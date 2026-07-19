@@ -1,4 +1,5 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
+import { classifyJob } from './core/filters.js';
 import { score } from './core/normalize.js';
 import type { Internship } from './types.js';
 import type { InternshipStore } from './store.js';
@@ -33,7 +34,7 @@ export const defaultRoleAbbreviations: Record<string, string> = {
 };
 export const defaultPushTemplates: Required<PushTemplates> = {
   titleTemplate: '{shortTitle} — {company}',
-  descriptionTemplate: '{location} · {season}{compensationDetail}\n{url}',
+  descriptionTemplate: '{title}\n{location} · {season}{compensationDetail}\n{focus}{postedDetail}\n{url}',
   roleAbbreviations: defaultRoleAbbreviations
 };
 
@@ -47,10 +48,13 @@ export function compactRoleTitle(title: string, roleAbbreviations: Record<string
 }
 export function renderPushTemplate(template: string, job: Internship, roleAbbreviations: Record<string, string> = defaultRoleAbbreviations) {
   const compensation = displayValue(job.compensation.raw) || (job.compensation.maxHourlyUSD ? `$${job.compensation.maxHourlyUSD.toFixed(0)}/hr` : '');
+  const posted = displayValue(job.sourceReferences[0]?.postedAt);
+  const focusLabels: Record<string, string> = { 'ai-ml': 'AI/ML', swe: 'SWE', quant: 'Quant', product: 'Product', design: 'Design' };
+  const focus = classifyJob(job).filter((category) => category !== 'grad').map((category) => focusLabels[category] ?? category).join(' · ');
   const values: Record<string, string> = {
-    title: displayValue(job.title), shortTitle: compactRoleTitle(job.title, roleAbbreviations), company: displayValue(job.company), location: displayValue(job.location), season: displayValue(job.season), compensation, compensationDetail: compensation ? ` · ${compensation}` : '', url: safeClick(job.applyUrl) ?? ''
+    title: displayValue(job.title), shortTitle: compactRoleTitle(job.title, roleAbbreviations), company: displayValue(job.company), location: displayValue(job.location), season: displayValue(job.season), compensation, compensationDetail: compensation ? ` · ${compensation}` : '', focus: focus ? `Focus: ${focus}` : '', posted, postedDetail: posted ? `${focus ? ' · ' : ''}Posted: ${posted}` : '', source: displayValue(job.sourceReferences[0]?.sourceId), url: safeClick(job.applyUrl) ?? ''
   };
-  return template.replace(/\{(title|shortTitle|company|location|season|compensation|compensationDetail|url)\}/g, (_, key: string) => values[key] ?? '').trim();
+  return template.replace(/\{(title|shortTitle|company|location|season|compensation|compensationDetail|focus|posted|postedDetail|source|url)\}/g, (_, key: string) => values[key] ?? '').replace(/\n[ \t]*\n+/g, '\n').trim();
 }
 function pushMessage(job: Internship, templates: PushTemplates): PushMessage {
   const aliases = { ...defaultRoleAbbreviations, ...(templates.roleAbbreviations ?? {}) };

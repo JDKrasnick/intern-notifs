@@ -26,12 +26,18 @@ function terms(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'sea
 function matchesKeyword(value: string, keyword: string) { return keyword.trim() !== '' && value.toLowerCase().includes(keyword.trim().toLowerCase()); }
 function matchesCategory(value: string, category: JobCategory) { return patterns[category].test(value); }
 
+export function classifyJob(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season'>): JobCategory[] {
+  const value = terms(listing);
+  return jobCategories.filter((category) => matchesCategory(value, category));
+}
+
 export function matchesJobFilter(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season'>, filter?: JobFilter) {
   if (!filter) return true;
   const value = terms(listing);
-  const excluded = [...(filter.excludeKeywords ?? []).map((keyword) => matchesKeyword(value, keyword)), ...(filter.excludeCategories ?? []).map((category) => matchesCategory(value, category))].some(Boolean);
+  const categories = classifyJob(listing);
+  const excluded = [...(filter.excludeKeywords ?? []).map((keyword) => matchesKeyword(value, keyword)), ...(filter.excludeCategories ?? []).map((category) => categories.includes(category))].some(Boolean);
   if (excluded) return false;
-  const inclusions = [...(filter.includeKeywords ?? []).map((keyword) => matchesKeyword(value, keyword)), ...(filter.includeCategories ?? []).map((category) => matchesCategory(value, category))];
+  const inclusions = [...(filter.includeKeywords ?? []).map((keyword) => matchesKeyword(value, keyword)), ...(filter.includeCategories ?? []).map((category) => categories.includes(category))];
   return inclusions.length === 0 || inclusions.some(Boolean);
 }
 
