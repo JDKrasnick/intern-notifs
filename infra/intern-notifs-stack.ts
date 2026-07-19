@@ -6,7 +6,6 @@ import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as ses from 'aws-cdk-lib/aws-ses';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
-import * as ssm from 'aws-cdk-lib/aws-ssm';
 import type { Construct } from 'constructs';
 
 export interface InternNotifsStackProps extends cdk.StackProps { githubRepository: string; githubOwnerId?: string; githubRepositoryId?: string; emailAddress: string; existingOidcProviderArn?: string; }
@@ -35,17 +34,17 @@ export class InternNotifsStack extends cdk.Stack {
     role.addToPolicy(new iam.PolicyStatement({ actions: ['ses:SendEmail'], resources: [identity.emailIdentityArn] }));
     // Direct phone-number publishing has no topic ARN to scope; the OIDC subject constrains this permission to main.
     role.addToPolicy(new iam.PolicyStatement({ actions: ['sns:Publish'], resources: ['*'] }));
-    const runtimeConfig = ssm.StringParameter.fromStringParameterName(this, 'RuntimeConfiguration', '/intern-notifs/runtime-config');
+    const runtimeConfigParameterName = '/intern-notifs/runtime-config';
     const notifier = new lambdaNodejs.NodejsFunction(this, 'Notifier', {
       entry: 'src/lambda.ts', handler: 'handler', runtime: lambda.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.minutes(4), memorySize: 512, reservedConcurrentExecutions: 1,
-      environment: { INTERNSHIPS_TABLE: internships.tableName, RUNTIME_CONFIG_PARAMETER_NAME: runtimeConfig.parameterName },
+      environment: { INTERNSHIPS_TABLE: internships.tableName, RUNTIME_CONFIG_PARAMETER_NAME: runtimeConfigParameterName },
       bundling: { externalModules: [] }
     });
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], resources: [internships.tableArn, `${internships.tableArn}/index/*`] }));
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['ses:SendEmail'], resources: [identity.emailIdentityArn] }));
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['sns:Publish'], resources: ['*'] }));
-    runtimeConfig.grantRead(notifier);
+    notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameter'], resources: [`arn:${this.partition}:ssm:${this.region}:${this.account}:parameter${runtimeConfigParameterName}`] }));
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['kms:Decrypt'], resources: [`arn:${this.partition}:kms:${this.region}:${this.account}:key/*`], conditions: { StringEquals: { 'kms:ViaService': `ssm.${this.region}.amazonaws.com` } } }));
     const deadLetterQueue = new sqs.Queue(this, 'SchedulerDeadLetterQueue', { retentionPeriod: cdk.Duration.days(14), encryption: sqs.QueueEncryption.SQS_MANAGED });
     const schedulerRole = new iam.Role(this, 'SchedulerInvokeRole', { assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com') });
@@ -58,7 +57,7 @@ export class InternNotifsStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ApplicationsTableName', { value: applications.tableName });
     new cdk.CfnOutput(this, 'GitHubActionsRoleArn', { value: role.roleArn });
     new cdk.CfnOutput(this, 'Region', { value: this.region });
-    new cdk.CfnOutput(this, 'RuntimeConfigParameterName', { value: runtimeConfig.parameterName });
+    new cdk.CfnOutput(this, 'RuntimeConfigParameterName', { value: runtimeConfigParameterName });
     new cdk.CfnOutput(this, 'NotifierFunctionName', { value: notifier.functionName });
   }
 }

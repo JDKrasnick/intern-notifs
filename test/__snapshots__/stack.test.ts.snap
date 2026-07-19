@@ -41,10 +41,6 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
       "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
       "Type": "AWS::SSM::Parameter::Value<String>",
     },
-    "RuntimeConfigurationParameter": {
-      "Default": "/intern-notifs/runtime-config",
-      "Type": "AWS::SSM::Parameter::Value<String>",
-    },
   },
   "Resources": {
     "ApplicationsE04DA868": {
@@ -612,12 +608,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
               "Resource": "*",
             },
             {
-              "Action": [
-                "ssm:DescribeParameters",
-                "ssm:GetParameters",
-                "ssm:GetParameter",
-                "ssm:GetParameterHistory",
-              ],
+              "Action": "ssm:GetParameter",
               "Effect": "Allow",
               "Resource": {
                 "Fn::Join": [
