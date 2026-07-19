@@ -12,7 +12,7 @@ Personal, serverless internship discovery for public GitHub lists. The first suc
 
 1. Install Node 22 and dependencies: `npm install`.
 2. Bootstrap your AWS account once: `npx cdk bootstrap aws://ACCOUNT_ID/us-east-1`.
-3. Deploy, replacing both values: `npx cdk deploy -c githubRepository=OWNER/REPO -c emailAddress=you@example.com`. If your account already has GitHub's OIDC provider, pass `-c existingOidcProviderArn=arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com`.
+3. Deploy, replacing both values: `npx cdk deploy -c githubRepository=OWNER/REPO -c emailAddress=you@example.com`. For repositories created after July 15, 2026, GitHub uses immutable OIDC subjects; additionally pass `-c githubOwnerId=OWNER_ID -c githubRepositoryId=REPOSITORY_ID` (obtain the numeric IDs with `gh api user --jq .id` and `gh api repos/OWNER/REPO --jq .id`). If your account already has GitHub's OIDC provider, pass `-c existingOidcProviderArn=arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com`.
 4. Put the output `GitHubActionsRoleArn`, `Region`, and `InternshipsTableName` in repository variables named `AWS_ROLE_ARN`, `AWS_REGION`, and `INTERNSHIPS_TABLE`. Add `SMS_DESTINATION`, `SMS_ORIGINATION_NUMBER`, `SES_FROM`, and `SES_TO` as repository secrets. Use the same verified SES address for both SES secrets while SES remains in its sandbox.
 5. Run `npx tsx src/cli.ts seed` once (with the table environment variable) to explicitly baseline feeds, then run `smoke-sms` and `smoke-email` before enabling schedules.
 

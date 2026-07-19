@@ -4,7 +4,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as ses from 'aws-cdk-lib/aws-ses';
 import type { Construct } from 'constructs';
 
-export interface InternNotifsStackProps extends cdk.StackProps { githubRepository: string; emailAddress: string; existingOidcProviderArn?: string; }
+export interface InternNotifsStackProps extends cdk.StackProps { githubRepository: string; githubOwnerId?: string; githubRepositoryId?: string; emailAddress: string; existingOidcProviderArn?: string; }
 export class InternNotifsStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: InternNotifsStackProps) {
     super(scope, id, props);
@@ -18,7 +18,11 @@ export class InternNotifsStack extends cdk.Stack {
     applications.addGlobalSecondaryIndex({ indexName: 'statusUpdatedAtIndex', partitionKey: { name: 'status', type: dynamodb.AttributeType.STRING }, sortKey: { name: 'updatedAt', type: dynamodb.AttributeType.STRING }, projectionType: dynamodb.ProjectionType.ALL });
     const identity = new ses.EmailIdentity(this, 'NotifierIdentity', { identity: ses.Identity.email(props.emailAddress) });
     const provider = props.existingOidcProviderArn ? iam.OpenIdConnectProvider.fromOpenIdConnectProviderArn(this, 'ImportedGithubOidc', props.existingOidcProviderArn) : new iam.OpenIdConnectProvider(this, 'GithubOidc', { url: 'https://token.actions.githubusercontent.com', clientIds: ['sts.amazonaws.com'] });
-    const role = new iam.Role(this, 'GitHubActionsRole', { assumedBy: new iam.WebIdentityPrincipal(provider.openIdConnectProviderArn, { StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com', 'token.actions.githubusercontent.com:sub': `repo:${props.githubRepository}:ref:refs/heads/main` } }) });
+    const [owner, repository] = props.githubRepository.split('/');
+    const subject = props.githubOwnerId && props.githubRepositoryId
+      ? `repo:${owner}@${props.githubOwnerId}/${repository}@${props.githubRepositoryId}:ref:refs/heads/main`
+      : `repo:${props.githubRepository}:ref:refs/heads/main`;
+    const role = new iam.Role(this, 'GitHubActionsRole', { assumedBy: new iam.WebIdentityPrincipal(provider.openIdConnectProviderArn, { StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com', 'token.actions.githubusercontent.com:sub': subject } }) });
     role.addToPolicy(new iam.PolicyStatement({
       actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'],
       resources: [internships.tableArn, `${internships.tableArn}/index/*`]
