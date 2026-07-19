@@ -1,67 +1,1254 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Button, FlatList, KeyboardAvoidingView, Linking, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import * as WebBrowser from 'expo-web-browser';
-import * as Notifications from 'expo-notifications';
-import * as DocumentPicker from 'expo-document-picker';
-import { api, sessionStorage } from './src/api';
-import { confirmEmail, signIn, signUp } from './src/auth';
-import { registerForJobAlerts } from './src/notifications';
+import { useEffect, useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Button,
+  FlatList,
+  KeyboardAvoidingView,
+  Linking,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import * as WebBrowser from "expo-web-browser";
+import * as Notifications from "expo-notifications";
+import * as DocumentPicker from "expo-document-picker";
+import { api, sessionStorage } from "./src/api";
+import { confirmEmail, signIn, signUp } from "./src/auth";
+import { registerForJobAlerts } from "./src/notifications";
 
-type Job = { jobId: string; company: string; title: string; location: string; season: string; applyUrl: string; compensation: { raw: string }; firstSeenAt: string };
-type Application = { applicationId: string; jobId: string; status: string; notes?: string };
-type Preference = { filter: { includeCategories?: string[]; includeKeywords?: string[] }; alertsEnabled: boolean; onboardingComplete: boolean; push?: { titleTemplate?: string; descriptionTemplate?: string } };
-const categories = ['ai-ml', 'swe', 'quant', 'product', 'design'];
+type Job = {
+  jobId: string;
+  company: string;
+  title: string;
+  location: string;
+  season: string;
+  applyUrl: string;
+  compensation: { raw: string };
+  firstSeenAt: string;
+};
+type Application = {
+  applicationId: string;
+  jobId: string;
+  status: string;
+  notes?: string;
+};
+type JobFilter = {
+  includeCategories?: string[];
+  includeKeywords?: string[];
+  excludeCategories?: string[];
+  excludeKeywords?: string[];
+};
+type PushPreferences = {
+  titleTemplate?: string;
+  descriptionTemplate?: string;
+  roleAbbreviations?: Record<string, string>;
+};
+type Preference = {
+  filter: JobFilter;
+  alertsEnabled: boolean;
+  onboardingComplete: boolean;
+  push?: PushPreferences;
+};
+const categories = ["ai-ml", "grad", "swe", "quant", "product", "design"];
+const pushPlaceholders = [
+  "{title}",
+  "{shortTitle}",
+  "{company}",
+  "{location}",
+  "{season}",
+  "{compensation}",
+  "{compensationDetail}",
+  "{focus}",
+  "{posted}",
+  "{postedDetail}",
+  "{source}",
+  "{url}",
+];
 
-function JobCard({ job, onOpen }: { job: Job; onOpen: () => void }) { return <TouchableOpacity style={styles.card} onPress={onOpen}><Text style={styles.company}>{job.company}</Text><Text style={styles.title}>{job.title}</Text><Text style={styles.muted}>{job.location} · {job.season}</Text>{job.compensation.raw ? <Text style={styles.pay}>{job.compensation.raw}</Text> : null}</TouchableOpacity>; }
+function JobCard({ job, onOpen }: { job: Job; onOpen: () => void }) {
+  return (
+    <TouchableOpacity style={styles.card} onPress={onOpen}>
+      <Text style={styles.company}>{job.company}</Text>
+      <Text style={styles.title}>{job.title}</Text>
+      <Text style={styles.muted}>
+        {job.location} · {job.season}
+      </Text>
+      {job.compensation.raw ? (
+        <Text style={styles.pay}>{job.compensation.raw}</Text>
+      ) : null}
+    </TouchableOpacity>
+  );
+}
 
 export default function App() {
-  const [token, setToken] = useState<string>(); const [ready, setReady] = useState(false); const [tab, setTab] = useState<'feed' | 'saved' | 'profile'>('feed'); const [preferences, setPreferences] = useState<Preference>(); const [jobs, setJobs] = useState<Job[]>([]); const [applications, setApplications] = useState<Application[]>([]); const [query, setQuery] = useState('');
-  useEffect(() => { void sessionStorage.get().then((value) => { setToken(value ?? undefined); setReady(true); }); }, []);
-  useEffect(() => { void api<{ jobs: Job[] }>('/jobs', '').then((feed) => setJobs(feed.jobs)).catch(() => undefined); }, []);
-  const load = async (idToken = token) => { if (!idToken) return; const [pref, apps] = await Promise.all([api<Preference>('/me/preferences', idToken), api<{ applications: Application[] }>('/me/applications', idToken)]); setPreferences(pref); setApplications(apps.applications); };
-  useEffect(() => { if (token) void load(); }, [token]);
-  useEffect(() => { const subscription = Notifications.addNotificationResponseReceivedListener((response) => { const jobId = response.notification.request.content.data.jobId as string | undefined; if (jobId) { setTab('feed'); void api<Job>(`/jobs/${jobId}`, '').then((job) => Alert.alert(job.title, `${job.company}\n${job.location}`, [{ text: 'Open job', onPress: () => void WebBrowser.openBrowserAsync(job.applyUrl) }])).catch(() => undefined); } }); return () => subscription.remove(); }, []);
-  const filtered = useMemo(() => jobs.filter((job) => `${job.company} ${job.title} ${job.location}`.toLowerCase().includes(query.toLowerCase())), [jobs, query]);
-  if (!ready) return <SafeAreaView style={styles.center}><ActivityIndicator /></SafeAreaView>;
-  if (!token) return <GuestExperience jobs={jobs} onSession={async (idToken) => { await sessionStorage.set(idToken); setToken(idToken); }} />;
-  if (!preferences) return <SafeAreaView style={styles.center}><ActivityIndicator /></SafeAreaView>;
-  if (!preferences.onboardingComplete) return <Onboarding token={token} onDone={() => void load()} />;
-  const apply = async (job: Job) => { const created = await api<Application>('/me/applications', token, { method: 'POST', body: JSON.stringify({ jobId: job.jobId, status: 'applied' }) }); setApplications((current) => [created, ...current]); await WebBrowser.openBrowserAsync(job.applyUrl); Alert.alert('Application tracking started', 'Complete and submit the employer’s official form. Your profile and résumé stay available in the Profile tab for manual completion.'); };
-  return <SafeAreaView style={styles.screen}><View style={styles.nav}>{(['feed', 'saved', 'profile'] as const).map((item) => <Button key={item} title={item === 'saved' ? 'Saved' : item[0].toUpperCase() + item.slice(1)} onPress={() => setTab(item)} color={tab === item ? '#0E7490' : '#64748B'} />)}</View>{tab === 'feed' ? <><TextInput value={query} onChangeText={setQuery} placeholder="Search roles, companies, locations" style={styles.search} /><FlatList data={filtered} keyExtractor={(job) => job.jobId} renderItem={({ item }) => <JobCard job={item} onOpen={() => Alert.alert(item.title, `${item.company}\n${item.location}`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Apply', onPress: () => void apply(item) }, { text: 'Official site', onPress: () => void WebBrowser.openBrowserAsync(item.applyUrl) }])} />} ListEmptyComponent={<Text style={styles.empty}>No open internships match your search.</Text>} /></> : tab === 'saved' ? <Applications applications={applications} jobs={jobs} token={token} onChanged={() => void load()} /> : <Profile token={token} preferences={preferences} onPreferencesChanged={(updated) => setPreferences(updated)} onSignOut={async () => { await sessionStorage.clear(); setToken(undefined); }} />}</SafeAreaView>;
+  const [token, setToken] = useState<string>();
+  const [ready, setReady] = useState(false);
+  const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
+  const [preferences, setPreferences] = useState<Preference>();
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    void sessionStorage.get().then((value) => {
+      setToken(value ?? undefined);
+      setReady(true);
+    });
+  }, []);
+  useEffect(() => {
+    void api<{ jobs: Job[] }>("/jobs", "")
+      .then((feed) => setJobs(feed.jobs))
+      .catch(() => undefined);
+  }, []);
+  const load = async (idToken = token) => {
+    if (!idToken) return;
+    const [pref, apps] = await Promise.all([
+      api<Preference>("/me/preferences", idToken),
+      api<{ applications: Application[] }>("/me/applications", idToken),
+    ]);
+    setPreferences(pref);
+    setApplications(apps.applications);
+  };
+  useEffect(() => {
+    if (token) void load();
+  }, [token]);
+  useEffect(() => {
+    const subscription = Notifications.addNotificationResponseReceivedListener(
+      (response) => {
+        const jobId = response.notification.request.content.data.jobId as
+          | string
+          | undefined;
+        if (jobId) {
+          setTab("feed");
+          void api<Job>(`/jobs/${jobId}`, "")
+            .then((job) =>
+              Alert.alert(job.title, `${job.company}\n${job.location}`, [
+                {
+                  text: "Open job",
+                  onPress: () => void WebBrowser.openBrowserAsync(job.applyUrl),
+                },
+              ]),
+            )
+            .catch(() => undefined);
+        }
+      },
+    );
+    return () => subscription.remove();
+  }, []);
+  const filtered = useMemo(
+    () =>
+      jobs.filter((job) =>
+        `${job.company} ${job.title} ${job.location}`
+          .toLowerCase()
+          .includes(query.toLowerCase()),
+      ),
+    [jobs, query],
+  );
+  if (!ready)
+    return (
+      <SafeAreaView style={styles.center}>
+        <ActivityIndicator />
+      </SafeAreaView>
+    );
+  if (!token)
+    return (
+      <GuestExperience
+        jobs={jobs}
+        onSession={async (idToken) => {
+          await sessionStorage.set(idToken);
+          setToken(idToken);
+        }}
+      />
+    );
+  if (!preferences)
+    return (
+      <SafeAreaView style={styles.center}>
+        <ActivityIndicator />
+      </SafeAreaView>
+    );
+  if (!preferences.onboardingComplete)
+    return <Onboarding token={token} onDone={() => void load()} />;
+  const apply = async (job: Job) => {
+    const created = await api<Application>("/me/applications", token, {
+      method: "POST",
+      body: JSON.stringify({ jobId: job.jobId, status: "applied" }),
+    });
+    setApplications((current) => [created, ...current]);
+    await WebBrowser.openBrowserAsync(job.applyUrl);
+    Alert.alert(
+      "Application tracking started",
+      "Complete and submit the employer’s official form. Your profile and résumé stay available in the Profile tab for manual completion.",
+    );
+  };
+  return (
+    <SafeAreaView style={styles.screen}>
+      <View style={styles.nav}>
+        {(["feed", "saved", "profile"] as const).map((item) => (
+          <Button
+            key={item}
+            title={
+              item === "saved" ? "Saved" : item[0].toUpperCase() + item.slice(1)
+            }
+            onPress={() => setTab(item)}
+            color={tab === item ? "#0E7490" : "#64748B"}
+          />
+        ))}
+      </View>
+      {tab === "feed" ? (
+        <>
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search roles, companies, locations"
+            style={styles.search}
+          />
+          <FlatList
+            data={filtered}
+            keyExtractor={(job) => job.jobId}
+            renderItem={({ item }) => (
+              <JobCard
+                job={item}
+                onOpen={() =>
+                  Alert.alert(item.title, `${item.company}\n${item.location}`, [
+                    { text: "Cancel", style: "cancel" },
+                    { text: "Apply", onPress: () => void apply(item) },
+                    {
+                      text: "Official site",
+                      onPress: () =>
+                        void WebBrowser.openBrowserAsync(item.applyUrl),
+                    },
+                  ])
+                }
+              />
+            )}
+            ListEmptyComponent={
+              <Text style={styles.empty}>
+                No open internships match your search.
+              </Text>
+            }
+          />
+        </>
+      ) : tab === "saved" ? (
+        <Applications
+          applications={applications}
+          jobs={jobs}
+          token={token}
+          onChanged={() => void load()}
+        />
+      ) : (
+        <Profile
+          token={token}
+          preferences={preferences}
+          onPreferencesChanged={(updated) => setPreferences(updated)}
+          onSignOut={async () => {
+            await sessionStorage.clear();
+            setToken(undefined);
+          }}
+        />
+      )}
+    </SafeAreaView>
+  );
 }
 
-function GuestExperience({ jobs, onSession }: { jobs: Job[]; onSession: (token: string) => void }) {
-  const [tab, setTab] = useState<'feed' | 'saved' | 'profile'>('feed'); const [query, setQuery] = useState(''); const [showAccount, setShowAccount] = useState(false);
-  const filtered = useMemo(() => jobs.filter((job) => `${job.company} ${job.title} ${job.location}`.toLowerCase().includes(query.toLowerCase())), [jobs, query]);
-  if (showAccount) return <SignIn onSession={onSession} onBrowse={() => setShowAccount(false)} />;
-  const openJob = (job: Job) => Alert.alert(job.title, `${job.company}\n${job.location}`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Open application', onPress: () => void WebBrowser.openBrowserAsync(job.applyUrl) }, { text: 'Sign in to track', onPress: () => setShowAccount(true) }]);
-  return <SafeAreaView style={styles.screen}><View style={styles.nav}>{(['feed', 'saved', 'profile'] as const).map((item) => <Button key={item} title={item === 'saved' ? 'Saved' : item[0].toUpperCase() + item.slice(1)} onPress={() => setTab(item)} color={tab === item ? '#0E7490' : '#64748B'} />)}</View>{tab === 'feed' ? <><TextInput value={query} onChangeText={setQuery} placeholder="Search roles, companies, locations" style={styles.search} /><FlatList data={filtered} keyExtractor={(job) => job.jobId} renderItem={({ item }) => <JobCard job={item} onOpen={() => openJob(item)} />} ListHeaderComponent={<View style={styles.guestHeader}><Text style={styles.sectionTitle}>Open technical internships</Text><Text style={styles.muted}>Browse freely. Create an account only to save applications or receive personalized alerts.</Text></View>} ListEmptyComponent={<Text style={styles.empty}>No open internships match your search.</Text>} /></> : <AccountGate feature={tab === 'saved' ? 'save and track applications' : 'set up alerts and your application profile'} onSignIn={() => setShowAccount(true)} />}</SafeAreaView>;
+function GuestExperience({
+  jobs,
+  onSession,
+}: {
+  jobs: Job[];
+  onSession: (token: string) => void;
+}) {
+  const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
+  const [query, setQuery] = useState("");
+  const [showAccount, setShowAccount] = useState(false);
+  const filtered = useMemo(
+    () =>
+      jobs.filter((job) =>
+        `${job.company} ${job.title} ${job.location}`
+          .toLowerCase()
+          .includes(query.toLowerCase()),
+      ),
+    [jobs, query],
+  );
+  if (showAccount)
+    return (
+      <SignIn onSession={onSession} onBrowse={() => setShowAccount(false)} />
+    );
+  const openJob = (job: Job) =>
+    Alert.alert(job.title, `${job.company}\n${job.location}`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Open application",
+        onPress: () => void WebBrowser.openBrowserAsync(job.applyUrl),
+      },
+      { text: "Sign in to track", onPress: () => setShowAccount(true) },
+    ]);
+  return (
+    <SafeAreaView style={styles.screen}>
+      <View style={styles.nav}>
+        {(["feed", "saved", "profile"] as const).map((item) => (
+          <Button
+            key={item}
+            title={
+              item === "saved" ? "Saved" : item[0].toUpperCase() + item.slice(1)
+            }
+            onPress={() => setTab(item)}
+            color={tab === item ? "#0E7490" : "#64748B"}
+          />
+        ))}
+      </View>
+      {tab === "feed" ? (
+        <>
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search roles, companies, locations"
+            style={styles.search}
+          />
+          <FlatList
+            data={filtered}
+            keyExtractor={(job) => job.jobId}
+            renderItem={({ item }) => (
+              <JobCard job={item} onOpen={() => openJob(item)} />
+            )}
+            ListHeaderComponent={
+              <View style={styles.guestHeader}>
+                <Text style={styles.sectionTitle}>
+                  Open technical internships
+                </Text>
+                <Text style={styles.muted}>
+                  Browse freely. Create an account only to save applications or
+                  receive personalized alerts.
+                </Text>
+              </View>
+            }
+            ListEmptyComponent={
+              <Text style={styles.empty}>
+                No open internships match your search.
+              </Text>
+            }
+          />
+        </>
+      ) : (
+        <AccountGate
+          feature={
+            tab === "saved"
+              ? "save and track applications"
+              : "set up alerts and your application profile"
+          }
+          onSignIn={() => setShowAccount(true)}
+        />
+      )}
+    </SafeAreaView>
+  );
 }
 
-function AccountGate({ feature, onSignIn }: { feature: string; onSignIn: () => void }) { return <View style={styles.gate}><Text style={styles.sectionTitle}>Make it yours</Text><Text style={styles.muted}>Create a free account to {feature}. Browsing internships never requires one.</Text><View style={styles.gateButton}><AuthButton label="Sign in or create account" onPress={onSignIn} /></View></View>; }
+function AccountGate({
+  feature,
+  onSignIn,
+}: {
+  feature: string;
+  onSignIn: () => void;
+}) {
+  return (
+    <View style={styles.gate}>
+      <Text style={styles.sectionTitle}>Make it yours</Text>
+      <Text style={styles.muted}>
+        Create a free account to {feature}. Browsing internships never requires
+        one.
+      </Text>
+      <View style={styles.gateButton}>
+        <AuthButton label="Sign in or create account" onPress={onSignIn} />
+      </View>
+    </View>
+  );
+}
 
-function Onboarding({ token, onDone }: { token: string; onDone: () => void }) { const [selected, setSelected] = useState<string[]>(['swe']); const [keywords, setKeywords] = useState(''); const [saving, setSaving] = useState(false); const toggle = (category: string) => setSelected((current) => current.includes(category) ? current.filter((item) => item !== category) : [...current, category]); const complete = async () => { setSaving(true); try { const pushToken = await registerForJobAlerts(token); await api('/me/preferences', token, { method: 'PUT', body: JSON.stringify({ filter: { includeCategories: selected, includeKeywords: keywords.split(',').map((item) => item.trim()).filter(Boolean) }, alertsEnabled: Boolean(pushToken), onboardingComplete: true }) }); onDone(); } finally { setSaving(false); } }; return <SafeAreaView style={styles.onboarding}><Text style={styles.hero}>Make InternNotifs yours.</Text><Text style={styles.muted}>Choose the kinds of roles you want. You can edit these anytime.</Text><View style={styles.chips}>{categories.map((category) => <TouchableOpacity key={category} style={[styles.chip, selected.includes(category) && styles.chipOn]} onPress={() => toggle(category)}><Text>{category.toUpperCase()}</Text></TouchableOpacity>)}</View><TextInput style={styles.search} value={keywords} onChangeText={setKeywords} placeholder="Keywords, comma separated (optional)" /><Button title={saving ? 'Saving…' : 'Enable alerts & continue'} disabled={saving} onPress={() => void complete()} /></SafeAreaView> }
-function Applications({ applications, jobs, token, onChanged }: { applications: Application[]; jobs: Job[]; token: string; onChanged: () => void }) { return <FlatList style={styles.list} data={applications} keyExtractor={(item) => item.applicationId} renderItem={({ item }) => { const job = jobs.find((candidate) => candidate.jobId === item.jobId); return <View style={styles.card}><Text style={styles.company}>{job?.company ?? 'Internship'}</Text><Text style={styles.title}>{job?.title ?? item.jobId}</Text><Text style={styles.muted}>{item.status.toUpperCase()}</Text><Button title="Advance status" onPress={() => void api(`/me/applications/${item.applicationId}`, token, { method: 'PATCH', body: JSON.stringify({ status: item.status === 'saved' ? 'applied' : 'interview' }) }).then(onChanged)} /></View>; }} ListEmptyComponent={<Text style={styles.empty}>Save roles or start an application to track them here.</Text>} /> }
-function Profile({ token, preferences, onPreferencesChanged, onSignOut }: { token: string; preferences: Preference; onPreferencesChanged: (value: Preference) => void; onSignOut: () => void }) {
-  const [profile, setProfile] = useState<Record<string, unknown>>({}); const [loading, setLoading] = useState(true); const [titleTemplate, setTitleTemplate] = useState(preferences.push?.titleTemplate ?? ''); const [descriptionTemplate, setDescriptionTemplate] = useState(preferences.push?.descriptionTemplate ?? ''); const [savingAlerts, setSavingAlerts] = useState(false);
-  useEffect(() => { void api<Record<string, unknown> | null>('/me/profile', token).then((value) => setProfile(value ?? {})).finally(() => setLoading(false)); }, [token]);
+function Onboarding({ token, onDone }: { token: string; onDone: () => void }) {
+  const [selected, setSelected] = useState<string[]>(["swe"]);
+  const [keywords, setKeywords] = useState("");
+  const [saving, setSaving] = useState(false);
+  const toggle = (category: string) =>
+    setSelected((current) =>
+      current.includes(category)
+        ? current.filter((item) => item !== category)
+        : [...current, category],
+    );
+  const complete = async () => {
+    setSaving(true);
+    try {
+      const pushToken = await registerForJobAlerts(token);
+      await api("/me/preferences", token, {
+        method: "PUT",
+        body: JSON.stringify({
+          filter: {
+            includeCategories: selected,
+            includeKeywords: keywords
+              .split(",")
+              .map((item) => item.trim())
+              .filter(Boolean),
+          },
+          alertsEnabled: Boolean(pushToken),
+          onboardingComplete: true,
+        }),
+      });
+      onDone();
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <SafeAreaView style={styles.onboarding}>
+      <Text style={styles.hero}>Make InternNotifs yours.</Text>
+      <Text style={styles.muted}>
+        Choose the kinds of roles you want. You can edit these anytime.
+      </Text>
+      <View style={styles.chips}>
+        {categories.map((category) => (
+          <TouchableOpacity
+            key={category}
+            style={[styles.chip, selected.includes(category) && styles.chipOn]}
+            onPress={() => toggle(category)}
+          >
+            <Text>{category.toUpperCase()}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <TextInput
+        style={styles.search}
+        value={keywords}
+        onChangeText={setKeywords}
+        placeholder="Keywords, comma separated (optional)"
+      />
+      <Button
+        title={saving ? "Saving…" : "Enable alerts & continue"}
+        disabled={saving}
+        onPress={() => void complete()}
+      />
+    </SafeAreaView>
+  );
+}
+function Applications({
+  applications,
+  jobs,
+  token,
+  onChanged,
+}: {
+  applications: Application[];
+  jobs: Job[];
+  token: string;
+  onChanged: () => void;
+}) {
+  return (
+    <FlatList
+      style={styles.list}
+      data={applications}
+      keyExtractor={(item) => item.applicationId}
+      renderItem={({ item }) => {
+        const job = jobs.find((candidate) => candidate.jobId === item.jobId);
+        return (
+          <View style={styles.card}>
+            <Text style={styles.company}>{job?.company ?? "Internship"}</Text>
+            <Text style={styles.title}>{job?.title ?? item.jobId}</Text>
+            <Text style={styles.muted}>{item.status.toUpperCase()}</Text>
+            <Button
+              title="Advance status"
+              onPress={() =>
+                void api(`/me/applications/${item.applicationId}`, token, {
+                  method: "PATCH",
+                  body: JSON.stringify({
+                    status: item.status === "saved" ? "applied" : "interview",
+                  }),
+                }).then(onChanged)
+              }
+            />
+          </View>
+        );
+      }}
+      ListEmptyComponent={
+        <Text style={styles.empty}>
+          Save roles or start an application to track them here.
+        </Text>
+      }
+    />
+  );
+}
+function commaList(value: string) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+function aliasesToText(aliases?: Record<string, string>) {
+  return Object.entries(aliases ?? {})
+    .map(([source, abbreviation]) => `${source} = ${abbreviation}`)
+    .join("\n");
+}
+function aliasesFromText(value: string) {
+  const aliases: Record<string, string> = {};
+  for (const line of value
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean)) {
+    const separator = line.indexOf("=");
+    if (separator < 1)
+      throw new Error(
+        "Use one role abbreviation per line: full role = short label",
+      );
+    const source = line.slice(0, separator).trim();
+    const abbreviation = line.slice(separator + 1).trim();
+    if (!source || !abbreviation || abbreviation.length > 40)
+      throw new Error(
+        "Each role abbreviation needs a role and a short label (40 characters or fewer).",
+      );
+    aliases[source] = abbreviation;
+  }
+  return aliases;
+}
+
+function Profile({
+  token,
+  preferences,
+  onPreferencesChanged,
+  onSignOut,
+}: {
+  token: string;
+  preferences: Preference;
+  onPreferencesChanged: (value: Preference) => void;
+  onSignOut: () => void;
+}) {
+  const [profile, setProfile] = useState<Record<string, unknown>>({});
+  const [loading, setLoading] = useState(true);
+  const [includeCategories, setIncludeCategories] = useState<string[]>(
+    preferences.filter.includeCategories ?? [],
+  );
+  const [excludeCategories, setExcludeCategories] = useState<string[]>(
+    preferences.filter.excludeCategories ?? [],
+  );
+  const [includeKeywords, setIncludeKeywords] = useState(
+    (preferences.filter.includeKeywords ?? []).join(", "),
+  );
+  const [excludeKeywords, setExcludeKeywords] = useState(
+    (preferences.filter.excludeKeywords ?? []).join(", "),
+  );
+  const [alertsEnabled, setAlertsEnabled] = useState(preferences.alertsEnabled);
+  const [titleTemplate, setTitleTemplate] = useState(
+    preferences.push?.titleTemplate ?? "",
+  );
+  const [descriptionTemplate, setDescriptionTemplate] = useState(
+    preferences.push?.descriptionTemplate ?? "",
+  );
+  const [roleAliases, setRoleAliases] = useState(
+    aliasesToText(preferences.push?.roleAbbreviations),
+  );
+  const [savingAlerts, setSavingAlerts] = useState(false);
+  useEffect(() => {
+    void api<Record<string, unknown> | null>("/me/profile", token)
+      .then((value) => setProfile(value ?? {}))
+      .finally(() => setLoading(false));
+  }, [token]);
+  useEffect(() => {
+    setIncludeCategories(preferences.filter.includeCategories ?? []);
+    setExcludeCategories(preferences.filter.excludeCategories ?? []);
+    setIncludeKeywords((preferences.filter.includeKeywords ?? []).join(", "));
+    setExcludeKeywords((preferences.filter.excludeKeywords ?? []).join(", "));
+    setAlertsEnabled(preferences.alertsEnabled);
+    setTitleTemplate(preferences.push?.titleTemplate ?? "");
+    setDescriptionTemplate(preferences.push?.descriptionTemplate ?? "");
+    setRoleAliases(aliasesToText(preferences.push?.roleAbbreviations));
+  }, [preferences]);
   if (loading) return <ActivityIndicator style={styles.center} />;
-  const contact = profile.contact as { name?: string; email?: string } | undefined;
-  const uploadResume = async () => { const result = await DocumentPicker.getDocumentAsync({ type: ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'] }); if (result.canceled) return; const asset = result.assets[0]; const response = await api<{ document: { documentId: string }; uploadUrl: string }>('/me/documents', token, { method: 'POST', body: JSON.stringify({ fileName: asset.name, contentType: asset.mimeType ?? 'application/pdf' }) }); const file = await fetch(asset.uri); await fetch(response.uploadUrl, { method: 'PUT', headers: { 'Content-Type': asset.mimeType ?? 'application/pdf', 'x-amz-server-side-encryption': 'aws:kms' }, body: await file.blob() }); setProfile((current) => ({ ...current, resumeDocumentId: response.document.documentId })); Alert.alert('Résumé uploaded', 'Save your profile to attach it.'); };
-  const saveAlertStyle = async () => { setSavingAlerts(true); try { const updated = await api<Preference>('/me/preferences', token, { method: 'PUT', body: JSON.stringify({ push: { ...(titleTemplate.trim() ? { titleTemplate: titleTemplate.trim() } : {}), ...(descriptionTemplate.trim() ? { descriptionTemplate: descriptionTemplate.trim() } : {}) } }) }); onPreferencesChanged(updated); Alert.alert('Alert style saved'); } catch (error) { Alert.alert('Could not save alert style', error instanceof Error ? error.message : 'Please try again.'); } finally { setSavingAlerts(false); } };
-  const deleteAccount = () => Alert.alert('Delete account?', 'This permanently deletes your profile, application tracking, uploaded documents, device alerts, and sign-in account.', [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete account', style: 'destructive', onPress: () => void api('/me', token, { method: 'DELETE' }).then(async () => { await sessionStorage.clear(); onSignOut(); }).catch((error) => Alert.alert('Could not delete account', error instanceof Error ? error.message : 'Please try again.')) }]);
-  const privacyUrl = process.env.EXPO_PUBLIC_PRIVACY_URL; const supportUrl = process.env.EXPO_PUBLIC_SUPPORT_URL;
-  return <ScrollView style={styles.list}><Text style={styles.hero}>Application profile</Text><TextInput style={styles.search} placeholder="Full name" value={contact?.name ?? ''} onChangeText={(name) => setProfile({ ...profile, contact: { ...contact, name } })} /><TextInput style={styles.search} placeholder="Email" value={contact?.email ?? ''} onChangeText={(email) => setProfile({ ...profile, contact: { ...contact, email } })} /><TextInput style={styles.search} placeholder="Location" value={profile.location as string ?? ''} onChangeText={(location) => setProfile({ ...profile, location })} /><TextInput style={styles.search} placeholder="Work authorization" value={profile.workAuthorization as string ?? ''} onChangeText={(workAuthorization) => setProfile({ ...profile, workAuthorization })} /><Button title={profile.resumeDocumentId ? 'Replace résumé' : 'Upload résumé'} onPress={() => void uploadResume()} /><View style={styles.spacer} /><Button title="Save profile" onPress={() => void api('/me/profile', token, { method: 'PUT', body: JSON.stringify({ ...profile, links: profile.links ?? {}, education: profile.education ?? [], reusableAnswers: profile.reusableAnswers ?? {} }) }).then(() => Alert.alert('Saved'))} /><View style={styles.spacer} /><Text style={styles.sectionTitle}>Job alert style</Text><Text style={styles.muted}>Optional placeholders: {'{shortTitle}'}, {'{company}'}, {'{location}'}, {'{season}'}, {'{url}'}.</Text><TextInput style={styles.search} placeholder="Title: {shortTitle} — {company}" value={titleTemplate} onChangeText={setTitleTemplate} /><TextInput style={[styles.search, styles.multiline]} placeholder="Description: {location} · {season}\n{url}" value={descriptionTemplate} onChangeText={setDescriptionTemplate} multiline /><Button title={savingAlerts ? 'Saving…' : 'Save alert style'} disabled={savingAlerts} onPress={() => void saveAlertStyle()} /><View style={styles.spacer} />{privacyUrl ? <Button title="Privacy policy" onPress={() => void Linking.openURL(privacyUrl)} /> : null}{supportUrl ? <Button title="Support" onPress={() => void Linking.openURL(supportUrl)} /> : null}<View style={styles.spacer} /><Button title="Sign out" color="#B91C1C" onPress={onSignOut} /><View style={styles.spacer} /><Button title="Delete account" color="#B91C1C" onPress={deleteAccount} /></ScrollView>;
-}
-function AuthButton({ label, onPress, disabled = false, secondary = false }: { label: string; onPress: () => void; disabled?: boolean; secondary?: boolean }) {
-  return <TouchableOpacity accessibilityRole="button" accessibilityState={{ disabled }} disabled={disabled} onPress={onPress} style={[styles.authButton, secondary && styles.authButtonSecondary, disabled && styles.authButtonDisabled]}><Text style={[styles.authButtonText, secondary && styles.authButtonTextSecondary]}>{label}</Text></TouchableOpacity>;
+  const contact = profile.contact as
+    | { name?: string; email?: string }
+    | undefined;
+  const toggleCategory = (
+    category: string,
+    selected: string[],
+    setter: (value: string[]) => void,
+  ) =>
+    setter(
+      selected.includes(category)
+        ? selected.filter((item) => item !== category)
+        : [...selected, category],
+    );
+  const uploadResume = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: [
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ],
+    });
+    if (result.canceled) return;
+    const asset = result.assets[0];
+    const response = await api<{
+      document: { documentId: string };
+      uploadUrl: string;
+    }>("/me/documents", token, {
+      method: "POST",
+      body: JSON.stringify({
+        fileName: asset.name,
+        contentType: asset.mimeType ?? "application/pdf",
+      }),
+    });
+    const file = await fetch(asset.uri);
+    await fetch(response.uploadUrl, {
+      method: "PUT",
+      headers: {
+        "Content-Type": asset.mimeType ?? "application/pdf",
+        "x-amz-server-side-encryption": "aws:kms",
+      },
+      body: await file.blob(),
+    });
+    setProfile((current) => ({
+      ...current,
+      resumeDocumentId: response.document.documentId,
+    }));
+    Alert.alert("Résumé uploaded", "Save your profile to attach it.");
+  };
+  const saveAlertPreferences = async () => {
+    setSavingAlerts(true);
+    try {
+      if (alertsEnabled) {
+        const deviceToken = await registerForJobAlerts(token);
+        if (!deviceToken) {
+          Alert.alert(
+            "Notifications are off",
+            "Enable notifications for InternNotifs in iPhone Settings, then try again on this physical device.",
+          );
+          return;
+        }
+      }
+      const aliases = aliasesFromText(roleAliases);
+      const push: PushPreferences = {
+        ...(titleTemplate.trim()
+          ? { titleTemplate: titleTemplate.trim() }
+          : {}),
+        ...(descriptionTemplate.trim()
+          ? { descriptionTemplate: descriptionTemplate.trim() }
+          : {}),
+        ...(Object.keys(aliases).length ? { roleAbbreviations: aliases } : {}),
+      };
+      const updated = await api<Preference>("/me/preferences", token, {
+        method: "PUT",
+        body: JSON.stringify({
+          filter: {
+            includeCategories,
+            includeKeywords: commaList(includeKeywords),
+            excludeCategories,
+            excludeKeywords: commaList(excludeKeywords),
+          },
+          alertsEnabled,
+          push,
+        }),
+      });
+      onPreferencesChanged(updated);
+      Alert.alert("Alert preferences saved");
+    } catch (error) {
+      Alert.alert(
+        "Could not save alert preferences",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setSavingAlerts(false);
+    }
+  };
+  const deleteAccount = () =>
+    Alert.alert(
+      "Delete account?",
+      "This permanently deletes your profile, application tracking, uploaded documents, device alerts, and sign-in account.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete account",
+          style: "destructive",
+          onPress: () =>
+            void api("/me", token, { method: "DELETE" })
+              .then(async () => {
+                await sessionStorage.clear();
+                onSignOut();
+              })
+              .catch((error) =>
+                Alert.alert(
+                  "Could not delete account",
+                  error instanceof Error ? error.message : "Please try again.",
+                ),
+              ),
+        },
+      ],
+    );
+  const openLink = (label: string, value: string | undefined) => {
+    if (!value || !/^https:\/\//.test(value)) {
+      Alert.alert(
+        `${label} unavailable`,
+        "This release is missing its required public link. Please contact support.",
+      );
+      return;
+    }
+    void Linking.openURL(value).catch(() =>
+      Alert.alert(`Could not open ${label.toLowerCase()}`),
+    );
+  };
+  return (
+    <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
+      <Text style={styles.hero}>Application profile</Text>
+      <TextInput
+        style={styles.search}
+        placeholder="Full name"
+        value={contact?.name ?? ""}
+        onChangeText={(name) =>
+          setProfile({ ...profile, contact: { ...contact, name } })
+        }
+      />
+      <TextInput
+        style={styles.search}
+        placeholder="Email"
+        value={contact?.email ?? ""}
+        onChangeText={(email) =>
+          setProfile({ ...profile, contact: { ...contact, email } })
+        }
+      />
+      <TextInput
+        style={styles.search}
+        placeholder="Location"
+        value={(profile.location as string) ?? ""}
+        onChangeText={(location) => setProfile({ ...profile, location })}
+      />
+      <TextInput
+        style={styles.search}
+        placeholder="Work authorization"
+        value={(profile.workAuthorization as string) ?? ""}
+        onChangeText={(workAuthorization) =>
+          setProfile({ ...profile, workAuthorization })
+        }
+      />
+      <Button
+        title={profile.resumeDocumentId ? "Replace résumé" : "Upload résumé"}
+        onPress={() => void uploadResume()}
+      />
+      <View style={styles.spacer} />
+      <Button
+        title="Save profile"
+        onPress={() =>
+          void api("/me/profile", token, {
+            method: "PUT",
+            body: JSON.stringify({
+              ...profile,
+              links: profile.links ?? {},
+              education: profile.education ?? [],
+              reusableAnswers: profile.reusableAnswers ?? {},
+            }),
+          })
+            .then(() => Alert.alert("Saved"))
+            .catch((error) =>
+              Alert.alert(
+                "Could not save profile",
+                error instanceof Error ? error.message : "Please try again.",
+              ),
+            )
+        }
+      />
+      <View style={styles.spacer} />
+      <Text style={styles.sectionTitle}>Job alerts</Text>
+      <View style={styles.preferenceRow}>
+        <View style={styles.preferenceCopy}>
+          <Text style={styles.preferenceTitle}>Job alerts</Text>
+          <Text style={styles.muted}>
+            Turn delivery on or off for this device.
+          </Text>
+        </View>
+        <Switch value={alertsEnabled} onValueChange={setAlertsEnabled} />
+      </View>
+      <Text style={styles.preferenceTitle}>Include role categories</Text>
+      <View style={styles.chips}>
+        {categories.map((category) => (
+          <TouchableOpacity
+            key={`include-${category}`}
+            style={[
+              styles.chip,
+              includeCategories.includes(category) && styles.chipOn,
+            ]}
+            onPress={() =>
+              toggleCategory(category, includeCategories, setIncludeCategories)
+            }
+          >
+            <Text>{category.toUpperCase()}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <TextInput
+        style={styles.search}
+        value={includeKeywords}
+        onChangeText={setIncludeKeywords}
+        placeholder="Include keywords, comma separated"
+      />
+      <Text style={styles.preferenceTitle}>Exclude role categories</Text>
+      <View style={styles.chips}>
+        {categories.map((category) => (
+          <TouchableOpacity
+            key={`exclude-${category}`}
+            style={[
+              styles.chip,
+              excludeCategories.includes(category) && styles.chipExclude,
+            ]}
+            onPress={() =>
+              toggleCategory(category, excludeCategories, setExcludeCategories)
+            }
+          >
+            <Text>{category.toUpperCase()}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <TextInput
+        style={styles.search}
+        value={excludeKeywords}
+        onChangeText={setExcludeKeywords}
+        placeholder="Exclude keywords, comma separated"
+      />
+      <Text style={styles.preferenceTitle}>Notification wording</Text>
+      <Text style={styles.muted}>
+        Supported placeholders: {pushPlaceholders.join(", ")}.
+      </Text>
+      <TextInput
+        style={styles.search}
+        placeholder="Title: {shortTitle} — {company}"
+        value={titleTemplate}
+        onChangeText={setTitleTemplate}
+      />
+      <TextInput
+        style={[styles.search, styles.multiline]}
+        placeholder="Description: {location} · {season}\n{url}"
+        value={descriptionTemplate}
+        onChangeText={setDescriptionTemplate}
+        multiline
+      />
+      <TextInput
+        style={[styles.search, styles.multiline]}
+        placeholder="Role abbreviations, one per line: software engineer = SWE"
+        value={roleAliases}
+        onChangeText={setRoleAliases}
+        multiline
+        autoCapitalize="none"
+      />
+      <Button
+        title={savingAlerts ? "Saving…" : "Save alert preferences"}
+        disabled={savingAlerts}
+        onPress={() => void saveAlertPreferences()}
+      />
+      <View style={styles.spacer} />
+      <Text style={styles.sectionTitle}>Account and support</Text>
+      <Button
+        title="Privacy policy"
+        onPress={() =>
+          openLink("Privacy policy", process.env.EXPO_PUBLIC_PRIVACY_URL)
+        }
+      />
+      <View style={styles.buttonGap} />
+      <Button
+        title="Support"
+        onPress={() => openLink("Support", process.env.EXPO_PUBLIC_SUPPORT_URL)}
+      />
+      <View style={styles.spacer} />
+      <Button title="Sign out" color="#B91C1C" onPress={onSignOut} />
+      <View style={styles.spacer} />
+      <Button title="Delete account" color="#B91C1C" onPress={deleteAccount} />
+    </ScrollView>
+  );
 }
 
-function SignIn({ onSession, onBrowse }: { onSession: (token: string) => void; onBrowse?: () => void }) {
-  const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [code, setCode] = useState(''); const [needsConfirmation, setNeedsConfirmation] = useState(false); const [createMode, setCreateMode] = useState(false); const [busy, setBusy] = useState(false);
-  const run = async (action: () => Promise<void>) => { setBusy(true); try { await action(); } catch (error) { Alert.alert('Account', error instanceof Error ? error.message : 'Please try again.'); } finally { setBusy(false); } };
-  const title = needsConfirmation ? 'Check your email' : createMode ? 'Create your account' : 'Welcome back';
-  const description = needsConfirmation ? 'Enter the verification code we sent to your email.' : createMode ? 'Use an email and password to save roles and receive alerts.' : 'Sign in to pick up where you left off.';
-  return <SafeAreaView style={styles.authScreen}><KeyboardAvoidingView style={styles.authKeyboard} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView contentContainerStyle={styles.authContent} keyboardShouldPersistTaps="handled"><View style={styles.authBrand}><View style={styles.brandMark}><Text style={styles.brandMarkText}>IN</Text></View><Text style={styles.authName}>InternNotifs</Text><Text style={styles.authTagline}>Internships, without the noise.</Text></View><View style={styles.authCard}><Text style={styles.authTitle}>{title}</Text><Text style={styles.authDescription}>{description}</Text><Text style={styles.inputLabel}>Email</Text><TextInput autoCapitalize="none" autoComplete="email" keyboardType="email-address" returnKeyType={needsConfirmation ? 'next' : 'next'} style={styles.authInput} placeholder="you@example.com" placeholderTextColor="#94A3B8" value={email} onChangeText={setEmail} />{needsConfirmation ? <><Text style={styles.inputLabel}>Verification code</Text><TextInput autoComplete="one-time-code" keyboardType="number-pad" returnKeyType="done" style={styles.authInput} placeholder="6-digit code" placeholderTextColor="#94A3B8" value={code} onChangeText={setCode} /><AuthButton label={busy ? 'Verifying…' : 'Verify email'} disabled={busy} onPress={() => void run(async () => { await confirmEmail(email, code); setNeedsConfirmation(false); setCreateMode(false); Alert.alert('Verified', 'Your account is ready. Sign in to continue.'); })} /></> : <><Text style={styles.inputLabel}>Password</Text><TextInput autoComplete={createMode ? 'new-password' : 'current-password'} secureTextEntry returnKeyType="done" style={styles.authInput} placeholder={createMode ? 'At least 12 characters' : 'Your password'} placeholderTextColor="#94A3B8" value={password} onChangeText={setPassword} onSubmitEditing={() => { if (!busy) void run(async () => createMode ? (await signUp(email, password), setNeedsConfirmation(true)) : onSession(await signIn(email, password))); }} /><AuthButton label={busy ? (createMode ? 'Creating…' : 'Signing in…') : createMode ? 'Create account' : 'Sign in'} disabled={busy} onPress={() => void run(async () => { if (createMode) { await signUp(email, password); setNeedsConfirmation(true); } else { onSession(await signIn(email, password)); } })} /><AuthButton secondary label={createMode ? 'I already have an account' : 'Create an account'} disabled={busy} onPress={() => setCreateMode((current) => !current)} /></>}</View>{onBrowse ? <AuthButton secondary label="Continue browsing" onPress={onBrowse} /> : null}<Text style={styles.authFootnote}>Email sign-in is available today. Sign in with Apple will be the primary iPhone option once its secure Apple–Cognito connection is configured.</Text></ScrollView></KeyboardAvoidingView></SafeAreaView>;
+function AuthButton({
+  label,
+  onPress,
+  disabled = false,
+  secondary = false,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  secondary?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={[
+        styles.authButton,
+        secondary && styles.authButtonSecondary,
+        disabled && styles.authButtonDisabled,
+      ]}
+    >
+      <Text
+        style={[
+          styles.authButtonText,
+          secondary && styles.authButtonTextSecondary,
+        ]}
+      >
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
 }
-const styles = StyleSheet.create({ screen: { flex: 1, backgroundColor: '#F8FAFC' }, center: { flex: 1, justifyContent: 'center', alignItems: 'center' }, nav: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 8, backgroundColor: '#FFF' }, list: { flex: 1, padding: 16 }, card: { backgroundColor: '#FFF', padding: 16, marginHorizontal: 16, marginVertical: 6, borderRadius: 12, shadowColor: '#0F172A', shadowOpacity: 0.08, shadowRadius: 8, elevation: 2 }, company: { color: '#0E7490', fontWeight: '700' }, title: { fontSize: 17, fontWeight: '700', marginTop: 3 }, sectionTitle: { fontSize: 20, fontWeight: '700', color: '#0F172A', marginTop: 8 }, muted: { color: '#64748B', marginTop: 4 }, pay: { marginTop: 8, color: '#166534' }, search: { backgroundColor: '#FFF', borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 10, padding: 12, margin: 12 }, multiline: { minHeight: 96, textAlignVertical: 'top' }, empty: { textAlign: 'center', color: '#64748B', padding: 28 }, onboarding: { flex: 1, justifyContent: 'center', padding: 24, backgroundColor: '#F8FAFC' }, hero: { fontSize: 28, fontWeight: '800', color: '#0F172A', marginBottom: 10 }, chips: { flexDirection: 'row', flexWrap: 'wrap', marginVertical: 14, gap: 8 }, chip: { borderWidth: 1, borderColor: '#CBD5E1', padding: 10, borderRadius: 20 }, chipOn: { backgroundColor: '#A5F3FC', borderColor: '#0E7490' }, spacer: { height: 24 }, guestHeader: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 10 }, gate: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }, gateButton: { alignSelf: 'stretch', marginTop: 20 }, authScreen: { flex: 1, backgroundColor: '#F8FAFC' }, authKeyboard: { flex: 1 }, authContent: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 32 }, authBrand: { alignItems: 'center', marginBottom: 32 }, brandMark: { width: 52, height: 52, borderRadius: 16, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }, brandMarkText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', letterSpacing: 0.5 }, authName: { color: '#0F172A', fontSize: 28, fontWeight: '800', letterSpacing: -0.6 }, authTagline: { color: '#64748B', fontSize: 16, marginTop: 6 }, authCard: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 20, padding: 20, shadowColor: '#0F172A', shadowOpacity: 0.05, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 2 }, authTitle: { color: '#0F172A', fontSize: 22, fontWeight: '700', letterSpacing: -0.3 }, authDescription: { color: '#64748B', fontSize: 15, lineHeight: 21, marginTop: 6, marginBottom: 22 }, inputLabel: { color: '#334155', fontSize: 13, fontWeight: '700', marginBottom: 7 }, authInput: { borderColor: '#CBD5E1', borderWidth: 1, borderRadius: 12, color: '#0F172A', fontSize: 16, height: 52, paddingHorizontal: 14, marginBottom: 16, backgroundColor: '#FFFFFF' }, authButton: { minHeight: 52, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0F172A', marginTop: 4 }, authButtonSecondary: { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#CBD5E1', marginTop: 12 }, authButtonDisabled: { opacity: 0.55 }, authButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' }, authButtonTextSecondary: { color: '#334155' }, authFootnote: { color: '#64748B', fontSize: 12, lineHeight: 17, textAlign: 'center', marginTop: 20, paddingHorizontal: 8 } });
+
+function SignIn({
+  onSession,
+  onBrowse,
+}: {
+  onSession: (token: string) => void;
+  onBrowse?: () => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [needsConfirmation, setNeedsConfirmation] = useState(false);
+  const [createMode, setCreateMode] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const run = async (action: () => Promise<void>) => {
+    setBusy(true);
+    try {
+      await action();
+    } catch (error) {
+      Alert.alert(
+        "Account",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  const title = needsConfirmation
+    ? "Check your email"
+    : createMode
+      ? "Create your account"
+      : "Welcome back";
+  const description = needsConfirmation
+    ? "Enter the verification code we sent to your email."
+    : createMode
+      ? "Use an email and password to save roles and receive alerts."
+      : "Sign in to pick up where you left off.";
+  return (
+    <SafeAreaView style={styles.authScreen}>
+      <KeyboardAvoidingView
+        style={styles.authKeyboard}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.authContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.authBrand}>
+            <View style={styles.brandMark}>
+              <Text style={styles.brandMarkText}>IN</Text>
+            </View>
+            <Text style={styles.authName}>InternNotifs</Text>
+            <Text style={styles.authTagline}>
+              Internships, without the noise.
+            </Text>
+          </View>
+          <View style={styles.authCard}>
+            <Text style={styles.authTitle}>{title}</Text>
+            <Text style={styles.authDescription}>{description}</Text>
+            <Text style={styles.inputLabel}>Email</Text>
+            <TextInput
+              autoCapitalize="none"
+              autoComplete="email"
+              keyboardType="email-address"
+              returnKeyType={needsConfirmation ? "next" : "next"}
+              style={styles.authInput}
+              placeholder="you@example.com"
+              placeholderTextColor="#94A3B8"
+              value={email}
+              onChangeText={setEmail}
+            />
+            {needsConfirmation ? (
+              <>
+                <Text style={styles.inputLabel}>Verification code</Text>
+                <TextInput
+                  autoComplete="one-time-code"
+                  keyboardType="number-pad"
+                  returnKeyType="done"
+                  style={styles.authInput}
+                  placeholder="6-digit code"
+                  placeholderTextColor="#94A3B8"
+                  value={code}
+                  onChangeText={setCode}
+                />
+                <AuthButton
+                  label={busy ? "Verifying…" : "Verify email"}
+                  disabled={busy}
+                  onPress={() =>
+                    void run(async () => {
+                      await confirmEmail(email, code);
+                      setNeedsConfirmation(false);
+                      setCreateMode(false);
+                      Alert.alert(
+                        "Verified",
+                        "Your account is ready. Sign in to continue.",
+                      );
+                    })
+                  }
+                />
+              </>
+            ) : (
+              <>
+                <Text style={styles.inputLabel}>Password</Text>
+                <TextInput
+                  autoComplete={
+                    createMode ? "new-password" : "current-password"
+                  }
+                  secureTextEntry
+                  returnKeyType="done"
+                  style={styles.authInput}
+                  placeholder={
+                    createMode ? "At least 12 characters" : "Your password"
+                  }
+                  placeholderTextColor="#94A3B8"
+                  value={password}
+                  onChangeText={setPassword}
+                  onSubmitEditing={() => {
+                    if (!busy)
+                      void run(async () =>
+                        createMode
+                          ? (await signUp(email, password),
+                            setNeedsConfirmation(true))
+                          : onSession(await signIn(email, password)),
+                      );
+                  }}
+                />
+                <AuthButton
+                  label={
+                    busy
+                      ? createMode
+                        ? "Creating…"
+                        : "Signing in…"
+                      : createMode
+                        ? "Create account"
+                        : "Sign in"
+                  }
+                  disabled={busy}
+                  onPress={() =>
+                    void run(async () => {
+                      if (createMode) {
+                        await signUp(email, password);
+                        setNeedsConfirmation(true);
+                      } else {
+                        onSession(await signIn(email, password));
+                      }
+                    })
+                  }
+                />
+                <AuthButton
+                  secondary
+                  label={
+                    createMode
+                      ? "I already have an account"
+                      : "Create an account"
+                  }
+                  disabled={busy}
+                  onPress={() => setCreateMode((current) => !current)}
+                />
+              </>
+            )}
+          </View>
+          {onBrowse ? (
+            <AuthButton
+              secondary
+              label="Continue browsing"
+              onPress={onBrowse}
+            />
+          ) : null}
+          <Text style={styles.authFootnote}>
+            Email sign-in is available today. Sign in with Apple will be the
+            primary iPhone option once its secure Apple–Cognito connection is
+            configured.
+          </Text>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: "#F8FAFC" },
+  center: { flex: 1, justifyContent: "center", alignItems: "center" },
+  nav: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    paddingVertical: 8,
+    backgroundColor: "#FFF",
+  },
+  list: { flex: 1, padding: 16 },
+  card: {
+    backgroundColor: "#FFF",
+    padding: 16,
+    marginHorizontal: 16,
+    marginVertical: 6,
+    borderRadius: 12,
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  company: { color: "#0E7490", fontWeight: "700" },
+  title: { fontSize: 17, fontWeight: "700", marginTop: 3 },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#0F172A",
+    marginTop: 8,
+  },
+  muted: { color: "#64748B", marginTop: 4 },
+  pay: { marginTop: 8, color: "#166534" },
+  search: {
+    backgroundColor: "#FFF",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    borderRadius: 10,
+    padding: 12,
+    margin: 12,
+  },
+  multiline: { minHeight: 96, textAlignVertical: "top" },
+  empty: { textAlign: "center", color: "#64748B", padding: 28 },
+  onboarding: {
+    flex: 1,
+    justifyContent: "center",
+    padding: 24,
+    backgroundColor: "#F8FAFC",
+  },
+  hero: { fontSize: 28, fontWeight: "800", color: "#0F172A", marginBottom: 10 },
+  chips: { flexDirection: "row", flexWrap: "wrap", marginVertical: 14, gap: 8 },
+  chip: {
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    padding: 10,
+    borderRadius: 20,
+  },
+  chipOn: { backgroundColor: "#A5F3FC", borderColor: "#0E7490" },
+  chipExclude: { backgroundColor: "#FEE2E2", borderColor: "#DC2626" },
+  preferenceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginVertical: 12,
+  },
+  preferenceCopy: { flex: 1, paddingRight: 16 },
+  preferenceTitle: {
+    color: "#0F172A",
+    fontSize: 16,
+    fontWeight: "700",
+    marginTop: 12,
+  },
+  buttonGap: { height: 12 },
+  spacer: { height: 24 },
+  guestHeader: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 10 },
+  gate: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 32,
+  },
+  gateButton: { alignSelf: "stretch", marginTop: 20 },
+  authScreen: { flex: 1, backgroundColor: "#F8FAFC" },
+  authKeyboard: { flex: 1 },
+  authContent: {
+    flexGrow: 1,
+    justifyContent: "center",
+    paddingHorizontal: 24,
+    paddingVertical: 32,
+  },
+  authBrand: { alignItems: "center", marginBottom: 32 },
+  brandMark: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: "#0F172A",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+  brandMarkText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  authName: {
+    color: "#0F172A",
+    fontSize: 28,
+    fontWeight: "800",
+    letterSpacing: -0.6,
+  },
+  authTagline: { color: "#64748B", fontSize: 16, marginTop: 6 },
+  authCard: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.05,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 2,
+  },
+  authTitle: {
+    color: "#0F172A",
+    fontSize: 22,
+    fontWeight: "700",
+    letterSpacing: -0.3,
+  },
+  authDescription: {
+    color: "#64748B",
+    fontSize: 15,
+    lineHeight: 21,
+    marginTop: 6,
+    marginBottom: 22,
+  },
+  inputLabel: {
+    color: "#334155",
+    fontSize: 13,
+    fontWeight: "700",
+    marginBottom: 7,
+  },
+  authInput: {
+    borderColor: "#CBD5E1",
+    borderWidth: 1,
+    borderRadius: 12,
+    color: "#0F172A",
+    fontSize: 16,
+    height: 52,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+    backgroundColor: "#FFFFFF",
+  },
+  authButton: {
+    minHeight: 52,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0F172A",
+    marginTop: 4,
+  },
+  authButtonSecondary: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    marginTop: 12,
+  },
+  authButtonDisabled: { opacity: 0.55 },
+  authButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" },
+  authButtonTextSecondary: { color: "#334155" },
+  authFootnote: {
+    color: "#64748B",
+    fontSize: 12,
+    lineHeight: 17,
+    textAlign: "center",
+    marginTop: 20,
+    paddingHorizontal: 8,
+  },
+});
