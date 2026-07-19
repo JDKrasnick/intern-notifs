@@ -7,7 +7,8 @@
     "ios": "expo start --ios",
     "android": "expo start --android",
     "test": "jest",
-    "typecheck": "tsc --noEmit --jsx react-jsx --esModuleInterop --moduleResolution bundler --module esnext --target esnext --skipLibCheck App.tsx src/api.ts src/auth.ts src/notifications.ts"
+    "typecheck": "tsc --noEmit --jsx react-jsx --esModuleInterop --moduleResolution bundler --module esnext --target esnext --skipLibCheck App.tsx src/api.ts src/auth.ts src/notifications.ts",
+    "release:check": "node scripts/release-check.mjs"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.1.2",
@@ -17,6 +18,7 @@
     "expo-device": "~55.0.19",
     "expo-document-picker": "~55.0.15",
     "expo-notifications": "~55.0.25",
+    "expo-splash-screen": "~55.0.23",
     "expo-web-browser": "~55.0.18",
     "react": "19.2.0",
     "react-native": "0.83.6"
