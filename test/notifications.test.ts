@@ -21,7 +21,7 @@ describe('notifications', () => {
     expect(await store.pendingDigest()).toHaveLength(1);
   });
   it('splits compact summaries before their approximate limit', () => expect(summaryChunks(Array.from({ length: 20 }, (_, index) => job(index)), 200).every((chunk) => chunk.length >= 1)).toBe(true));
-  it('supports safe user-selected title and description fields', () => {
+  it('supports safe user-selected title and description fields', async () => {
     const listing = { ...job(1, 'OpenAI'), title: 'Software\nIntern' };
     expect(renderPushTemplate('{company}: {title}', listing)).toBe('OpenAI: Software Intern');
     expect(renderPushTemplate('{season} | {compensation} | {url}', listing)).toBe('summer-2027 | $50/hr | https://apply.example.com/1');
@@ -29,11 +29,13 @@ describe('notifications', () => {
     expect(compactRoleTitle('Machine Learning Internship')).toBe('ML');
     expect(compactRoleTitle('Software Engineering Intern', { 'software engineering': 'Dev' })).toBe('Dev');
     expect(renderPushTemplate('{focus}{postedDetail}', { ...listing, title: 'Machine Learning Intern', sourceReferences: [{ ...listing.sourceReferences[0], postedAt: '2026-07-19' }] })).toBe('Focus: AI/ML · Posted: 2026-07-19');
+    const store = new MemoryInternshipStore(); await store.putInternship({ ...listing, title: 'Software Engineering Intern', notification: { smsPending: true, digestPending: false } });
+    const pushes: PushMessage[] = []; await sendPendingNotifications(store, { publish: async (message) => { pushes.push(message); } }); expect(pushes[0]?.tags).toEqual(['computer']);
   });
   it('publishes a high-priority push message and rejects non-success responses', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    await new NtfyPublisher('private topic', 'https://push.example.test', async (url, init) => { calls.push({ url: String(url), init }); return new Response('', { status: 200 }); }).publish({ title: 'Role — Company', body: 'Remote\nhttps://apply.example.com', click: 'https://apply.example.com' });
-    expect(calls[0]).toMatchObject({ url: 'https://push.example.test', init: { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic: 'private topic', title: 'Role — Company', message: 'Remote\nhttps://apply.example.com', priority: 4, tags: ['briefcase'], click: 'https://apply.example.com' }) } });
+    await new NtfyPublisher('private topic', 'https://push.example.test', async (url, init) => { calls.push({ url: String(url), init }); return new Response('', { status: 200 }); }).publish({ title: 'Role — Company', body: 'Remote\nhttps://apply.example.com', click: 'https://apply.example.com', tags: ['computer'] });
+    expect(calls[0]).toMatchObject({ url: 'https://push.example.test', init: { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic: 'private topic', title: 'Role — Company', message: 'Remote\nhttps://apply.example.com', priority: 4, tags: ['computer'], click: 'https://apply.example.com' }) } });
     await expect(new NtfyPublisher('topic', 'https://push.example.test', async () => new Response('', { status: 503 })).publish({ title: 'Test', body: 'hello' })).rejects.toThrow('HTTP 503');
   });
 });

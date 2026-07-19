@@ -6,7 +6,7 @@ import type { InternshipStore } from './store.js';
 
 export const rankInternships = (jobs: Internship[]) => [...jobs].sort((a, b) => score(b.company, b.compensation) - score(a.company, a.compensation) || (b.sourceReferences[0]?.postedAt ?? '').localeCompare(a.sourceReferences[0]?.postedAt ?? '') || b.firstSeenAt.localeCompare(a.firstSeenAt));
 
-export interface PushMessage { title: string; body: string; click?: string; }
+export interface PushMessage { title: string; body: string; click?: string; tags?: string[]; }
 export interface PushPublisher { publish(message: PushMessage): Promise<void>; }
 
 export class NtfyPublisher implements PushPublisher {
@@ -15,7 +15,7 @@ export class NtfyPublisher implements PushPublisher {
     const response = await this.fetcher(this.endpoint.replace(/\/$/, ''), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic: this.topic, title: message.title, message: message.body, priority: 4, tags: ['briefcase'], ...(message.click ? { click: message.click } : {}) })
+      body: JSON.stringify({ topic: this.topic, title: message.title, message: message.body, priority: 4, ...(message.tags?.length ? { tags: message.tags } : {}), ...(message.click ? { click: message.click } : {}) })
     });
     if (!response.ok) throw new Error(`ntfy rejected notification with HTTP ${response.status}`);
   }
@@ -59,7 +59,9 @@ export function renderPushTemplate(template: string, job: Internship, roleAbbrev
 function pushMessage(job: Internship, templates: PushTemplates): PushMessage {
   const aliases = { ...defaultRoleAbbreviations, ...(templates.roleAbbreviations ?? {}) };
   const title = renderPushTemplate(templates.titleTemplate ?? defaultPushTemplates.titleTemplate, job, aliases).replace(/[\r\n]+/g, ' ').slice(0, 180);
-  return { title: title || 'New internship', body: renderPushTemplate(templates.descriptionTemplate ?? defaultPushTemplates.descriptionTemplate, job, aliases), click: safeClick(job.applyUrl) };
+  const tagsByCategory: Record<string, string> = { 'ai-ml': 'brain', swe: 'computer', quant: 'chart_with_upwards_trend', product: 'clipboard', design: 'art' };
+  const tags = classifyJob(job).map((category) => tagsByCategory[category]).filter((tag): tag is string => Boolean(tag));
+  return { title: title || 'New internship', body: renderPushTemplate(templates.descriptionTemplate ?? defaultPushTemplates.descriptionTemplate, job, aliases), click: safeClick(job.applyUrl), ...(tags.length ? { tags } : {}) };
 }
 export function summaryChunks(jobs: Internship[], limit = 1200): Internship[][] {
   const chunks: Internship[][] = []; let current: Internship[] = []; let length = 0;

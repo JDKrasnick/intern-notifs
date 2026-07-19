@@ -67,10 +67,10 @@ describe('mocked production workflow integration', () => {
   it('builds ntfy and SES delivery requests without making network calls', async () => {
     const sesSend = vi.spyOn(SESv2Client.prototype, 'send').mockResolvedValue({ $metadata: {} } as never);
     const ntfyCalls: Array<{ url: string; init?: RequestInit }> = [];
-    await new NtfyPublisher('private-topic', 'https://ntfy.example.test', async (url, init) => { ntfyCalls.push({ url: String(url), init }); return new Response('', { status: 200 }); }).publish({ title: 'Role — Company', body: 'Synthetic push smoke test', click: 'https://jobs.example.com/1' });
+    await new NtfyPublisher('private-topic', 'https://ntfy.example.test', async (url, init) => { ntfyCalls.push({ url: String(url), init }); return new Response('', { status: 200 }); }).publish({ title: 'Role — Company', body: 'Synthetic push smoke test', click: 'https://jobs.example.com/1', tags: ['computer'] });
     await new SesEmailSender('sender@example.com', 'recipient@example.com').send('Synthetic email smoke test', 'plain', '<p>html</p>');
     const sesCommand = sesSend.mock.calls[0][0];
-    expect(ntfyCalls[0]).toMatchObject({ url: 'https://ntfy.example.test', init: { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic: 'private-topic', title: 'Role — Company', message: 'Synthetic push smoke test', priority: 4, tags: ['briefcase'], click: 'https://jobs.example.com/1' }) } });
+    expect(ntfyCalls[0]).toMatchObject({ url: 'https://ntfy.example.test', init: { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic: 'private-topic', title: 'Role — Company', message: 'Synthetic push smoke test', priority: 4, tags: ['computer'], click: 'https://jobs.example.com/1' }) } });
     expect(sesCommand).toBeInstanceOf(SendEmailCommand);
     expect((sesCommand as SendEmailCommand).input).toMatchObject({ FromEmailAddress: 'sender@example.com', Destination: { ToAddresses: ['recipient@example.com'] }, Content: { Simple: { Subject: { Data: 'Synthetic email smoke test' }, Body: { Text: { Data: 'plain' }, Html: { Data: '<p>html</p>' } } } } });
     sesSend.mockRestore();
