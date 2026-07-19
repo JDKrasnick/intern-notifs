@@ -1,17 +1,21 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
-import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
 import { score } from './core/normalize.js';
 import type { Internship } from './types.js';
 import type { InternshipStore } from './store.js';
 
 export const rankInternships = (jobs: Internship[]) => [...jobs].sort((a, b) => score(b.company, b.compensation) - score(a.company, a.compensation) || (b.sourceReferences[0]?.postedAt ?? '').localeCompare(a.sourceReferences[0]?.postedAt ?? '') || b.firstSeenAt.localeCompare(a.firstSeenAt));
 
-export interface SmsPublisher { publish(message: string): Promise<void>; }
-export class SnsSmsPublisher implements SmsPublisher {
-  private readonly client = new SNSClient({});
-  constructor(private readonly destination: string, private readonly originationNumber?: string) {}
+export interface PushPublisher { publish(message: string): Promise<void>; }
+
+export class NtfyPublisher implements PushPublisher {
+  constructor(private readonly topic: string, private readonly endpoint = 'https://ntfy.sh', private readonly fetcher: typeof fetch = fetch) {}
   async publish(message: string) {
-    await this.client.send(new PublishCommand({ PhoneNumber: this.destination, Message: message, MessageAttributes: this.originationNumber ? { 'AWS.SNS.SMS.OriginationNumber': { DataType: 'String', StringValue: this.originationNumber } } : undefined }));
+    const response = await this.fetcher(`${this.endpoint}/${encodeURIComponent(this.topic)}`, {
+      method: 'POST',
+      headers: { Title: 'New internship', Priority: 'high', Tags: 'briefcase' },
+      body: message
+    });
+    if (!response.ok) throw new Error(`ntfy rejected notification with HTTP ${response.status}`);
   }
 }
 
@@ -22,7 +26,7 @@ export function summaryChunks(jobs: Internship[], limit = 1200): Internship[][] 
   if (current.length) chunks.push(current); return chunks;
 }
 
-export async function sendPendingSms(store: InternshipStore, publisher: SmsPublisher, now: () => Date = () => new Date()): Promise<{ sent: number; failed: number }> {
+export async function sendPendingSms(store: InternshipStore, publisher: PushPublisher, now: () => Date = () => new Date()): Promise<{ sent: number; failed: number }> {
   const jobs = rankInternships(await store.pendingSms()); let sent = 0; let failed = 0;
   for (const job of jobs.slice(0, 5)) {
     try { await publisher.publish(`New internship: ${smsLine(job)}`); await store.markSmsSent(job.jobId, now().toISOString()); sent += 1; }

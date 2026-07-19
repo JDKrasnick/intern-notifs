@@ -32,8 +32,6 @@ export class InternNotifsStack extends cdk.Stack {
       resources: [internships.tableArn, `${internships.tableArn}/index/*`]
     }));
     role.addToPolicy(new iam.PolicyStatement({ actions: ['ses:SendEmail'], resources: [identity.emailIdentityArn] }));
-    // Direct phone-number publishing has no topic ARN to scope; the OIDC subject constrains this permission to main.
-    role.addToPolicy(new iam.PolicyStatement({ actions: ['sns:Publish'], resources: ['*'] }));
     const runtimeConfigParameterName = '/intern-notifs/runtime-config';
     const notifier = new lambdaNodejs.NodejsFunction(this, 'Notifier', {
       entry: 'src/lambda.ts', handler: 'handler', runtime: lambda.Runtime.NODEJS_22_X,
@@ -43,7 +41,6 @@ export class InternNotifsStack extends cdk.Stack {
     });
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], resources: [internships.tableArn, `${internships.tableArn}/index/*`] }));
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['ses:SendEmail'], resources: [identity.emailIdentityArn] }));
-    notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['sns:Publish'], resources: ['*'] }));
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameter'], resources: [`arn:${this.partition}:ssm:${this.region}:${this.account}:parameter${runtimeConfigParameterName}`] }));
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['kms:Decrypt'], resources: [`arn:${this.partition}:kms:${this.region}:${this.account}:key/*`], conditions: { StringEquals: { 'kms:ViaService': `ssm.${this.region}.amazonaws.com` } } }));
     const deadLetterQueue = new sqs.Queue(this, 'SchedulerDeadLetterQueue', { retentionPeriod: cdk.Duration.days(14), encryption: sqs.QueueEncryption.SQS_MANAGED });

@@ -299,11 +299,6 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
                 ],
               },
             },
-            {
-              "Action": "sns:Publish",
-              "Effect": "Allow",
-              "Resource": "*",
-            },
           ],
           "Version": "2012-10-17",
         },
@@ -480,7 +475,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
           "S3Bucket": {
             "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
           },
-          "S3Key": "516862095871680518e60c31adef27e9f85b9052f0f9b279cb634af255ed3774.zip",
+          "S3Key": "01b91f3973328d41ab4b551d0d65ab35126cba9a9fa073228878708c72605a30.zip",
         },
         "Environment": {
           "Variables": {
@@ -600,11 +595,6 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
                   ],
                 ],
               },
-            },
-            {
-              "Action": "sns:Publish",
-              "Effect": "Allow",
-              "Resource": "*",
             },
             {
               "Action": "ssm:GetParameter",

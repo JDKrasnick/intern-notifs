@@ -1,13 +1,12 @@
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
-import { sendDigest, sendPendingSms, SesEmailSender, SnsSmsPublisher, type EmailSender, type SmsPublisher } from './notifications.js';
+import { NtfyPublisher, sendDigest, sendPendingSms, SesEmailSender, type EmailSender, type PushPublisher } from './notifications.js';
 import { Poller } from './poll.js';
 import { DynamoInternshipStore, type InternshipStore } from './store.js';
 import { defaultSources } from './sources/github.js';
 import type { SourceAdapter } from './types.js';
 
 export interface RuntimeConfig {
-  smsDestination: string;
-  smsOriginationNumber?: string;
+  ntfyTopic: string;
   sesFrom: string;
   sesTo: string;
 }
@@ -16,7 +15,7 @@ export async function loadRuntimeConfig(parameterName: string, client = new SSMC
   const value = (await client.send(new GetParameterCommand({ Name: parameterName, WithDecryption: true }))).Parameter?.Value;
   if (!value) throw new Error(`Runtime configuration parameter ${parameterName} has no value`);
   const config = JSON.parse(value) as Partial<RuntimeConfig>;
-  if (!config.smsDestination || !config.sesFrom || !config.sesTo) throw new Error('Runtime configuration requires smsDestination, sesFrom, and sesTo');
+  if (!config.ntfyTopic || !config.sesFrom || !config.sesTo) throw new Error('Runtime configuration requires ntfyTopic, sesFrom, and sesTo');
   return config as RuntimeConfig;
 }
 
@@ -24,15 +23,15 @@ export interface RuntimeDependencies {
   store: InternshipStore;
   config: RuntimeConfig;
   sources?: SourceAdapter[];
-  smsPublisher?: SmsPublisher;
+  notificationPublisher?: PushPublisher;
   emailSender?: EmailSender;
 }
 
 export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies: RuntimeDependencies) {
   if (command === 'poll') {
     const poll = await new Poller(dependencies.sources ?? defaultSources, dependencies.store).poll();
-    const sms = await sendPendingSms(dependencies.store, dependencies.smsPublisher ?? new SnsSmsPublisher(dependencies.config.smsDestination, dependencies.config.smsOriginationNumber));
-    return { poll, sms };
+    const notifications = await sendPendingSms(dependencies.store, dependencies.notificationPublisher ?? new NtfyPublisher(dependencies.config.ntfyTopic));
+    return { poll, notifications };
   }
   return { digested: await sendDigest(dependencies.store, dependencies.emailSender ?? new SesEmailSender(dependencies.config.sesFrom, dependencies.config.sesTo)) };
 }
