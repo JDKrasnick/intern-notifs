@@ -2,6 +2,8 @@ import type { RawListing } from '../types.js';
 
 export const jobCategories = ['ai-ml', 'grad', 'swe', 'quant', 'product', 'design'] as const;
 export type JobCategory = typeof jobCategories[number];
+/** The initial public catalog deliberately stays focused on technical early-career roles. */
+export const technicalJobCategories: JobCategory[] = ['ai-ml', 'swe', 'quant', 'product', 'design'];
 export const jobFocuses = ['AI/ML', 'Cloud/Infra', 'Security', 'Data', 'Backend/API', 'Frontend/Mobile', 'Systems/Hardware', 'Quant/Fintech', 'Product', 'Design', 'SWE'] as const;
 export type JobFocus = typeof jobFocuses[number];
 export interface JobFilter {
@@ -43,6 +45,9 @@ function matchesCategory(value: string, category: JobCategory) { return patterns
 export function classifyJob(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season'>): JobCategory[] {
   const value = terms(listing);
   return jobCategories.filter((category) => matchesCategory(value, category));
+}
+export function isTechnicalJob(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season'>) {
+  return classifyJob(listing).some((category) => technicalJobCategories.includes(category));
 }
 
 /** Deterministic title-keyword classification for compact notification context; it does not infer qualifications. */

@@ -8,6 +8,11 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         "Ref": "ApplicationsE04DA868",
       },
     },
+    "DocumentsBucketName": {
+      "Value": {
+        "Ref": "ApplicantDocumentsD1FBD230",
+      },
+    },
     "GitHubActionsRoleArn": {
       "Value": {
         "Fn::GetAtt": [
@@ -26,6 +31,14 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         "Ref": "NotifierDFD80165",
       },
     },
+    "PublicApiUrl": {
+      "Value": {
+        "Fn::GetAtt": [
+          "PublicHttpApi954A824B",
+          "ApiEndpoint",
+        ],
+      },
+    },
     "Region": {
       "Value": {
         "Ref": "AWS::Region",
@@ -33,6 +46,21 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
     },
     "RuntimeConfigParameterName": {
       "Value": "/intern-notifs/runtime-config",
+    },
+    "UserDataTableName": {
+      "Value": {
+        "Ref": "UserData6A2E227B",
+      },
+    },
+    "UserPoolClientId": {
+      "Value": {
+        "Ref": "UsersMobileClient92F5E777",
+      },
+    },
+    "UserPoolId": {
+      "Value": {
+        "Ref": "Users0A0EEA89",
+      },
     },
   },
   "Parameters": {
@@ -43,6 +71,93 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
     },
   },
   "Resources": {
+    "ApplicantDocumentsD1FBD230": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "aws:kms",
+              },
+            },
+          ],
+        },
+        "CorsConfiguration": {
+          "CorsRules": [
+            {
+              "AllowedHeaders": [
+                "Content-Type",
+              ],
+              "AllowedMethods": [
+                "PUT",
+              ],
+              "AllowedOrigins": [
+                "*",
+              ],
+            },
+          ],
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true,
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled",
+        },
+      },
+      "Type": "AWS::S3::Bucket",
+      "UpdateReplacePolicy": "Retain",
+    },
+    "ApplicantDocumentsPolicy3E8EFBF5": {
+      "Properties": {
+        "Bucket": {
+          "Ref": "ApplicantDocumentsD1FBD230",
+        },
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "s3:*",
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false",
+                },
+              },
+              "Effect": "Deny",
+              "Principal": {
+                "AWS": "*",
+              },
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "ApplicantDocumentsD1FBD230",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "ApplicantDocumentsD1FBD230",
+                          "Arn",
+                        ],
+                      },
+                      "/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+      },
+      "Type": "AWS::S3::BucketPolicy",
+    },
     "ApplicationsE04DA868": {
       "DeletionPolicy": "Retain",
       "Properties": {
@@ -358,6 +473,14 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
             "AttributeName": "digestPk",
             "AttributeType": "S",
           },
+          {
+            "AttributeName": "openPk",
+            "AttributeType": "S",
+          },
+          {
+            "AttributeName": "openSk",
+            "AttributeType": "S",
+          },
         ],
         "BillingMode": "PAY_PER_REQUEST",
         "GlobalSecondaryIndexes": [
@@ -403,6 +526,22 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
               {
                 "AttributeName": "digestPk",
                 "KeyType": "HASH",
+              },
+            ],
+            "Projection": {
+              "ProjectionType": "ALL",
+            },
+          },
+          {
+            "IndexName": "openJobsIndex",
+            "KeySchema": [
+              {
+                "AttributeName": "openPk",
+                "KeyType": "HASH",
+              },
+              {
+                "AttributeName": "openSk",
+                "KeyType": "RANGE",
               },
             ],
             "Projection": {
@@ -475,7 +614,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
           "S3Bucket": {
             "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
           },
-          "S3Key": "50e7b2c841cc624d44306ca3b5b9b1b2cf87244de7e4a01e4ffc355b326eb4a2.zip",
+          "S3Key": "2c1d2d4b876f806212561883dad811b21f3f6b7388ed6a07e185af0e42302e98.zip",
         },
         "Environment": {
           "Variables": {
@@ -483,6 +622,9 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
               "Ref": "InternshipsB67F358B",
             },
             "RUNTIME_CONFIG_PARAMETER_NAME": "/intern-notifs/runtime-config",
+            "USERS_TABLE": {
+              "Ref": "UserData6A2E227B",
+            },
           },
         },
         "Handler": "index.handler",
@@ -560,6 +702,36 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
                       {
                         "Fn::GetAtt": [
                           "InternshipsB67F358B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:Query",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "UserData6A2E227B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "UserData6A2E227B",
                           "Arn",
                         ],
                       },
@@ -710,6 +882,698 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
       },
       "Type": "AWS::Scheduler::Schedule",
     },
+    "PublicApiC8293BC5": {
+      "DependsOn": [
+        "PublicApiServiceRoleDefaultPolicy43DADC50",
+        "PublicApiServiceRole385FA2A0",
+      ],
+      "Properties": {
+        "Code": {
+          "S3Bucket": {
+            "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
+          },
+          "S3Key": "d6ecbc2709907791d4e2901c210675a10ec3aff1b34c508d9b0db25191a38ff5.zip",
+        },
+        "Environment": {
+          "Variables": {
+            "DOCUMENTS_BUCKET": {
+              "Ref": "ApplicantDocumentsD1FBD230",
+            },
+            "INTERNSHIPS_TABLE": {
+              "Ref": "InternshipsB67F358B",
+            },
+            "USERS_TABLE": {
+              "Ref": "UserData6A2E227B",
+            },
+            "USER_POOL_ID": {
+              "Ref": "Users0A0EEA89",
+            },
+          },
+        },
+        "Handler": "index.handler",
+        "MemorySize": 512,
+        "Role": {
+          "Fn::GetAtt": [
+            "PublicApiServiceRole385FA2A0",
+            "Arn",
+          ],
+        },
+        "Runtime": "nodejs22.x",
+        "Timeout": 29,
+      },
+      "Type": "AWS::Lambda::Function",
+    },
+    "PublicApiServiceRole385FA2A0": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition",
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+              ],
+            ],
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "PublicApiServiceRoleDefaultPolicy43DADC50": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:Query",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "InternshipsB67F358B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "InternshipsB67F358B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::GetAtt": [
+                    "UserData6A2E227B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "UserData6A2E227B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "s3:GetObject*",
+                "s3:GetBucket*",
+                "s3:List*",
+                "s3:DeleteObject*",
+                "s3:PutObject",
+                "s3:PutObjectLegalHold",
+                "s3:PutObjectRetention",
+                "s3:PutObjectTagging",
+                "s3:PutObjectVersionTagging",
+                "s3:Abort*",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "ApplicantDocumentsD1FBD230",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "ApplicantDocumentsD1FBD230",
+                          "Arn",
+                        ],
+                      },
+                      "/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": "cognito-idp:AdminDeleteUser",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "Users0A0EEA89",
+                  "Arn",
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "PublicApiServiceRoleDefaultPolicy43DADC50",
+        "Roles": [
+          {
+            "Ref": "PublicApiServiceRole385FA2A0",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "PublicHttpApi954A824B": {
+      "Properties": {
+        "CorsConfiguration": {
+          "AllowHeaders": [
+            "Authorization",
+            "Content-Type",
+          ],
+          "AllowMethods": [
+            "*",
+          ],
+          "AllowOrigins": [
+            "*",
+          ],
+          "MaxAge": 86400,
+        },
+        "Name": "PublicHttpApi",
+        "ProtocolType": "HTTP",
+      },
+      "Type": "AWS::ApiGatewayV2::Api",
+    },
+    "PublicHttpApiANYmeproxy379C5FFD": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "PublicHttpApi954A824B",
+        },
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "PublicHttpApiCognitoJwt57D475C4",
+        },
+        "RouteKey": "ANY /me/{proxy+}",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "PublicHttpApiGETjobsPublicApiIntegrationFF569FBB",
+              },
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::ApiGatewayV2::Route",
+    },
+    "PublicHttpApiANYmeproxyPublicApiIntegrationPermission321A4DC5": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "PublicApiC8293BC5",
+            "Arn",
+          ],
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition",
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region",
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId",
+              },
+              ":",
+              {
+                "Ref": "PublicHttpApi954A824B",
+              },
+              "/*/*/me/{proxy+}",
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::Lambda::Permission",
+    },
+    "PublicHttpApiCognitoJwt57D475C4": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "PublicHttpApi954A824B",
+        },
+        "AuthorizerType": "JWT",
+        "IdentitySource": [
+          "$request.header.Authorization",
+        ],
+        "JwtConfiguration": {
+          "Audience": [
+            {
+              "Ref": "UsersMobileClient92F5E777",
+            },
+          ],
+          "Issuer": {
+            "Fn::Join": [
+              "",
+              [
+                "https://cognito-idp.",
+                {
+                  "Ref": "AWS::Region",
+                },
+                ".amazonaws.com/",
+                {
+                  "Ref": "Users0A0EEA89",
+                },
+              ],
+            ],
+          },
+        },
+        "Name": "CognitoJwt",
+      },
+      "Type": "AWS::ApiGatewayV2::Authorizer",
+    },
+    "PublicHttpApiDELETEme4C62639C": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "PublicHttpApi954A824B",
+        },
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "PublicHttpApiCognitoJwt57D475C4",
+        },
+        "RouteKey": "DELETE /me",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "PublicHttpApiGETjobsPublicApiIntegrationFF569FBB",
+              },
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::ApiGatewayV2::Route",
+    },
+    "PublicHttpApiDELETEmePublicApiIntegrationPermission401B0C1C": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "PublicApiC8293BC5",
+            "Arn",
+          ],
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition",
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region",
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId",
+              },
+              ":",
+              {
+                "Ref": "PublicHttpApi954A824B",
+              },
+              "/*/*/me",
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::Lambda::Permission",
+    },
+    "PublicHttpApiDefaultStageC42D72D2": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "PublicHttpApi954A824B",
+        },
+        "AutoDeploy": true,
+        "DefaultRouteSettings": {
+          "ThrottlingBurstLimit": 50,
+          "ThrottlingRateLimit": 25,
+        },
+        "StageName": "$default",
+      },
+      "Type": "AWS::ApiGatewayV2::Stage",
+    },
+    "PublicHttpApiGETjobs97276EDF": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "PublicHttpApi954A824B",
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /jobs",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "PublicHttpApiGETjobsPublicApiIntegrationFF569FBB",
+              },
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::ApiGatewayV2::Route",
+    },
+    "PublicHttpApiGETjobsPublicApiIntegrationFF569FBB": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "PublicHttpApi954A824B",
+        },
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": {
+          "Fn::GetAtt": [
+            "PublicApiC8293BC5",
+            "Arn",
+          ],
+        },
+        "PayloadFormatVersion": "2.0",
+      },
+      "Type": "AWS::ApiGatewayV2::Integration",
+    },
+    "PublicHttpApiGETjobsPublicApiIntegrationPermission3CFBA2C9": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "PublicApiC8293BC5",
+            "Arn",
+          ],
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition",
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region",
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId",
+              },
+              ":",
+              {
+                "Ref": "PublicHttpApi954A824B",
+              },
+              "/*/*/jobs",
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::Lambda::Permission",
+    },
+    "PublicHttpApiGETjobsjobId75FA6EB6": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "PublicHttpApi954A824B",
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /jobs/{jobId}",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "PublicHttpApiGETjobsPublicApiIntegrationFF569FBB",
+              },
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::ApiGatewayV2::Route",
+    },
+    "PublicHttpApiGETjobsjobIdPublicApiIntegrationPermission74235503": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "PublicApiC8293BC5",
+            "Arn",
+          ],
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition",
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region",
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId",
+              },
+              ":",
+              {
+                "Ref": "PublicHttpApi954A824B",
+              },
+              "/*/*/jobs/{jobId}",
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::Lambda::Permission",
+    },
+    "PublicHttpApiGETme32B2B951": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "PublicHttpApi954A824B",
+        },
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "PublicHttpApiCognitoJwt57D475C4",
+        },
+        "RouteKey": "GET /me",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "PublicHttpApiGETjobsPublicApiIntegrationFF569FBB",
+              },
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::ApiGatewayV2::Route",
+    },
+    "PublicHttpApiGETmePublicApiIntegrationPermissionE70C7A3F": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "PublicApiC8293BC5",
+            "Arn",
+          ],
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition",
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region",
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId",
+              },
+              ":",
+              {
+                "Ref": "PublicHttpApi954A824B",
+              },
+              "/*/*/me",
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::Lambda::Permission",
+    },
+    "PublicHttpApiPOSTmeF31BEDBF": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "PublicHttpApi954A824B",
+        },
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "PublicHttpApiCognitoJwt57D475C4",
+        },
+        "RouteKey": "POST /me",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "PublicHttpApiGETjobsPublicApiIntegrationFF569FBB",
+              },
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::ApiGatewayV2::Route",
+    },
+    "PublicHttpApiPOSTmePublicApiIntegrationPermission1CEF8BBC": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "PublicApiC8293BC5",
+            "Arn",
+          ],
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition",
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region",
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId",
+              },
+              ":",
+              {
+                "Ref": "PublicHttpApi954A824B",
+              },
+              "/*/*/me",
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::Lambda::Permission",
+    },
+    "PublicHttpApiPUTme21573145": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "PublicHttpApi954A824B",
+        },
+        "AuthorizationType": "JWT",
+        "AuthorizerId": {
+          "Ref": "PublicHttpApiCognitoJwt57D475C4",
+        },
+        "RouteKey": "PUT /me",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "PublicHttpApiGETjobsPublicApiIntegrationFF569FBB",
+              },
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::ApiGatewayV2::Route",
+    },
+    "PublicHttpApiPUTmePublicApiIntegrationPermission8EBEB567": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "PublicApiC8293BC5",
+            "Arn",
+          ],
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition",
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region",
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId",
+              },
+              ":",
+              {
+                "Ref": "PublicHttpApi954A824B",
+              },
+              "/*/*/me",
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::Lambda::Permission",
+    },
     "SchedulerDeadLetterQueueFA1FB96A": {
       "DeletionPolicy": "Delete",
       "Properties": {
@@ -791,6 +1655,171 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         },
       },
       "Type": "AWS::IAM::Role",
+    },
+    "UserData6A2E227B": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "pk",
+            "AttributeType": "S",
+          },
+          {
+            "AttributeName": "sk",
+            "AttributeType": "S",
+          },
+          {
+            "AttributeName": "activePk",
+            "AttributeType": "S",
+          },
+          {
+            "AttributeName": "tokenPk",
+            "AttributeType": "S",
+          },
+          {
+            "AttributeName": "receiptPk",
+            "AttributeType": "S",
+          },
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+        "GlobalSecondaryIndexes": [
+          {
+            "IndexName": "activeDevicesIndex",
+            "KeySchema": [
+              {
+                "AttributeName": "activePk",
+                "KeyType": "HASH",
+              },
+            ],
+            "Projection": {
+              "ProjectionType": "ALL",
+            },
+          },
+          {
+            "IndexName": "tokenIndex",
+            "KeySchema": [
+              {
+                "AttributeName": "tokenPk",
+                "KeyType": "HASH",
+              },
+            ],
+            "Projection": {
+              "ProjectionType": "ALL",
+            },
+          },
+          {
+            "IndexName": "pendingReceiptsIndex",
+            "KeySchema": [
+              {
+                "AttributeName": "receiptPk",
+                "KeyType": "HASH",
+              },
+            ],
+            "Projection": {
+              "ProjectionType": "ALL",
+            },
+          },
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "pk",
+            "KeyType": "HASH",
+          },
+          {
+            "AttributeName": "sk",
+            "KeyType": "RANGE",
+          },
+        ],
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true,
+        },
+        "SSESpecification": {
+          "SSEEnabled": true,
+        },
+      },
+      "Type": "AWS::DynamoDB::Table",
+      "UpdateReplacePolicy": "Retain",
+    },
+    "Users0A0EEA89": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "AccountRecoverySetting": {
+          "RecoveryMechanisms": [
+            {
+              "Name": "verified_email",
+              "Priority": 1,
+            },
+          ],
+        },
+        "AdminCreateUserConfig": {
+          "AllowAdminCreateUserOnly": false,
+        },
+        "AutoVerifiedAttributes": [
+          "email",
+        ],
+        "EmailVerificationMessage": "The verification code to your new account is {####}",
+        "EmailVerificationSubject": "Verify your new account",
+        "Policies": {
+          "PasswordPolicy": {
+            "MinimumLength": 12,
+            "RequireLowercase": true,
+            "RequireNumbers": true,
+            "RequireSymbols": false,
+            "RequireUppercase": true,
+          },
+        },
+        "Schema": [
+          {
+            "Mutable": true,
+            "Name": "email",
+            "Required": true,
+          },
+        ],
+        "SmsVerificationMessage": "The verification code to your new account is {####}",
+        "UsernameAttributes": [
+          "email",
+        ],
+        "VerificationMessageTemplate": {
+          "DefaultEmailOption": "CONFIRM_WITH_CODE",
+          "EmailMessage": "The verification code to your new account is {####}",
+          "EmailSubject": "Verify your new account",
+          "SmsMessage": "The verification code to your new account is {####}",
+        },
+      },
+      "Type": "AWS::Cognito::UserPool",
+      "UpdateReplacePolicy": "Retain",
+    },
+    "UsersMobileClient92F5E777": {
+      "Properties": {
+        "AllowedOAuthFlows": [
+          "implicit",
+          "code",
+        ],
+        "AllowedOAuthFlowsUserPoolClient": true,
+        "AllowedOAuthScopes": [
+          "profile",
+          "phone",
+          "email",
+          "openid",
+          "aws.cognito.signin.user.admin",
+        ],
+        "CallbackURLs": [
+          "https://example.com",
+        ],
+        "ExplicitAuthFlows": [
+          "ALLOW_USER_PASSWORD_AUTH",
+          "ALLOW_USER_SRP_AUTH",
+          "ALLOW_REFRESH_TOKEN_AUTH",
+        ],
+        "PreventUserExistenceErrors": "ENABLED",
+        "SupportedIdentityProviders": [
+          "COGNITO",
+        ],
+        "UserPoolId": {
+          "Ref": "Users0A0EEA89",
+        },
+      },
+      "Type": "AWS::Cognito::UserPoolClient",
     },
   },
   "Rules": {
