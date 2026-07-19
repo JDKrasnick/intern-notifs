@@ -1,4 +1,5 @@
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
+import { parseJobFilter, type JobFilter } from './core/filters.js';
 import { NtfyPublisher, sendDigest, sendPendingNotifications, SesEmailSender, type EmailSender, type PushPublisher } from './notifications.js';
 import { Poller } from './poll.js';
 import { DynamoInternshipStore, type InternshipStore } from './store.js';
@@ -9,6 +10,7 @@ export interface RuntimeConfig {
   ntfyTopic: string;
   ntfyTitleTemplate?: string;
   ntfyDescriptionTemplate?: string;
+  jobFilter?: JobFilter;
   sesFrom: string;
   sesTo: string;
 }
@@ -18,7 +20,7 @@ export async function loadRuntimeConfig(parameterName: string, client = new SSMC
   if (!value) throw new Error(`Runtime configuration parameter ${parameterName} has no value`);
   const config = JSON.parse(value) as Partial<RuntimeConfig>;
   if (!config.ntfyTopic || !config.sesFrom || !config.sesTo) throw new Error('Runtime configuration requires ntfyTopic, sesFrom, and sesTo');
-  return config as RuntimeConfig;
+  return { ...config, jobFilter: parseJobFilter(config.jobFilter) } as RuntimeConfig;
 }
 
 export interface RuntimeDependencies {
@@ -31,7 +33,7 @@ export interface RuntimeDependencies {
 
 export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies: RuntimeDependencies) {
   if (command === 'poll') {
-    const poll = await new Poller(dependencies.sources ?? defaultSources, dependencies.store).poll();
+    const poll = await new Poller(dependencies.sources ?? defaultSources, dependencies.store, () => new Date(), dependencies.config.jobFilter).poll();
     const notifications = await sendPendingNotifications(dependencies.store, dependencies.notificationPublisher ?? new NtfyPublisher(dependencies.config.ntfyTopic), { titleTemplate: dependencies.config.ntfyTitleTemplate, descriptionTemplate: dependencies.config.ntfyDescriptionTemplate });
     return { poll, notifications };
   }

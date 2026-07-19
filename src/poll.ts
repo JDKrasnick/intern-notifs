@@ -1,8 +1,9 @@
 import { fingerprint, jobId, normalizeUrl } from './core/normalize.js';
+import { matchesJobFilter, type JobFilter } from './core/filters.js';
 import type { Internship, RawListing, SourceAdapter, SourceOccurrence } from './types.js';
 import type { InternshipStore } from './store.js';
 
-export interface PollReport { fetchedSources: number; baselineSources: string[]; newJobs: Internship[]; failures: string[]; }
+export interface PollReport { fetchedSources: number; baselineSources: string[]; newJobs: Internship[]; filteredJobs: Internship[]; failures: string[]; }
 
 function occurrence(listing: RawListing): SourceOccurrence {
   return { sourceId: listing.sourceId, document: listing.document, sourceUrl: listing.sourceUrl, row: listing.row, postedAt: listing.postedAt, company: listing.company, title: listing.title, location: listing.location, season: listing.season, applyUrl: listing.applyUrl, compensation: listing.compensation, state: listing.state };
@@ -18,9 +19,9 @@ function newJob(listing: RawListing, now: string): Internship {
 }
 
 export class Poller {
-  constructor(private readonly adapters: SourceAdapter[], private readonly store: InternshipStore, private readonly now: () => Date = () => new Date()) {}
+  constructor(private readonly adapters: SourceAdapter[], private readonly store: InternshipStore, private readonly now: () => Date = () => new Date(), private readonly filter?: JobFilter) {}
   async poll(options: { seedOnly?: boolean } = {}): Promise<PollReport> {
-    const report: PollReport = { fetchedSources: 0, baselineSources: [], newJobs: [], failures: [] };
+    const report: PollReport = { fetchedSources: 0, baselineSources: [], newJobs: [], filteredJobs: [], failures: [] };
     for (const adapter of this.adapters) {
       const previous = await this.store.getCheckpoint(adapter.id);
       try {
@@ -38,7 +39,8 @@ export class Poller {
           else {
             const created = newJob(listing, now);
             if (baseline) created.notification = { smsPending: false, digestPending: false };
-            else report.newJobs.push(created);
+            else if (matchesJobFilter(listing, this.filter)) report.newJobs.push(created);
+            else { created.notification = { smsPending: false, digestPending: false }; report.filteredJobs.push(created); }
             await this.store.putInternship(created);
           }
         }
