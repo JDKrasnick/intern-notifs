@@ -37,7 +37,7 @@ export class InternNotifsStack extends cdk.Stack {
     const runtimeConfigParameterName = '/intern-notifs/runtime-config';
     const notifier = new lambdaNodejs.NodejsFunction(this, 'Notifier', {
       entry: 'src/lambda.ts', handler: 'handler', runtime: lambda.Runtime.NODEJS_22_X,
-      timeout: cdk.Duration.minutes(4), memorySize: 512, reservedConcurrentExecutions: 1,
+      timeout: cdk.Duration.minutes(4), memorySize: 512,
       environment: { INTERNSHIPS_TABLE: internships.tableName, RUNTIME_CONFIG_PARAMETER_NAME: runtimeConfigParameterName },
       bundling: { externalModules: [] }
     });

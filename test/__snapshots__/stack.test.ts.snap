@@ -492,7 +492,6 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         },
         "Handler": "index.handler",
         "MemorySize": 512,
-        "ReservedConcurrentExecutions": 1,
         "Role": {
           "Fn::GetAtt": [
             "NotifierServiceRole156E35B0",
