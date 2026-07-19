@@ -1,0 +1,30 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal"
+    },
+    "testflight": {
+      "autoIncrement": true
+    },
+    "production": {
+      "autoIncrement": true,
+      "ios": { "image": "sdk-55" }
+    }
+  },
+  "submit": {
+    "testflight": {
+      "ios": { "ascAppId": "6792557963" }
+    },
+    "production": {
+      "ios": { "ascAppId": "6792557963" }
+    }
+  }
+}

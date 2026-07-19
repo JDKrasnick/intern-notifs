@@ -6,9 +6,36 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
-    "ios": { "supportsTablet": true, "bundleIdentifier": "com.internnotifs.app" },
-    "android": { "package": "com.internnotifs.app", "permissions": ["POST_NOTIFICATIONS"] },
-    "plugins": [["expo-notifications", { "color": "#0E7490" }]],
-    "extra": { "apiUrl": "${EXPO_PUBLIC_API_URL}", "cognitoUserPoolId": "${EXPO_PUBLIC_COGNITO_USER_POOL_ID}", "cognitoClientId": "${EXPO_PUBLIC_COGNITO_CLIENT_ID}" }
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.internnotifs.app",
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.internnotifs.app",
+      "permissions": [
+        "POST_NOTIFICATIONS"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "color": "#0E7490"
+        }
+      ]
+    ],
+    "extra": {
+      "apiUrl": "${EXPO_PUBLIC_API_URL}",
+      "cognitoUserPoolId": "${EXPO_PUBLIC_COGNITO_USER_POOL_ID}",
+      "cognitoClientId": "${EXPO_PUBLIC_COGNITO_CLIENT_ID}",
+      "eas": {
+        "projectId": "b9b09ef1-a482-4875-a5f4-ff963488cd3e"
+      }
+    },
+    "owner": "jdkrasnicks-team"
   }
 }
