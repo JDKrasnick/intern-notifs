@@ -16,7 +16,7 @@
     },
     "production": {
       "autoIncrement": true,
-      "image": "sdk-55"
+      "ios": { "image": "sdk-55" }
     }
   },
   "submit": {
