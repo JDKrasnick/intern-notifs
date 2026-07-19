@@ -1,5 +1,5 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
-import { classifyJob } from './core/filters.js';
+import { inferJobFocuses, type JobFocus } from './core/filters.js';
 import { score } from './core/normalize.js';
 import type { Internship } from './types.js';
 import type { InternshipStore } from './store.js';
@@ -34,23 +34,23 @@ export const defaultRoleAbbreviations: Record<string, string> = {
 };
 export const defaultPushTemplates: Required<PushTemplates> = {
   titleTemplate: '{shortTitle} — {company}',
-  descriptionTemplate: '{title}\n{location} · {season}{compensationDetail}\n{focus}{postedDetail}\n{url}',
+  descriptionTemplate: '{location} · {season}{compensationDetail}\n{focus}{postedDetail}\n{url}',
   roleAbbreviations: defaultRoleAbbreviations
 };
 
 function displayValue(value: string | undefined) { return (value ?? '').replace(/[\r\n\t]+/g, ' ').trim(); }
 function safeClick(url: string) { try { const parsed = new URL(url); return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.toString() : undefined; } catch { return undefined; } }
-function escapedPattern(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 export function compactRoleTitle(title: string, roleAbbreviations: Record<string, string> = defaultRoleAbbreviations) {
-  let result = displayValue(title);
-  for (const [source, replacement] of Object.entries(roleAbbreviations).sort(([left], [right]) => right.length - left.length)) result = result.replace(new RegExp(`\\b${escapedPattern(source)}\\b`, 'gi'), displayValue(replacement));
+  const original = displayValue(title);
+  const candidates = Object.entries(roleAbbreviations).map(([source, replacement]) => ({ source, replacement: displayValue(replacement), at: original.toLowerCase().indexOf(source.toLowerCase()) })).filter((candidate) => candidate.at >= 0).sort((left, right) => left.at - right.at || right.source.length - left.source.length);
+  if (candidates[0]?.replacement) return candidates[0].replacement;
+  const result = original;
   return result.replace(/\b(internship|intern|co-op)\b/gi, '').replace(/[\s–—-]+$/g, '').replace(/\s{2,}/g, ' ').trim() || displayValue(title);
 }
 export function renderPushTemplate(template: string, job: Internship, roleAbbreviations: Record<string, string> = defaultRoleAbbreviations) {
   const compensation = displayValue(job.compensation.raw) || (job.compensation.maxHourlyUSD ? `$${job.compensation.maxHourlyUSD.toFixed(0)}/hr` : '');
   const posted = displayValue(job.sourceReferences[0]?.postedAt);
-  const focusLabels: Record<string, string> = { 'ai-ml': 'AI/ML', swe: 'SWE', quant: 'Quant', product: 'Product', design: 'Design' };
-  const focus = classifyJob(job).filter((category) => category !== 'grad').map((category) => focusLabels[category] ?? category).join(' · ');
+  const focus = inferJobFocuses(job).join(' · ');
   const values: Record<string, string> = {
     title: displayValue(job.title), shortTitle: compactRoleTitle(job.title, roleAbbreviations), company: displayValue(job.company), location: displayValue(job.location), season: displayValue(job.season), compensation, compensationDetail: compensation ? ` · ${compensation}` : '', focus: focus ? `Focus: ${focus}` : '', posted, postedDetail: posted ? `${focus ? ' · ' : ''}Posted: ${posted}` : '', source: displayValue(job.sourceReferences[0]?.sourceId), url: safeClick(job.applyUrl) ?? ''
   };
@@ -59,8 +59,9 @@ export function renderPushTemplate(template: string, job: Internship, roleAbbrev
 function pushMessage(job: Internship, templates: PushTemplates): PushMessage {
   const aliases = { ...defaultRoleAbbreviations, ...(templates.roleAbbreviations ?? {}) };
   const title = renderPushTemplate(templates.titleTemplate ?? defaultPushTemplates.titleTemplate, job, aliases).replace(/[\r\n]+/g, ' ').slice(0, 180);
-  const tagsByCategory: Record<string, string> = { 'ai-ml': 'brain', swe: 'computer', quant: 'chart_with_upwards_trend', product: 'clipboard', design: 'art' };
-  const tags = classifyJob(job).map((category) => tagsByCategory[category]).filter((tag): tag is string => Boolean(tag));
+  const tagsByFocus: Partial<Record<JobFocus, string>> = { 'AI/ML': 'brain', 'Cloud/Infra': 'cloud', Security: 'lock', Data: 'bar_chart', 'Backend/API': 'computer', 'Frontend/Mobile': 'computer', 'Systems/Hardware': 'gear', 'Quant/Fintech': 'chart_with_upwards_trend', Product: 'clipboard', Design: 'art', SWE: 'computer' };
+  const tag = inferJobFocuses(job).map((focus) => tagsByFocus[focus]).find((candidate): candidate is string => Boolean(candidate));
+  const tags = tag ? [tag] : [];
   return { title: title || 'New internship', body: renderPushTemplate(templates.descriptionTemplate ?? defaultPushTemplates.descriptionTemplate, job, aliases), click: safeClick(job.applyUrl), ...(tags.length ? { tags } : {}) };
 }
 export function summaryChunks(jobs: Internship[], limit = 1200): Internship[][] {

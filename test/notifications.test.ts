@@ -8,7 +8,7 @@ describe('notifications', () => {
   it('sends five individual jobs and preserves links in summary chunks', async () => {
     const store = new MemoryInternshipStore(); for (let index = 1; index <= 7; index += 1) await store.putInternship(job(index, index === 1 ? 'OpenAI' : 'Unknown'));
     const messages: PushMessage[] = []; await sendPendingNotifications(store, { publish: async (message) => { messages.push(message); } });
-    expect(messages).toHaveLength(6); expect(messages[0]).toMatchObject({ title: 'Role 1 — OpenAI', body: 'Role 1\nNYC · summer-2027 · $50/hr\nhttps://apply.example.com/1', click: 'https://apply.example.com/1' }); expect(messages.map((message) => message.body).join('\n')).toContain('https://apply.example.com/7'); expect(await store.pendingSms()).toHaveLength(0);
+    expect(messages).toHaveLength(6); expect(messages[0]).toMatchObject({ title: 'Role 1 — OpenAI', body: 'NYC · summer-2027 · $50/hr\nhttps://apply.example.com/1', click: 'https://apply.example.com/1' }); expect(messages.map((message) => message.body).join('\n')).toContain('https://apply.example.com/7'); expect(await store.pendingSms()).toHaveLength(0);
   });
   it('does not mark a failed SMS and does not send empty digests', async () => {
     const store = new MemoryInternshipStore(); await store.putInternship(job(1));
@@ -27,6 +27,7 @@ describe('notifications', () => {
     expect(renderPushTemplate('{season} | {compensation} | {url}', listing)).toBe('summer-2027 | $50/hr | https://apply.example.com/1');
     expect(compactRoleTitle('Software Engineering Intern')).toBe('SWE');
     expect(compactRoleTitle('Machine Learning Internship')).toBe('ML');
+    expect(compactRoleTitle('Cloud Infrastructure Software Engineering Intern')).toBe('SWE');
     expect(compactRoleTitle('Software Engineering Intern', { 'software engineering': 'Dev' })).toBe('Dev');
     expect(renderPushTemplate('{focus}{postedDetail}', { ...listing, title: 'Machine Learning Intern', sourceReferences: [{ ...listing.sourceReferences[0], postedAt: '2026-07-19' }] })).toBe('Focus: AI/ML · Posted: 2026-07-19');
     const store = new MemoryInternshipStore(); await store.putInternship({ ...listing, title: 'Software Engineering Intern', notification: { smsPending: true, digestPending: false } });

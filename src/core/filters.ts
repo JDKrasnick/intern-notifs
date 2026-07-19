@@ -2,6 +2,8 @@ import type { RawListing } from '../types.js';
 
 export const jobCategories = ['ai-ml', 'grad', 'swe', 'quant', 'product', 'design'] as const;
 export type JobCategory = typeof jobCategories[number];
+export const jobFocuses = ['AI/ML', 'Cloud/Infra', 'Security', 'Data', 'Backend/API', 'Frontend/Mobile', 'Systems/Hardware', 'Quant/Fintech', 'Product', 'Design', 'SWE'] as const;
+export type JobFocus = typeof jobFocuses[number];
 export interface JobFilter {
   /** A job must match at least one included keyword or category when either list is supplied. */
   includeKeywords?: string[];
@@ -19,6 +21,18 @@ const patterns: Record<JobCategory, RegExp> = {
   product: /\b(product manager|product management|pm)\b/i,
   design: /\b(design|ux|ui|user experience)\b/i
 };
+const focusPatterns: Array<[JobFocus, RegExp]> = [
+  ['AI/ML', /\b(generative ai|gen ai|artificial intelligence|machine learning|\bml\b|llm|nlp|natural language|computer vision|deep learning)\b/i],
+  ['Cloud/Infra', /\b(cloud|infrastructure|infra|platform|devops|site reliability|\bsre\b|distributed systems?|kubernetes|docker|networking|observability)\b/i],
+  ['Security', /\b(security|cybersecurity|privacy|cryptograph|identity|authentication|authorization)\b/i],
+  ['Data', /\b(data engineering|data engineer|analytics|business intelligence|\bbi\b|data warehouse|\betl\b)\b/i],
+  ['Backend/API', /\b(back[- ]?end|api|microservices?|server[- ]?side|services?)\b/i],
+  ['Frontend/Mobile', /\b(front[- ]?end|full[- ]?stack|web|ios|android|mobile|react)\b/i],
+  ['Systems/Hardware', /\b(systems?|embedded|firmware|compiler|operating systems?|\bos\b|hardware)\b/i],
+  ['Quant/Fintech', /\b(quant|quantitative|trading|trader|financial|fintech|risk)\b/i],
+  ['Product', /\b(product manager|product management|\bpm\b)\b/i],
+  ['Design', /\b(design|ux|ui|user experience)\b/i]
+];
 
 function terms(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season'>) {
   return `${listing.company} ${listing.title} ${listing.location} ${listing.season}`.replace(/\s+/g, ' ').trim();
@@ -29,6 +43,13 @@ function matchesCategory(value: string, category: JobCategory) { return patterns
 export function classifyJob(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season'>): JobCategory[] {
   const value = terms(listing);
   return jobCategories.filter((category) => matchesCategory(value, category));
+}
+
+/** Deterministic title-keyword classification for compact notification context; it does not infer qualifications. */
+export function inferJobFocuses(listing: Pick<RawListing, 'title'>): JobFocus[] {
+  const value = listing.title.replace(/\s+/g, ' ').trim();
+  const matched = focusPatterns.filter(([, pattern]) => pattern.test(value)).map(([focus]) => focus);
+  return matched.length ? matched : /\b(software|swe|engineer|developer)\b/i.test(value) ? ['SWE'] : [];
 }
 
 export function matchesJobFilter(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season'>, filter?: JobFilter) {

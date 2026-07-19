@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchesJobFilter, parseJobFilter } from '../src/core/filters.js';
+import { inferJobFocuses, matchesJobFilter, parseJobFilter } from '../src/core/filters.js';
 import { MemoryInternshipStore } from '../src/store.js';
 import { Poller } from '../src/poll.js';
 import type { RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult } from '../src/types.js';
@@ -24,6 +24,12 @@ describe('job filters', () => {
     expect(matchesJobFilter(listing('Senior Machine Learning Intern', 'https://example.com/senior'), filter)).toBe(false);
     expect(matchesJobFilter(listing('Finance Intern', 'https://example.com/finance'), filter)).toBe(false);
     expect(() => parseJobFilter({ excludeCategories: ['not-a-category'] })).toThrow('unsupported category');
+  });
+  it('derives specific focus labels from role keywords without an LLM', () => {
+    expect(inferJobFocuses(listing('Cloud Infrastructure Software Engineering Intern', 'https://example.com/cloud'))).toEqual(['Cloud/Infra']);
+    expect(inferJobFocuses(listing('Machine Learning Platform Intern', 'https://example.com/ml'))).toEqual(['AI/ML', 'Cloud/Infra']);
+    expect(inferJobFocuses(listing('Backend API Intern', 'https://example.com/backend'))).toEqual(['Backend/API']);
+    expect(inferJobFocuses(listing('Software Engineering Intern', 'https://example.com/swe'))).toEqual(['SWE']);
   });
   it('stores filtered jobs but never queues them for push or email', async () => {
     const store = new MemoryInternshipStore();
