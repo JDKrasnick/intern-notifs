@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryInternshipStore } from '../src/store.js';
-import { NtfyPublisher, renderPushTemplate, sendDigest, sendPendingNotifications, summaryChunks, type PushMessage } from '../src/notifications.js';
+import { compactRoleTitle, NtfyPublisher, renderPushTemplate, sendDigest, sendPendingNotifications, summaryChunks, type PushMessage } from '../src/notifications.js';
 import type { Internship } from '../src/types.js';
 
 function job(index: number, company = 'Unknown'): Internship { return { jobId: `j${index}`, company, title: `Role ${index}`, location: 'NYC', season: 'summer-2027', applyUrl: `https://apply.example.com/${index}`, normalizedUrl: `https://apply.example.com/${index}`, fingerprint: String(index), compensation: { raw: '$50/hr', maxHourlyUSD: 50 }, sourceReferences: [{ sourceId: 'x', document: 'README', sourceUrl: 'x', row: index, company, title: `Role ${index}`, location: 'NYC', season: 'summer-2027', applyUrl: `https://apply.example.com/${index}`, compensation: { raw: '' }, state: 'open' }], open: true, firstSeenAt: `2026-01-0${index}T00:00:00Z`, lastSeenAt: '2026-01-01T00:00:00Z', notification: { smsPending: true, digestPending: true } }; }
@@ -25,6 +25,9 @@ describe('notifications', () => {
     const listing = { ...job(1, 'OpenAI'), title: 'Software\nIntern' };
     expect(renderPushTemplate('{company}: {title}', listing)).toBe('OpenAI: Software Intern');
     expect(renderPushTemplate('{season} | {compensation} | {url}', listing)).toBe('summer-2027 | $50/hr | https://apply.example.com/1');
+    expect(compactRoleTitle('Software Engineering Intern')).toBe('SWE');
+    expect(compactRoleTitle('Machine Learning Internship')).toBe('ML');
+    expect(compactRoleTitle('Software Engineering Intern', { 'software engineering': 'Dev' })).toBe('Dev');
   });
   it('publishes a high-priority push message and rejects non-success responses', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];

@@ -20,24 +20,42 @@ export class NtfyPublisher implements PushPublisher {
   }
 }
 
-export interface PushTemplates { titleTemplate?: string; descriptionTemplate?: string; }
+export interface PushTemplates { titleTemplate?: string; descriptionTemplate?: string; roleAbbreviations?: Record<string, string>; }
+export const defaultRoleAbbreviations: Record<string, string> = {
+  'software development engineer': 'SDE',
+  'software engineering': 'SWE',
+  'software engineer': 'SWE',
+  'machine learning': 'ML',
+  'artificial intelligence': 'AI',
+  'data science': 'DS',
+  'product management': 'PM',
+  quantitative: 'Quant'
+};
 export const defaultPushTemplates: Required<PushTemplates> = {
-  titleTemplate: '{title} — {company}',
-  descriptionTemplate: '{location} · {season}{compensationDetail}\n{url}'
+  titleTemplate: '{shortTitle} — {company}',
+  descriptionTemplate: '{location} · {season}{compensationDetail}\n{url}',
+  roleAbbreviations: defaultRoleAbbreviations
 };
 
 function displayValue(value: string | undefined) { return (value ?? '').replace(/[\r\n\t]+/g, ' ').trim(); }
 function safeClick(url: string) { try { const parsed = new URL(url); return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.toString() : undefined; } catch { return undefined; } }
-export function renderPushTemplate(template: string, job: Internship) {
+function escapedPattern(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+export function compactRoleTitle(title: string, roleAbbreviations: Record<string, string> = defaultRoleAbbreviations) {
+  let result = displayValue(title);
+  for (const [source, replacement] of Object.entries(roleAbbreviations).sort(([left], [right]) => right.length - left.length)) result = result.replace(new RegExp(`\\b${escapedPattern(source)}\\b`, 'gi'), displayValue(replacement));
+  return result.replace(/\b(internship|intern|co-op)\b/gi, '').replace(/[\s–—-]+$/g, '').replace(/\s{2,}/g, ' ').trim() || displayValue(title);
+}
+export function renderPushTemplate(template: string, job: Internship, roleAbbreviations: Record<string, string> = defaultRoleAbbreviations) {
   const compensation = displayValue(job.compensation.raw) || (job.compensation.maxHourlyUSD ? `$${job.compensation.maxHourlyUSD.toFixed(0)}/hr` : '');
   const values: Record<string, string> = {
-    title: displayValue(job.title), company: displayValue(job.company), location: displayValue(job.location), season: displayValue(job.season), compensation, compensationDetail: compensation ? ` · ${compensation}` : '', url: safeClick(job.applyUrl) ?? ''
+    title: displayValue(job.title), shortTitle: compactRoleTitle(job.title, roleAbbreviations), company: displayValue(job.company), location: displayValue(job.location), season: displayValue(job.season), compensation, compensationDetail: compensation ? ` · ${compensation}` : '', url: safeClick(job.applyUrl) ?? ''
   };
-  return template.replace(/\{(title|company|location|season|compensation|compensationDetail|url)\}/g, (_, key: string) => values[key] ?? '').trim();
+  return template.replace(/\{(title|shortTitle|company|location|season|compensation|compensationDetail|url)\}/g, (_, key: string) => values[key] ?? '').trim();
 }
 function pushMessage(job: Internship, templates: PushTemplates): PushMessage {
-  const title = renderPushTemplate(templates.titleTemplate ?? defaultPushTemplates.titleTemplate, job).replace(/[\r\n]+/g, ' ').slice(0, 180);
-  return { title: title || 'New internship', body: renderPushTemplate(templates.descriptionTemplate ?? defaultPushTemplates.descriptionTemplate, job), click: safeClick(job.applyUrl) };
+  const aliases = { ...defaultRoleAbbreviations, ...(templates.roleAbbreviations ?? {}) };
+  const title = renderPushTemplate(templates.titleTemplate ?? defaultPushTemplates.titleTemplate, job, aliases).replace(/[\r\n]+/g, ' ').slice(0, 180);
+  return { title: title || 'New internship', body: renderPushTemplate(templates.descriptionTemplate ?? defaultPushTemplates.descriptionTemplate, job, aliases), click: safeClick(job.applyUrl) };
 }
 export function summaryChunks(jobs: Internship[], limit = 1200): Internship[][] {
   const chunks: Internship[][] = []; let current: Internship[] = []; let length = 0;
@@ -52,7 +70,8 @@ export async function sendPendingNotifications(store: InternshipStore, publisher
     catch { failed += 1; }
   }
   for (const chunk of summaryChunks(jobs.slice(5))) {
-    try { await publisher.publish({ title: `${chunk.length} new internships`, body: chunk.map((job) => `${renderPushTemplate(templates.titleTemplate ?? defaultPushTemplates.titleTemplate, job)}\n${renderPushTemplate(templates.descriptionTemplate ?? defaultPushTemplates.descriptionTemplate, job)}`).join('\n\n') }); for (const job of chunk) await store.markSmsSent(job.jobId, now().toISOString()); sent += chunk.length; }
+    const aliases = { ...defaultRoleAbbreviations, ...(templates.roleAbbreviations ?? {}) };
+    try { await publisher.publish({ title: `${chunk.length} new internships`, body: chunk.map((job) => `${renderPushTemplate(templates.titleTemplate ?? defaultPushTemplates.titleTemplate, job, aliases)}\n${renderPushTemplate(templates.descriptionTemplate ?? defaultPushTemplates.descriptionTemplate, job, aliases)}`).join('\n\n') }); for (const job of chunk) await store.markSmsSent(job.jobId, now().toISOString()); sent += chunk.length; }
     catch { failed += chunk.length; }
   }
   return { sent, failed };

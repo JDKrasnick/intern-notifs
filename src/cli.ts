@@ -15,7 +15,7 @@ async function main() {
   if (command === 'poll' || command === 'seed' || command === 'dry-run') {
     const filter = process.env.JOB_FILTER_JSON ? parseJobFilter(JSON.parse(process.env.JOB_FILTER_JSON)) : undefined;
     const report = await new Poller(defaultSources, store, () => new Date(), filter).poll({ seedOnly: command === 'seed' || command === 'dry-run' });
-    if (command === 'poll' && process.env.NTFY_TOPIC) console.log(JSON.stringify({ poll: report, notifications: await sendPendingNotifications(store, new NtfyPublisher(process.env.NTFY_TOPIC), { titleTemplate: process.env.NTFY_TITLE_TEMPLATE, descriptionTemplate: process.env.NTFY_DESCRIPTION_TEMPLATE }) }, null, 2));
+    if (command === 'poll' && process.env.NTFY_TOPIC) console.log(JSON.stringify({ poll: report, notifications: await sendPendingNotifications(store, new NtfyPublisher(process.env.NTFY_TOPIC), { titleTemplate: process.env.NTFY_TITLE_TEMPLATE, descriptionTemplate: process.env.NTFY_DESCRIPTION_TEMPLATE, roleAbbreviations: process.env.NTFY_ROLE_ABBREVIATIONS ? JSON.parse(process.env.NTFY_ROLE_ABBREVIATIONS) : undefined }) }, null, 2));
     else console.log(JSON.stringify(report, null, 2));
     if (report.failures.length) process.exitCode = 1;
     return;

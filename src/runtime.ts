@@ -10,6 +10,7 @@ export interface RuntimeConfig {
   ntfyTopic: string;
   ntfyTitleTemplate?: string;
   ntfyDescriptionTemplate?: string;
+  ntfyRoleAbbreviations?: Record<string, string>;
   jobFilter?: JobFilter;
   sesFrom: string;
   sesTo: string;
@@ -34,7 +35,7 @@ export interface RuntimeDependencies {
 export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies: RuntimeDependencies) {
   if (command === 'poll') {
     const poll = await new Poller(dependencies.sources ?? defaultSources, dependencies.store, () => new Date(), dependencies.config.jobFilter).poll();
-    const notifications = await sendPendingNotifications(dependencies.store, dependencies.notificationPublisher ?? new NtfyPublisher(dependencies.config.ntfyTopic), { titleTemplate: dependencies.config.ntfyTitleTemplate, descriptionTemplate: dependencies.config.ntfyDescriptionTemplate });
+    const notifications = await sendPendingNotifications(dependencies.store, dependencies.notificationPublisher ?? new NtfyPublisher(dependencies.config.ntfyTopic), { titleTemplate: dependencies.config.ntfyTitleTemplate, descriptionTemplate: dependencies.config.ntfyDescriptionTemplate, roleAbbreviations: dependencies.config.ntfyRoleAbbreviations });
     return { poll, notifications };
   }
   return { digested: await sendDigest(dependencies.store, dependencies.emailSender ?? new SesEmailSender(dependencies.config.sesFrom, dependencies.config.sesTo)) };
