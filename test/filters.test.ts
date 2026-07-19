@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inferJobFocuses, matchesJobFilter, parseJobFilter } from '../src/core/filters.js';
+import { inferJobFocuses, isTechnicalJob, matchesJobFilter, parseJobFilter } from '../src/core/filters.js';
 import { MemoryInternshipStore } from '../src/store.js';
 import { Poller } from '../src/poll.js';
 import type { RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult } from '../src/types.js';
@@ -30,6 +30,10 @@ describe('job filters', () => {
     expect(inferJobFocuses(listing('Machine Learning Platform Intern', 'https://example.com/ml'))).toEqual(['AI/ML', 'Cloud/Infra']);
     expect(inferJobFocuses(listing('Backend API Intern', 'https://example.com/backend'))).toEqual(['Backend/API']);
     expect(inferJobFocuses(listing('Software Engineering Intern', 'https://example.com/swe'))).toEqual(['SWE']);
+  });
+  it('keeps the initial catalog technical while retaining graduate filters as a preference', () => {
+    expect(isTechnicalJob(listing('Software Engineering Intern', 'https://example.com/swe'))).toBe(true);
+    expect(isTechnicalJob(listing('Human Resources Intern', 'https://example.com/hr'))).toBe(false);
   });
   it('stores filtered jobs but never queues them for push or email', async () => {
     const store = new MemoryInternshipStore();

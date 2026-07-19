@@ -12,13 +12,17 @@
     "test": "vitest run",
     "test:integration": "vitest run test/integration.workflow.test.ts",
     "test:watch": "vitest",
+    "migrate:open-index": "tsx src/migrate-open-index.ts",
     "cdk": "cdk --app 'npx tsx infra/app.ts'"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.883.0",
+    "@aws-sdk/client-cognito-identity-provider": "^3.883.0",
     "@aws-sdk/client-sesv2": "^3.883.0",
+    "@aws-sdk/client-s3": "^3.883.0",
     "@aws-sdk/client-ssm": "^3.883.0",
-    "@aws-sdk/lib-dynamodb": "^3.883.0"
+    "@aws-sdk/lib-dynamodb": "^3.883.0",
+    "@aws-sdk/s3-request-presigner": "^3.883.0"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

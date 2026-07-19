@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { MemoryInternshipStore } from '../src/store.js';
-import { compactRoleTitle, NtfyPublisher, renderPushTemplate, sendDigest, sendPendingNotifications, summaryChunks, type PushMessage } from '../src/notifications.js';
+import { MemoryInternshipStore, MemoryUserStore } from '../src/store.js';
+import { compactRoleTitle, ExpoPushPublisher, NtfyPublisher, renderPushTemplate, sendDigest, sendNewJobNotifications, sendPendingNotifications, summaryChunks, type PushMessage } from '../src/notifications.js';
 import type { Internship } from '../src/types.js';
 
 function job(index: number, company = 'Unknown'): Internship { return { jobId: `j${index}`, company, title: `Role ${index}`, location: 'NYC', season: 'summer-2027', applyUrl: `https://apply.example.com/${index}`, normalizedUrl: `https://apply.example.com/${index}`, fingerprint: String(index), compensation: { raw: '$50/hr', maxHourlyUSD: 50 }, sourceReferences: [{ sourceId: 'x', document: 'README', sourceUrl: 'x', row: index, company, title: `Role ${index}`, location: 'NYC', season: 'summer-2027', applyUrl: `https://apply.example.com/${index}`, compensation: { raw: '' }, state: 'open' }], open: true, firstSeenAt: `2026-01-0${index}T00:00:00Z`, lastSeenAt: '2026-01-01T00:00:00Z', notification: { smsPending: true, digestPending: true } }; }
@@ -38,5 +38,13 @@ describe('notifications', () => {
     await new NtfyPublisher('private topic', 'https://push.example.test', async (url, init) => { calls.push({ url: String(url), init }); return new Response('', { status: 200 }); }).publish({ title: 'Role — Company', body: 'Remote\nhttps://apply.example.com', click: 'https://apply.example.com', tags: ['computer'] });
     expect(calls[0]).toMatchObject({ url: 'https://push.example.test', init: { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic: 'private topic', title: 'Role — Company', message: 'Remote\nhttps://apply.example.com', priority: 4, tags: ['computer'], click: 'https://apply.example.com' }) } });
     await expect(new NtfyPublisher('topic', 'https://push.example.test', async () => new Response('', { status: 503 })).publish({ title: 'Test', body: 'hello' })).rejects.toThrow('HTTP 503');
+  });
+  it('uses a user-selected compact template over Expo while preserving the legacy defaults', async () => {
+    const users = new MemoryUserStore(); const calls: RequestInit[] = []; const internship = job(1, 'OpenAI');
+    await users.putPreferences({ userId: 'user-1', filter: {}, alertsEnabled: true, onboardingComplete: true, push: { titleTemplate: '{company}: {title}', descriptionTemplate: '{season} | {url}' }, updatedAt: '2026-07-19T00:00:00Z' });
+    await users.putDevice({ userId: 'user-1', token: 'ExponentPushToken[test]', platform: 'ios', active: true, createdAt: '2026-07-19T00:00:00Z', updatedAt: '2026-07-19T00:00:00Z' });
+    const publisher = new ExpoPushPublisher('https://push.example.test', async (_url, init) => { calls.push(init ?? {}); return new Response(JSON.stringify({ data: { id: 'ticket-1', status: 'ok' } }), { status: 200 }); });
+    await sendNewJobNotifications([internship], users, publisher);
+    expect(JSON.parse(String(calls[0]?.body))).toMatchObject({ title: 'OpenAI: Role 1', body: 'summer-2027 | https://apply.example.com/1', data: { jobId: 'j1' } });
   });
 });

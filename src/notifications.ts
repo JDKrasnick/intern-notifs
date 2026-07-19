@@ -1,13 +1,84 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { inferJobFocuses, type JobFocus } from './core/filters.js';
 import { score } from './core/normalize.js';
-import type { Internship } from './types.js';
-import type { InternshipStore } from './store.js';
+import type { DeliveryReceipt, Internship } from './types.js';
+import type { InternshipStore, UserStore } from './store.js';
+import { matchesJobFilter } from './core/filters.js';
 
 export const rankInternships = (jobs: Internship[]) => [...jobs].sort((a, b) => score(b.company, b.compensation) - score(a.company, a.compensation) || (b.sourceReferences[0]?.postedAt ?? '').localeCompare(a.sourceReferences[0]?.postedAt ?? '') || b.firstSeenAt.localeCompare(a.firstSeenAt));
 
 export interface PushMessage { title: string; body: string; click?: string; tags?: string[]; }
 export interface PushPublisher { publish(message: PushMessage): Promise<void>; }
+
+export interface ExpoPushTicket { id?: string; status: 'ok' | 'error'; details?: { error?: string }; message?: string; }
+/** Minimal Expo Push Service client: Expo handles APNs/FCM credential delivery. */
+export class ExpoPushPublisher {
+  constructor(private readonly endpoint = 'https://exp.host/--/api/v2/push/send', private readonly fetcher: typeof fetch = fetch) {}
+  async publish(token: string, message: PushMessage): Promise<ExpoPushTicket> {
+    const response = await this.fetcher(this.endpoint, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ to: token, sound: 'default', priority: 'high', title: message.title, body: message.body, data: { jobId: message.click }, channelId: 'job-alerts' }) });
+    if (!response.ok) throw new Error(`Expo Push Service rejected notification with HTTP ${response.status}`);
+    const body = await response.json() as { data?: ExpoPushTicket | ExpoPushTicket[] };
+    const ticket = Array.isArray(body.data) ? body.data[0] : body.data;
+    if (!ticket) throw new Error('Expo Push Service returned no ticket');
+    return ticket;
+  }
+  async receipts(ticketIds: string[]): Promise<Record<string, ExpoPushTicket>> {
+    if (!ticketIds.length) return {};
+    const response = await this.fetcher('https://exp.host/--/api/v2/push/getReceipts', { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: ticketIds }) });
+    if (!response.ok) throw new Error(`Expo Push Service rejected receipt lookup with HTTP ${response.status}`);
+    const body = await response.json() as { data?: Record<string, ExpoPushTicket> };
+    return body.data ?? {};
+  }
+}
+
+function nativePushMessage(job: Internship, templates?: PushTemplates): PushMessage {
+  // Keep the legacy compact title/body defaults; only the transport changes from ntfy to Expo.
+  return { ...pushMessage(job, templates ?? defaultPushTemplates), click: job.jobId };
+}
+
+/**
+ * Delivers each new listing to matching opted-in users. Receipts are written before
+ * sending so a poll retry cannot fan out duplicate pushes to the same device.
+ */
+export async function sendNewJobNotifications(jobs: Internship[], users: UserStore, publisher: ExpoPushPublisher, now: () => Date = () => new Date()): Promise<{ sent: number; skipped: number; failed: number }> {
+  let sent = 0; let skipped = 0; let failed = 0;
+  const devices = await users.activeDevices();
+  const preferences = new Map<string, Awaited<ReturnType<UserStore['getPreferences']>>>();
+  for (const job of jobs) for (const device of devices) {
+    let preference = preferences.get(device.userId);
+    if (!preference) { preference = await users.getPreferences(device.userId); preferences.set(device.userId, preference); }
+    if (!preference?.alertsEnabled || !preference.onboardingComplete || !matchesJobFilter(job, preference.filter)) { skipped += 1; continue; }
+    const existing = await users.getReceipt(device.userId, job.jobId, device.token);
+    if (existing?.status === 'ok' || existing?.status === 'pending') { skipped += 1; continue; }
+    const timestamp = now().toISOString(); const receipt: DeliveryReceipt = { userId: device.userId, jobId: job.jobId, token: device.token, status: 'pending', createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp };
+    await users.putReceipt(receipt);
+    try {
+      const ticket = await publisher.publish(device.token, nativePushMessage(job, preference.push));
+      const status = ticket.status === 'ok' ? 'pending' : 'error';
+      await users.putReceipt({ ...receipt, ticketId: ticket.id, status, updatedAt: now().toISOString() });
+      if (status === 'pending') sent += 1;
+      else { failed += 1; if (ticket.details?.error === 'DeviceNotRegistered') await users.putDevice({ ...device, active: false, updatedAt: now().toISOString() }); }
+    } catch { await users.putReceipt({ ...receipt, status: 'error', updatedAt: now().toISOString() }); failed += 1; }
+  }
+  return { sent, skipped, failed };
+}
+
+/** Expo tickets are accepted asynchronously; this reconciliation deactivates invalid tokens. */
+export async function inspectExpoPushReceipts(users: UserStore, publisher: ExpoPushPublisher, now: () => Date = () => new Date()): Promise<{ ok: number; invalid: number; pending: number }> {
+  const receipts = await users.pendingReceipts(); const byId = await publisher.receipts(receipts.map((receipt) => receipt.ticketId).filter((id): id is string => Boolean(id))); let ok = 0; let invalid = 0; let pending = 0;
+  for (const receipt of receipts) {
+    const result = receipt.ticketId ? byId[receipt.ticketId] : undefined;
+    if (!result) { pending += 1; continue; }
+    if (result.status === 'ok') { await users.putReceipt({ ...receipt, status: 'ok', updatedAt: now().toISOString() }); ok += 1; continue; }
+    await users.putReceipt({ ...receipt, status: 'error', updatedAt: now().toISOString() });
+    if (result.details?.error === 'DeviceNotRegistered') {
+      const device = (await users.activeDevices()).find((candidate) => candidate.userId === receipt.userId && candidate.token === receipt.token);
+      if (device) await users.putDevice({ ...device, active: false, updatedAt: now().toISOString() });
+      invalid += 1;
+    }
+  }
+  return { ok, invalid, pending };
+}
 
 export class NtfyPublisher implements PushPublisher {
   constructor(private readonly topic: string, private readonly endpoint = 'https://ntfy.sh', private readonly fetcher: typeof fetch = fetch) {}
