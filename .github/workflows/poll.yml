@@ -17,6 +17,10 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci
+      - name: Inspect OIDC claims (manual runs only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          node -e 'const run = async () => { const response = await fetch(`${process.env.ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com`, { headers: { Authorization: `Bearer ${process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` } }); const { value } = await response.json(); const claims = JSON.parse(Buffer.from(value.split(".")[1], "base64url").toString()); console.log(JSON.stringify({ sub: claims.sub, aud: claims.aud })); }; run().catch((error) => { console.error(error); process.exit(1); });'
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
