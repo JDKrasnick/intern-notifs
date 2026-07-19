@@ -22,5 +22,3 @@ jobs:
       - run: npx tsx src/cli.ts poll
         env:
           INTERNSHIPS_TABLE: ${{ vars.INTERNSHIPS_TABLE }}
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-          JOB_FILTER_JSON: ${{ secrets.JOB_FILTER_JSON }}
