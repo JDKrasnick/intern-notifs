@@ -1,0 +1,30 @@
+name: Send internship digest
+on:
+  schedule:
+    # GitHub Actions schedules use UTC; the runner checks New York time below for DST-safe 09:00/17:00 delivery.
+    - cron: '0 * * * *'
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - id: time
+        run: echo "hour=$(TZ=America/New_York date +%H)" >> "$GITHUB_OUTPUT"
+      - if: steps.time.outputs.hour == '09' || steps.time.outputs.hour == '17' || github.event_name == 'workflow_dispatch'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - if: steps.time.outputs.hour == '09' || steps.time.outputs.hour == '17' || github.event_name == 'workflow_dispatch'
+        run: npx tsx src/cli.ts digest
+        env:
+          INTERNSHIPS_TABLE: ${{ vars.INTERNSHIPS_TABLE }}
+          SES_FROM: ${{ secrets.SES_FROM }}
+          SES_TO: ${{ secrets.SES_TO }}

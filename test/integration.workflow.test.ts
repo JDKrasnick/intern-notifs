@@ -1,0 +1,80 @@
+import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
+import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
+import { describe, expect, it, vi } from 'vitest';
+import { sendDigest, sendPendingSms, SesEmailSender, SnsSmsPublisher, type EmailSender, type SmsPublisher } from '../src/notifications.js';
+import { Poller } from '../src/poll.js';
+import { MemoryInternshipStore } from '../src/store.js';
+import type { RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult } from '../src/types.js';
+
+const row = (number: number, sourceId = 'fixture'): RawListing => ({
+  sourceId, document: 'README.md', sourceUrl: 'https://github.com/fixture/list', row: number,
+  company: number === 1 ? 'OpenAI' : `Company ${number}`, title: `Software Intern ${number}`,
+  location: 'New York, NY', season: 'summer-2027', applyUrl: `https://jobs.example.com/${number}?utm_source=fixture`,
+  compensation: { raw: `$${40 + number}/hr`, maxHourlyUSD: 40 + number }, state: 'open',
+  postedAt: `2026-07-${String(number).padStart(2, '0')}`, fetchedAt: '2026-07-18T12:00:00.000Z'
+});
+
+class FixtureAdapter implements SourceAdapter {
+  constructor(readonly id: string, private readonly rows: RawListing[]) {}
+  async fetch(previous?: SourceCheckpoint): Promise<SourceFetchResult> {
+    return { sourceId: this.id, listings: this.rows, notModified: false, checkpoint: { sourceId: this.id, successfulFetches: (previous?.successfulFetches ?? 0) + 1, lastRowCount: this.rows.length, lastSuccessAt: '2026-07-18T12:00:00.000Z' } };
+  }
+}
+
+class RecorderSms implements SmsPublisher {
+  messages: string[] = []; calls = 0;
+  async publish(message: string): Promise<void> { this.calls += 1; if (this.calls === 2) throw new Error('simulated SNS timeout'); this.messages.push(message); }
+}
+class RecorderEmail implements EmailSender {
+  calls = 0; subject = ''; text = ''; html = '';
+  async send(subject: string, text: string, html: string): Promise<void> { this.calls += 1; this.subject = subject; this.text = text; this.html = html; }
+}
+
+describe('mocked production workflow integration', () => {
+  it('quietly baselines, deduplicates, retries SNS failures, and digests only after SES acceptance', async () => {
+    const store = new MemoryInternshipStore();
+    const baseline = row(1);
+    const first = await new Poller([new FixtureAdapter('feed-a', [baseline])], store, () => new Date('2026-07-18T12:00:00.000Z')).poll();
+    expect(first).toMatchObject({ baselineSources: ['feed-a'], newJobs: [] });
+    expect(await store.pendingSms()).toEqual([]);
+
+    // The duplicated URL comes from a newly added source; it must not create another canonical job or alert.
+    const duplicate = { ...baseline, sourceId: 'feed-b', applyUrl: 'https://JOBS.example.com/1?utm_source=second#apply' };
+    const fresh = Array.from({ length: 7 }, (_, index) => row(index + 2));
+    const second = await new Poller([new FixtureAdapter('feed-a', [baseline, ...fresh]), new FixtureAdapter('feed-b', [duplicate])], store, () => new Date('2026-07-18T12:05:00.000Z')).poll();
+    expect(second.newJobs).toHaveLength(7);
+    expect(store.jobs.size).toBe(8);
+    expect([...store.jobs.values()].find((job) => job.company === 'OpenAI')?.sourceReferences).toHaveLength(2);
+
+    const sms = new RecorderSms();
+    const firstSms = await sendPendingSms(store, sms, () => new Date('2026-07-18T12:05:01.000Z'));
+    expect(firstSms).toEqual({ sent: 6, failed: 1 });
+    expect(await store.pendingSms()).toHaveLength(1);
+    expect(sms.messages.join('\n')).toContain('https://jobs.example.com/8?utm_source=fixture');
+
+    const retry = new RecorderSms();
+    expect(await sendPendingSms(store, retry)).toEqual({ sent: 1, failed: 0 });
+    expect(await store.pendingSms()).toEqual([]);
+
+    const email = new RecorderEmail();
+    expect(await sendDigest(store, email, () => new Date('2026-07-18T17:00:00.000Z'))).toBe(7);
+    expect(email).toMatchObject({ calls: 1, subject: 'Internship digest: 7 new roles' });
+    expect(email.html).toContain('https://jobs.example.com/2?utm_source=fixture');
+    expect(await store.pendingDigest()).toEqual([]);
+    expect(await sendDigest(store, email)).toBe(0);
+    expect(email.calls).toBe(1);
+  });
+
+  it('builds direct SNS and SES SDK requests without making network calls', async () => {
+    const snsSend = vi.spyOn(SNSClient.prototype, 'send').mockResolvedValue({ $metadata: {} } as never);
+    const sesSend = vi.spyOn(SESv2Client.prototype, 'send').mockResolvedValue({ $metadata: {} } as never);
+    await new SnsSmsPublisher('+12025550123', '+12025550124').publish('Synthetic SMS smoke test');
+    await new SesEmailSender('sender@example.com', 'recipient@example.com').send('Synthetic email smoke test', 'plain', '<p>html</p>');
+    const snsCommand = snsSend.mock.calls[0][0]; const sesCommand = sesSend.mock.calls[0][0];
+    expect(snsCommand).toBeInstanceOf(PublishCommand);
+    expect((snsCommand as PublishCommand).input).toMatchObject({ PhoneNumber: '+12025550123', Message: 'Synthetic SMS smoke test', MessageAttributes: { 'AWS.SNS.SMS.OriginationNumber': { StringValue: '+12025550124' } } });
+    expect(sesCommand).toBeInstanceOf(SendEmailCommand);
+    expect((sesCommand as SendEmailCommand).input).toMatchObject({ FromEmailAddress: 'sender@example.com', Destination: { ToAddresses: ['recipient@example.com'] }, Content: { Simple: { Subject: { Data: 'Synthetic email smoke test' }, Body: { Text: { Data: 'plain' }, Html: { Data: '<p>html</p>' } } } } });
+    snsSend.mockRestore(); sesSend.mockRestore();
+  });
+});
