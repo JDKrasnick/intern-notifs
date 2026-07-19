@@ -15,7 +15,8 @@
       "autoIncrement": true
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "image": "sdk-55"
     }
   },
   "submit": {
