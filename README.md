@@ -17,10 +17,12 @@ Personal, serverless internship discovery for public GitHub lists. The first suc
 
    ```bash
    aws ssm put-parameter --name /intern-notifs/runtime-config --type SecureString --overwrite \
-     --value '{"ntfyTopic":"a-long-random-private-topic","sesFrom":"you@example.com","sesTo":"you@example.com"}'
+     --value '{"ntfyTopic":"a-long-random-private-topic","ntfyTitleTemplate":"{title} — {company}","ntfyDescriptionTemplate":"{location} · {season}{compensationDetail}\n{url}","sesFrom":"you@example.com","sesTo":"you@example.com"}'
    ```
 
    Install [ntfy](https://ntfy.sh/) on the phone and subscribe to that exact topic. Treat the topic as a secret: anyone who knows it can read and publish messages. Use the same verified SES address for sender and recipient while SES remains in its sandbox.
+
+   The defaults make a compact phone notification: its title is `Role — Company`, while its description is location, season, pay when known, and the apply link. Each user can change `ntfyTitleTemplate` and `ntfyDescriptionTemplate` without a redeploy. Valid placeholders are `{title}`, `{company}`, `{location}`, `{season}`, `{compensation}`, `{compensationDetail}`, and `{url}`. For example, `"{company}: {title}"` puts the company first; `"{location}\n{url}"` keeps the description extra short. Tapping an individual alert opens its application URL.
 5. GitHub variables/secrets are optional and support manual workflow smoke tests only. For those, put the output `GitHubActionsRoleArn`, `Region`, and `InternshipsTableName` in `AWS_ROLE_ARN`, `AWS_REGION`, and `INTERNSHIPS_TABLE`; add `NTFY_TOPIC`, `SES_FROM`, and `SES_TO` as secrets.
 6. Run `npx tsx src/cli.ts seed` once (with the table environment variable) to explicitly baseline feeds, then run `smoke-push` and `smoke-email` before enabling schedules.
 

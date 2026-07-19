@@ -1,5 +1,5 @@
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
-import { NtfyPublisher, sendDigest, sendPendingSms, SesEmailSender, type EmailSender, type PushPublisher } from './notifications.js';
+import { NtfyPublisher, sendDigest, sendPendingNotifications, SesEmailSender, type EmailSender, type PushPublisher } from './notifications.js';
 import { Poller } from './poll.js';
 import { DynamoInternshipStore, type InternshipStore } from './store.js';
 import { defaultSources } from './sources/github.js';
@@ -7,6 +7,8 @@ import type { SourceAdapter } from './types.js';
 
 export interface RuntimeConfig {
   ntfyTopic: string;
+  ntfyTitleTemplate?: string;
+  ntfyDescriptionTemplate?: string;
   sesFrom: string;
   sesTo: string;
 }
@@ -30,7 +32,7 @@ export interface RuntimeDependencies {
 export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies: RuntimeDependencies) {
   if (command === 'poll') {
     const poll = await new Poller(dependencies.sources ?? defaultSources, dependencies.store).poll();
-    const notifications = await sendPendingSms(dependencies.store, dependencies.notificationPublisher ?? new NtfyPublisher(dependencies.config.ntfyTopic));
+    const notifications = await sendPendingNotifications(dependencies.store, dependencies.notificationPublisher ?? new NtfyPublisher(dependencies.config.ntfyTopic), { titleTemplate: dependencies.config.ntfyTitleTemplate, descriptionTemplate: dependencies.config.ntfyDescriptionTemplate });
     return { poll, notifications };
   }
   return { digested: await sendDigest(dependencies.store, dependencies.emailSender ?? new SesEmailSender(dependencies.config.sesFrom, dependencies.config.sesTo)) };

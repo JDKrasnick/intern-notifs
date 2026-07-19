@@ -1,6 +1,6 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { describe, expect, it, vi } from 'vitest';
-import { NtfyPublisher, sendDigest, sendPendingSms, SesEmailSender, type EmailSender, type PushPublisher } from '../src/notifications.js';
+import { NtfyPublisher, sendDigest, sendPendingNotifications, SesEmailSender, type EmailSender, type PushMessage, type PushPublisher } from '../src/notifications.js';
 import { Poller } from '../src/poll.js';
 import { MemoryInternshipStore } from '../src/store.js';
 import type { RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult } from '../src/types.js';
@@ -21,8 +21,8 @@ class FixtureAdapter implements SourceAdapter {
 }
 
 class RecorderSms implements PushPublisher {
-  messages: string[] = []; calls = 0;
-  async publish(message: string): Promise<void> { this.calls += 1; if (this.calls === 2) throw new Error('simulated push timeout'); this.messages.push(message); }
+  messages: PushMessage[] = []; calls = 0;
+  async publish(message: PushMessage): Promise<void> { this.calls += 1; if (this.calls === 2) throw new Error('simulated push timeout'); this.messages.push(message); }
 }
 class RecorderEmail implements EmailSender {
   calls = 0; subject = ''; text = ''; html = '';
@@ -46,13 +46,13 @@ describe('mocked production workflow integration', () => {
     expect([...store.jobs.values()].find((job) => job.company === 'OpenAI')?.sourceReferences).toHaveLength(2);
 
     const sms = new RecorderSms();
-    const firstSms = await sendPendingSms(store, sms, () => new Date('2026-07-18T12:05:01.000Z'));
+    const firstSms = await sendPendingNotifications(store, sms, undefined, () => new Date('2026-07-18T12:05:01.000Z'));
     expect(firstSms).toEqual({ sent: 6, failed: 1 });
     expect(await store.pendingSms()).toHaveLength(1);
-    expect(sms.messages.join('\n')).toContain('https://jobs.example.com/8?utm_source=fixture');
+    expect(sms.messages.map((message) => message.body).join('\n')).toContain('https://jobs.example.com/8?utm_source=fixture');
 
     const retry = new RecorderSms();
-    expect(await sendPendingSms(store, retry)).toEqual({ sent: 1, failed: 0 });
+    expect(await sendPendingNotifications(store, retry)).toEqual({ sent: 1, failed: 0 });
     expect(await store.pendingSms()).toEqual([]);
 
     const email = new RecorderEmail();
@@ -67,10 +67,10 @@ describe('mocked production workflow integration', () => {
   it('builds ntfy and SES delivery requests without making network calls', async () => {
     const sesSend = vi.spyOn(SESv2Client.prototype, 'send').mockResolvedValue({ $metadata: {} } as never);
     const ntfyCalls: Array<{ url: string; init?: RequestInit }> = [];
-    await new NtfyPublisher('private-topic', 'https://ntfy.example.test', async (url, init) => { ntfyCalls.push({ url: String(url), init }); return new Response('', { status: 200 }); }).publish('Synthetic push smoke test');
+    await new NtfyPublisher('private-topic', 'https://ntfy.example.test', async (url, init) => { ntfyCalls.push({ url: String(url), init }); return new Response('', { status: 200 }); }).publish({ title: 'Role — Company', body: 'Synthetic push smoke test', click: 'https://jobs.example.com/1' });
     await new SesEmailSender('sender@example.com', 'recipient@example.com').send('Synthetic email smoke test', 'plain', '<p>html</p>');
     const sesCommand = sesSend.mock.calls[0][0];
-    expect(ntfyCalls[0]).toMatchObject({ url: 'https://ntfy.example.test/private-topic', init: { method: 'POST', headers: { Title: 'New internship', Priority: 'high' }, body: 'Synthetic push smoke test' } });
+    expect(ntfyCalls[0]).toMatchObject({ url: 'https://ntfy.example.test', init: { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic: 'private-topic', title: 'Role — Company', message: 'Synthetic push smoke test', priority: 4, tags: ['briefcase'], click: 'https://jobs.example.com/1' }) } });
     expect(sesCommand).toBeInstanceOf(SendEmailCommand);
     expect((sesCommand as SendEmailCommand).input).toMatchObject({ FromEmailAddress: 'sender@example.com', Destination: { ToAddresses: ['recipient@example.com'] }, Content: { Simple: { Subject: { Data: 'Synthetic email smoke test' }, Body: { Text: { Data: 'plain' }, Html: { Data: '<p>html</p>' } } } } });
     sesSend.mockRestore();

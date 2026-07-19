@@ -2,7 +2,7 @@
 import { defaultSources } from './sources/github.js';
 import { Poller } from './poll.js';
 import { DynamoInternshipStore, MemoryInternshipStore } from './store.js';
-import { NtfyPublisher, sendDigest, sendPendingSms, SesEmailSender } from './notifications.js';
+import { NtfyPublisher, sendDigest, sendPendingNotifications, SesEmailSender } from './notifications.js';
 
 const command = process.argv[2];
 const table = process.env.INTERNSHIPS_TABLE;
@@ -13,7 +13,7 @@ const store = command === 'dry-run' ? new MemoryInternshipStore() : new DynamoIn
 async function main() {
   if (command === 'poll' || command === 'seed' || command === 'dry-run') {
     const report = await new Poller(defaultSources, store).poll({ seedOnly: command === 'seed' || command === 'dry-run' });
-    if (command === 'poll' && process.env.NTFY_TOPIC) console.log(JSON.stringify({ poll: report, notifications: await sendPendingSms(store, new NtfyPublisher(process.env.NTFY_TOPIC)) }, null, 2));
+    if (command === 'poll' && process.env.NTFY_TOPIC) console.log(JSON.stringify({ poll: report, notifications: await sendPendingNotifications(store, new NtfyPublisher(process.env.NTFY_TOPIC), { titleTemplate: process.env.NTFY_TITLE_TEMPLATE, descriptionTemplate: process.env.NTFY_DESCRIPTION_TEMPLATE }) }, null, 2));
     else console.log(JSON.stringify(report, null, 2));
     if (report.failures.length) process.exitCode = 1;
     return;
@@ -24,7 +24,7 @@ async function main() {
   }
   if (command === 'smoke-push') {
     if (!process.env.NTFY_TOPIC) throw new Error('NTFY_TOPIC is required');
-    await new NtfyPublisher(process.env.NTFY_TOPIC).publish('Intern notifier smoke test'); return;
+    await new NtfyPublisher(process.env.NTFY_TOPIC).publish({ title: 'Intern notifier', body: 'Push delivery is configured.' }); return;
   }
   if (command === 'smoke-email') {
     if (!process.env.SES_FROM || !process.env.SES_TO) throw new Error('SES_FROM and SES_TO are required');
