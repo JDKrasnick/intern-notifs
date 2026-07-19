@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "InternNotifs",
+    "slug": "internnotifs",
+    "scheme": "internnotifs",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": { "supportsTablet": true, "bundleIdentifier": "com.internnotifs.app" },
+    "android": { "package": "com.internnotifs.app", "permissions": ["POST_NOTIFICATIONS"] },
+    "plugins": [["expo-notifications", { "color": "#0E7490" }]],
+    "extra": { "apiUrl": "${EXPO_PUBLIC_API_URL}", "cognitoUserPoolId": "${EXPO_PUBLIC_COGNITO_USER_POOL_ID}", "cognitoClientId": "${EXPO_PUBLIC_COGNITO_CLIENT_ID}" }
+  }
+}
