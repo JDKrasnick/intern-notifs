@@ -16,6 +16,19 @@ const identity = (event: ApiEvent) => event.requestContext?.authorizer?.jwt?.cla
 const now = () => new Date().toISOString();
 const statuses: ApplicationStatus[] = ['saved', 'applied', 'assessment', 'interview', 'offer', 'rejected', 'withdrawn'];
 
+function pushPreferences(value: unknown): UserPreferences['push'] | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('push must be an object');
+  const push = value as Record<string, unknown>; const template = (name: 'titleTemplate' | 'descriptionTemplate') => {
+    const result = push[name]; if (result === undefined) return undefined;
+    if (typeof result !== 'string' || result.length > 500) throw new Error(`push.${name} must be a string of at most 500 characters`);
+    return result;
+  };
+  const titleTemplate = template('titleTemplate'); const descriptionTemplate = template('descriptionTemplate'); const aliases = push.roleAbbreviations;
+  if (aliases !== undefined && (!aliases || typeof aliases !== 'object' || Array.isArray(aliases) || Object.entries(aliases).some(([key, item]) => !key.trim() || typeof item !== 'string' || item.length > 40))) throw new Error('push.roleAbbreviations must map non-empty strings to short strings');
+  return { ...(titleTemplate !== undefined ? { titleTemplate } : {}), ...(descriptionTemplate !== undefined ? { descriptionTemplate } : {}), ...(aliases ? { roleAbbreviations: aliases as Record<string, string> } : {}) };
+}
+
 function requireProfile(value: Record<string, unknown>, userId: string): ApplicantProfile {
   const contact = value.contact as ApplicantProfile['contact'];
   if (!contact?.name || !contact.email || typeof value.location !== 'string' || typeof value.workAuthorization !== 'string' || !Array.isArray(value.education) || !value.links || !value.reusableAnswers || typeof value.resumeDocumentId !== 'string') throw new Error('Profile needs contact name/email, location, work authorization, résumé, education, links, and reusable answers');
@@ -37,7 +50,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
       if (method === 'GET' && jobMatch) { const job = await dependencies.jobs.getJob?.(decodeURIComponent(jobMatch[1])); return job ? reply(200, job) : reply(404, { message: 'Job not found' }); }
       const userId = identity(event); if (!userId) return reply(401, { message: 'Authentication required' });
       if (method === 'GET' && path === '/me/preferences') return reply(200, (await dependencies.users.getPreferences(userId)) ?? { userId, filter: {}, alertsEnabled: false, onboardingComplete: false });
-      if (method === 'PUT' && path === '/me/preferences') { const body = parseBody(event); const filter = parseJobFilter(body.filter ?? {}); const value: UserPreferences = { userId, filter: filter ?? {}, alertsEnabled: body.alertsEnabled === true, onboardingComplete: body.onboardingComplete === true, updatedAt: now() }; await dependencies.users.putPreferences(value); return reply(200, value); }
+      if (method === 'PUT' && path === '/me/preferences') { const body = parseBody(event); const previous = await dependencies.users.getPreferences(userId); const filter = parseJobFilter(body.filter ?? previous?.filter ?? {}); const push = pushPreferences(body.push); const value: UserPreferences = { userId, filter: filter ?? {}, alertsEnabled: typeof body.alertsEnabled === 'boolean' ? body.alertsEnabled : previous?.alertsEnabled ?? false, onboardingComplete: typeof body.onboardingComplete === 'boolean' ? body.onboardingComplete : previous?.onboardingComplete ?? false, ...(push !== undefined ? { push } : previous?.push ? { push: previous.push } : {}), updatedAt: now() }; await dependencies.users.putPreferences(value); return reply(200, value); }
       if (method === 'POST' && path === '/me/devices') { const body = parseBody(event); if (typeof body.token !== 'string' || !body.token.startsWith('ExponentPushToken[') || (body.platform !== 'ios' && body.platform !== 'android')) return reply(400, { message: 'A valid Expo token and platform are required' }); const value: DeviceToken = { userId, token: body.token, platform: body.platform, active: true, createdAt: now(), updatedAt: now() }; await dependencies.users.putDevice(value); return reply(201, value); }
       if (method === 'DELETE' && path.startsWith('/me/devices/')) { await dependencies.users.deleteDevice(userId, decodeURIComponent(path.slice('/me/devices/'.length))); return reply(204, {}); }
       if (method === 'GET' && path === '/me/profile') return reply(200, (await dependencies.users.getProfile(userId)) ?? null);

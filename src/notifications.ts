@@ -31,8 +31,9 @@ export class ExpoPushPublisher {
   }
 }
 
-function nativePushMessage(job: Internship): PushMessage {
-  return { ...pushMessage(job, defaultPushTemplates), click: job.jobId };
+function nativePushMessage(job: Internship, templates?: PushTemplates): PushMessage {
+  // Keep the legacy compact title/body defaults; only the transport changes from ntfy to Expo.
+  return { ...pushMessage(job, templates ?? defaultPushTemplates), click: job.jobId };
 }
 
 /**
@@ -52,7 +53,7 @@ export async function sendNewJobNotifications(jobs: Internship[], users: UserSto
     const timestamp = now().toISOString(); const receipt: DeliveryReceipt = { userId: device.userId, jobId: job.jobId, token: device.token, status: 'pending', createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp };
     await users.putReceipt(receipt);
     try {
-      const ticket = await publisher.publish(device.token, nativePushMessage(job));
+      const ticket = await publisher.publish(device.token, nativePushMessage(job, preference.push));
       const status = ticket.status === 'ok' ? 'pending' : 'error';
       await users.putReceipt({ ...receipt, ticketId: ticket.id, status, updatedAt: now().toISOString() });
       if (status === 'pending') sent += 1;

@@ -19,6 +19,8 @@ export interface UserPreferences {
   filter: JobFilter;
   alertsEnabled: boolean;
   onboardingComplete: boolean;
+  /** Uses the same safe placeholders as the legacy compact ntfy notification. */
+  push?: { titleTemplate?: string; descriptionTemplate?: string; roleAbbreviations?: Record<string, string> };
   updatedAt: string;
 }
 

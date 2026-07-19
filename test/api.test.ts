@@ -18,4 +18,11 @@ describe('public API ownership boundary', () => {
     expect((await handler(event('user-b', 'PATCH', `/me/applications/${applicationId}`, { status: 'offer' }))).statusCode).toBe(404);
     expect(JSON.parse((await handler(event('user-a', 'GET', '/me/applications'))).body).applications[0]).toMatchObject({ jobId: 'job-1', applyMode: 'official-form' });
   });
+  it('persists per-user alert templates without resetting existing alert preferences', async () => {
+    const jobs = new MemoryInternshipStore(); const users = new MemoryUserStore(); const handler = createApiHandler({ jobs, users });
+    const first = await handler(event('user-a', 'PUT', '/me/preferences', { filter: { includeCategories: ['swe'] }, alertsEnabled: true, onboardingComplete: true, push: { titleTemplate: '{company}: {title}', descriptionTemplate: '{location}\n{url}' } }));
+    expect(JSON.parse(first.body)).toMatchObject({ alertsEnabled: true, push: { titleTemplate: '{company}: {title}' } });
+    const second = await handler(event('user-a', 'PUT', '/me/preferences', { push: { titleTemplate: '{shortTitle} — {company}' } }));
+    expect(JSON.parse(second.body)).toMatchObject({ filter: { includeCategories: ['swe'] }, alertsEnabled: true, onboardingComplete: true, push: { titleTemplate: '{shortTitle} — {company}' } });
+  });
 });
