@@ -1,5 +1,5 @@
 import { fingerprint, jobId, normalizeUrl } from './core/normalize.js';
-import { matchesJobFilter, type JobFilter } from './core/filters.js';
+import { isTechnicalJob, matchesJobFilter, type JobFilter } from './core/filters.js';
 import type { Internship, RawListing, SourceAdapter, SourceOccurrence } from './types.js';
 import type { InternshipStore } from './store.js';
 
@@ -39,7 +39,7 @@ export class Poller {
           else {
             const created = newJob(listing, now);
             if (baseline) created.notification = { smsPending: false, digestPending: false };
-            else if (matchesJobFilter(listing, this.filter)) report.newJobs.push(created);
+            else if (isTechnicalJob(created) && matchesJobFilter(listing, this.filter)) report.newJobs.push(created);
             else { created.notification = { smsPending: false, digestPending: false }; report.filteredJobs.push(created); }
             await this.store.putInternship(created);
           }
