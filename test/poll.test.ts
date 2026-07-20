@@ -68,7 +68,7 @@ describe('polling', () => {
       undefined,
       async () => { throw new Error('Application link returned HTTP 403'); },
     ).poll();
-    expect((await store.getJob('legacy-role'))).toMatchObject({ open: false, notification: { smsPending: false, digestPending: false } });
+    expect((await store.getJob('legacy-role'))).toMatchObject({ open: false, invalidApplicationUrl: role.applyUrl, notification: { smsPending: false, digestPending: false } });
     expect(report.failures).toContain('catalog: legacy-role: Application link returned HTTP 403');
   });
 });

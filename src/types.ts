@@ -145,6 +145,8 @@ export interface Internship {
   normalizedUrl: string;
   /** Present only after the official destination has resolved successfully. */
   applicationUrlValidatedAt?: string;
+  /** A confirmed broken URL remains hidden until a source supplies a different destination. */
+  invalidApplicationUrl?: string;
   fingerprint: string;
   compensation: Compensation;
   requirements?: JobRequirements;

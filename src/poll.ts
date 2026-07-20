@@ -21,8 +21,12 @@ function merge(existing: Internship, listing: RawListing, now: string, applicati
   const location = genericLocation(existing.location) ? listing.location || existing.location : existing.location;
   const company = existing.company || listing.company;
   const sourceReferences = match >= 0 ? existing.sourceReferences.map((item, index) => index === match ? reference : item) : [...existing.sourceReferences, reference];
-  const replaceLegacyUrl = Boolean(applicationUrlValidatedAt && !existing.applicationUrlValidatedAt);
-  return { ...existing, company, title: existing.title || listing.title, location, applyUrl: replaceLegacyUrl ? listing.applyUrl : existing.applyUrl || listing.applyUrl, normalizedUrl: replaceLegacyUrl ? normalizeUrl(listing.applyUrl) : existing.normalizedUrl, fingerprint: fingerprint(company, existing.title || listing.title, location, listing.season), compensation: listing.compensation.maxHourlyUSD ? listing.compensation : existing.compensation, requirements: listing.requirements ?? existing.requirements, employerCategory: employerCategory(company), sourceReferences, open: sourceReferences.some((item) => item.state === 'open'), lastSeenAt: now, ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}) };
+  const listingNormalizedUrl = normalizeUrl(listing.applyUrl);
+  const keepQuarantined = existing.invalidApplicationUrl === listingNormalizedUrl;
+  const replaceStoredUrl = Boolean(applicationUrlValidatedAt && (!existing.applicationUrlValidatedAt || existing.normalizedUrl !== listingNormalizedUrl));
+  const base = { ...existing };
+  if (!keepQuarantined) delete base.invalidApplicationUrl;
+  return { ...base, company, title: existing.title || listing.title, location, applyUrl: replaceStoredUrl ? listing.applyUrl : existing.applyUrl || listing.applyUrl, normalizedUrl: replaceStoredUrl ? listingNormalizedUrl : existing.normalizedUrl, fingerprint: fingerprint(company, existing.title || listing.title, location, listing.season), compensation: listing.compensation.maxHourlyUSD ? listing.compensation : existing.compensation, requirements: listing.requirements ?? existing.requirements, employerCategory: employerCategory(company), sourceReferences, open: keepQuarantined ? false : sourceReferences.some((item) => item.state === 'open'), lastSeenAt: now, ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}) };
 }
 function newJob(listing: RawListing, now: string, applicationUrlValidatedAt?: string): Internship {
   const normalizedUrl = normalizeUrl(listing.applyUrl); const key = fingerprint(listing.company, listing.title, listing.location, listing.season);
@@ -31,6 +35,9 @@ function newJob(listing: RawListing, now: string, applicationUrlValidatedAt?: st
 
 export class Poller {
   constructor(private readonly adapters: SourceAdapter[], private readonly store: InternshipStore, private readonly now: () => Date = () => new Date(), private readonly filter?: JobFilter, private readonly validateApplicationUrl?: ApplicationUrlValidator) {}
+  private async quarantine(job: Internship) {
+    await this.store.putInternship({ ...job, open: false, invalidApplicationUrl: job.normalizedUrl, notification: { ...job.notification, smsPending: false, digestPending: false } });
+  }
   private async validateUnverifiedOpenJobs(report: PollReport) {
     if (!this.validateApplicationUrl || !this.store.listOpen) return;
     let cursor: string | undefined;
@@ -46,7 +53,7 @@ export class Poller {
           await this.validateApplicationUrl!(job.applyUrl);
           await this.store.putInternship({ ...job, applicationUrlValidatedAt: this.now().toISOString() });
         } catch (error) {
-          await this.store.putInternship({ ...job, open: false, notification: { ...job.notification, smsPending: false, digestPending: false } });
+          await this.quarantine(job);
           report.failures.push(`catalog: ${job.jobId}: ${error instanceof Error ? error.message : String(error)}`);
         }
       };
@@ -83,7 +90,7 @@ export class Poller {
             // Runtime polling supplies a live verifier. Existing validated URLs
             // are cached so the five-minute poll does not repeatedly probe the
             // same employer endpoint.
-            const needsValidation = Boolean(this.validateApplicationUrl && (!existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
+            const needsValidation = Boolean(this.validateApplicationUrl && existing?.invalidApplicationUrl !== normalizedUrl && (!existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
             validatingLink = needsValidation;
             if (needsValidation) await this.validateApplicationUrl!(listing.applyUrl);
             const verifiedListing = listing;
@@ -99,7 +106,7 @@ export class Poller {
             }
           } catch (error) {
             if (validatingLink && existing?.open) {
-              await this.store.putInternship({ ...existing, open: false, notification: { ...existing.notification, smsPending: false, digestPending: false } });
+              await this.quarantine(existing);
             }
             report.failures.push(`${adapter.id}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`);
           }
