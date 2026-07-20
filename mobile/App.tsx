@@ -1078,8 +1078,6 @@ function AppContent() {
     return <AppLoadingSkeleton />;
   if (!preferences.onboardingComplete)
     return <Onboarding token={token} onDone={setPreferences} />;
-  if (!launchLoaded)
-    return <AppLoadingSkeleton />;
   const apply = async (job: Job) => {
     const created = await api<Application>("/me/applications", token, {
       method: "POST",

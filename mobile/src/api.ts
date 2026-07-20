@@ -1,9 +1,31 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const baseUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
+const requestTimeoutMs = 12_000;
+
 export async function api<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
   if (!baseUrl) throw new Error('EXPO_PUBLIC_API_URL is not configured');
-  const response = await fetch(`${baseUrl}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init.headers } });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...init.headers,
+      },
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error('The request timed out. Check your connection and try again.');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
   if (response.status === 204) return undefined as T;
   const data = await response.json() as T & { message?: string };
   if (!response.ok) throw new Error(data.message ?? 'Request failed');
