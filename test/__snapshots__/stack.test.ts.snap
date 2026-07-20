@@ -638,7 +638,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
           "S3Bucket": {
             "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
           },
-          "S3Key": "fe5acef78f34ba11e02e0f52b6576a004f7b7225fa835a28bfe39e755fb3026b.zip",
+          "S3Key": "d3a85efc865f5f252501c5ca9b0a40409fa8477faf4a1900f08287e199a6d798.zip",
         },
         "Environment": {
           "Variables": {

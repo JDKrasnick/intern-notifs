@@ -3,6 +3,7 @@ import {
   AccessibilityInfo,
   Alert,
   Animated,
+  Easing,
   FlatList,
   KeyboardAvoidingView,
   Linking,
@@ -167,6 +168,25 @@ function useMotionAllowed() {
   return motionAllowed;
 }
 
+async function openOfficialApplication(url: string) {
+  if (!/^https:\/\//i.test(url)) {
+    Alert.alert(
+      "Application link unavailable",
+      "This role does not have a valid official application link yet.",
+    );
+    return;
+  }
+
+  try {
+    await WebBrowser.openBrowserAsync(url);
+  } catch {
+    Alert.alert(
+      "Could not open application",
+      "Please try again or open the employer's site from another device.",
+    );
+  }
+}
+
 function JobCard({
   job,
   onOpen,
@@ -280,6 +300,32 @@ function JobDetailSheet({
   onDismiss: () => void;
   onApply: (job: Job) => void;
 }) {
+  const motionAllowed = useContext(MotionAllowedContext);
+  const sheetOffset = useRef(new Animated.Value(800)).current;
+  const visible = Boolean(job);
+
+  useEffect(() => {
+    if (!visible) {
+      sheetOffset.setValue(800);
+      return;
+    }
+
+    sheetOffset.setValue(800);
+    if (!motionAllowed) {
+      sheetOffset.setValue(0);
+      return;
+    }
+
+    const animation = Animated.timing(sheetOffset, {
+      toValue: 0,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [motionAllowed, sheetOffset, visible]);
+
   if (!job) return null;
   const details = [job.location, job.season, job.compensation.raw]
     .filter(Boolean)
@@ -291,7 +337,7 @@ function JobDetailSheet({
       : "Open official application";
   return (
     <Modal
-      animationType="slide"
+      animationType="none"
       transparent
       visible
       onRequestClose={onDismiss}
@@ -304,9 +350,9 @@ function JobDetailSheet({
           style={styles.sheetDismissArea}
           onPress={onDismiss}
         />
-        <View
+        <Animated.View
           accessibilityViewIsModal
-          style={styles.jobSheet}
+          style={[styles.jobSheet, { transform: [{ translateY: sheetOffset }] }]}
         >
           <View style={styles.sheetHandle} />
           <Text style={styles.sheetEyebrow}>Official application</Text>
@@ -329,10 +375,10 @@ function JobDetailSheet({
             {!job.open
               ? "This opportunity is shown for reference. Confirm its availability on the employer’s site."
               : signedIn
-              ? "We’ll start tracking this role, then open the employer’s application in your browser."
+              ? "We’ll open the employer’s application and start tracking this role in the background."
               : "You’ll complete the employer’s application in your browser."}
           </Text>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -1078,30 +1124,35 @@ function AppContent() {
     return <AppLoadingSkeleton />;
   if (!preferences.onboardingComplete)
     return <Onboarding token={token} onDone={setPreferences} />;
-  const apply = async (job: Job) => {
-    const created = await api<Application>("/me/applications", token, {
-      method: "POST",
-      body: JSON.stringify({ jobId: job.jobId, status: "applied" }),
-    });
-    setApplications((current) => [created, ...current.filter((item) => item.applicationId !== created.applicationId)]);
-    const alertSettings = preferences.alertSettings ?? defaultAlertSettings;
-    if (preferences.alertsEnabled && alertSettings.applicationReminders) {
-      void notifyApplicationProgress(
-        created.applicationId,
-        "Application tracking started",
-        `${job.title} at ${job.company} is now in your saved applications.`,
-      ).catch(() => undefined);
-      void scheduleApplicationFollowUp(
-        created.applicationId,
-        `${job.title} at ${job.company}`,
-        alertSettings.followUpDays,
-      ).catch(() => undefined);
-    }
-    await WebBrowser.openBrowserAsync(job.applyUrl);
-    Alert.alert(
-      "Application tracking started",
-      "Complete and submit the employer’s official form. Your profile and résumé stay available in the Profile tab for manual completion.",
-    );
+  const apply = (job: Job) => {
+    void openOfficialApplication(job.applyUrl);
+    void (async () => {
+      try {
+        const created = await api<Application>("/me/applications", token, {
+          method: "POST",
+          body: JSON.stringify({ jobId: job.jobId, status: "applied" }),
+        });
+        setApplications((current) => [created, ...current.filter((item) => item.applicationId !== created.applicationId)]);
+        const alertSettings = preferences.alertSettings ?? defaultAlertSettings;
+        if (preferences.alertsEnabled && alertSettings.applicationReminders) {
+          void notifyApplicationProgress(
+            created.applicationId,
+            "Application tracking started",
+            `${job.title} at ${job.company} is now in your saved applications.`,
+          ).catch(() => undefined);
+          void scheduleApplicationFollowUp(
+            created.applicationId,
+            `${job.title} at ${job.company}`,
+            alertSettings.followUpDays,
+          ).catch(() => undefined);
+        }
+      } catch {
+        Alert.alert(
+          "Application tracking unavailable",
+          "The official application is open, but we could not save this role to your tracker.",
+        );
+      }
+    })();
   };
   return (
     <SafeAreaView style={styles.screen}>
@@ -1207,7 +1258,7 @@ function AppContent() {
         onApply={(job) => {
           setSelectedJob(null);
           if (job.open) void apply(job);
-          else void WebBrowser.openBrowserAsync(job.applyUrl);
+          else void openOfficialApplication(job.applyUrl);
         }}
       />
     </SafeAreaView>
@@ -1325,7 +1376,7 @@ function GuestExperience({
         onDismiss={() => setSelectedJob(null)}
         onApply={(job) => {
           setSelectedJob(null);
-          void WebBrowser.openBrowserAsync(job.applyUrl);
+          void openOfficialApplication(job.applyUrl);
         }}
       />
     </SafeAreaView>

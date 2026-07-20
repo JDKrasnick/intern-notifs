@@ -38,4 +38,18 @@ describe('polling', () => {
     expect((await store.listOpen?.(undefined, 25, 'closed'))?.jobs).toMatchObject([{ open: false }]);
     expect(await store.pendingSms()).toEqual([]);
   });
+  it('does not store or alert a role whose application link fails validation', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putCheckpoint({ sourceId: 'one', successfulFetches: 1, lastRowCount: 1 });
+    const report = await new Poller(
+      [new Adapter('one', [listing('https://jobs.example.com/b')])],
+      store,
+      undefined,
+      undefined,
+      async () => { throw new Error('Application link returned HTTP 404'); },
+    ).poll();
+    expect(report.failures).toEqual([expect.stringContaining('row 5: Application link returned HTTP 404')]);
+    expect(store.jobs.size).toBe(0);
+    expect(report.newJobs).toEqual([]);
+  });
 });

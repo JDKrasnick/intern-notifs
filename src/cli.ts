@@ -3,6 +3,7 @@ import { defaultSources } from './sources/github.js';
 import { Poller } from './poll.js';
 import { DynamoInternshipStore, MemoryInternshipStore } from './store.js';
 import { ExpoPushPublisher, sendDigest, SesEmailSender } from './notifications.js';
+import { validateApplicationUrl } from './core/application-url.js';
 
 const command = process.argv[2];
 const table = process.env.INTERNSHIPS_TABLE;
@@ -12,7 +13,7 @@ const store = command === 'dry-run' ? new MemoryInternshipStore() : new DynamoIn
 
 async function main() {
   if (command === 'poll' || command === 'seed' || command === 'dry-run') {
-    const report = await new Poller(defaultSources, store, () => new Date()).poll({ seedOnly: command === 'seed' || command === 'dry-run' });
+    const report = await new Poller(defaultSources, store, () => new Date(), undefined, validateApplicationUrl).poll({ seedOnly: command === 'seed' || command === 'dry-run' });
     console.log(JSON.stringify(report, null, 2));
     if (report.failures.length) process.exitCode = 1;
     return;

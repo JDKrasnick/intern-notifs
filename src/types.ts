@@ -143,6 +143,8 @@ export interface Internship {
   season: string;
   applyUrl: string;
   normalizedUrl: string;
+  /** Present only after the official destination has resolved successfully. */
+  applicationUrlValidatedAt?: string;
   fingerprint: string;
   compensation: Compensation;
   requirements?: JobRequirements;
