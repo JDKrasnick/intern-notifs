@@ -1,22 +1,28 @@
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AccessibilityInfo,
   Alert,
+  Animated,
   FlatList,
   KeyboardAvoidingView,
   Linking,
+  Modal,
   Platform,
   SafeAreaView,
   ScrollView,
+  SectionList,
   StyleSheet,
   Switch,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import * as Notifications from "expo-notifications";
 import * as DocumentPicker from "expo-document-picker";
+import { Ionicons } from "@expo/vector-icons";
 import { api, sessionStorage } from "./src/api";
 import { confirmEmail, signIn, signUp } from "./src/auth";
 import {
@@ -46,6 +52,14 @@ type Application = {
   status: string;
   notes?: string;
 };
+type LaunchInbox = {
+  jobs: Job[];
+  total: number;
+  hasMore: boolean;
+  previousOpenedAt: string | null;
+  openedAt: string;
+};
+type RoleSection = { kind: "new" | "seen" | "all"; data: Job[] };
 type JobFilter = {
   includeCategories?: string[];
   includeKeywords?: string[];
@@ -114,22 +128,72 @@ const colors = {
   ink: "#1C1C1E",
   body: "#3A3A3C",
   muted: "#6C6C70",
+  placeholder: "#475569",
   border: "#D1D1D6",
   separator: "#E5E5EA",
   signal: "#0E7490",
   signalSoft: "#E6F6F8",
+  signalGlow: "#67E8F9",
+  onDark: "#FFFFFF",
+  overlay: "rgba(15, 23, 42, 0.44)",
+  dangerSoft: "#FEF1F0",
+  dangerBorder: "#F2AAA4",
+  successSoft: "#ECFDF3",
+  successBorder: "#86D6A5",
   danger: "#B42318",
 };
+const MotionAllowedContext = createContext(false);
 
-function JobCard({ job, onOpen }: { job: Job; onOpen: () => void }) {
+function useMotionAllowed() {
+  const [motionAllowed, setMotionAllowed] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    void AccessibilityInfo.isReduceMotionEnabled()
+      .then((reduceMotion) => {
+        if (mounted) setMotionAllowed(!reduceMotion);
+      })
+      .catch(() => {
+        if (mounted) setMotionAllowed(true);
+      });
+    const subscription = AccessibilityInfo.addEventListener(
+      "reduceMotionChanged",
+      (reduceMotion) => setMotionAllowed(!reduceMotion),
+    );
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
+  return motionAllowed;
+}
+
+function JobCard({
+  job,
+  onOpen,
+  applicationStatus,
+  isNew = false,
+}: {
+  job: Job;
+  onOpen: () => void;
+  applicationStatus?: string;
+  isNew?: boolean;
+}) {
   return (
     <TouchableOpacity
       accessibilityRole="button"
-      accessibilityLabel={`${job.title} at ${job.company}, ${job.location}`}
+      accessibilityLabel={`${isNew ? "New role, " : ""}${job.title} at ${job.company}, ${job.location}${applicationStatus ? `, ${applicationStatus}` : ""}`}
       style={styles.card}
       onPress={onOpen}
     >
-      <Text style={styles.company}>{job.company}</Text>
+      <View style={styles.jobCompanyRow}>
+        <Text style={styles.company}>{job.company}</Text>
+        {isNew ? (
+          <View style={styles.newSpark} accessibilityLabel="New role">
+            <Ionicons name="sparkles-outline" size={13} color={colors.signal} />
+            <Text style={styles.newSparkText}>New</Text>
+          </View>
+        ) : null}
+      </View>
       <Text style={styles.title}>{job.title}</Text>
       <Text style={styles.muted}>
         {job.location} · {job.season}
@@ -138,11 +202,139 @@ function JobCard({ job, onOpen }: { job: Job; onOpen: () => void }) {
       {job.compensation.raw ? (
         <Text style={styles.pay}>{job.compensation.raw}</Text>
       ) : null}
+      {applicationStatus ? (
+        <View style={styles.jobApplicationStatus}>
+          <Text style={styles.jobApplicationStatusText}>{applicationStatus.toUpperCase()}</Text>
+        </View>
+      ) : null}
       <View style={styles.jobCardAction}>
         <Text style={styles.jobCardActionText}>View role</Text>
         <Text style={styles.jobCardActionArrow}>›</Text>
       </View>
     </TouchableOpacity>
+  );
+}
+
+function NewRoleCard({
+  job,
+  onOpen,
+  applicationStatus,
+  index,
+}: {
+  job: Job;
+  onOpen: () => void;
+  applicationStatus?: string;
+  index: number;
+}) {
+  const opacity = useRef(new Animated.Value(1)).current;
+  const lift = useRef(new Animated.Value(0)).current;
+  const glow = useRef(new Animated.Value(0)).current;
+  const motionAllowed = useContext(MotionAllowedContext);
+
+  useEffect(() => {
+    if (!motionAllowed) {
+      opacity.setValue(1);
+      lift.setValue(0);
+      glow.setValue(0);
+      return;
+    }
+    opacity.setValue(0);
+    lift.setValue(8);
+    glow.setValue(0);
+    const animation = Animated.sequence([
+      Animated.delay(Math.min(index, 4) * 80),
+      Animated.parallel([
+        Animated.timing(opacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+        Animated.spring(lift, { toValue: 0, friction: 9, tension: 100, useNativeDriver: true }),
+        Animated.sequence([
+          Animated.timing(glow, { toValue: 0.18, duration: 160, useNativeDriver: true }),
+          Animated.timing(glow, { toValue: 0, duration: 420, useNativeDriver: true }),
+        ]),
+      ]),
+    ]);
+    animation.start();
+    return () => animation.stop();
+  }, [glow, index, lift, motionAllowed, opacity]);
+
+  return (
+    <Animated.View style={{ opacity, transform: [{ translateY: lift }] }}>
+      <JobCard
+        job={job}
+        onOpen={onOpen}
+        applicationStatus={applicationStatus}
+        isNew
+      />
+      <Animated.View pointerEvents="none" style={[styles.newRoleGlow, { opacity: glow }]} />
+    </Animated.View>
+  );
+}
+
+function JobDetailSheet({
+  job,
+  signedIn,
+  onDismiss,
+  onApply,
+}: {
+  job: Job | null;
+  signedIn: boolean;
+  onDismiss: () => void;
+  onApply: (job: Job) => void;
+}) {
+  if (!job) return null;
+  const details = [job.location, job.season, job.compensation.raw]
+    .filter(Boolean)
+    .join(" · ");
+  const actionLabel = !job.open
+    ? "View official listing"
+    : signedIn
+      ? "Apply on official site"
+      : "Open official application";
+  return (
+    <Modal
+      animationType="slide"
+      transparent
+      visible
+      onRequestClose={onDismiss}
+      statusBarTranslucent
+    >
+      <View style={styles.sheetOverlay}>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Close role details"
+          style={styles.sheetDismissArea}
+          onPress={onDismiss}
+        />
+        <View
+          accessibilityViewIsModal
+          style={styles.jobSheet}
+        >
+          <View style={styles.sheetHandle} />
+          <Text style={styles.sheetEyebrow}>Official application</Text>
+          <Text style={styles.sheetTitle}>{job.title}</Text>
+          <Text style={styles.sheetCompany}>{job.company}</Text>
+          <Text style={styles.sheetDetail}>{details}</Text>
+          {!job.open ? (
+            <View style={styles.sheetClosedNotice}>
+              <Text style={styles.sheetClosedText}>This listing is marked closed.</Text>
+            </View>
+          ) : null}
+          <View style={styles.sheetActions}>
+            <ActionButton
+              label={actionLabel}
+              onPress={() => onApply(job)}
+            />
+            <ActionButton label="Not now" variant="secondary" onPress={onDismiss} />
+          </View>
+          <Text style={styles.sheetHelper}>
+            {!job.open
+              ? "This opportunity is shown for reference. Confirm its availability on the employer’s site."
+              : signedIn
+              ? "We’ll start tracking this role, then open the employer’s application in your browser."
+              : "You’ll complete the employer’s application in your browser."}
+          </Text>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -308,26 +500,37 @@ function RoleFilters({
 function TabNavigation({
   active,
   onChange,
+  rail = false,
 }: {
   active: "feed" | "saved" | "profile";
   onChange: (tab: "feed" | "saved" | "profile") => void;
+  rail?: boolean;
 }) {
+  const tabs = [
+    { key: "feed", label: "Roles", icon: "briefcase-outline", activeIcon: "briefcase" },
+    { key: "saved", label: "Saved", icon: "bookmark-outline", activeIcon: "bookmark" },
+    { key: "profile", label: "Profile", icon: "person-outline", activeIcon: "person" },
+  ] as const;
   return (
-    <View style={styles.nav} accessibilityRole="tablist">
-      {(["feed", "saved", "profile"] as const).map((item) => {
-        const selected = active === item;
+    <View style={[styles.nav, rail && styles.navRail]} accessibilityRole="tablist">
+      {tabs.map((item) => {
+        const selected = active === item.key;
         return (
           <TouchableOpacity
-            key={item}
+            key={item.key}
             accessibilityRole="tab"
             accessibilityState={{ selected }}
-            onPress={() => onChange(item)}
-            style={[styles.navItem, selected && styles.navItemActive]}
+            accessibilityLabel={item.label}
+            onPress={() => onChange(item.key)}
+            style={[styles.navItem, rail && styles.navRailItem]}
           >
+            <Ionicons
+              name={selected ? item.activeIcon : item.icon}
+              size={22}
+              color={selected ? colors.ink : colors.muted}
+            />
             <Text style={[styles.navLabel, selected && styles.navLabelActive]}>
-              {item === "feed"
-                ? "Roles"
-                : item[0].toUpperCase() + item.slice(1)}
+              {item.label}
             </Text>
           </TouchableOpacity>
         );
@@ -495,33 +698,151 @@ function JobCardSkeleton() {
   );
 }
 
+function LoadingRoleCard({ index }: { index: number }) {
+  const opacity = useRef(new Animated.Value(1)).current;
+  const lift = useRef(new Animated.Value(0)).current;
+  const motionAllowed = useContext(MotionAllowedContext);
+
+  useEffect(() => {
+    if (!motionAllowed) {
+      opacity.setValue(1);
+      lift.setValue(0);
+      return;
+    }
+    opacity.setValue(0);
+    lift.setValue(10);
+    const animation = Animated.sequence([
+      Animated.delay(index * 100),
+      Animated.parallel([
+        Animated.timing(opacity, { toValue: 1, duration: 240, useNativeDriver: true }),
+        Animated.spring(lift, { toValue: 0, friction: 10, tension: 100, useNativeDriver: true }),
+      ]),
+    ]);
+    animation.start();
+    return () => animation.stop();
+  }, [index, lift, motionAllowed, opacity]);
+
+  return (
+    <Animated.View style={{ opacity, transform: [{ translateY: lift }] }}>
+      <JobCardSkeleton />
+    </Animated.View>
+  );
+}
+
+function launchInterval(previousOpenedAt: string | null) {
+  if (!previousOpenedAt) return "your last visit";
+  const date = new Date(previousOpenedAt);
+  if (Number.isNaN(date.valueOf())) return "your last visit";
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
+function LaunchInbox({
+  inbox,
+  onOpen,
+  onViewAll,
+  applicationStatuses,
+}: {
+  inbox: LaunchInbox;
+  onOpen: (job: Job) => void;
+  onViewAll: () => void;
+  applicationStatuses: Map<string, string>;
+}) {
+  return (
+    <FlatList
+      style={styles.list}
+      data={inbox.jobs}
+      keyExtractor={(job) => job.jobId}
+      contentContainerStyle={styles.feedListContent}
+      ListHeaderComponent={
+        <View style={styles.inboxHeader}>
+          <Text style={styles.eyebrow}>Your radar</Text>
+          <Text accessibilityLabel={`${inbox.total} new matches`} style={styles.inboxCount}>
+            {inbox.total}
+          </Text>
+          <Text style={styles.inboxTitle}>new matches</Text>
+          <Text style={styles.inboxDescription}>
+            Matched your alerts since {launchInterval(inbox.previousOpenedAt)}
+          </Text>
+          {inbox.hasMore ? (
+            <Text style={styles.inboxOverflow}>Showing the newest 50.</Text>
+          ) : null}
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={onViewAll}
+            style={styles.inboxViewAll}
+          >
+            <Text style={styles.inboxViewAllText}>View all internships</Text>
+          </TouchableOpacity>
+          <Text style={styles.inboxSectionLabel}>New matches</Text>
+        </View>
+      }
+      renderItem={({ item, index }) => (
+        <NewRoleCard
+          job={item}
+          index={index}
+          onOpen={() => onOpen(item)}
+          applicationStatus={applicationStatuses.get(item.jobId)}
+        />
+      )}
+    />
+  );
+}
+
+function CaughtUpDivider({ showSeenLabel = true }: { showSeenLabel?: boolean }) {
+  return (
+    <View accessibilityRole="text" accessibilityLabel="You are all caught up. Seen roles follow." style={styles.caughtUpBlock}>
+      <View style={styles.caughtUpRuleRow}>
+        <View style={styles.caughtUpLine} />
+        <Text style={styles.caughtUpText}>You’re all caught up</Text>
+        <View style={styles.caughtUpLine} />
+      </View>
+      {showSeenLabel ? <Text style={styles.seenRolesLabel}>Seen roles</Text> : null}
+    </View>
+  );
+}
+
 function AppLoadingSkeleton() {
+  const { width } = useWindowDimensions();
+  const usesNavigationRail = width >= 700;
   return (
     <SafeAreaView
       style={styles.screen}
       accessibilityRole="progressbar"
       accessibilityLabel="Loading your internships"
     >
-      <View style={styles.skeletonNav}>
-        <Skeleton width={40} height={14} />
-        <Skeleton width={44} height={14} />
-        <Skeleton width={46} height={14} />
-      </View>
-      <View style={styles.skeletonPage}>
-        <View style={styles.loadingTitleGroup}>
-          <Skeleton width={94} height={12} />
-          <View style={styles.skeletonGap8} />
-          <Skeleton width={168} height={28} />
+      <View style={[styles.appShell, usesNavigationRail && styles.appShellWide]}>
+        {usesNavigationRail ? (
+          <View style={[styles.skeletonNav, styles.skeletonNavRail]}>
+            <Skeleton width={40} height={14} />
+            <Skeleton width={44} height={14} />
+            <Skeleton width={46} height={14} />
+          </View>
+        ) : null}
+        <View style={styles.skeletonPage}>
+          <View style={styles.loadingTitleGroup}>
+            <Skeleton width={94} height={12} />
+            <View style={styles.skeletonGap8} />
+            <Skeleton width={168} height={28} />
+          </View>
+          <View style={styles.skeletonSearch} />
+          <View style={styles.skeletonSection}>
+            <Skeleton width={132} height={12} />
+            <View style={styles.skeletonGap8} />
+            <Skeleton width={248} height={14} />
+          </View>
+          {[0, 1, 2].map((index) => <LoadingRoleCard key={index} index={index} />)}
         </View>
-        <View style={styles.skeletonSearch} />
-        <View style={styles.skeletonSection}>
-          <Skeleton width={132} height={12} />
-          <View style={styles.skeletonGap8} />
-          <Skeleton width={248} height={14} />
-        </View>
-        <JobCardSkeleton />
-        <JobCardSkeleton />
-        <JobCardSkeleton />
+        {!usesNavigationRail ? (
+          <View style={styles.skeletonNav}>
+            <Skeleton width={40} height={14} />
+            <Skeleton width={44} height={14} />
+            <Skeleton width={46} height={14} />
+          </View>
+        ) : null}
       </View>
     </SafeAreaView>
   );
@@ -578,7 +899,9 @@ function ProfileLoadingSkeleton() {
   );
 }
 
-export default function App() {
+function AppContent() {
+  const { width } = useWindowDimensions();
+  const usesNavigationRail = width >= 700;
   const [token, setToken] = useState<string>();
   const [ready, setReady] = useState(false);
   const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
@@ -592,6 +915,13 @@ export default function App() {
   const [hideUsCitizenshipRequired, setHideUsCitizenshipRequired] = useState(false);
   const [hideAdvancedDegreeRequired, setHideAdvancedDegreeRequired] = useState(false);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [launchInbox, setLaunchInbox] = useState<LaunchInbox>();
+  const [showLaunchInbox, setShowLaunchInbox] = useState(false);
+  const [launchLoaded, setLaunchLoaded] = useState(false);
+  const [launchToken, setLaunchToken] = useState<string>();
+  const launchRequestToken = useRef<string | undefined>(undefined);
+  const launchRequestId = useRef(0);
   useEffect(() => {
     void sessionStorage.get().then((value) => {
       setToken(value ?? undefined);
@@ -625,6 +955,37 @@ export default function App() {
     if (token) void load();
   }, [token]);
   useEffect(() => {
+    if (token !== launchToken) {
+      launchRequestToken.current = undefined;
+      setLaunchInbox(undefined);
+      setShowLaunchInbox(false);
+      setLaunchLoaded(false);
+      setLaunchToken(token);
+      return;
+    }
+    if (!token || !preferences?.onboardingComplete || launchLoaded || launchRequestToken.current === token) return;
+    launchRequestToken.current = token;
+    const requestId = ++launchRequestId.current;
+    void api<LaunchInbox>("/me/opening", token, { method: "POST" })
+      .then((inbox) => {
+        if (launchRequestId.current === requestId) {
+          setLaunchInbox(inbox.total ? inbox : undefined);
+          setShowLaunchInbox(Boolean(inbox.total));
+          if (inbox.jobs.length) {
+            setJobs((current) => [
+              ...inbox.jobs,
+              ...current.filter((job) => !inbox.jobs.some((newJob) => newJob.jobId === job.jobId)),
+            ]);
+          }
+        }
+      })
+      // The normal feed remains useful if the launch-inbox check is unavailable.
+      .catch(() => undefined)
+      .finally(() => {
+        if (launchRequestId.current === requestId) setLaunchLoaded(true);
+      });
+  }, [launchLoaded, launchToken, preferences?.onboardingComplete, token]);
+  useEffect(() => {
     const subscription = Notifications.addNotificationResponseReceivedListener(
       (response) => {
         const jobId = response.notification.request.content.data.jobId as
@@ -653,9 +1014,16 @@ export default function App() {
     );
     return () => subscription.remove();
   }, []);
+  const catalogJobs = useMemo(() => {
+    const newJobs = launchInbox?.jobs ?? [];
+    return [
+      ...newJobs,
+      ...jobs.filter((job) => !newJobs.some((newJob) => newJob.jobId === job.jobId)),
+    ];
+  }, [jobs, launchInbox]);
   const filtered = useMemo(
     () =>
-      jobs
+      catalogJobs
         .filter((job) => employerFilter === "all" || (job.employerCategory ?? "normal") === employerFilter)
         .filter((job) => !hideUsCitizenshipRequired || !job.requirements?.requiresUsCitizenship)
         .filter((job) => !hideAdvancedDegreeRequired || !job.requirements?.advancedDegreeRequired)
@@ -664,8 +1032,23 @@ export default function App() {
             .toLowerCase()
             .includes(query.toLowerCase()),
         ),
-    [employerFilter, hideAdvancedDegreeRequired, hideUsCitizenshipRequired, jobs, query],
+    [catalogJobs, employerFilter, hideAdvancedDegreeRequired, hideUsCitizenshipRequired, query],
   );
+  const applicationStatuses = useMemo(
+    () => new Map(applications.map((application) => [application.jobId, application.status])),
+    [applications],
+  );
+  const roleSections = useMemo<RoleSection[]>(() => {
+    const newJobIds = new Set(launchInbox?.jobs.map((job) => job.jobId) ?? []);
+    if (!newJobIds.size) return [{ kind: "all", data: filtered }];
+    const newJobs = filtered.filter((job) => newJobIds.has(job.jobId));
+    if (!newJobs.length) return [{ kind: "all", data: filtered }];
+    const seenJobs = filtered.filter((job) => !newJobIds.has(job.jobId));
+    return [
+      { kind: "new", data: newJobs },
+      ...(seenJobs.length ? [{ kind: "seen" as const, data: seenJobs }] : []),
+    ];
+  }, [filtered, launchInbox]);
   if (!ready)
     return <AppLoadingSkeleton />;
   if (!token)
@@ -695,12 +1078,14 @@ export default function App() {
     return <AppLoadingSkeleton />;
   if (!preferences.onboardingComplete)
     return <Onboarding token={token} onDone={setPreferences} />;
+  if (!launchLoaded)
+    return <AppLoadingSkeleton />;
   const apply = async (job: Job) => {
     const created = await api<Application>("/me/applications", token, {
       method: "POST",
       body: JSON.stringify({ jobId: job.jobId, status: "applied" }),
     });
-    setApplications((current) => [created, ...current]);
+    setApplications((current) => [created, ...current.filter((item) => item.applicationId !== created.applicationId)]);
     const alertSettings = preferences.alertSettings ?? defaultAlertSettings;
     if (preferences.alertsEnabled && alertSettings.applicationReminders) {
       void notifyApplicationProgress(
@@ -722,86 +1107,121 @@ export default function App() {
   };
   return (
     <SafeAreaView style={styles.screen}>
-      <TabNavigation active={tab} onChange={setTab} />
-      {tab === "feed" ? (
-        <>
-          <View style={styles.feedTop}>
-            <PageHeading
-              eyebrow="Technical internships"
-              title={jobStatus === "open" ? "Internships" : "Closed roles"}
-              description="Official applications, in one focused list."
+      <View style={[styles.appShell, usesNavigationRail && styles.appShellWide]}>
+        {usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} rail /> : null}
+        <View style={styles.appMain}>
+          {tab === "feed" ? (
+            launchInbox && showLaunchInbox ? (
+              <LaunchInbox
+                inbox={launchInbox}
+                onOpen={setSelectedJob}
+                onViewAll={() => setShowLaunchInbox(false)}
+                applicationStatuses={applicationStatuses}
+              />
+            ) : (
+              <>
+                <View style={styles.roleFeedControls}>
+                  <TextInput
+                    value={query}
+                    onChangeText={setQuery}
+                    accessibilityLabel="Search roles, companies, and locations"
+                    placeholder="Search roles, companies, locations"
+                    placeholderTextColor={colors.placeholder}
+                    style={styles.feedSearch}
+                  />
+                  <RoleFilters
+                    expanded={filtersExpanded}
+                    onToggle={() => setFiltersExpanded((value) => !value)}
+                    employerFilter={employerFilter}
+                    onEmployerFilterChange={setEmployerFilter}
+                    jobStatus={jobStatus}
+                    onJobStatusChange={setJobStatus}
+                    hideUsCitizenshipRequired={hideUsCitizenshipRequired}
+                    hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
+                    onHideUsCitizenshipRequiredChange={setHideUsCitizenshipRequired}
+                    onHideAdvancedDegreeRequiredChange={setHideAdvancedDegreeRequired}
+                  />
+                </View>
+                <SectionList
+                  sections={roleSections}
+                  keyExtractor={(job) => job.jobId}
+                  contentContainerStyle={styles.feedListContent}
+                  stickySectionHeadersEnabled={false}
+                  renderSectionHeader={({ section }) =>
+                    section.kind === "new" ? <Text style={styles.newRolesLabel}>New roles</Text>
+                      : section.kind === "seen" ? <CaughtUpDivider />
+                        : null
+                  }
+                  ListFooterComponent={roleSections.length === 1 && roleSections[0]?.kind === "new" ? <CaughtUpDivider showSeenLabel={false} /> : null}
+                  renderItem={({ item, index, section }) =>
+                    section.kind === "new" ? (
+                      <NewRoleCard
+                        job={item}
+                        index={index}
+                        onOpen={() => setSelectedJob(item)}
+                        applicationStatus={applicationStatuses.get(item.jobId)}
+                      />
+                    ) : (
+                      <JobCard
+                        job={item}
+                        onOpen={() => setSelectedJob(item)}
+                        applicationStatus={applicationStatuses.get(item.jobId)}
+                      />
+                    )
+                  }
+                  ListEmptyComponent={
+                    <EmptyState
+                      eyebrow="Search"
+                      title="Nothing fits that search yet."
+                      description="Try a company, role, or location with fewer terms."
+                    />
+                  }
+                />
+              </>
+            )
+          ) : tab === "saved" ? (
+            <Applications
+              applications={applications}
+              jobs={catalogJobs}
+              token={token}
+              alertSettings={preferences.alertSettings ?? defaultAlertSettings}
+              alertsEnabled={preferences.alertsEnabled}
+              onChanged={() => void load()}
             />
-            <Text style={styles.inputLabel}>Search opportunities</Text>
-          </View>
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search roles, companies, locations"
-            placeholderTextColor="#94A3B8"
-            style={styles.feedSearch}
-          />
-          <RoleFilters
-            expanded={filtersExpanded}
-            onToggle={() => setFiltersExpanded((value) => !value)}
-            employerFilter={employerFilter}
-            onEmployerFilterChange={setEmployerFilter}
-            jobStatus={jobStatus}
-            onJobStatusChange={setJobStatus}
-            hideUsCitizenshipRequired={hideUsCitizenshipRequired}
-            hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
-            onHideUsCitizenshipRequiredChange={setHideUsCitizenshipRequired}
-            onHideAdvancedDegreeRequiredChange={setHideAdvancedDegreeRequired}
-          />
-          <FlatList
-            data={filtered}
-            keyExtractor={(job) => job.jobId}
-            contentContainerStyle={styles.feedListContent}
-            renderItem={({ item }) => (
-              <JobCard
-                job={item}
-                onOpen={() =>
-                  Alert.alert(item.title, `${item.company}\n${item.location}`, [
-                    { text: "Cancel", style: "cancel" },
-                    { text: "Apply", onPress: () => void apply(item) },
-                    {
-                      text: "Official site",
-                      onPress: () =>
-                        void WebBrowser.openBrowserAsync(item.applyUrl),
-                    },
-                  ])
-                }
-              />
-            )}
-            ListEmptyComponent={
-              <EmptyState
-                eyebrow="Search"
-                title="Nothing fits that search yet."
-                description="Try a company, role, or location with fewer terms."
-              />
-            }
-          />
-        </>
-      ) : tab === "saved" ? (
-        <Applications
-          applications={applications}
-          jobs={jobs}
-          token={token}
-          alertSettings={preferences.alertSettings ?? defaultAlertSettings}
-          alertsEnabled={preferences.alertsEnabled}
-          onChanged={() => void load()}
-        />
-      ) : (
-        <Profile
-          token={token}
-          preferences={preferences}
-          onPreferencesChanged={(updated) => setPreferences(updated)}
-          onSignOut={async () => {
-            await sessionStorage.clear();
-            setToken(undefined);
-          }}
-        />
-      )}
+          ) : (
+            <Profile
+              token={token}
+              preferences={preferences}
+              onPreferencesChanged={(updated) => setPreferences(updated)}
+              onSignOut={async () => {
+                await sessionStorage.clear();
+                setToken(undefined);
+              }}
+            />
+          )}
+        </View>
+        {!usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} /> : null}
+      </View>
+      <JobDetailSheet
+        job={selectedJob}
+        signedIn
+        onDismiss={() => setSelectedJob(null)}
+        onApply={(job) => {
+          setSelectedJob(null);
+          if (job.open) void apply(job);
+          else void WebBrowser.openBrowserAsync(job.applyUrl);
+        }}
+      />
     </SafeAreaView>
+  );
+}
+
+export default function App() {
+  const motionAllowed = useMotionAllowed();
+  return (
+    <MotionAllowedContext.Provider value={motionAllowed}>
+      <AppContent />
+    </MotionAllowedContext.Provider>
   );
 }
 
@@ -816,6 +1236,8 @@ function GuestExperience({
   onJobStatusChange: (status: "open" | "closed") => void;
   onSession: (token: string) => void;
 }) {
+  const { width } = useWindowDimensions();
+  const usesNavigationRail = width >= 700;
   const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
   const [query, setQuery] = useState("");
   const [employerFilter, setEmployerFilter] = useState<EmployerCategory | "all">("all");
@@ -823,6 +1245,7 @@ function GuestExperience({
   const [hideAdvancedDegreeRequired, setHideAdvancedDegreeRequired] = useState(false);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
+  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const filtered = useMemo(
     () =>
       jobs
@@ -840,73 +1263,73 @@ function GuestExperience({
     return (
       <SignIn onSession={onSession} onBrowse={() => setShowAccount(false)} />
     );
-  const openJob = (job: Job) =>
-    Alert.alert(job.title, `${job.company}\n${job.location}`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Open application",
-        onPress: () => void WebBrowser.openBrowserAsync(job.applyUrl),
-      },
-      { text: "Sign in to track", onPress: () => setShowAccount(true) },
-    ]);
   return (
     <SafeAreaView style={styles.screen}>
-      <TabNavigation active={tab} onChange={setTab} />
-      {tab === "feed" ? (
-        <>
-          <View style={styles.feedTop}>
-            <PageHeading
-              eyebrow="Technical internships"
-              title={jobStatus === "open" ? "Internships" : "Closed roles"}
-              description="Browse freely. Track roles when you are ready."
-            />
-            <Text style={styles.inputLabel}>Search opportunities</Text>
-          </View>
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search roles, companies, locations"
-            placeholderTextColor="#94A3B8"
-            style={styles.feedSearch}
-          />
-          <RoleFilters
-            expanded={filtersExpanded}
-            onToggle={() => setFiltersExpanded((value) => !value)}
-            employerFilter={employerFilter}
-            onEmployerFilterChange={setEmployerFilter}
-            jobStatus={jobStatus}
-            onJobStatusChange={onJobStatusChange}
-            hideUsCitizenshipRequired={hideUsCitizenshipRequired}
-            hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
-            onHideUsCitizenshipRequiredChange={setHideUsCitizenshipRequired}
-            onHideAdvancedDegreeRequiredChange={setHideAdvancedDegreeRequired}
-          />
-          <FlatList
-            data={filtered}
-            keyExtractor={(job) => job.jobId}
-            contentContainerStyle={styles.feedListContent}
-            renderItem={({ item }) => (
-              <JobCard job={item} onOpen={() => openJob(item)} />
-            )}
-            ListEmptyComponent={
-              <EmptyState
-                eyebrow="Search"
-                title="Nothing fits that search yet."
-                description="Try a company, role, or location with fewer terms."
+      <View style={[styles.appShell, usesNavigationRail && styles.appShellWide]}>
+        {usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} rail /> : null}
+        <View style={styles.appMain}>
+          {tab === "feed" ? (
+            <>
+              <View style={styles.roleFeedControls}>
+                <TextInput
+                  value={query}
+                  onChangeText={setQuery}
+                  accessibilityLabel="Search roles, companies, and locations"
+                  placeholder="Search roles, companies, locations"
+                  placeholderTextColor={colors.placeholder}
+                  style={styles.feedSearch}
+                />
+                <RoleFilters
+                  expanded={filtersExpanded}
+                  onToggle={() => setFiltersExpanded((value) => !value)}
+                  employerFilter={employerFilter}
+                  onEmployerFilterChange={setEmployerFilter}
+                  jobStatus={jobStatus}
+                  onJobStatusChange={onJobStatusChange}
+                  hideUsCitizenshipRequired={hideUsCitizenshipRequired}
+                  hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
+                  onHideUsCitizenshipRequiredChange={setHideUsCitizenshipRequired}
+                  onHideAdvancedDegreeRequiredChange={setHideAdvancedDegreeRequired}
+                />
+              </View>
+              <FlatList
+                data={filtered}
+                keyExtractor={(job) => job.jobId}
+                contentContainerStyle={styles.feedListContent}
+                renderItem={({ item }) => (
+                  <JobCard job={item} onOpen={() => setSelectedJob(item)} />
+                )}
+                ListEmptyComponent={
+                  <EmptyState
+                    eyebrow="Search"
+                    title="Nothing fits that search yet."
+                    description="Try a company, role, or location with fewer terms."
+                  />
+                }
               />
-            }
-          />
-        </>
-      ) : (
-        <AccountGate
-          feature={
-            tab === "saved"
-              ? "save and track applications"
-              : "set up alerts and your application profile"
-          }
-          onSignIn={() => setShowAccount(true)}
-        />
-      )}
+            </>
+          ) : (
+            <AccountGate
+              feature={
+                tab === "saved"
+                  ? "save and track applications"
+                  : "set up alerts and your application profile"
+              }
+              onSignIn={() => setShowAccount(true)}
+            />
+          )}
+        </View>
+        {!usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} /> : null}
+      </View>
+      <JobDetailSheet
+        job={selectedJob}
+        signedIn={false}
+        onDismiss={() => setSelectedJob(null)}
+        onApply={(job) => {
+          setSelectedJob(null);
+          void WebBrowser.openBrowserAsync(job.applyUrl);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -1039,8 +1462,9 @@ function Onboarding({
             style={styles.formInput}
             value={keywords}
             onChangeText={setKeywords}
+            accessibilityLabel="Specific keywords"
             placeholder="e.g. backend, robotics, research"
-            placeholderTextColor="#94A3B8"
+            placeholderTextColor={colors.placeholder}
           />
           <View style={styles.onboardingAlertRow}>
             <View style={styles.preferenceCopy}>
@@ -1052,8 +1476,9 @@ function Onboarding({
             <Switch
               value={alertsRequested}
               onValueChange={setAlertsRequested}
+              accessibilityLabel="Enable job alerts"
               trackColor={{ false: colors.border, true: colors.signal }}
-              thumbColor="#FFFFFF"
+              thumbColor={colors.onDark}
             />
           </View>
           <SaveFeedback state={feedback} onRetry={() => void complete()} />
@@ -1514,8 +1939,9 @@ function Profile({
       <Text style={styles.inputLabel}>Full name</Text>
       <TextInput
         style={styles.search}
+        accessibilityLabel="Full name"
         placeholder="Your name"
-        placeholderTextColor="#94A3B8"
+        placeholderTextColor={colors.placeholder}
         value={contact?.name ?? ""}
         onChangeText={(name) =>
           setProfile({ ...profile, contact: { ...contact, name } })
@@ -1524,8 +1950,9 @@ function Profile({
       <Text style={styles.inputLabel}>Email</Text>
       <TextInput
         style={styles.search}
+        accessibilityLabel="Email"
         placeholder="you@example.com"
-        placeholderTextColor="#94A3B8"
+        placeholderTextColor={colors.placeholder}
         value={contact?.email ?? ""}
         onChangeText={(email) =>
           setProfile({ ...profile, contact: { ...contact, email } })
@@ -1534,16 +1961,18 @@ function Profile({
       <Text style={styles.inputLabel}>Location</Text>
       <TextInput
         style={styles.search}
+        accessibilityLabel="Location"
         placeholder="Location"
-        placeholderTextColor="#94A3B8"
+        placeholderTextColor={colors.placeholder}
         value={(profile.location as string) ?? ""}
         onChangeText={(location) => setProfile({ ...profile, location })}
       />
       <Text style={styles.inputLabel}>Work authorization</Text>
       <TextInput
         style={styles.search}
+        accessibilityLabel="Work authorization"
         placeholder="Work authorization"
-        placeholderTextColor="#94A3B8"
+        placeholderTextColor={colors.placeholder}
         value={(profile.workAuthorization as string) ?? ""}
         onChangeText={(workAuthorization) =>
           setProfile({ ...profile, workAuthorization })
@@ -1574,8 +2003,9 @@ function Profile({
         <Switch
           value={alertsEnabled}
           onValueChange={setAlertsEnabled}
+          accessibilityLabel="Job alerts"
           trackColor={{ false: colors.border, true: colors.signal }}
-          thumbColor="#FFFFFF"
+          thumbColor={colors.onDark}
         />
       </View>
       <Text style={styles.preferenceTitle}>Company type</Text>
@@ -1606,8 +2036,9 @@ function Profile({
         <Switch
           value={excludeUsCitizenshipRequired}
           onValueChange={setExcludeUsCitizenshipRequired}
+          accessibilityLabel="Hide roles requiring U.S. citizenship"
           trackColor={{ false: colors.border, true: colors.signal }}
-          thumbColor="#FFFFFF"
+          thumbColor={colors.onDark}
         />
       </View>
       <View style={styles.preferenceRow}>
@@ -1618,8 +2049,9 @@ function Profile({
         <Switch
           value={excludeAdvancedDegreeRequired}
           onValueChange={setExcludeAdvancedDegreeRequired}
+          accessibilityLabel="Hide roles requiring an advanced degree"
           trackColor={{ false: colors.border, true: colors.signal }}
-          thumbColor="#FFFFFF"
+          thumbColor={colors.onDark}
         />
       </View>
       <Text style={styles.preferenceTitle}>Delivery timing</Text>
@@ -1646,10 +2078,11 @@ function Profile({
           <Text style={styles.inputLabel}>Start</Text>
           <TextInput
             style={styles.search}
+            accessibilityLabel="Quiet hours start"
             value={quietStart}
             onChangeText={setQuietStart}
             placeholder="22:00"
-            placeholderTextColor="#94A3B8"
+            placeholderTextColor={colors.placeholder}
             autoCapitalize="none"
           />
         </View>
@@ -1657,10 +2090,11 @@ function Profile({
           <Text style={styles.inputLabel}>End</Text>
           <TextInput
             style={styles.search}
+            accessibilityLabel="Quiet hours end"
             value={quietEnd}
             onChangeText={setQuietEnd}
             placeholder="08:00"
-            placeholderTextColor="#94A3B8"
+            placeholderTextColor={colors.placeholder}
             autoCapitalize="none"
           />
         </View>
@@ -1668,10 +2102,11 @@ function Profile({
       <Text style={styles.inputLabel}>Timezone</Text>
       <TextInput
         style={styles.search}
+        accessibilityLabel="Quiet hours timezone"
         value={quietTimezone}
         onChangeText={setQuietTimezone}
         placeholder="America/New_York"
-        placeholderTextColor="#94A3B8"
+        placeholderTextColor={colors.placeholder}
         autoCapitalize="none"
       />
       <Text style={styles.preferenceTitle}>Include role categories</Text>
@@ -1703,10 +2138,11 @@ function Profile({
       <Text style={styles.inputLabel}>Include keywords</Text>
       <TextInput
         style={styles.search}
+        accessibilityLabel="Include keywords"
         value={includeKeywords}
         onChangeText={setIncludeKeywords}
         placeholder="Include keywords, comma separated"
-        placeholderTextColor="#94A3B8"
+        placeholderTextColor={colors.placeholder}
       />
       <Text style={styles.preferenceTitle}>Exclude role categories</Text>
       <View style={styles.chips}>
@@ -1737,10 +2173,11 @@ function Profile({
       <Text style={styles.inputLabel}>Exclude keywords</Text>
       <TextInput
         style={styles.search}
+        accessibilityLabel="Exclude keywords"
         value={excludeKeywords}
         onChangeText={setExcludeKeywords}
         placeholder="Exclude keywords, comma separated"
-        placeholderTextColor="#94A3B8"
+        placeholderTextColor={colors.placeholder}
       />
       <Text style={styles.preferenceTitle}>Notification wording</Text>
       <Text style={styles.muted}>
@@ -1749,16 +2186,18 @@ function Profile({
       <Text style={styles.inputLabel}>Notification title</Text>
       <TextInput
         style={styles.search}
+        accessibilityLabel="Notification title"
         placeholder="Title: {shortTitle} — {company}"
-        placeholderTextColor="#94A3B8"
+        placeholderTextColor={colors.placeholder}
         value={titleTemplate}
         onChangeText={setTitleTemplate}
       />
       <Text style={styles.inputLabel}>Notification description</Text>
       <TextInput
         style={[styles.search, styles.multiline]}
+        accessibilityLabel="Notification description"
         placeholder="Description: {location} · {season}\n{url}"
-        placeholderTextColor="#94A3B8"
+        placeholderTextColor={colors.placeholder}
         value={descriptionTemplate}
         onChangeText={setDescriptionTemplate}
         multiline
@@ -1766,8 +2205,9 @@ function Profile({
       <Text style={styles.inputLabel}>Role abbreviations</Text>
       <TextInput
         style={[styles.search, styles.multiline]}
+        accessibilityLabel="Role abbreviations"
         placeholder="Role abbreviations, one per line: software engineer = SWE"
-        placeholderTextColor="#94A3B8"
+        placeholderTextColor={colors.placeholder}
         value={roleAliases}
         onChangeText={setRoleAliases}
         multiline
@@ -1784,18 +2224,20 @@ function Profile({
         <Switch
           value={applicationReminders}
           onValueChange={setApplicationReminders}
+          accessibilityLabel="Application reminders"
           trackColor={{ false: colors.border, true: colors.signal }}
-          thumbColor="#FFFFFF"
+          thumbColor={colors.onDark}
         />
       </View>
       <Text style={styles.inputLabel}>Follow up after (days)</Text>
       <TextInput
         style={styles.search}
+        accessibilityLabel="Follow up after days"
         value={followUpDays}
         onChangeText={setFollowUpDays}
         keyboardType="number-pad"
         placeholder="7"
-        placeholderTextColor="#94A3B8"
+        placeholderTextColor={colors.placeholder}
       />
       <Text style={styles.preferenceTitle}>Live notification preview</Text>
       <View style={styles.notificationPreview}>
@@ -1938,11 +2380,12 @@ function SignIn({
             <TextInput
               autoCapitalize="none"
               autoComplete="email"
+              accessibilityLabel="Email"
               keyboardType="email-address"
               returnKeyType={needsConfirmation ? "next" : "next"}
               style={styles.authInput}
               placeholder="you@example.com"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor={colors.placeholder}
               value={email}
               onChangeText={setEmail}
             />
@@ -1951,11 +2394,12 @@ function SignIn({
                 <Text style={styles.inputLabel}>Verification code</Text>
                 <TextInput
                   autoComplete="one-time-code"
+                  accessibilityLabel="Verification code"
                   keyboardType="number-pad"
                   returnKeyType="done"
                   style={styles.authInput}
                   placeholder="6-digit code"
-                  placeholderTextColor="#94A3B8"
+                  placeholderTextColor={colors.placeholder}
                   value={code}
                   onChangeText={setCode}
                 />
@@ -1982,13 +2426,14 @@ function SignIn({
                   autoComplete={
                     createMode ? "new-password" : "current-password"
                   }
+                  accessibilityLabel="Password"
                   secureTextEntry
                   returnKeyType="done"
                   style={styles.authInput}
                   placeholder={
                     createMode ? "At least 12 characters" : "Your password"
                   }
-                  placeholderTextColor="#94A3B8"
+                  placeholderTextColor={colors.placeholder}
                   value={password}
                   onChangeText={setPassword}
                   onSubmitEditing={() => {
@@ -2053,17 +2498,27 @@ function SignIn({
 }
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.canvas },
+  appShell: { flex: 1 },
+  appShellWide: { flexDirection: "row" },
+  appMain: { flex: 1, minWidth: 0 },
   skeleton: { backgroundColor: colors.separator },
   skeletonNav: {
-    height: 56,
+    height: 64,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-around",
     paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.separator,
+    borderTopWidth: 1,
+    borderTopColor: colors.separator,
   },
-  skeletonPage: { paddingHorizontal: 20, paddingTop: 20 },
+  skeletonPage: {
+    alignSelf: "center",
+    flex: 1,
+    maxWidth: 760,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    width: "100%",
+  },
   loadingTitleGroup: { marginBottom: 20 },
   skeletonSearch: {
     height: 52,
@@ -2087,6 +2542,18 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginTop: 8,
   },
+  skeletonNavRail: {
+    alignSelf: "stretch",
+    borderRightColor: colors.separator,
+    borderRightWidth: 1,
+    borderTopWidth: 0,
+    flexDirection: "column",
+    height: undefined,
+    justifyContent: "flex-start",
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+    width: 96,
+  },
   loadErrorScreen: {
     flex: 1,
     justifyContent: "flex-start",
@@ -2095,21 +2562,75 @@ const styles = StyleSheet.create({
   },
   nav: {
     flexDirection: "row",
-    height: 56,
+    height: 64,
     paddingHorizontal: 20,
-    alignItems: "stretch",
+    alignItems: "center",
     backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.separator,
+    borderTopWidth: 1,
+    borderTopColor: colors.separator,
   },
-  navItem: { flex: 1, alignItems: "center", justifyContent: "center" },
-  navItemActive: { borderBottomWidth: 2, borderBottomColor: colors.ink },
-  navLabel: { color: colors.muted, fontSize: 14, fontWeight: "600" },
+  navItem: { flex: 1, alignItems: "center", justifyContent: "center", minHeight: 52 },
+  navRail: {
+    alignSelf: "stretch",
+    borderRightColor: colors.separator,
+    borderRightWidth: 1,
+    borderTopWidth: 0,
+    flexDirection: "column",
+    height: undefined,
+    justifyContent: "flex-start",
+    paddingHorizontal: 8,
+    paddingVertical: 16,
+    width: 96,
+  },
+  navRailItem: { flex: 0, marginBottom: 8, width: "100%" },
+  navLabel: { color: colors.muted, fontSize: 12, fontWeight: "600", marginTop: 3 },
   navLabelActive: { color: colors.ink, fontWeight: "700" },
+  inboxHeader: { paddingTop: 28, paddingBottom: 20 },
+  inboxCount: {
+    color: colors.ink,
+    fontSize: 76,
+    fontWeight: "800",
+    letterSpacing: -3,
+    lineHeight: 82,
+  },
+  inboxTitle: { color: colors.ink, fontSize: 30, fontWeight: "800", letterSpacing: -0.7, lineHeight: 36 },
+  inboxDescription: { color: colors.muted, fontSize: 16, lineHeight: 22, marginTop: 6 },
+  inboxOverflow: { color: colors.muted, fontSize: 14, lineHeight: 20, marginTop: 6 },
+  inboxViewAll: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    borderColor: colors.signal,
+    borderRadius: 10,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 48,
+    paddingHorizontal: 14,
+    marginTop: 16,
+  },
+  inboxViewAllText: { color: colors.signal, fontSize: 15, fontWeight: "700" },
+  inboxSectionLabel: { color: colors.signal, fontSize: 12, fontWeight: "700", letterSpacing: 1, marginTop: 28 },
+  newRolesLabel: { color: colors.signal, fontSize: 12, fontWeight: "700", letterSpacing: 1, marginTop: 8, marginBottom: 12 },
+  caughtUpBlock: { marginTop: 20, marginBottom: 12 },
+  caughtUpRuleRow: { alignItems: "center", flexDirection: "row", gap: 10 },
+  caughtUpLine: { backgroundColor: colors.separator, flex: 1, height: 1 },
+  caughtUpText: { color: colors.muted, fontSize: 13, fontWeight: "600" },
+  seenRolesLabel: { color: colors.muted, fontSize: 12, fontWeight: "700", letterSpacing: 1, marginTop: 14 },
   list: { flex: 1 },
-  feedListContent: { paddingHorizontal: 20, paddingBottom: 28 },
-  profileContent: { paddingHorizontal: 20, paddingTop: 24, paddingBottom: 44 },
-  feedTop: { paddingHorizontal: 20, paddingTop: 16 },
+  feedListContent: {
+    alignSelf: "center",
+    maxWidth: 760,
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+    width: "100%",
+  },
+  profileContent: {
+    alignSelf: "center",
+    maxWidth: 760,
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 44,
+    width: "100%",
+  },
   pageHeading: { marginBottom: 0 },
   card: {
     backgroundColor: colors.surface,
@@ -2119,11 +2640,99 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.separator,
   },
+  newRoleGlow: {
+    backgroundColor: colors.signalGlow,
+    borderRadius: 14,
+    bottom: 12,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+  },
+  sheetOverlay: {
+    flex: 1,
+    backgroundColor: colors.overlay,
+    justifyContent: "flex-end",
+  },
+  sheetDismissArea: { flex: 1 },
+  jobSheet: {
+    backgroundColor: colors.canvas,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 32,
+  },
+  sheetHandle: {
+    alignSelf: "center",
+    backgroundColor: colors.border,
+    borderRadius: 2,
+    height: 4,
+    marginBottom: 24,
+    width: 40,
+  },
+  sheetEyebrow: {
+    color: colors.signal,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+    marginBottom: 8,
+  },
+  sheetTitle: {
+    color: colors.ink,
+    fontSize: 26,
+    fontWeight: "800",
+    letterSpacing: -0.5,
+    lineHeight: 32,
+  },
+  sheetCompany: {
+    color: colors.body,
+    fontSize: 17,
+    fontWeight: "600",
+    lineHeight: 24,
+    marginTop: 8,
+  },
+  sheetDetail: {
+    color: colors.muted,
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 4,
+  },
+  sheetClosedNotice: {
+    backgroundColor: colors.dangerSoft,
+    borderColor: colors.dangerBorder,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 20,
+    padding: 12,
+  },
+  sheetClosedText: { color: colors.danger, fontSize: 14, fontWeight: "600", lineHeight: 20 },
+  sheetActions: { gap: 12, marginTop: 28 },
+  sheetHelper: {
+    color: colors.muted,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 14,
+    textAlign: "center",
+  },
   company: {
     color: colors.signal,
+    flexShrink: 1,
     fontSize: 13,
     fontWeight: "700",
   },
+  jobCompanyRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
+  newSpark: {
+    alignItems: "center",
+    backgroundColor: colors.signalSoft,
+    borderRadius: 999,
+    flexDirection: "row",
+    gap: 4,
+    marginLeft: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  newSparkText: { color: colors.signal, fontSize: 11, fontWeight: "800", letterSpacing: 0.2 },
   title: {
     color: colors.ink,
     fontSize: 17,
@@ -2143,6 +2752,15 @@ const styles = StyleSheet.create({
   jobCardAction: { alignItems: "center", flexDirection: "row", marginTop: 14 },
   jobCardActionText: { color: colors.signal, fontSize: 15, fontWeight: "700" },
   jobCardActionArrow: { color: colors.signal, fontSize: 22, lineHeight: 20, marginLeft: 5 },
+  jobApplicationStatus: {
+    alignSelf: "flex-start",
+    backgroundColor: colors.signalSoft,
+    borderRadius: 999,
+    marginTop: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  jobApplicationStatusText: { color: colors.signal, fontSize: 12, fontWeight: "800", letterSpacing: 0.5 },
   search: {
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -2161,24 +2779,29 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     color: colors.ink,
     fontSize: 16,
-    height: 52,
+    minHeight: 52,
     paddingHorizontal: 14,
-    marginHorizontal: 20,
-    marginTop: 0,
+    marginTop: 12,
     marginBottom: 0,
   },
-  filterRegion: { marginHorizontal: 20, marginTop: 12, marginBottom: 12 },
-  filterBar: { flexDirection: "row", alignItems: "center", minHeight: 44 },
+  roleFeedControls: {
+    alignSelf: "center",
+    maxWidth: 760,
+    paddingHorizontal: 20,
+    width: "100%",
+  },
+  filterRegion: { marginTop: 12, marginBottom: 12 },
+  filterBar: { flexDirection: "row", alignItems: "center", minHeight: 48 },
   filterToggle: {
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between",
-    minHeight: 44,
+    minHeight: 48,
     paddingHorizontal: 2,
   },
   filterToggleText: { color: colors.signal, fontSize: 15, fontWeight: "700" },
   filterToggleGlyph: { color: colors.signal, fontSize: 20, fontWeight: "400", marginLeft: 8 },
-  clearFilters: { minHeight: 44, justifyContent: "center", marginLeft: 16 },
+  clearFilters: { minHeight: 48, justifyContent: "center", marginLeft: 16 },
   clearFiltersText: { color: colors.muted, fontSize: 15, fontWeight: "600" },
   filterPanel: {
     borderTopWidth: 1,
@@ -2200,7 +2823,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     color: colors.ink,
     fontSize: 16,
-    height: 52,
+    minHeight: 52,
     paddingHorizontal: 14,
     marginBottom: 20,
   },
@@ -2246,14 +2869,14 @@ const styles = StyleSheet.create({
   chip: {
     borderWidth: 1,
     borderColor: colors.border,
-    minHeight: 44,
+    minHeight: 48,
     paddingHorizontal: 14,
     justifyContent: "center",
     borderRadius: 20,
     backgroundColor: colors.surface,
   },
   chipOn: { backgroundColor: colors.signalSoft, borderColor: colors.signal },
-  chipExclude: { backgroundColor: "#FDECEC", borderColor: colors.danger },
+  chipExclude: { backgroundColor: colors.dangerSoft, borderColor: colors.danger },
   chipLabel: { color: colors.body, fontSize: 14, fontWeight: "700" },
   chipLabelOn: { color: colors.signal },
   chipLabelExclude: { color: colors.danger },
@@ -2326,7 +2949,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 1,
   },
-  notificationPreviewTitle: { color: "#FFFFFF", fontSize: 16, fontWeight: "700", marginTop: 6 },
+  notificationPreviewTitle: { color: colors.onDark, fontSize: 16, fontWeight: "700", marginTop: 6 },
   notificationPreviewBody: { color: "#D1D1D6", fontSize: 14, lineHeight: 20, marginTop: 4 },
   saveFeedback: {
     backgroundColor: colors.surface,
@@ -2336,8 +2959,8 @@ const styles = StyleSheet.create({
     marginTop: 12,
     padding: 12,
   },
-  saveFeedbackSuccess: { backgroundColor: "#ECFDF3", borderColor: "#86D6A5" },
-  saveFeedbackError: { backgroundColor: "#FEF1F0", borderColor: "#F2AAA4" },
+  saveFeedbackSuccess: { backgroundColor: colors.successSoft, borderColor: colors.successBorder },
+  saveFeedbackError: { backgroundColor: colors.dangerSoft, borderColor: colors.dangerBorder },
   saveFeedbackText: { color: colors.body, fontSize: 14, lineHeight: 20 },
   saveFeedbackRetry: { color: colors.signal, fontSize: 14, fontWeight: "700", marginTop: 8 },
   profileSectionLabel: {
@@ -2416,7 +3039,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     color: colors.ink,
     fontSize: 16,
-    height: 52,
+    minHeight: 52,
     paddingHorizontal: 14,
     marginBottom: 16,
     backgroundColor: colors.surface,
@@ -2436,7 +3059,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   authButtonDisabled: { opacity: 0.55 },
-  authButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" },
+  authButtonText: { color: colors.onDark, fontSize: 16, fontWeight: "700" },
   authButtonTextSecondary: { color: colors.body },
   authFootnote: {
     color: colors.muted,
@@ -2458,8 +3081,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   actionButtonDanger: { backgroundColor: colors.danger },
-  actionButtonCompact: { minHeight: 44, marginTop: 16 },
+  actionButtonCompact: { minHeight: 48, marginTop: 16 },
   actionButtonDisabled: { opacity: 0.55 },
-  actionButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" },
+  actionButtonText: { color: colors.onDark, fontSize: 16, fontWeight: "700" },
   actionButtonTextSecondary: { color: colors.body },
 });

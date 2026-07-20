@@ -30,6 +30,11 @@ export interface UserPreferences {
   filter: JobFilter;
   alertsEnabled: boolean;
   onboardingComplete: boolean;
+  /**
+   * The bounded timestamp used by the signed-in launch inbox. A missing value
+   * means this is the user's first launch after the feature was introduced.
+   */
+  lastCatalogOpenedAt?: string;
   alertSettings?: AlertSettings;
   /** Uses the same safe placeholders as the legacy compact ntfy notification. */
   push?: { titleTemplate?: string; descriptionTemplate?: string; roleAbbreviations?: Record<string, string> };

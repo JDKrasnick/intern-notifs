@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { DeleteObjectCommand, GetObjectCommand, S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { CognitoIdentityProviderClient, AdminDeleteUserCommand } from '@aws-sdk/client-cognito-identity-provider';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { jobCategories, parseJobFilter } from './core/filters.js';
+import { jobCategories, matchesJobFilter, parseJobFilter } from './core/filters.js';
 import { DynamoInternshipStore, DynamoUserStore, type InternshipStore, type UserStore } from './store.js';
 import type { ApplicantProfile, ApplicationRecord, ApplicationStatus, DeviceToken, UserPreferences } from './types.js';
 import { EmployerIntegrationRegistry } from './providers.js';
@@ -79,7 +79,7 @@ function requireProfile(value: Record<string, unknown>, userId: string): Applica
   return { userId, contact, location: value.location, workAuthorization: value.workAuthorization, links: value.links as Record<string, string>, education: value.education as ApplicantProfile['education'], reusableAnswers: value.reusableAnswers as Record<string, string>, ...(typeof value.resumeDocumentId === 'string' ? { resumeDocumentId: value.resumeDocumentId } : {}), ...(value.sensitive && typeof value.sensitive === 'object' ? { sensitive: value.sensitive as Record<string, unknown> } : {}), updatedAt: now() };
 }
 
-export interface ApiDependencies { jobs: InternshipStore; users: UserStore; documentsBucket?: string; userPoolId?: string; integrations?: EmployerIntegrationRegistry; s3?: S3Client; cognito?: CognitoIdentityProviderClient; }
+export interface ApiDependencies { jobs: InternshipStore; users: UserStore; documentsBucket?: string; userPoolId?: string; integrations?: EmployerIntegrationRegistry; s3?: S3Client; cognito?: CognitoIdentityProviderClient; now?: () => string; }
 export function createApiHandler(dependencies: ApiDependencies) {
   const integrations = dependencies.integrations ?? new EmployerIntegrationRegistry(); const s3 = dependencies.s3 ?? new S3Client({});
   return async (event: ApiEvent): Promise<ApiResponse> => {
@@ -98,7 +98,37 @@ export function createApiHandler(dependencies: ApiDependencies) {
       if (method === 'GET' && jobMatch) { const job = await dependencies.jobs.getJob?.(decodeURIComponent(jobMatch[1])); return job ? reply(200, job) : reply(404, { message: 'Job not found' }); }
       const userId = identity(event); if (!userId) return reply(401, { message: 'Authentication required' });
       if (method === 'GET' && path === '/me/preferences') return reply(200, (await dependencies.users.getPreferences(userId)) ?? { userId, filter: {}, alertsEnabled: false, onboardingComplete: false });
-      if (method === 'PUT' && path === '/me/preferences') { const body = parseBody(event); const previous = await dependencies.users.getPreferences(userId); const filter = parseJobFilter(body.filter ?? previous?.filter ?? {}); const push = pushPreferences(body.push); const value: UserPreferences = { userId, filter: filter ?? {}, alertsEnabled: typeof body.alertsEnabled === 'boolean' ? body.alertsEnabled : previous?.alertsEnabled ?? false, onboardingComplete: typeof body.onboardingComplete === 'boolean' ? body.onboardingComplete : previous?.onboardingComplete ?? false, alertSettings: alertSettings(body.alertSettings, previous?.alertSettings), ...(push !== undefined ? { push } : previous?.push ? { push: previous.push } : {}), updatedAt: now() }; await dependencies.users.putPreferences(value); return reply(200, value); }
+      if (method === 'PUT' && path === '/me/preferences') { const body = parseBody(event); const previous = await dependencies.users.getPreferences(userId); const filter = parseJobFilter(body.filter ?? previous?.filter ?? {}); const push = pushPreferences(body.push); const value: UserPreferences = { userId, filter: filter ?? {}, alertsEnabled: typeof body.alertsEnabled === 'boolean' ? body.alertsEnabled : previous?.alertsEnabled ?? false, onboardingComplete: typeof body.onboardingComplete === 'boolean' ? body.onboardingComplete : previous?.onboardingComplete ?? false, alertSettings: alertSettings(body.alertSettings, previous?.alertSettings), ...(push !== undefined ? { push } : previous?.push ? { push: previous.push } : {}), ...(previous?.lastCatalogOpenedAt ? { lastCatalogOpenedAt: previous.lastCatalogOpenedAt } : {}), updatedAt: now() }; await dependencies.users.putPreferences(value); return reply(200, value); }
+      if (method === 'POST' && path === '/me/opening') {
+        const openedAt = dependencies.now?.() ?? now();
+        const previous = await dependencies.users.getPreferences(userId);
+        const previousOpenedAt = previous?.lastCatalogOpenedAt;
+        const preferences: UserPreferences = {
+          userId,
+          filter: previous?.filter ?? {},
+          alertsEnabled: previous?.alertsEnabled ?? false,
+          onboardingComplete: previous?.onboardingComplete ?? false,
+          ...(previous?.alertSettings ? { alertSettings: previous.alertSettings } : {}),
+          ...(previous?.push ? { push: previous.push } : {}),
+          lastCatalogOpenedAt: openedAt,
+          // Opening the catalog is not a preference edit, so preserve the
+          // existing preference timestamp when one exists.
+          updatedAt: previous?.updatedAt ?? openedAt,
+        };
+        // The first launch establishes a baseline. This avoids presenting an
+        // unbounded historical backlog when the feature rolls out.
+        if (!previousOpenedAt) {
+          await dependencies.users.putPreferences(preferences);
+          return reply(200, { jobs: [], total: 0, hasMore: false, previousOpenedAt: null, openedAt });
+        }
+        const matches = (await dependencies.jobs.listOpenSince(previousOpenedAt, openedAt))
+          .filter((job) => matchesJobFilter(job, previous?.filter));
+        // Keep launch fast if a source backfills many records; the Feed remains
+        // the complete catalog and provides the explicit path to the remainder.
+        const limit = 50;
+        await dependencies.users.putPreferences(preferences);
+        return reply(200, { jobs: matches.slice(0, limit), total: matches.length, hasMore: matches.length > limit, previousOpenedAt, openedAt });
+      }
       if (method === 'POST' && path === '/me/devices') { const body = parseBody(event); if (typeof body.token !== 'string' || !body.token.startsWith('ExponentPushToken[') || (body.platform !== 'ios' && body.platform !== 'android')) return reply(400, { message: 'A valid Expo token and platform are required' }); const value: DeviceToken = { userId, token: body.token, platform: body.platform, active: true, createdAt: now(), updatedAt: now() }; await dependencies.users.putDevice(value); return reply(201, value); }
       if (method === 'DELETE' && path.startsWith('/me/devices/')) { await dependencies.users.deleteDevice(userId, decodeURIComponent(path.slice('/me/devices/'.length))); return reply(204, {}); }
       if (method === 'GET' && path === '/me/profile') return reply(200, (await dependencies.users.getProfile(userId)) ?? null);

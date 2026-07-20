@@ -7,3 +7,8 @@ coverage/
 SOURCES.md
 # Local employer catalog and internal tiering decisions.
 EMPLOYERS.json
+# Locally installed Codex/Claude skills and hook configuration.
+.agents/
+.codex/
+.github/hooks/
+.github/skills/

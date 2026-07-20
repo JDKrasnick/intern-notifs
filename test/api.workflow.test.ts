@@ -42,6 +42,35 @@ describe('public catalog and authenticated applicant workflow', () => {
     expect(body<{ jobs: Internship[] }>(invalidLimit).jobs).toHaveLength(2);
   });
 
+  it('returns filtered internships from the previous launch window, then advances the window', async () => {
+    const jobs = new MemoryInternshipStore();
+    await jobs.putInternship(job('before', '2026-07-01T00:00:00.000Z'));
+    await jobs.putInternship({ ...job('match', '2026-07-19T08:00:00.000Z'), title: 'Machine Learning Intern' });
+    await jobs.putInternship({ ...job('excluded', '2026-07-19T08:00:00.000Z'), title: 'Product Design Intern' });
+    const users = new MemoryUserStore();
+    await users.putPreferences({
+      userId: 'student-a', filter: { includeCategories: ['ai-ml'] }, alertsEnabled: false, onboardingComplete: true,
+      lastCatalogOpenedAt: '2026-07-18T00:00:00.000Z', updatedAt: '2026-07-18T00:00:00.000Z',
+    });
+    const handler = createApiHandler({ jobs, users, now: () => '2026-07-19T12:00:00.000Z' });
+
+    const opening = await handler(event('student-a', 'POST', '/me/opening'));
+    expect(opening.statusCode).toBe(200);
+    expect(body<{ jobs: Internship[]; total: number; previousOpenedAt: string }>(opening)).toMatchObject({
+      jobs: [{ jobId: 'match' }], total: 1, previousOpenedAt: '2026-07-18T00:00:00.000Z',
+    });
+    expect((await users.getPreferences('student-a'))?.lastCatalogOpenedAt).toBeTruthy();
+  });
+
+  it('uses the first signed-in launch only to establish a calm baseline', async () => {
+    const jobs = new MemoryInternshipStore(); await jobs.putInternship(job('existing', '2026-07-18T00:00:00.000Z'));
+    const users = new MemoryUserStore(); const handler = createApiHandler({ jobs, users, now: () => '2026-07-19T12:00:00.000Z' });
+
+    const opening = await handler(event('student-a', 'POST', '/me/opening'));
+    expect(body<{ jobs: Internship[]; total: number; previousOpenedAt: string | null }>(opening)).toEqual(expect.objectContaining({ jobs: [], total: 0, previousOpenedAt: null }));
+    expect((await users.getPreferences('student-a'))?.lastCatalogOpenedAt).toBeTruthy();
+  });
+
   it('runs a private profile, alert, device, and official-form application flow without cross-account access', async () => {
     const jobs = new MemoryInternshipStore(); await jobs.putInternship(job('role-1', '2026-07-02T00:00:00.000Z'));
     const users = new MemoryUserStore(); const handler = createApiHandler({ jobs, users });

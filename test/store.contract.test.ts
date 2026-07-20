@@ -32,6 +32,22 @@ describe('DynamoDB persistence contract', () => {
     expect((send.mock.calls[0]?.[0] as QueryCommand).input).toMatchObject({ TableName: 'jobs-table', IndexName: 'openJobsIndex', ScanIndexForward: false, Limit: 10, ExclusiveStartKey: { pk: 'JOB#previous', sk: 'META' } });
   });
 
+  it('queries the open-jobs index inside the launch interval', async () => {
+    const { send, client } = fakeClient(); const store = new DynamoInternshipStore('jobs-table', client);
+    send.mockResolvedValueOnce({ Items: [{ job: job() }] });
+    expect(await store.listOpenSince('2026-07-18T00:00:00.000Z', '2026-07-19T00:00:00.000Z')).toMatchObject([{ jobId: 'job-1' }]);
+    expect((send.mock.calls[0]?.[0] as QueryCommand).input).toMatchObject({
+      TableName: 'jobs-table', IndexName: 'openJobsIndex',
+      KeyConditionExpression: 'openPk = :open AND openSk BETWEEN :after AND :before',
+      ExpressionAttributeValues: {
+        ':open': 'OPEN',
+        ':after': '2026-07-18T00:00:00.000Z\uffff',
+        ':before': '2026-07-19T00:00:00.000Z\uffff',
+      },
+      ScanIndexForward: false,
+    });
+  });
+
   it('deletes every user-owned item after returning the document list for object cleanup', async () => {
     const { send, client } = fakeClient(); const store = new DynamoUserStore('users-table', client);
     send.mockResolvedValueOnce({ Items: [{ value: { userId: 'student-a', documentId: 'document-1', objectKey: 'private/student-a/document-1' } }] });

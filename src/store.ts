@@ -20,6 +20,8 @@ export interface InternshipStore {
   markDigested(jobIds: string[], sentAt: string): Promise<void>;
   getJob?(jobId: string): Promise<Internship | undefined>;
   listOpen?(cursor?: string, limit?: number, status?: 'open' | 'closed'): Promise<{ jobs: Internship[]; cursor?: string }>;
+  /** Open technical roles discovered strictly after `after` and no later than `before`. */
+  listOpenSince(after: string, before: string): Promise<Internship[]>;
 }
 
 export class MemoryInternshipStore implements InternshipStore {
@@ -36,6 +38,12 @@ export class MemoryInternshipStore implements InternshipStore {
   async markDigested(jobIds: string[], sentAt: string) { for (const jobId of jobIds) { const job = this.jobs.get(jobId); if (job) { job.notification.digestPending = false; job.notification.digestedAt = sentAt; } } }
   async getJob(jobId: string) { const job = this.jobs.get(jobId); return job && withEmployerCategory(job); }
   async listOpen(cursor?: string, limit = 25, status: 'open' | 'closed' = 'open') { const jobs = [...this.jobs.values()].filter((job) => job.open === (status === 'open') && isTechnicalJob(job)).sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt)); const offset = cursor ? Number(cursor) : 0; const page = jobs.slice(offset, offset + limit).map(withEmployerCategory); return { jobs: page, cursor: offset + page.length < jobs.length ? String(offset + page.length) : undefined }; }
+  async listOpenSince(after: string, before: string) {
+    return [...this.jobs.values()]
+      .filter((job) => job.open && isTechnicalJob(job) && job.firstSeenAt > after && job.firstSeenAt <= before)
+      .sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt))
+      .map(withEmployerCategory);
+  }
 }
 
 type JobItem = { pk: string; sk: 'META'; urlPk: string; fingerprintPk: string; smsPk?: string; digestPk?: string; openPk?: string; openSk?: string; closedPk?: string; closedSk?: string; job: Internship };
@@ -84,6 +92,22 @@ export class DynamoInternshipStore implements InternshipStore {
     const open = status === 'open';
     const result = await this.client.send(new QueryCommand({ TableName: this.tableName, IndexName: open ? 'openJobsIndex' : 'closedJobsIndex', KeyConditionExpression: open ? 'openPk = :status' : 'closedPk = :status', ExpressionAttributeValues: { ':status': open ? 'OPEN' : 'CLOSED' }, ScanIndexForward: false, Limit: limit, ...(cursor ? { ExclusiveStartKey: JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) } : {}) }));
     return { jobs: (result.Items ?? []).map((item) => withEmployerCategory(item.job as Internship)), ...(result.LastEvaluatedKey ? { cursor: Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString('base64url') } : {}) };
+  }
+  async listOpenSince(after: string, before: string): Promise<Internship[]> {
+    const result = await this.queryAll({
+      TableName: this.tableName,
+      IndexName: 'openJobsIndex',
+      KeyConditionExpression: 'openPk = :open AND openSk BETWEEN :after AND :before',
+      ExpressionAttributeValues: {
+        ':open': 'OPEN',
+        // `openSk` ends in a job ID, so this excludes roles exactly at `after`
+        // while including all roles whose firstSeenAt equals `before`.
+        ':after': `${after}\uffff`,
+        ':before': `${before}\uffff`,
+      },
+      ScanIndexForward: false,
+    });
+    return result.map((item) => withEmployerCategory(item.job as Internship));
   }
 }
 

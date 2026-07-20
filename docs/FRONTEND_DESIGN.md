@@ -51,23 +51,23 @@ Specific keywords (optional)
 We’ll ask for notification permission next.
 ```
 
-The content starts 42 pt below the safe area, with a 20 pt gutter on both sides. The chips wrap naturally, but every chip keeps a 44 pt minimum height. The action is full-width and visually grounded.
+The content starts 42 pt below the safe area, with a 20 pt gutter on both sides. The chips wrap naturally, but every chip keeps a 48 pt minimum height. The action is full-width and visually grounded.
 
 ### Focused Editorial sample: role feed
 
 ```text
-Roles                         Saved                     Profile
 [ Search roles, companies, locations                    ]
-
-OPEN TECHNICAL INTERNSHIPS
-Browse freely. Save roles when you are ready.
+[ Filter roles ]
 
 ┌──────────────────────────────────────────────────────┐
 │ Datadog                                               │
 │ Software Engineering Intern                           │
 │ New York, NY · Summer 2027                            │
 │ $52–$58 / hour                                        │
+│ [ APPLIED ]                                           │
 └──────────────────────────────────────────────────────┘
+
+[ ▣ Roles ]                 [ ♧ Saved ]              [ ◯ Profile ]
 ```
 
 Navigation, search, headers, and cards all align to the same 20 pt edge. Cards are 16 pt radius, use a one-pixel slate border, and have a 12 pt gap—no floating/shadow-heavy treatment.
@@ -108,7 +108,9 @@ Profile is a single scrollable form with visible labels. Inputs, buttons, chips,
 | Signal teal | `#0E7490` | Selected category, company metadata, eyebrow labels |
 | Danger | `#B91C1C` | Destructive action only |
 
-Use a four-point spacing scale: `4, 8, 12, 16, 20, 24, 32, 44`. Standard controls are 52 pt high; chips are at least 44 pt high; all touch targets meet the 44 pt minimum.
+Use a four-point spacing scale: `4, 8, 12, 16, 20, 24, 32, 44`. Standard controls are 52 pt high; chips are at least 48 pt high so they meet Android's larger touch-target guidance while remaining comfortable on iPhone.
+
+The current release intentionally ships a light appearance only. Do not claim automatic Dark Mode until semantic light/dark token sets and physical-device checks exist; a consistently light interface is preferable to a partially inverted one.
 
 Typography should stay simple:
 
@@ -136,12 +138,14 @@ Every screen follows these rules. They are as important as colors and type.
 
 ## Component recipes
 
-### Top navigation
+### Bottom tab navigation
 
-- Height: 56 pt; canvas background; 20 pt horizontal inset.
-- Three equal-width tab targets.
-- Active tab: ink label with a 2 pt ink bottom rule.
-- Inactive tab: muted text only. Do not use blue system buttons for navigation.
+- Fixed at the bottom of the app content, with a one-pixel top separator and safe-area space below it.
+- Three equal-width, 52 pt minimum targets: Roles, Saved, and Profile.
+- Every tab combines a familiar icon with a short text label. Use a filled briefcase for the selected Roles tab, bookmark for Saved, and person for Profile.
+- Active tab: ink icon and label; inactive tabs: muted outline icon and label. Do not use a bottom-rule-only state or blue system buttons for navigation.
+- A tab bar is for moving among these three top-level areas, never for inline actions. Keep it visible while switching sections.
+- At 700 pt or wider, replace the bottom bar with the same three destinations in a compact left navigation rail; keep the primary content column centered and no wider than 760 pt.
 
 ### Input
 
@@ -152,7 +156,7 @@ Every screen follows these rules. They are as important as colors and type.
 
 ### Filter chip
 
-- Minimum 44 pt high; 14 pt horizontal padding; fully rounded.
+- Minimum 48 pt high; 14 pt horizontal padding; fully rounded.
 - Neutral: white surface, slate border, body-colored label.
 - Selected: pale teal surface with teal border and dark-teal label.
 - Excluded: pale red surface with red border; reserve this state for explicit exclusions only.
@@ -163,6 +167,15 @@ Every screen follows these rules. They are as important as colors and type.
 - One-pixel soft border; no required shadow.
 - 12 pt gap between cards.
 - Company is teal metadata, role is ink, and location/season is muted body text.
+- When the signed-in user has an application record for the role, display its current status in a compact teal pill. For example, show **APPLIED** after the user starts the employer handoff; continue to show later statuses such as assessment or interview.
+
+### New and seen roles
+
+- For the active signed-in session, keep roles returned by the launch-inbox endpoint above the normal feed in a **New roles** group.
+- After the last new card, show a quiet rule divider reading **You’re all caught up**, then label the remainder **Seen roles**.
+- Do not use a modal, an alert, or a persistent badge for this boundary. If there are no new roles, omit both labels and render the same simple search/filter-and-list landing page.
+- Give each new card a small, one-time arrival moment: an 8 pt lift, a soft teal sheen that fades within 420 ms, and a compact sparkle-plus-**New** marker beside the company. Stagger only the first five cards by 80 ms; never loop, pulse, or use a full-card neon treatment.
+- Honor the device Reduce Motion preference by showing the card and static **New** marker without movement. The treatment uses opacity and transforms so it stays smooth without making the list feel busy.
 
 ### Buttons
 
@@ -175,6 +188,8 @@ Every screen follows these rules. They are as important as colors and type.
 
 - Use static, layout-matched skeletons instead of activity wheels or progress bars.
 - A loading feed includes the tab row, search field, section copy, and three job-card shapes.
+- Let those three card shapes reveal from top to bottom: each starts 10 pt lower, then rises and fades in once over 240 ms, with a 100 ms stagger. Keep the surrounding chrome still, and never loop the animation or add a shimmer sweep.
+- Respect Reduce Motion: show the completed skeleton layout immediately when it is enabled. The real roles should replace the shapes without an additional transition, keeping loading quick and legible.
 - A loading profile uses headline, field-label, input, and button shapes in the same 20 pt content column as the completed form.
 - Skeletons use `#E2E8F0`; buttons may use the slightly darker `#CBD5E1`. They are announced as loading content for assistive technology, but contain no visible loading text.
 
@@ -202,7 +217,7 @@ The notification backend must apply the saved role, company-type, U.S.-citizensh
 
 - **Browse / sign in:** establish trust quickly. Browsing remains useful without an account.
 - **Onboarding:** select roles and enable alerts in under a minute. Explain the next permission step before triggering it.
-- **Feed:** scan quickly. Each card answers what, where, and when before any secondary detail.
+- **Feed:** start with only search and filter controls, then the role list. Each card answers what, where, and when before any secondary detail; tracked roles also expose their current application status.
 - **Apply:** make the handoff to the employer explicit. InternNotifs tracks progress; it does not impersonate an employer form.
 - **Saved:** show a small, clear status model rather than a complex CRM workflow.
 - **Profile:** keep application data, résumé, alerts, support, and destructive account control in clearly separated sections.

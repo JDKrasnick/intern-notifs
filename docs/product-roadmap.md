@@ -34,6 +34,7 @@
 - [ ] Draft a first 100–200 employer roster with an explicit international/student-friendly coverage strategy.
 - [ ] Define source-admission, attribution, and removal policies.
 - [x] Add internal source-aware filtering (FAANG, verified startups/YC, normal, U.S.-citizenship requirement, advanced-degree requirement, and open/closed status) to catalog ingestion, alerts, and mobile discovery.
+- [x] Add the signed-in “new since last open” inbox with a calm first-open baseline, saved-filter matching, and count-led mobile launch screen.
 - [x] Audit 25 representative employers through the GitHub Markdown ingestion and poller pipeline.
 - [ ] Implement Greenhouse source adapter and tests.
 - [ ] Implement Lever source adapter and tests.
