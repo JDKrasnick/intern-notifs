@@ -29,6 +29,50 @@ function pushPreferences(value: unknown): UserPreferences['push'] | undefined {
   return { ...(titleTemplate !== undefined ? { titleTemplate } : {}), ...(descriptionTemplate !== undefined ? { descriptionTemplate } : {}), ...(aliases ? { roleAbbreviations: aliases as Record<string, string> } : {}) };
 }
 
+function alertSettings(
+  value: unknown,
+  previous?: UserPreferences['alertSettings'],
+): NonNullable<UserPreferences['alertSettings']> {
+  if (value !== undefined && (!value || typeof value !== 'object' || Array.isArray(value))) {
+    throw new Error('alertSettings must be an object');
+  }
+  const settings = (value ?? {}) as Record<string, unknown>;
+  const delivery = settings.delivery ?? previous?.delivery ?? 'immediate';
+  if (delivery !== 'immediate' && delivery !== 'daily-digest') {
+    throw new Error('alertSettings.delivery must be immediate or daily-digest');
+  }
+  const reminders = settings.applicationReminders ?? previous?.applicationReminders ?? true;
+  if (typeof reminders !== 'boolean') throw new Error('alertSettings.applicationReminders must be a boolean');
+  const followUpDays = settings.followUpDays ?? previous?.followUpDays ?? 7;
+  if (typeof followUpDays !== 'number' || !Number.isInteger(followUpDays) || followUpDays < 1 || followUpDays > 30) {
+    throw new Error('alertSettings.followUpDays must be a whole number from 1 to 30');
+  }
+  const quietHours = settings.quietHours ?? previous?.quietHours;
+  if (quietHours !== undefined) {
+    if (!quietHours || typeof quietHours !== 'object' || Array.isArray(quietHours)) {
+      throw new Error('alertSettings.quietHours must be an object');
+    }
+    const quiet = quietHours as Record<string, unknown>;
+    if (
+      typeof quiet.start !== 'string' ||
+      typeof quiet.end !== 'string' ||
+      typeof quiet.timezone !== 'string' ||
+      !/^([01]\d|2[0-3]):[0-5]\d$/.test(quiet.start) ||
+      !/^([01]\d|2[0-3]):[0-5]\d$/.test(quiet.end) ||
+      !quiet.timezone.trim() ||
+      quiet.timezone.length > 100
+    ) {
+      throw new Error('alertSettings.quietHours needs start/end times (HH:MM) and a timezone');
+    }
+  }
+  return {
+    delivery,
+    applicationReminders: reminders,
+    followUpDays,
+    ...(quietHours ? { quietHours: quietHours as { start: string; end: string; timezone: string } } : {}),
+  };
+}
+
 function requireProfile(value: Record<string, unknown>, userId: string): ApplicantProfile {
   const contact = value.contact as ApplicantProfile['contact'];
   if (!contact?.name || !contact.email || typeof value.location !== 'string' || typeof value.workAuthorization !== 'string' || !Array.isArray(value.education) || !value.links || !value.reusableAnswers || typeof value.resumeDocumentId !== 'string') throw new Error('Profile needs contact name/email, location, work authorization, résumé, education, links, and reusable answers');
@@ -43,14 +87,18 @@ export function createApiHandler(dependencies: ApiDependencies) {
       const method = event.requestContext?.http?.method ?? event.routeKey?.split(' ')[0] ?? 'GET'; const path = event.rawPath ?? event.routeKey?.split(' ')[1] ?? '/';
       if (method === 'OPTIONS') return reply(204, {});
       if (method === 'GET' && path === '/jobs') {
-        const page = await dependencies.jobs.listOpen?.(event.queryStringParameters?.cursor, Math.min(Math.max(Number(event.queryStringParameters?.limit ?? 25), 1), 50));
+        const requestedLimit = Number(event.queryStringParameters?.limit ?? 25);
+        const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 50) : 25;
+        const status = event.queryStringParameters?.status ?? 'open';
+        if (status !== 'open' && status !== 'closed') return reply(400, { message: 'status must be open or closed' });
+        const page = await dependencies.jobs.listOpen?.(event.queryStringParameters?.cursor, limit, status);
         return reply(200, page ?? { jobs: [] });
       }
       const jobMatch = path.match(/^\/jobs\/([^/]+)$/);
       if (method === 'GET' && jobMatch) { const job = await dependencies.jobs.getJob?.(decodeURIComponent(jobMatch[1])); return job ? reply(200, job) : reply(404, { message: 'Job not found' }); }
       const userId = identity(event); if (!userId) return reply(401, { message: 'Authentication required' });
       if (method === 'GET' && path === '/me/preferences') return reply(200, (await dependencies.users.getPreferences(userId)) ?? { userId, filter: {}, alertsEnabled: false, onboardingComplete: false });
-      if (method === 'PUT' && path === '/me/preferences') { const body = parseBody(event); const previous = await dependencies.users.getPreferences(userId); const filter = parseJobFilter(body.filter ?? previous?.filter ?? {}); const push = pushPreferences(body.push); const value: UserPreferences = { userId, filter: filter ?? {}, alertsEnabled: typeof body.alertsEnabled === 'boolean' ? body.alertsEnabled : previous?.alertsEnabled ?? false, onboardingComplete: typeof body.onboardingComplete === 'boolean' ? body.onboardingComplete : previous?.onboardingComplete ?? false, ...(push !== undefined ? { push } : previous?.push ? { push: previous.push } : {}), updatedAt: now() }; await dependencies.users.putPreferences(value); return reply(200, value); }
+      if (method === 'PUT' && path === '/me/preferences') { const body = parseBody(event); const previous = await dependencies.users.getPreferences(userId); const filter = parseJobFilter(body.filter ?? previous?.filter ?? {}); const push = pushPreferences(body.push); const value: UserPreferences = { userId, filter: filter ?? {}, alertsEnabled: typeof body.alertsEnabled === 'boolean' ? body.alertsEnabled : previous?.alertsEnabled ?? false, onboardingComplete: typeof body.onboardingComplete === 'boolean' ? body.onboardingComplete : previous?.onboardingComplete ?? false, alertSettings: alertSettings(body.alertSettings, previous?.alertSettings), ...(push !== undefined ? { push } : previous?.push ? { push: previous.push } : {}), updatedAt: now() }; await dependencies.users.putPreferences(value); return reply(200, value); }
       if (method === 'POST' && path === '/me/devices') { const body = parseBody(event); if (typeof body.token !== 'string' || !body.token.startsWith('ExponentPushToken[') || (body.platform !== 'ios' && body.platform !== 'android')) return reply(400, { message: 'A valid Expo token and platform are required' }); const value: DeviceToken = { userId, token: body.token, platform: body.platform, active: true, createdAt: now(), updatedAt: now() }; await dependencies.users.putDevice(value); return reply(201, value); }
       if (method === 'DELETE' && path.startsWith('/me/devices/')) { await dependencies.users.deleteDevice(userId, decodeURIComponent(path.slice('/me/devices/'.length))); return reply(204, {}); }
       if (method === 'GET' && path === '/me/profile') return reply(200, (await dependencies.users.getProfile(userId)) ?? null);

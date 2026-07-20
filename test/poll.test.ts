@@ -31,4 +31,11 @@ describe('polling', () => {
     const report = await new Poller([new Adapter('one', [])], store).poll();
     expect(report.failures[0]).toContain('suspicious zero-row'); expect((await store.getCheckpoint('one'))?.lastRowCount).toBe(1);
   });
+  it('stores closed technical roles without queuing alerts', async () => {
+    const store = new MemoryInternshipStore();
+    const closed = { ...listing('https://jobs.example.com/closed'), state: 'closed' as const };
+    await new Poller([new Adapter('one', [closed])], store).poll();
+    expect((await store.listOpen?.(undefined, 25, 'closed'))?.jobs).toMatchObject([{ open: false }]);
+    expect(await store.pendingSms()).toEqual([]);
+  });
 });

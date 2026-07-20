@@ -10,8 +10,10 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:integration": "vitest run test/integration.workflow.test.ts",
+    "test:unit": "vitest run --exclude test/integration.workflow.test.ts --exclude test/api.workflow.test.ts --exclude test/full-day.workflow.test.ts",
+    "test:integration": "vitest run test/integration.workflow.test.ts test/api.workflow.test.ts test/full-day.workflow.test.ts",
     "test:watch": "vitest",
+    "audit:employers": "tsx scripts/audit-employer-classification.ts",
     "migrate:open-index": "tsx src/migrate-open-index.ts",
     "cdk": "cdk --app 'npx tsx infra/app.ts'"
   },

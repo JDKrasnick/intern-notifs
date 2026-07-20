@@ -3,3 +3,7 @@ dist/
 cdk.out/
 coverage/
 .env
+# Local operational inventory; do not commit source research or credentials.
+SOURCES.md
+# Local employer catalog and internal tiering decisions.
+EMPLOYERS.json

@@ -1,21 +1,30 @@
-import { fingerprint, jobId, normalizeUrl } from './core/normalize.js';
+import { fingerprint, fingerprintCandidates, jobId, normalizeUrl } from './core/normalize.js';
 import { isTechnicalJob, matchesJobFilter, type JobFilter } from './core/filters.js';
+import { employerCategory } from './core/employers.js';
 import type { Internship, RawListing, SourceAdapter, SourceOccurrence } from './types.js';
 import type { InternshipStore } from './store.js';
 
 export interface PollReport { fetchedSources: number; baselineSources: string[]; newJobs: Internship[]; filteredJobs: Internship[]; failures: string[]; }
 
 function occurrence(listing: RawListing): SourceOccurrence {
-  return { sourceId: listing.sourceId, document: listing.document, sourceUrl: listing.sourceUrl, row: listing.row, postedAt: listing.postedAt, company: listing.company, title: listing.title, location: listing.location, season: listing.season, applyUrl: listing.applyUrl, compensation: listing.compensation, state: listing.state };
+  return { sourceId: listing.sourceId, document: listing.document, sourceUrl: listing.sourceUrl, row: listing.row, postedAt: listing.postedAt, company: listing.company, title: listing.title, location: listing.location, season: listing.season, applyUrl: listing.applyUrl, compensation: listing.compensation, ...(listing.requirements ? { requirements: listing.requirements } : {}), state: listing.state };
+}
+function genericLocation(value: string | undefined) {
+  return !value || /^(unknown|unspecified|n\/?a|not (?:listed|specified)|tbd|see (?:description|job))$/i.test(value.trim());
 }
 function merge(existing: Internship, listing: RawListing, now: string): Internship {
   const reference = occurrence(listing);
-  const match = existing.sourceReferences.find((item) => item.sourceId === reference.sourceId && item.document === reference.document && item.row === reference.row);
-  return { ...existing, company: listing.company || existing.company, title: listing.title || existing.title, location: listing.location || existing.location, applyUrl: listing.applyUrl || existing.applyUrl, compensation: listing.compensation.maxHourlyUSD ? listing.compensation : existing.compensation, sourceReferences: match ? existing.sourceReferences : [...existing.sourceReferences, reference], open: true, lastSeenAt: now };
+  const match = existing.sourceReferences.findIndex((item) => item.sourceId === reference.sourceId && item.document === reference.document && item.row === reference.row);
+  // Keep the first precise source value stable; secondary lists often flatten
+  // details such as “Remote (US)” into a less useful variant.
+  const location = genericLocation(existing.location) ? listing.location || existing.location : existing.location;
+  const company = existing.company || listing.company;
+  const sourceReferences = match >= 0 ? existing.sourceReferences.map((item, index) => index === match ? reference : item) : [...existing.sourceReferences, reference];
+  return { ...existing, company, title: existing.title || listing.title, location, applyUrl: existing.applyUrl || listing.applyUrl, fingerprint: fingerprint(company, existing.title || listing.title, location, listing.season), compensation: listing.compensation.maxHourlyUSD ? listing.compensation : existing.compensation, requirements: listing.requirements ?? existing.requirements, employerCategory: employerCategory(company), sourceReferences, open: sourceReferences.some((item) => item.state === 'open'), lastSeenAt: now };
 }
 function newJob(listing: RawListing, now: string): Internship {
   const normalizedUrl = normalizeUrl(listing.applyUrl); const key = fingerprint(listing.company, listing.title, listing.location, listing.season);
-  return { jobId: jobId(normalizedUrl, key), company: listing.company, title: listing.title, location: listing.location, season: listing.season, applyUrl: listing.applyUrl, normalizedUrl, fingerprint: key, compensation: listing.compensation, sourceReferences: [occurrence(listing)], open: true, firstSeenAt: now, lastSeenAt: now, notification: { smsPending: true, digestPending: true } };
+  return { jobId: jobId(normalizedUrl, key), company: listing.company, title: listing.title, location: listing.location, season: listing.season, applyUrl: listing.applyUrl, normalizedUrl, fingerprint: key, compensation: listing.compensation, ...(listing.requirements ? { requirements: listing.requirements } : {}), employerCategory: employerCategory(listing.company), sourceReferences: [occurrence(listing)], open: listing.state === 'open', firstSeenAt: now, lastSeenAt: now, notification: { smsPending: true, digestPending: true } };
 }
 
 export class Poller {
@@ -33,15 +42,22 @@ export class Poller {
         if (baseline) report.baselineSources.push(adapter.id);
         const now = this.now().toISOString();
         for (const listing of result.listings) {
-          let existing = await this.store.findByUrl(normalizeUrl(listing.applyUrl));
-          if (!existing) existing = await this.store.findByFingerprint(fingerprint(listing.company, listing.title, listing.location, listing.season));
-          if (existing) await this.store.putInternship(merge(existing, listing, now));
-          else {
-            const created = newJob(listing, now);
-            if (baseline) created.notification = { smsPending: false, digestPending: false };
-            else if (isTechnicalJob(created) && matchesJobFilter(listing, this.filter)) report.newJobs.push(created);
-            else { created.notification = { smsPending: false, digestPending: false }; report.filteredJobs.push(created); }
-            await this.store.putInternship(created);
+          try {
+            let existing = await this.store.findByUrl(normalizeUrl(listing.applyUrl));
+            for (const candidate of fingerprintCandidates(listing.company, listing.title, listing.location, listing.season)) {
+              if (existing) break;
+              existing = await this.store.findByFingerprint(candidate);
+            }
+            if (existing) await this.store.putInternship(merge(existing, listing, now));
+            else {
+              const created = newJob(listing, now);
+              if (baseline) created.notification = { smsPending: false, digestPending: false };
+              else if (created.open && isTechnicalJob(created) && matchesJobFilter(created, this.filter)) report.newJobs.push(created);
+              else { created.notification = { smsPending: false, digestPending: false }; report.filteredJobs.push(created); }
+              await this.store.putInternship(created);
+            }
+          } catch (error) {
+            report.failures.push(`${adapter.id}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`);
           }
         }
         await this.store.putCheckpoint(result.checkpoint);

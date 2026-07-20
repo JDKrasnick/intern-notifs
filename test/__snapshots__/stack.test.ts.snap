@@ -481,6 +481,14 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
             "AttributeName": "openSk",
             "AttributeType": "S",
           },
+          {
+            "AttributeName": "closedPk",
+            "AttributeType": "S",
+          },
+          {
+            "AttributeName": "closedSk",
+            "AttributeType": "S",
+          },
         ],
         "BillingMode": "PAY_PER_REQUEST",
         "GlobalSecondaryIndexes": [
@@ -541,6 +549,22 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
               },
               {
                 "AttributeName": "openSk",
+                "KeyType": "RANGE",
+              },
+            ],
+            "Projection": {
+              "ProjectionType": "ALL",
+            },
+          },
+          {
+            "IndexName": "closedJobsIndex",
+            "KeySchema": [
+              {
+                "AttributeName": "closedPk",
+                "KeyType": "HASH",
+              },
+              {
+                "AttributeName": "closedSk",
                 "KeyType": "RANGE",
               },
             ],
@@ -614,7 +638,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
           "S3Bucket": {
             "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
           },
-          "S3Key": "64bb9800f15de52eac287a10e90b11944c42a647254662cc6a14e83981fbe022.zip",
+          "S3Key": "27ddcdd8d1fe2cef4823db879a83da165b7d9a63910a61d4c189ffd80cc3b96b.zip",
         },
         "Environment": {
           "Variables": {
@@ -892,7 +916,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
           "S3Bucket": {
             "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
           },
-          "S3Key": "94ae925c3393eeae84524ef581b3053c0b8da205c16dd6bc7142f7a72bebc01f.zip",
+          "S3Key": "fd1abc648b81fcc8a5d91b81fc4fee16218c8bfb7ca9bb64c993ea9441b9c549.zip",
         },
         "Environment": {
           "Variables": {

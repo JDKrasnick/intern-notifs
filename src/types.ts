@@ -1,4 +1,5 @@
 import type { JobFilter } from './core/filters.js';
+import type { EmployerCategory } from './core/employers.js';
 
 export type ApplicationStatus =
   | 'saved' | 'applied' | 'assessment' | 'interview' | 'offer' | 'rejected' | 'withdrawn';
@@ -14,11 +15,22 @@ export interface ApplicationRecord {
   applyMode?: 'official-form' | 'partner';
 }
 
+export type AlertDelivery = 'immediate' | 'daily-digest';
+
+/** Delivery preferences are stored separately from the role filter so they can evolve independently. */
+export interface AlertSettings {
+  delivery: AlertDelivery;
+  quietHours?: { start: string; end: string; timezone: string };
+  applicationReminders: boolean;
+  followUpDays: number;
+}
+
 export interface UserPreferences {
   userId: string;
   filter: JobFilter;
   alertsEnabled: boolean;
   onboardingComplete: boolean;
+  alertSettings?: AlertSettings;
   /** Uses the same safe placeholders as the legacy compact ntfy notification. */
   push?: { titleTemplate?: string; descriptionTemplate?: string; roleAbbreviations?: Record<string, string> };
   updatedAt: string;
@@ -90,6 +102,12 @@ export interface Compensation {
   maxHourlyUSD?: number;
 }
 
+/** Source-declared constraints; absence never implies that a constraint does not exist. */
+export interface JobRequirements {
+  requiresUsCitizenship: boolean;
+  advancedDegreeRequired: boolean;
+}
+
 export interface SourceOccurrence extends SourceReference {
   company: string;
   title: string;
@@ -97,6 +115,7 @@ export interface SourceOccurrence extends SourceReference {
   season: string;
   applyUrl: string;
   compensation: Compensation;
+  requirements?: JobRequirements;
   state: 'open' | 'closed';
 }
 
@@ -121,6 +140,9 @@ export interface Internship {
   normalizedUrl: string;
   fingerprint: string;
   compensation: Compensation;
+  requirements?: JobRequirements;
+  /** Set at ingest time; older stored records are classified from company name when read. */
+  employerCategory?: EmployerCategory;
   sourceReferences: SourceOccurrence[];
   open: boolean;
   firstSeenAt: string;

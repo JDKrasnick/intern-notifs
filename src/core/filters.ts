@@ -1,4 +1,5 @@
 import type { RawListing } from '../types.js';
+import { employerCategories, employerCategory, type EmployerCategory } from './employers.js';
 
 export const jobCategories = ['ai-ml', 'grad', 'swe', 'quant', 'product', 'design'] as const;
 export type JobCategory = typeof jobCategories[number];
@@ -13,6 +14,14 @@ export interface JobFilter {
   /** Exclusions always win over inclusions. */
   excludeKeywords?: string[];
   excludeCategories?: JobCategory[];
+  /** When supplied, a job must match one selected company bucket as well as any role or keyword filter. */
+  includeEmployerCategories?: EmployerCategory[];
+  /** Exclusions always win over employer-category inclusions. */
+  excludeEmployerCategories?: EmployerCategory[];
+  /** Hide listings whose source explicitly requires U.S. citizenship. */
+  excludeUsCitizenshipRequired?: boolean;
+  /** Hide listings whose source explicitly marks an advanced degree as required. */
+  excludeAdvancedDegreeRequired?: boolean;
 }
 
 const patterns: Record<JobCategory, RegExp> = {
@@ -57,14 +66,20 @@ export function inferJobFocuses(listing: Pick<RawListing, 'title'>): JobFocus[] 
   return matched.length ? matched : /\b(software|swe|engineer|developer)\b/i.test(value) ? ['SWE'] : [];
 }
 
-export function matchesJobFilter(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season'>, filter?: JobFilter) {
+export function matchesJobFilter(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season' | 'requirements'>, filter?: JobFilter) {
   if (!filter) return true;
   const value = terms(listing);
   const categories = classifyJob(listing);
-  const excluded = [...(filter.excludeKeywords ?? []).map((keyword) => matchesKeyword(value, keyword)), ...(filter.excludeCategories ?? []).map((category) => categories.includes(category))].some(Boolean);
+  const companyCategory = employerCategory(listing.company);
+  const requirements = listing.requirements ?? {
+    requiresUsCitizenship: /🇺🇸|\b(?:requires?|must be)\s+(?:a\s+)?(?:u\.?s\.?|united states)\s+citizen(?:ship)?\b/i.test(value),
+    advancedDegreeRequired: /🎓|\b(?:advanced degree|master'?s|ph\.?d\.?|mba)\b/i.test(value)
+  };
+  const excluded = [...(filter.excludeKeywords ?? []).map((keyword) => matchesKeyword(value, keyword)), ...(filter.excludeCategories ?? []).map((category) => categories.includes(category)), ...(filter.excludeEmployerCategories ?? []).map((category) => companyCategory === category), Boolean(filter.excludeUsCitizenshipRequired && requirements.requiresUsCitizenship), Boolean(filter.excludeAdvancedDegreeRequired && requirements.advancedDegreeRequired)].some(Boolean);
   if (excluded) return false;
-  const inclusions = [...(filter.includeKeywords ?? []).map((keyword) => matchesKeyword(value, keyword)), ...(filter.includeCategories ?? []).map((category) => categories.includes(category))];
-  return inclusions.length === 0 || inclusions.some(Boolean);
+  const roleInclusions = [...(filter.includeKeywords ?? []).map((keyword) => matchesKeyword(value, keyword)), ...(filter.includeCategories ?? []).map((category) => categories.includes(category))];
+  const employerInclusions = (filter.includeEmployerCategories ?? []).map((category) => companyCategory === category);
+  return (roleInclusions.length === 0 || roleInclusions.some(Boolean)) && (employerInclusions.length === 0 || employerInclusions.some(Boolean));
 }
 
 function stringList(value: unknown, name: string) {
@@ -77,15 +92,37 @@ function categoryList(value: unknown, name: string): JobCategory[] | undefined {
   if (values?.some((value) => !jobCategories.includes(value as JobCategory))) throw new Error(`jobFilter.${name} contains an unsupported category`);
   return values as JobCategory[] | undefined;
 }
+function employerCategoryList(value: unknown, name: string): EmployerCategory[] | undefined {
+  const values = stringList(value, name);
+  if (values?.some((value) => !employerCategories.includes(value as EmployerCategory))) throw new Error(`jobFilter.${name} contains an unsupported employer category`);
+  return values as EmployerCategory[] | undefined;
+}
+function booleanValue(value: unknown, name: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'boolean') throw new Error(`jobFilter.${name} must be a boolean`);
+  return value;
+}
 
 export function parseJobFilter(value: unknown): JobFilter | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('jobFilter must be an object');
   const config = value as Record<string, unknown>;
+  const includeKeywords = stringList(config.includeKeywords, 'includeKeywords');
+  const includeCategories = categoryList(config.includeCategories, 'includeCategories');
+  const excludeKeywords = stringList(config.excludeKeywords, 'excludeKeywords');
+  const excludeCategories = categoryList(config.excludeCategories, 'excludeCategories');
+  const includeEmployerCategories = employerCategoryList(config.includeEmployerCategories, 'includeEmployerCategories');
+  const excludeEmployerCategories = employerCategoryList(config.excludeEmployerCategories, 'excludeEmployerCategories');
+  const excludeUsCitizenshipRequired = booleanValue(config.excludeUsCitizenshipRequired, 'excludeUsCitizenshipRequired');
+  const excludeAdvancedDegreeRequired = booleanValue(config.excludeAdvancedDegreeRequired, 'excludeAdvancedDegreeRequired');
   return {
-    includeKeywords: stringList(config.includeKeywords, 'includeKeywords'),
-    includeCategories: categoryList(config.includeCategories, 'includeCategories'),
-    excludeKeywords: stringList(config.excludeKeywords, 'excludeKeywords'),
-    excludeCategories: categoryList(config.excludeCategories, 'excludeCategories')
+    ...(includeKeywords !== undefined ? { includeKeywords } : {}),
+    ...(includeCategories !== undefined ? { includeCategories } : {}),
+    ...(excludeKeywords !== undefined ? { excludeKeywords } : {}),
+    ...(excludeCategories !== undefined ? { excludeCategories } : {}),
+    ...(includeEmployerCategories !== undefined ? { includeEmployerCategories } : {}),
+    ...(excludeEmployerCategories !== undefined ? { excludeEmployerCategories } : {}),
+    ...(excludeUsCitizenshipRequired !== undefined ? { excludeUsCitizenshipRequired } : {}),
+    ...(excludeAdvancedDegreeRequired !== undefined ? { excludeAdvancedDegreeRequired } : {})
   };
 }

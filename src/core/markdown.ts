@@ -69,7 +69,11 @@ export function parseInternshipMarkdown(markdown: string, options: MarkdownParse
     if (companyAt < 0 || titleAt < 0 || applyAt < 0) continue;
     for (const row of table.rows) {
       const values = row.cells.map(text); const rawRow = row.cells.join(' ').toLowerCase();
-      if (/\b(closed|inactive|filled|expired)\b/.test(rawRow)) continue;
+      const closed = /\b(closed|inactive|filled|expired)\b/.test(rawRow) || rawRow.includes('🔒');
+      const requirements = {
+        requiresUsCitizenship: rawRow.includes('🇺🇸') || /\b(?:requires?|must be)\s+(?:a\s+)?(?:u\.?s\.?|united states)\s+citizen(?:ship)?\b/i.test(rawRow),
+        advancedDegreeRequired: rawRow.includes('🎓') || /\b(?:advanced degree|master'?s|ph\.?d\.?|mba)\b/i.test(rawRow)
+      };
       let company = values[companyAt] ?? '';
       if (/^↳|^\u21b3/.test(company)) company = inheritedCompany;
       else if (company) inheritedCompany = company;
@@ -78,7 +82,7 @@ export function parseInternshipMarkdown(markdown: string, options: MarkdownParse
       parsed.push({
         sourceId: options.sourceId, document: options.document, sourceUrl: options.sourceUrl, row: row.row,
         company, title, location: locationAt >= 0 ? values[locationAt] || 'Unspecified' : 'Unspecified', season: options.season, applyUrl,
-        compensation: parseCompensation(compensationAt >= 0 ? values[compensationAt] ?? '' : ''), state: 'open',
+        compensation: parseCompensation(compensationAt >= 0 ? values[compensationAt] ?? '' : ''), requirements, state: closed ? 'closed' : 'open',
         postedAt: dateAt >= 0 ? values[dateAt] || undefined : undefined, fetchedAt: options.fetchedAt ?? new Date().toISOString()
       });
     }

@@ -45,4 +45,4 @@ Use a physical iOS/Android device for push testing. Expo Push Service delivery i
 
 ## Commands
 
-`npm run typecheck`, `npm run lint`, and `npm test` verify the backend and infrastructure. `npx tsx src/cli.ts seed` baselines sources quietly; `poll`, `dry-run`, `digest`, `smoke-push`, and `smoke-email` remain available for operations. `smoke-push` uses `EXPO_PUSH_TOKEN`.
+`npm run typecheck`, `npm run lint`, and `npm test` verify the backend and infrastructure. Use `npm run test:unit` for fast module/persistence checks and `npm run test:integration` for the hermetic end-to-end polling and authenticated API workflows. `npx tsx src/cli.ts seed` baselines sources quietly; `poll`, `dry-run`, `digest`, `smoke-push`, and `smoke-email` remain available for operations. `smoke-push` uses `EXPO_PUSH_TOKEN`.

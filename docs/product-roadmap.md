@@ -33,6 +33,8 @@
 
 - [ ] Draft a first 100–200 employer roster with an explicit international/student-friendly coverage strategy.
 - [ ] Define source-admission, attribution, and removal policies.
+- [x] Add internal source-aware filtering (FAANG, verified startups/YC, normal, U.S.-citizenship requirement, advanced-degree requirement, and open/closed status) to catalog ingestion, alerts, and mobile discovery.
+- [x] Audit 25 representative employers through the GitHub Markdown ingestion and poller pipeline.
 - [ ] Implement Greenhouse source adapter and tests.
 - [ ] Implement Lever source adapter and tests.
 - [ ] Add job freshness/source labels and notification deep links to the mobile product.
@@ -67,3 +69,4 @@
 | 2026-07-19 | Initial roles are technical | Focus increases catalog quality and relevance |
 | 2026-07-19 | Use official-form handoff, not universal direct submit | Better reliability and employer authorization boundary |
 | 2026-07-19 | GitHub Project will be the shared external tracker | Fits open-source workflow and links work to code/issues |
+| 2026-07-19 | Use FAANG, startup, and normal as the initial company-type filters | Small, understandable filters; startup begins with a reviewed YC-backed allowlist and unknown employers remain normal |
