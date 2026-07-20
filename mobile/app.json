@@ -17,7 +17,9 @@
     },
     "android": {
       "package": "com.internnotifs.app",
-      "permissions": ["POST_NOTIFICATIONS"]
+      "permissions": [
+        "POST_NOTIFICATIONS"
+      ]
     },
     "plugins": [
       [
@@ -34,7 +36,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#061A33"
         }
-      ]
+      ],
+      "expo-font"
     ],
     "extra": {
       "apiUrl": "${EXPO_PUBLIC_API_URL}",
