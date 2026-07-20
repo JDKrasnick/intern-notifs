@@ -52,4 +52,23 @@ describe('polling', () => {
     expect(store.jobs.size).toBe(0);
     expect(report.newJobs).toEqual([]);
   });
+  it('quarantines a legacy open role when its source has not changed but its link fails validation', async () => {
+    const store = new MemoryInternshipStore();
+    const role = listing('https://jobs.example.com/b');
+    await store.putInternship({
+      jobId: 'legacy-role', company: role.company, title: role.title, location: role.location,
+      season: role.season, applyUrl: role.applyUrl, normalizedUrl: role.applyUrl, fingerprint: 'legacy-role',
+      compensation: role.compensation, sourceReferences: [role], open: true, firstSeenAt: role.fetchedAt,
+      lastSeenAt: role.fetchedAt, notification: { smsPending: true, digestPending: true },
+    });
+    const report = await new Poller(
+      [new Adapter('one', [])],
+      store,
+      undefined,
+      undefined,
+      async () => { throw new Error('Application link returned HTTP 403'); },
+    ).poll();
+    expect((await store.getJob('legacy-role'))).toMatchObject({ open: false, notification: { smsPending: false, digestPending: false } });
+    expect(report.failures).toContain('catalog: legacy-role: Application link returned HTTP 403');
+  });
 });

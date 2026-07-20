@@ -31,6 +31,30 @@ function newJob(listing: RawListing, now: string, applicationUrlValidatedAt?: st
 
 export class Poller {
   constructor(private readonly adapters: SourceAdapter[], private readonly store: InternshipStore, private readonly now: () => Date = () => new Date(), private readonly filter?: JobFilter, private readonly validateApplicationUrl?: ApplicationUrlValidator) {}
+  private async validateUnverifiedOpenJobs(report: PollReport) {
+    if (!this.validateApplicationUrl || !this.store.listOpen) return;
+    let cursor: string | undefined;
+    do {
+      const page = await this.store.listOpen(cursor, 100, 'open');
+      cursor = page.cursor;
+      const jobs = page.jobs.filter((job) => !job.applicationUrlValidatedAt);
+      let nextJob = 0;
+      const validateJob = async () => {
+        const job = jobs[nextJob++];
+        if (!job) return;
+        try {
+          await this.validateApplicationUrl!(job.applyUrl);
+          await this.store.putInternship({ ...job, applicationUrlValidatedAt: this.now().toISOString() });
+        } catch (error) {
+          await this.store.putInternship({ ...job, open: false, notification: { ...job.notification, smsPending: false, digestPending: false } });
+          report.failures.push(`catalog: ${job.jobId}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(24, jobs.length) }, async () => {
+        while (nextJob < jobs.length) await validateJob();
+      }));
+    } while (cursor);
+  }
   async poll(options: { seedOnly?: boolean } = {}): Promise<PollReport> {
     const report: PollReport = { fetchedSources: 0, baselineSources: [], newJobs: [], filteredJobs: [], failures: [] };
     for (const adapter of this.adapters) {
@@ -87,6 +111,7 @@ export class Poller {
         await this.store.putCheckpoint(result.checkpoint);
       } catch (error) { report.failures.push(error instanceof Error ? error.message : String(error)); }
     }
+    await this.validateUnverifiedOpenJobs(report);
     return report;
   }
 }
