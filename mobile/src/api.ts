@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { publicConfig } from './public-config';
 
-const baseUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
+const baseUrl = publicConfig.apiUrl.replace(/\/$/, '');
 const requestTimeoutMs = 12_000;
 
 export async function api<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
