@@ -3,6 +3,7 @@ import { DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, QueryCom
 import { isTechnicalJob } from './core/filters.js';
 import { employerCategory } from './core/employers.js';
 import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, SourceCheckpoint, UserDocument, UserPreferences } from './types.js';
+import type { ApplicationSession } from './application-automation.js';
 
 function withEmployerCategory(job: Internship): Internship {
   return { ...structuredClone(job), employerCategory: job.employerCategory ?? employerCategory(job.company) };
@@ -122,6 +123,10 @@ export interface UserStore {
   listApplications(userId: string): Promise<ApplicationRecord[]>;
   getApplication(userId: string, applicationId: string): Promise<ApplicationRecord | undefined>;
   putApplication(userId: string, value: ApplicationRecord): Promise<void>;
+  getApplicationSession(userId: string, sessionId: string): Promise<ApplicationSession | undefined>;
+  getApplicationSessionById(sessionId: string): Promise<ApplicationSession | undefined>;
+  putApplicationSession(userId: string, value: ApplicationSession, expectedVersion?: number): Promise<boolean>;
+  listApplicationSessions(userId: string, applicationId?: string): Promise<ApplicationSession[]>;
   listDocuments(userId: string): Promise<UserDocument[]>;
   putDocument(value: UserDocument): Promise<void>;
   deleteDocument(userId: string, documentId: string): Promise<void>;
@@ -132,20 +137,24 @@ export interface UserStore {
 }
 
 export class MemoryUserStore implements UserStore {
-  readonly preferences = new Map<string, UserPreferences>(); readonly devices = new Map<string, DeviceToken>(); readonly profiles = new Map<string, ApplicantProfile>(); readonly applications = new Map<string, ApplicationRecord>(); readonly documents = new Map<string, UserDocument>(); readonly receipts = new Map<string, DeliveryReceipt>();
+  readonly preferences = new Map<string, UserPreferences>(); readonly devices = new Map<string, DeviceToken>(); readonly profiles = new Map<string, ApplicantProfile>(); readonly applications = new Map<string, ApplicationRecord>(); readonly sessions = new Map<string, ApplicationSession>(); readonly documents = new Map<string, UserDocument>(); readonly receipts = new Map<string, DeliveryReceipt>();
   async getPreferences(userId: string) { return this.preferences.get(userId); } async putPreferences(value: UserPreferences) { this.preferences.set(value.userId, structuredClone(value)); }
   async activeDevices() { return [...this.devices.values()].filter((d) => d.active).map((d) => structuredClone(d)); }
   async putDevice(value: DeviceToken) { this.devices.set(`${value.userId}#${value.token}`, structuredClone(value)); } async deleteDevice(userId: string, token: string) { this.devices.delete(`${userId}#${token}`); }
   async getProfile(userId: string) { return this.profiles.get(userId); } async putProfile(value: ApplicantProfile) { this.profiles.set(value.userId, structuredClone(value)); }
   async listApplications(userId: string) { return [...this.applications.entries()].filter(([key]) => key.startsWith(`${userId}#`)).map(([, value]) => value).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((a) => structuredClone(a)); }
   async getApplication(userId: string, applicationId: string) { const value = this.applications.get(`${userId}#${applicationId}`); return value && structuredClone(value); } async putApplication(userId: string, value: ApplicationRecord) { this.applications.set(`${userId}#${value.applicationId}`, structuredClone(value)); }
+  async getApplicationSession(userId: string, sessionId: string) { const value = this.sessions.get(`${userId}#${sessionId}`); return value && structuredClone(value); }
+  async getApplicationSessionById(sessionId: string) { const value = [...this.sessions.values()].find((session) => session.sessionId === sessionId); return value && structuredClone(value); }
+  async putApplicationSession(userId: string, value: ApplicationSession, expectedVersion?: number) { const key = `${userId}#${value.sessionId}`; const current = this.sessions.get(key); if (expectedVersion !== undefined && current?.version !== expectedVersion) return false; if (expectedVersion === undefined && current) return false; this.sessions.set(key, structuredClone(value)); return true; }
+  async listApplicationSessions(userId: string, applicationId?: string) { return [...this.sessions.entries()].filter(([key, value]) => key.startsWith(`${userId}#`) && (!applicationId || value.applicationId === applicationId)).map(([, value]) => structuredClone(value)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
   async listDocuments(userId: string) { return [...this.documents.values()].filter((d) => d.userId === userId).map((d) => structuredClone(d)); } async putDocument(value: UserDocument) { this.documents.set(`${value.userId}#${value.documentId}`, structuredClone(value)); } async deleteDocument(userId: string, documentId: string) { this.documents.delete(`${userId}#${documentId}`); }
   async getReceipt(userId: string, jobId: string, token: string) { return this.receipts.get(`${userId}#${jobId}#${token}`); } async putReceipt(value: DeliveryReceipt) { this.receipts.set(`${value.userId}#${value.jobId}#${value.token}`, structuredClone(value)); }
   async pendingReceipts() { return [...this.receipts.values()].filter((receipt) => receipt.status === 'pending' && receipt.ticketId).map((receipt) => structuredClone(receipt)); }
-  async deleteUser(userId: string) { const docs = await this.listDocuments(userId); for (const map of [this.preferences, this.profiles]) map.delete(userId); for (const [key] of this.devices) if (key.startsWith(`${userId}#`)) this.devices.delete(key); for (const [key] of this.applications) if (key.startsWith(`${userId}#`)) this.applications.delete(key); for (const [key] of this.documents) if (key.startsWith(`${userId}#`)) this.documents.delete(key); for (const [key] of this.receipts) if (key.startsWith(`${userId}#`)) this.receipts.delete(key); return docs; }
+  async deleteUser(userId: string) { const docs = await this.listDocuments(userId); for (const map of [this.preferences, this.profiles]) map.delete(userId); for (const [key] of this.devices) if (key.startsWith(`${userId}#`)) this.devices.delete(key); for (const [key] of this.applications) if (key.startsWith(`${userId}#`)) this.applications.delete(key); for (const [key] of this.sessions) if (key.startsWith(`${userId}#`)) this.sessions.delete(key); for (const [key] of this.documents) if (key.startsWith(`${userId}#`)) this.documents.delete(key); for (const [key] of this.receipts) if (key.startsWith(`${userId}#`)) this.receipts.delete(key); return docs; }
 }
 
-type UserItem = { pk: string; sk: string; kind: string; value: unknown; activePk?: string; tokenPk?: string; receiptPk?: string };
+type UserItem = { pk: string; sk: string; kind: string; value: unknown; activePk?: string; tokenPk?: string; receiptPk?: string; activeSessionPk?: string; expiresAtEpoch?: number };
 export class DynamoUserStore implements UserStore {
   private readonly client: DynamoDBDocumentClient;
   constructor(private readonly tableName: string, client?: DynamoDBDocumentClient) { this.client = client ?? DynamoDBDocumentClient.from(new DynamoDBClient({})); }
@@ -165,6 +174,30 @@ export class DynamoUserStore implements UserStore {
   getProfile(userId: string) { return this.get<ApplicantProfile>(userId, 'PROFILE'); } putProfile(value: ApplicantProfile) { return this.put(value.userId, 'PROFILE', 'profile', value); }
   async listApplications(userId: string) { return (await this.queryAll({ TableName: this.tableName, KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)', ExpressionAttributeValues: { ':pk': `USER#${userId}`, ':prefix': 'APPLICATION#' } })).map((item) => item.value as ApplicationRecord).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
   getApplication(userId: string, applicationId: string) { return this.get<ApplicationRecord>(userId, `APPLICATION#${applicationId}`); } putApplication(userId: string, value: ApplicationRecord) { return this.put(userId, `APPLICATION#${value.applicationId}`, 'application', value); }
+  getApplicationSession(userId: string, sessionId: string) { return this.get<ApplicationSession>(userId, `APPLICATION_SESSION#${sessionId}`); }
+  async getApplicationSessionById(sessionId: string) {
+    const response = await this.client.send(new QueryCommand({ TableName: this.tableName, IndexName: 'activeSessionsIndex', KeyConditionExpression: 'activeSessionPk = :pk', ExpressionAttributeValues: { ':pk': `SESSION#${sessionId}` }, Limit: 1 }));
+    return response.Items?.[0]?.value as ApplicationSession | undefined;
+  }
+  async putApplicationSession(userId: string, value: ApplicationSession, expectedVersion?: number) {
+    const active = !['submitted', 'failed', 'cancelled'].includes(value.status);
+    const input = {
+      TableName: this.tableName,
+      Item: {
+        pk: `USER#${userId}`,
+        sk: `APPLICATION_SESSION#${value.sessionId}`,
+        kind: 'application-session',
+        value,
+        ...(active ? { activeSessionPk: `SESSION#${value.sessionId}` } : {}),
+        expiresAtEpoch: Math.floor(new Date(value.metadataExpiresAt).getTime() / 1000),
+      } satisfies UserItem,
+      ...(expectedVersion === undefined
+        ? { ConditionExpression: 'attribute_not_exists(pk)' }
+        : { ConditionExpression: '#value.#version = :expectedVersion', ExpressionAttributeNames: { '#value': 'value', '#version': 'version' }, ExpressionAttributeValues: { ':expectedVersion': expectedVersion } }),
+    };
+    try { await this.client.send(new PutCommand(input)); return true; } catch (error) { if ((error as { name?: string }).name === 'ConditionalCheckFailedException') return false; throw error; }
+  }
+  async listApplicationSessions(userId: string, applicationId?: string) { return (await this.queryAll({ TableName: this.tableName, KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)', ExpressionAttributeValues: { ':pk': `USER#${userId}`, ':prefix': 'APPLICATION_SESSION#' } })).map((item) => item.value as ApplicationSession).filter((session) => !applicationId || session.applicationId === applicationId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
   async listDocuments(userId: string) { return (await this.queryAll({ TableName: this.tableName, KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)', ExpressionAttributeValues: { ':pk': `USER#${userId}`, ':prefix': 'DOCUMENT#' } })).map((item) => item.value as UserDocument); } putDocument(value: UserDocument) { return this.put(value.userId, `DOCUMENT#${value.documentId}`, 'document', value); } async deleteDocument(userId: string, documentId: string) { await this.client.send(new DeleteCommand({ TableName: this.tableName, Key: { pk: `USER#${userId}`, sk: `DOCUMENT#${documentId}` } })); }
   getReceipt(userId: string, jobId: string, token: string) { return this.get<DeliveryReceipt>(userId, `RECEIPT#${jobId}#${token}`); } putReceipt(value: DeliveryReceipt) { return this.put(value.userId, `RECEIPT#${value.jobId}#${value.token}`, 'receipt', value, value.status === 'pending' ? { receiptPk: 'PENDING' } : {}); }
   async pendingReceipts() { return (await this.queryAll({ TableName: this.tableName, IndexName: 'pendingReceiptsIndex', KeyConditionExpression: 'receiptPk = :pending', ExpressionAttributeValues: { ':pending': 'PENDING' } })).map((item) => item.value as DeliveryReceipt); }

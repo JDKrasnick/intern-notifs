@@ -23,4 +23,9 @@ describe('GFM internship parser', () => {
     const rows = parseInternshipMarkdown('| Company | Role | Apply |\n| --- | --- | --- |\n| Acme | Research Intern 🇺🇸 🎓 | [Apply](https://example.com/apply) |', { sourceId: 'fixture', document: 'README.md', sourceUrl: 'https://example.com', season: 'summer-2027' });
     expect(rows[0]?.requirements).toEqual({ requiresUsCitizenship: true, advancedDegreeRequired: true });
   });
+  it('parses an HTML table while preferring the official link in its application cell', () => {
+    const rows = parseInternshipMarkdown('<table><thead><tr><th>Company</th><th>Role</th><th>Location</th><th>Application</th></tr></thead><tbody><tr><td><strong>Acme</strong></td><td>Software Intern</td><td>Remote</td><td><a href="https://careers.example.test/acme">Apply</a> <a href="https://aggregator.example.test/acme">Mirror</a></td></tr></tbody></table>', { sourceId: 'fixture', document: 'README.md', sourceUrl: 'https://example.com', season: 'summer-2027' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ company: 'Acme', title: 'Software Intern', applyUrl: 'https://careers.example.test/acme' });
+  });
 });

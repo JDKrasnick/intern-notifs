@@ -232,7 +232,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
           "S3Bucket": {
             "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
           },
-          "S3Key": "c0d9f24649426c60a1bc01108070535a40353ae6cd8ceccb812969319b936e5d.zip",
+          "S3Key": "<lambda-asset>.zip",
         },
         "Handler": "__entrypoint__.handler",
         "MemorySize": 128,
@@ -638,7 +638,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
           "S3Bucket": {
             "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
           },
-          "S3Key": "8b085a5fe5ecf97ffdc0eea76092662d5c54628fd1df1979e792114f53a24989.zip",
+          "S3Key": "<lambda-asset>.zip",
         },
         "Environment": {
           "Variables": {
@@ -916,7 +916,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
           "S3Bucket": {
             "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
           },
-          "S3Key": "f641753c3adba208398bd6399b83990a7a3851a5253a7feb2bf95947689ce3e7.zip",
+          "S3Key": "<lambda-asset>.zip",
         },
         "Environment": {
           "Variables": {
@@ -1704,6 +1704,10 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
             "AttributeName": "receiptPk",
             "AttributeType": "S",
           },
+          {
+            "AttributeName": "activeSessionPk",
+            "AttributeType": "S",
+          },
         ],
         "BillingMode": "PAY_PER_REQUEST",
         "GlobalSecondaryIndexes": [
@@ -1743,6 +1747,18 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
               "ProjectionType": "ALL",
             },
           },
+          {
+            "IndexName": "activeSessionsIndex",
+            "KeySchema": [
+              {
+                "AttributeName": "activeSessionPk",
+                "KeyType": "HASH",
+              },
+            ],
+            "Projection": {
+              "ProjectionType": "ALL",
+            },
+          },
         ],
         "KeySchema": [
           {
@@ -1759,6 +1775,10 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         },
         "SSESpecification": {
           "SSEEnabled": true,
+        },
+        "TimeToLiveSpecification": {
+          "AttributeName": "expiresAtEpoch",
+          "Enabled": true,
         },
       },
       "Type": "AWS::DynamoDB::Table",

@@ -169,6 +169,19 @@ Every screen follows these rules. They are as important as colors and type.
 - Company is teal metadata, role is ink, and location/season is muted body text.
 - When the signed-in user has an application record for the role, display its current status in a compact teal pill. For example, show **APPLIED** after the user starts the employer handoff; continue to show later statuses such as assessment or interview.
 
+### Save for web
+
+- On the signed-in mobile feed, a deliberate left swipe on an unsaved role reveals a teal bookmark action and saves the role to the shared **Saved** queue. The card returns to its resting position, then shows its **SAVED** status; do not remove it from the feed.
+- The reveal uses a short 100 ms follow-through and 120 ms hold before the card settles back. With Reduce Motion enabled, save immediately without movement.
+- Saving never opens the employer form. The same account-backed role is available in the responsive web app’s **Saved** queue, where **Open official application** is the clear primary handoff. Keep status changes explicit; opening a form alone must not mark a role applied.
+- Expose the same action to assistive technology as **Save for web**, with a hint that it can be applied to later in the web app.
+
+### Hide from feed
+
+- A deliberate right swipe hides a role on the current device only. Reveal a subdued **Hide** action, then remove the card after its short follow-through; this must never remove the role from the catalog, Saved queue, or alerts.
+- Replace the card in place with a quiet, static **Role hidden on this device · Undo** row. It is not a popup or toast: it remains in the role’s list position for the current session, so Undo is immediate. Hidden roles are also listed in Profile and can be restored individually.
+- Expose **Hide on this device** as an assistive-technology action. A card with both actions must describe left swipe for Save and right swipe for Hide.
+
 ### New and seen roles
 
 - For the active signed-in session, keep roles returned by the launch-inbox endpoint above the normal feed in a **New roles** group.

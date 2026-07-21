@@ -1,0 +1,23 @@
+name: Nightly source quality
+on:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run source:quality -- --output artifacts/source-quality.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightly-source-quality-report
+          path: artifacts/source-quality.json
+          if-no-files-found: warn

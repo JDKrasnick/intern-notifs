@@ -21,7 +21,7 @@ function isSeparator(line: string): boolean {
   return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
 }
 
-function tables(markdown: string): Table[] {
+function markdownTables(markdown: string): Table[] {
   const lines = markdown.replace(/\r/g, '').split('\n'); const result: Table[] = [];
   for (let index = 0; index + 1 < lines.length; index += 1) {
     if (!lines[index].includes('|') || !isSeparator(lines[index + 1])) continue;
@@ -37,6 +37,35 @@ function tables(markdown: string): Table[] {
   return result;
 }
 
+function htmlCells(row: string): string[] {
+  return [...row.matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)].map((match) => match[1].trim());
+}
+
+/** Supports source lists that use simple HTML tables while retaining their raw links. */
+function htmlTables(markdown: string): Table[] {
+  const result: Table[] = [];
+  for (const table of markdown.matchAll(/<table\b[^>]*>([\s\S]*?)<\/table>/gi)) {
+    const body = table[1]; const rows = [...body.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)];
+    const headerAt = rows.findIndex((row) => /<th\b/i.test(row[1]));
+    if (headerAt < 0) continue;
+    const headers = htmlCells(rows[headerAt][1]);
+    if (headers.length === 0) continue;
+    const parsedRows: Table['rows'] = [];
+    for (const row of rows.slice(headerAt + 1)) {
+      const cells = htmlCells(row[1]);
+      if (cells.length !== headers.length) continue;
+      const start = (table.index ?? 0) + (row.index ?? 0);
+      parsedRows.push({ cells, row: markdown.slice(0, start).split('\n').length });
+    }
+    result.push({ headers, rows: parsedRows });
+  }
+  return result;
+}
+
+function tables(markdown: string): Table[] {
+  return [...markdownTables(markdown), ...htmlTables(markdown)];
+}
+
 function text(value: string): string {
   return value.replace(/<[^>]*>/g, ' ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*_`]/g, '').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -47,7 +76,7 @@ function links(value: string): string[] {
     ...[...value.matchAll(/<a\s+[^>]*href\s*=\s*["'](https?:\/\/[^"']+)["'][^>]*>/gi)].map((m) => m[1]),
     ...[...value.matchAll(/(?<!["'(])(https?:\/\/[^\s<>)]+)/gi)].map((m) => m[1])
   ];
-  return [...new Set(values.map((link) => link.replace(/[),.;]+$/, '')).filter((link) => { try { return /^https?:$/.test(new URL(link).protocol); } catch { return false; } }))];
+  return [...new Set(values.map((link) => link.replace(/&amp;/gi, '&').replace(/[),.;]+$/, '')).filter((link) => { try { return /^https?:$/.test(new URL(link).protocol); } catch { return false; } }))];
 }
 
 function indexOf(headers: string[], expressions: RegExp[]): number {
@@ -56,14 +85,17 @@ function indexOf(headers: string[], expressions: RegExp[]): number {
 
 export interface MarkdownParseOptions { sourceId: string; document: string; sourceUrl: string; season: string; fetchedAt?: string; }
 
-/** Parses only GFM table syntax; HTML is treated as inert text and only href values are read. */
+/** Parses GFM and simple HTML tables; HTML is otherwise treated as inert text. */
 export function parseInternshipMarkdown(markdown: string, options: MarkdownParseOptions): RawListing[] {
   const parsed: RawListing[] = []; let inheritedCompany = '';
   for (const table of tables(markdown)) {
     const companyAt = indexOf(table.headers, [/company|employer/]);
     const titleAt = indexOf(table.headers, [/role|position|title/]);
     const locationAt = indexOf(table.headers, [/location/]);
-    const applyAt = indexOf(table.headers, [/apply|link|application/]);
+    // SpeedyApply calls its direct application-link column "Posting". Match
+    // that exact header without treating a generic "Date Posted" column as an
+    // application URL.
+    const applyAt = indexOf(table.headers, [/apply|application/, /^link$/, /^posting$/]);
     const compensationAt = indexOf(table.headers, [/compensation|salary|pay/]);
     const dateAt = indexOf(table.headers, [/date|posted/]);
     if (companyAt < 0 || titleAt < 0 || applyAt < 0) continue;

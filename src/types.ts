@@ -53,7 +53,14 @@ export interface DeviceToken {
 /** Core details are deliberately separate from optional sensitive application answers. */
 export interface ApplicantProfile {
   userId: string;
-  contact: { name: string; email: string; phone?: string };
+  contact: {
+    name: string;
+    /** Explicit parts prevent unsafe guessing from an international full name. */
+    firstName?: string;
+    lastName?: string;
+    email: string;
+    phone?: string;
+  };
   location: string;
   workAuthorization: string;
   links: Record<string, string>;
@@ -100,6 +107,8 @@ export interface SourceReference {
   sourceUrl: string;
   row: number;
   postedAt?: string;
+  /** Source-declared workplace arrangement; absent when the source does not declare one. */
+  workMode?: 'remote' | 'hybrid' | 'onsite';
 }
 
 export interface Compensation {
@@ -167,6 +176,8 @@ export interface SourceAdapter {
 export interface SourceFetchResult {
   sourceId: string;
   listings: RawListing[];
+  /** Rows withheld before publication because their application URL violates baseline policy. */
+  rejectedApplicationUrls?: Array<{ row: number; url: string; reason: string }>;
   checkpoint: SourceCheckpoint;
   notModified: boolean;
 }

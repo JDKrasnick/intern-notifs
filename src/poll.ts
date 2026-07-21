@@ -2,13 +2,14 @@ import { fingerprint, fingerprintCandidates, jobId, normalizeUrl } from './core/
 import type { ApplicationUrlValidator } from './core/application-url.js';
 import { isTechnicalJob, matchesJobFilter, type JobFilter } from './core/filters.js';
 import { employerCategory } from './core/employers.js';
+import { sourceQualityFailures } from './sources/quality.js';
 import type { Internship, RawListing, SourceAdapter, SourceOccurrence } from './types.js';
 import type { InternshipStore } from './store.js';
 
 export interface PollReport { fetchedSources: number; baselineSources: string[]; newJobs: Internship[]; filteredJobs: Internship[]; failures: string[]; }
 
 function occurrence(listing: RawListing): SourceOccurrence {
-  return { sourceId: listing.sourceId, document: listing.document, sourceUrl: listing.sourceUrl, row: listing.row, postedAt: listing.postedAt, company: listing.company, title: listing.title, location: listing.location, season: listing.season, applyUrl: listing.applyUrl, compensation: listing.compensation, ...(listing.requirements ? { requirements: listing.requirements } : {}), state: listing.state };
+  return { sourceId: listing.sourceId, document: listing.document, sourceUrl: listing.sourceUrl, row: listing.row, postedAt: listing.postedAt, workMode: listing.workMode, company: listing.company, title: listing.title, location: listing.location, season: listing.season, applyUrl: listing.applyUrl, compensation: listing.compensation, ...(listing.requirements ? { requirements: listing.requirements } : {}), state: listing.state };
 }
 function genericLocation(value: string | undefined) {
   return !value || /^(unknown|unspecified|n\/?a|not (?:listed|specified)|tbd|see (?:description|job))$/i.test(value.trim());
@@ -69,8 +70,8 @@ export class Poller {
       try {
         const result = await adapter.fetch(previous); report.fetchedSources += 1;
         if (result.notModified) continue;
-        // A formerly healthy feed returning no rows is more likely layout drift than no internships.
-        if ((previous?.successfulFetches ?? 0) > 0 && previous?.lastRowCount && result.listings.length === 0) throw new Error(`${adapter.id}: suspicious zero-row parser result`);
+        const qualityFailures = sourceQualityFailures(result, previous);
+        if (qualityFailures.length) throw new Error(qualityFailures.join('; '));
         const baseline = !previous || previous.successfulFetches === 0 || options.seedOnly;
         if (baseline) report.baselineSources.push(adapter.id);
         const now = this.now().toISOString();

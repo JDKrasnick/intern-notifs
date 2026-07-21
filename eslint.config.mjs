@@ -5,6 +5,7 @@ export default tseslint.config(
   {
     ignores: [
       'dist/**',
+      'browser-companion/dist/**',
       'cdk.out/**',
       'coverage/**',
       'node_modules/**',
@@ -17,6 +18,25 @@ export default tseslint.config(
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    files: ['browser-companion/**/*.{ts,js}'],
+    languageOptions: {
+      globals: {
+        CSS: 'readonly',
+        Event: 'readonly',
+        HTMLInputElement: 'readonly',
+        HTMLSelectElement: 'readonly',
+        HTMLTextAreaElement: 'readonly',
+        MutationObserver: 'readonly',
+        URL: 'readonly',
+        chrome: 'readonly',
+        document: 'readonly',
+        location: 'readonly',
+        sessionStorage: 'readonly',
+        window: 'readonly',
+      },
+    },
+  },
   {
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',

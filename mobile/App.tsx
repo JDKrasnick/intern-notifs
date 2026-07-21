@@ -5,9 +5,11 @@ import {
   Animated,
   Easing,
   FlatList,
+  InteractionManager,
   KeyboardAvoidingView,
   Linking,
   Modal,
+  PanResponder,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -24,7 +26,7 @@ import * as WebBrowser from "expo-web-browser";
 import * as Notifications from "expo-notifications";
 import * as DocumentPicker from "expo-document-picker";
 import { Ionicons } from "@expo/vector-icons";
-import { api, sessionStorage } from "./src/api";
+import { api, responseCache, sessionStorage } from "./src/api";
 import { confirmEmail, signIn, signUp } from "./src/auth";
 import {
   clearApplicationFollowUp,
@@ -94,6 +96,8 @@ const defaultAlertSettings: AlertSettings = {
   applicationReminders: true,
   followUpDays: 7,
 };
+const catalogCacheKey = "internnotifs.open-catalog.v1";
+const hiddenRolesCacheKey = "internnotifs.hidden-roles.v1";
 const nextApplicationStatuses: Record<string, Application["status"]> = {
   saved: "applied",
   applied: "assessment",
@@ -187,51 +191,182 @@ async function openOfficialApplication(url: string) {
   }
 }
 
+function hasGreenhouseQuickApply(url: string) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "boards.greenhouse.io"
+      || host.endsWith(".boards.greenhouse.io")
+      || host === "job-boards.greenhouse.io"
+      || host.endsWith(".job-boards.greenhouse.io");
+  } catch {
+    return false;
+  }
+}
+
 function JobCard({
   job,
   onOpen,
   applicationStatus,
   isNew = false,
+  onSaveForWeb,
+  isSavingForWeb = false,
+  onHideLocally,
 }: {
   job: Job;
   onOpen: () => void;
   applicationStatus?: string;
   isNew?: boolean;
+  /** Saving is account-backed, so the same role is available in the web app. */
+  onSaveForWeb?: () => void;
+  isSavingForWeb?: boolean;
+  onHideLocally?: () => void;
 }) {
+  const motionAllowed = useContext(MotionAllowedContext);
+  const translateX = useRef(new Animated.Value(0)).current;
+  const canSaveForWeb = Boolean(onSaveForWeb) && !applicationStatus && !isSavingForWeb;
+  const canHideLocally = Boolean(onHideLocally);
+  const resetPosition = () => {
+    if (!motionAllowed) {
+      translateX.setValue(0);
+      return;
+    }
+    Animated.spring(translateX, {
+      toValue: 0,
+      friction: 9,
+      tension: 130,
+      useNativeDriver: true,
+    }).start();
+  };
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          ((canSaveForWeb && gesture.dx < -8) || (canHideLocally && gesture.dx > 8))
+          && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+        onPanResponderMove: (_, gesture) => {
+          translateX.setValue(
+            Math.max(canSaveForWeb ? -116 : 0, Math.min(canHideLocally ? 116 : 0, gesture.dx)),
+          );
+        },
+        onPanResponderRelease: (_, gesture) => {
+          const shouldSave = canSaveForWeb && (gesture.dx < -84 || gesture.vx < -0.7);
+          const shouldHide = canHideLocally && (gesture.dx > 84 || gesture.vx > 0.7);
+          if (!shouldSave && !shouldHide) {
+            resetPosition();
+            return;
+          }
+          if (shouldSave) onSaveForWeb?.();
+          if (!motionAllowed) {
+            translateX.setValue(0);
+            if (shouldHide) onHideLocally?.();
+            return;
+          }
+          Animated.sequence([
+            Animated.timing(translateX, {
+              toValue: shouldSave ? -108 : 108,
+              duration: 100,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            }),
+            Animated.delay(120),
+          ]).start(() => {
+            if (shouldHide) onHideLocally?.();
+            else resetPosition();
+          });
+        },
+        onPanResponderTerminate: resetPosition,
+      }),
+    [canHideLocally, canSaveForWeb, motionAllowed, onHideLocally, onSaveForWeb, translateX],
+  );
+  const saveActionProgress = translateX.interpolate({
+    inputRange: [-108, -36, 0],
+    outputRange: [1, 0.32, 0],
+    extrapolate: "clamp",
+  });
+  const hideActionProgress = translateX.interpolate({
+    inputRange: [0, 36, 108],
+    outputRange: [0, 0.32, 1],
+    extrapolate: "clamp",
+  });
+
   return (
-    <TouchableOpacity
-      accessibilityRole="button"
-      accessibilityLabel={`${isNew ? "New role, " : ""}${job.title} at ${job.company}, ${job.location}${applicationStatus ? `, ${applicationStatus}` : ""}`}
-      style={styles.card}
-      onPress={onOpen}
-    >
-      <View style={styles.jobCompanyRow}>
-        <Text style={styles.company}>{job.company}</Text>
-        {isNew ? (
-          <View style={styles.newSpark} accessibilityLabel="New role">
-            <Ionicons name="sparkles-outline" size={13} color={colors.signal} />
-            <Text style={styles.newSparkText}>New</Text>
+    <View style={styles.swipeCard}>
+      {canSaveForWeb || isSavingForWeb ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.swipeSaveAction, { opacity: saveActionProgress }]}
+        >
+          <Ionicons name="bookmark" size={20} color={colors.onDark} />
+          <Text style={styles.swipeSaveActionText}>{isSavingForWeb ? "Saving…" : "Save"}</Text>
+        </Animated.View>
+      ) : null}
+      {canHideLocally ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.swipeHideAction, { opacity: hideActionProgress }]}
+        >
+          <Ionicons name="eye-off-outline" size={20} color={colors.onDark} />
+          <Text style={styles.swipeHideActionText}>Hide</Text>
+        </Animated.View>
+      ) : null}
+      <Animated.View
+        {...(canSaveForWeb || canHideLocally ? panResponder.panHandlers : {})}
+        style={{ transform: [{ translateX }] }}
+      >
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={`${isNew ? "New role, " : ""}${job.title} at ${job.company}, ${job.location}${applicationStatus ? `, ${applicationStatus}` : ""}`}
+          accessibilityHint={
+            canSaveForWeb && canHideLocally
+              ? "Swipe left to save this role for the web app, or swipe right to hide it on this device."
+              : canSaveForWeb
+                ? "Swipe left to save this role and apply later in the web app."
+                : canHideLocally
+                  ? "Swipe right to hide this role on this device."
+                  : undefined
+          }
+          accessibilityActions={
+            [
+              ...(canSaveForWeb ? [{ name: "save", label: "Save for web" }] : []),
+              ...(canHideLocally ? [{ name: "hide", label: "Hide on this device" }] : []),
+            ]
+          }
+          onAccessibilityAction={(event) => {
+            if (event.nativeEvent.actionName === "save") onSaveForWeb?.();
+            if (event.nativeEvent.actionName === "hide") onHideLocally?.();
+          }}
+          style={[styles.card, styles.swipeCardSurface]}
+          onPress={onOpen}
+        >
+          <View style={styles.jobCompanyRow}>
+            <Text style={styles.company}>{job.company}</Text>
+            {isNew ? (
+              <View style={styles.newSpark} accessibilityLabel="New role">
+                <Ionicons name="sparkles-outline" size={13} color={colors.signal} />
+                <Text style={styles.newSparkText}>New</Text>
+              </View>
+            ) : null}
           </View>
-        ) : null}
-      </View>
-      <Text style={styles.title}>{job.title}</Text>
-      <Text style={styles.muted}>
-        {job.location} · {job.season}
-      </Text>
-      {!job.open ? <Text style={styles.closedStatus}>Closed</Text> : null}
-      {job.compensation.raw ? (
-        <Text style={styles.pay}>{job.compensation.raw}</Text>
-      ) : null}
-      {applicationStatus ? (
-        <View style={styles.jobApplicationStatus}>
-          <Text style={styles.jobApplicationStatusText}>{applicationStatus.toUpperCase()}</Text>
-        </View>
-      ) : null}
-      <View style={styles.jobCardAction}>
-        <Text style={styles.jobCardActionText}>View role</Text>
-        <Text style={styles.jobCardActionArrow}>›</Text>
-      </View>
-    </TouchableOpacity>
+          <Text style={styles.title}>{job.title}</Text>
+          <Text style={styles.muted}>
+            {job.location} · {job.season}
+          </Text>
+          {!job.open ? <Text style={styles.closedStatus}>Closed</Text> : null}
+          {job.compensation.raw ? (
+            <Text style={styles.pay}>{job.compensation.raw}</Text>
+          ) : null}
+          {applicationStatus ? (
+            <View style={styles.jobApplicationStatus}>
+              <Text style={styles.jobApplicationStatusText}>{applicationStatus.toUpperCase()}</Text>
+            </View>
+          ) : null}
+          <View style={styles.jobCardAction}>
+            <Text style={styles.jobCardActionText}>View role</Text>
+            <Text style={styles.jobCardActionArrow}>›</Text>
+          </View>
+        </TouchableOpacity>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -240,11 +375,17 @@ function NewRoleCard({
   onOpen,
   applicationStatus,
   index,
+  onSaveForWeb,
+  isSavingForWeb,
+  onHideLocally,
 }: {
   job: Job;
   onOpen: () => void;
   applicationStatus?: string;
   index: number;
+  onSaveForWeb?: () => void;
+  isSavingForWeb?: boolean;
+  onHideLocally?: () => void;
 }) {
   const opacity = useRef(new Animated.Value(1)).current;
   const lift = useRef(new Animated.Value(0)).current;
@@ -283,6 +424,9 @@ function NewRoleCard({
         onOpen={onOpen}
         applicationStatus={applicationStatus}
         isNew
+        onSaveForWeb={onSaveForWeb}
+        isSavingForWeb={isSavingForWeb}
+        onHideLocally={onHideLocally}
       />
       <Animated.View pointerEvents="none" style={[styles.newRoleGlow, { opacity: glow }]} />
     </Animated.View>
@@ -294,15 +438,22 @@ function JobDetailSheet({
   signedIn,
   onDismiss,
   onApply,
+  onOpenListing,
 }: {
   job: Job | null;
   signedIn: boolean;
   onDismiss: () => void;
   onApply: (job: Job) => void;
+  onOpenListing: (job: Job) => void;
 }) {
   const motionAllowed = useContext(MotionAllowedContext);
   const sheetOffset = useRef(new Animated.Value(800)).current;
+  const displayedJob = useRef<Job | null>(null);
+  const pendingAction = useRef<{ job: Job; kind: "apply" | "listing" } | null>(null);
+  const [handoffPending, setHandoffPending] = useState(false);
   const visible = Boolean(job);
+
+  if (job) displayedJob.current = job;
 
   useEffect(() => {
     if (!visible) {
@@ -326,21 +477,33 @@ function JobDetailSheet({
     return () => animation.stop();
   }, [motionAllowed, sheetOffset, visible]);
 
-  if (!job) return null;
-  const details = [job.location, job.season, job.compensation.raw]
+  const role = job ?? displayedJob.current;
+  if (!role) return null;
+  const details = [role.location, role.season, role.compensation.raw]
     .filter(Boolean)
     .join(" · ");
-  const actionLabel = !job.open
+  const actionLabel = !role.open
     ? "View official listing"
     : signedIn
       ? "Apply on official site"
       : "Open official application";
+  const greenhouseQuickApply = hasGreenhouseQuickApply(role.applyUrl);
   return (
     <Modal
       animationType="none"
       transparent
-      visible
+      visible={visible}
       onRequestClose={onDismiss}
+      onDismiss={() => {
+        const action = pendingAction.current;
+        pendingAction.current = null;
+        displayedJob.current = null;
+        setHandoffPending(false);
+        if (action) {
+          if (action.kind === "apply") onApply(action.job);
+          else onOpenListing(action.job);
+        }
+      }}
       statusBarTranslucent
     >
       <View style={styles.sheetOverlay}>
@@ -356,31 +519,95 @@ function JobDetailSheet({
         >
           <View style={styles.sheetHandle} />
           <Text style={styles.sheetEyebrow}>Official application</Text>
-          <Text style={styles.sheetTitle}>{job.title}</Text>
-          <Text style={styles.sheetCompany}>{job.company}</Text>
+          <Text style={styles.sheetTitle}>{role.title}</Text>
+          <Text style={styles.sheetCompany}>{role.company}</Text>
           <Text style={styles.sheetDetail}>{details}</Text>
-          {!job.open ? (
+          {!role.open ? (
             <View style={styles.sheetClosedNotice}>
               <Text style={styles.sheetClosedText}>This listing is marked closed.</Text>
             </View>
           ) : null}
           <View style={styles.sheetActions}>
+            {role.open ? (
+              <ApplyNowButton
+                disabled={handoffPending}
+                label={greenhouseQuickApply ? "Open Greenhouse Quick Apply" : actionLabel}
+                hint={
+                  greenhouseQuickApply
+                    ? "Opens the official Greenhouse application. If this employer enables Quick Apply, MyGreenhouse can fill details you have saved there."
+                    : "Opens the official employer form and saves this role to To Apply."
+                }
+                onPress={() => startRoleAction("apply")}
+              />
+            ) : null}
             <ActionButton
-              label={actionLabel}
-              onPress={() => onApply(job)}
+              label={role.open ? "Read the official listing first" : actionLabel}
+              variant={role.open ? "secondary" : "primary"}
+              disabled={handoffPending}
+              onPress={() => startRoleAction("listing")}
             />
             <ActionButton label="Not now" variant="secondary" onPress={onDismiss} />
           </View>
           <Text style={styles.sheetHelper}>
-            {!job.open
+            {!role.open
               ? "This opportunity is shown for reference. Confirm its availability on the employer’s site."
+              : greenhouseQuickApply
+              ? "If this employer enables Quick Apply, MyGreenhouse can fill the details you have saved there. Review every answer before submitting."
               : signedIn
-              ? "We’ll open the employer’s application and start tracking this role in the background."
+              ? "Apply now opens the employer form and saves this role to To Apply."
               : "You’ll complete the employer’s application in your browser."}
           </Text>
         </Animated.View>
       </View>
     </Modal>
+  );
+
+  function startRoleAction(kind: "apply" | "listing") {
+    if (pendingAction.current) return;
+    pendingAction.current = { job: role, kind };
+    setHandoffPending(true);
+    onDismiss();
+    // Android does not fire Modal.onDismiss. Let its modal teardown finish
+    // before opening the Custom Tab instead.
+    if (Platform.OS !== "ios") {
+      InteractionManager.runAfterInteractions(() => {
+        const action = pendingAction.current;
+        pendingAction.current = null;
+        displayedJob.current = null;
+        setHandoffPending(false);
+        if (action) {
+          if (action.kind === "apply") onApply(action.job);
+          else onOpenListing(action.job);
+        }
+      });
+    }
+  }
+}
+
+function ApplyNowButton({
+  onPress,
+  disabled = false,
+  label = "Open official application",
+  hint = "Opens the official employer form",
+}: {
+  onPress: () => void;
+  disabled?: boolean;
+  label?: string;
+  hint?: string;
+}) {
+  return (
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint={hint}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={[styles.applyNowButton, disabled && styles.actionButtonDisabled]}
+    >
+      <Text style={styles.applyNowTitle}>{label}</Text>
+      <Ionicons name="open-outline" size={19} color={colors.onDark} style={styles.applyNowArrow} />
+    </TouchableOpacity>
   );
 }
 
@@ -693,6 +920,17 @@ function SaveFeedback({
   );
 }
 
+function HiddenRolePlaceholder({ onUndo }: { onUndo: () => void }) {
+  return (
+    <View accessibilityLiveRegion="polite" style={styles.hiddenRolePlaceholder}>
+      <Text style={styles.hiddenRolePlaceholderText}>Role hidden on this device</Text>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Undo hide" onPress={onUndo}>
+        <Text style={styles.hiddenRolePlaceholderUndo}>Undo</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 function ChoiceOption({
   label,
   description,
@@ -791,23 +1029,38 @@ function LaunchInbox({
   onOpen,
   onViewAll,
   applicationStatuses,
+  onSaveForWeb,
+  savingJobIds,
+  hiddenJobIds,
+  onHideLocally,
+  hiddenFeedbackJob,
+  onUndoHide,
 }: {
   inbox: LaunchInbox;
   onOpen: (job: Job) => void;
   onViewAll: () => void;
   applicationStatuses: Map<string, string>;
+  onSaveForWeb: (job: Job) => void;
+  savingJobIds: Set<string>;
+  hiddenJobIds: Set<string>;
+  onHideLocally: (job: Job) => void;
+  hiddenFeedbackJob?: Job;
+  onUndoHide: () => void;
 }) {
+  const visibleJobs = inbox.jobs.filter(
+    (job) => !hiddenJobIds.has(job.jobId) || hiddenFeedbackJob?.jobId === job.jobId,
+  );
   return (
     <FlatList
       style={styles.list}
-      data={inbox.jobs}
+      data={visibleJobs}
       keyExtractor={(job) => job.jobId}
       contentContainerStyle={styles.feedListContent}
       ListHeaderComponent={
         <View style={styles.inboxHeader}>
           <Text style={styles.eyebrow}>Your radar</Text>
-          <Text accessibilityLabel={`${inbox.total} new matches`} style={styles.inboxCount}>
-            {inbox.total}
+          <Text accessibilityLabel={`${visibleJobs.length} new matches`} style={styles.inboxCount}>
+            {visibleJobs.length}
           </Text>
           <Text style={styles.inboxTitle}>new matches</Text>
           <Text style={styles.inboxDescription}>
@@ -826,14 +1079,27 @@ function LaunchInbox({
           <Text style={styles.inboxSectionLabel}>New matches</Text>
         </View>
       }
-      renderItem={({ item, index }) => (
-        <NewRoleCard
-          job={item}
-          index={index}
-          onOpen={() => onOpen(item)}
-          applicationStatus={applicationStatuses.get(item.jobId)}
+      renderItem={({ item, index }) =>
+        hiddenFeedbackJob?.jobId === item.jobId ? (
+          <HiddenRolePlaceholder onUndo={onUndoHide} />
+        ) : (
+          <NewRoleCard
+            job={item}
+            index={index}
+            onOpen={() => onOpen(item)}
+            applicationStatus={applicationStatuses.get(item.jobId)}
+            onSaveForWeb={() => onSaveForWeb(item)}
+            isSavingForWeb={savingJobIds.has(item.jobId)}
+            onHideLocally={() => onHideLocally(item)}
+          />
+        )}
+      ListEmptyComponent={
+        <EmptyState
+          eyebrow="New matches"
+          title="Those roles are hidden on this device."
+          description="You can restore them from Profile whenever you want."
         />
-      )}
+      }
     />
   );
 }
@@ -954,7 +1220,12 @@ function AppContent() {
   const [preferences, setPreferences] = useState<Preference>();
   const [preferenceError, setPreferenceError] = useState<string>();
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [catalogError, setCatalogError] = useState<string>();
+  const [catalogRefresh, setCatalogRefresh] = useState(0);
   const [applications, setApplications] = useState<Application[]>([]);
+  const [savingJobIds, setSavingJobIds] = useState<Set<string>>(() => new Set());
+  const [hiddenJobIds, setHiddenJobIds] = useState<Set<string>>(() => new Set());
+  const [hiddenFeedbackJob, setHiddenFeedbackJob] = useState<Job>();
   const [query, setQuery] = useState("");
   const [employerFilter, setEmployerFilter] = useState<EmployerCategory | "all">("all");
   const [jobStatus, setJobStatus] = useState<"open" | "closed">("open");
@@ -975,10 +1246,52 @@ function AppContent() {
     }).catch(() => setReady(true));
   }, []);
   useEffect(() => {
+    let active = true;
+    void responseCache.get<string[]>(hiddenRolesCacheKey).then((cached) => {
+      if (active && cached) setHiddenJobIds(new Set(cached));
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    // Show the last successful public catalog immediately. This is especially
+    // useful after onboarding, when the launch inbox intentionally has no
+    // historical "new" roles to show yet.
+    void responseCache.get<{ jobs: Job[] }>(catalogCacheKey).then((cached) => {
+      if (active && cached?.jobs.length) {
+        setJobs((current) => current.length ? current : cached.jobs);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    setCatalogError(undefined);
     void api<{ jobs: Job[] }>(`/jobs?status=${jobStatus}`, "")
-      .then((feed) => setJobs(feed.jobs))
-      .catch(() => undefined);
-  }, [jobStatus]);
+      .then((feed) => {
+        if (!active) return;
+        setJobs(feed.jobs);
+        if (jobStatus === "open" && feed.jobs.length) {
+          void responseCache.set(catalogCacheKey, feed);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setCatalogError(
+            error instanceof Error
+              ? error.message
+              : "We couldn't refresh internships right now.",
+          );
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [catalogRefresh, jobStatus]);
   const load = async (idToken = token) => {
     if (!idToken) return;
     setPreferenceError(undefined);
@@ -1050,7 +1363,7 @@ function AppContent() {
               Alert.alert(job.title, `${job.company}\n${job.location}`, [
                 {
                   text: "Open job",
-                  onPress: () => void WebBrowser.openBrowserAsync(job.applyUrl),
+                  onPress: () => void openOfficialApplication(job.applyUrl),
                 },
               ]),
             )
@@ -1070,6 +1383,7 @@ function AppContent() {
   const filtered = useMemo(
     () =>
       catalogJobs
+        .filter((job) => !hiddenJobIds.has(job.jobId) || hiddenFeedbackJob?.jobId === job.jobId)
         .filter((job) => employerFilter === "all" || (job.employerCategory ?? "normal") === employerFilter)
         .filter((job) => !hideUsCitizenshipRequired || !job.requirements?.requiresUsCitizenship)
         .filter((job) => !hideAdvancedDegreeRequired || !job.requirements?.advancedDegreeRequired)
@@ -1078,7 +1392,7 @@ function AppContent() {
             .toLowerCase()
             .includes(query.toLowerCase()),
         ),
-    [catalogJobs, employerFilter, hideAdvancedDegreeRequired, hideUsCitizenshipRequired, query],
+    [catalogJobs, employerFilter, hiddenFeedbackJob, hiddenJobIds, hideAdvancedDegreeRequired, hideUsCitizenshipRequired, query],
   );
   const applicationStatuses = useMemo(
     () => new Map(applications.map((application) => [application.jobId, application.status])),
@@ -1095,6 +1409,35 @@ function AppContent() {
       ...(seenJobs.length ? [{ kind: "seen" as const, data: seenJobs }] : []),
     ];
   }, [filtered, launchInbox]);
+  const hideLocally = (job: Job) => {
+    if (hiddenJobIds.has(job.jobId)) return;
+    setHiddenJobIds((current) => {
+      const updated = new Set(current).add(job.jobId);
+      void responseCache.set(hiddenRolesCacheKey, [...updated]);
+      return updated;
+    });
+    setHiddenFeedbackJob(job);
+  };
+  const undoHideLocally = () => {
+    const job = hiddenFeedbackJob;
+    if (!job) return;
+    setHiddenJobIds((current) => {
+      const updated = new Set(current);
+      updated.delete(job.jobId);
+      void responseCache.set(hiddenRolesCacheKey, [...updated]);
+      return updated;
+    });
+    setHiddenFeedbackJob(undefined);
+  };
+  const restoreHiddenRole = (job: Job) => {
+    setHiddenJobIds((current) => {
+      const updated = new Set(current);
+      updated.delete(job.jobId);
+      void responseCache.set(hiddenRolesCacheKey, [...updated]);
+      return updated;
+    });
+    if (hiddenFeedbackJob?.jobId === job.jobId) setHiddenFeedbackJob(undefined);
+  };
   if (!ready)
     return <AppLoadingSkeleton />;
   if (!token)
@@ -1103,6 +1446,10 @@ function AppContent() {
         jobs={jobs}
         jobStatus={jobStatus}
         onJobStatusChange={setJobStatus}
+        hiddenJobIds={hiddenJobIds}
+        hiddenFeedbackJob={hiddenFeedbackJob}
+        onHideLocally={hideLocally}
+        onUndoHide={undoHideLocally}
         onSession={async (idToken) => {
           await sessionStorage.set(idToken);
           setToken(idToken);
@@ -1125,20 +1472,22 @@ function AppContent() {
   if (!preferences.onboardingComplete)
     return <Onboarding token={token} onDone={setPreferences} />;
   const apply = (job: Job) => {
-    void openOfficialApplication(job.applyUrl);
+    const browser = openOfficialApplication(job.applyUrl);
     void (async () => {
       try {
         const created = await api<Application>("/me/applications", token, {
           method: "POST",
-          body: JSON.stringify({ jobId: job.jobId, status: "applied" }),
+          // Opening an official form adds the role to To Apply. Only a
+          // confirmed successful submission may move it to Applied.
+          body: JSON.stringify({ jobId: job.jobId }),
         });
         setApplications((current) => [created, ...current.filter((item) => item.applicationId !== created.applicationId)]);
         const alertSettings = preferences.alertSettings ?? defaultAlertSettings;
         if (preferences.alertsEnabled && alertSettings.applicationReminders) {
           void notifyApplicationProgress(
             created.applicationId,
-            "Application tracking started",
-            `${job.title} at ${job.company} is now in your saved applications.`,
+            "Added to To Apply",
+            `${job.title} at ${job.company} is ready when you are.`,
           ).catch(() => undefined);
           void scheduleApplicationFollowUp(
             created.applicationId,
@@ -1147,10 +1496,48 @@ function AppContent() {
           ).catch(() => undefined);
         }
       } catch {
+        // Presenting an alert while iOS is presenting SFSafariViewController
+        // can interrupt the browser handoff. Wait until the browser closes.
+        await browser;
         Alert.alert(
           "Application tracking unavailable",
           "The official application is open, but we could not save this role to your tracker.",
         );
+      }
+    })();
+  };
+  const saveForWeb = (job: Job) => {
+    if (applicationStatuses.has(job.jobId) || savingJobIds.has(job.jobId)) return;
+    setSavingJobIds((current) => new Set(current).add(job.jobId));
+    void (async () => {
+      try {
+        const created = await api<Application>("/me/applications", token, {
+          method: "POST",
+          body: JSON.stringify({ jobId: job.jobId, status: "saved" }),
+        });
+        setApplications((current) => [
+          created,
+          ...current.filter((item) => item.applicationId !== created.applicationId),
+        ]);
+        const alertSettings = preferences.alertSettings ?? defaultAlertSettings;
+        if (preferences.alertsEnabled && alertSettings.applicationReminders) {
+          void scheduleApplicationFollowUp(
+            created.applicationId,
+            `${job.title} at ${job.company}`,
+            alertSettings.followUpDays,
+          ).catch(() => undefined);
+        }
+      } catch (error) {
+        Alert.alert(
+          "Could not save role",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      } finally {
+        setSavingJobIds((current) => {
+          const updated = new Set(current);
+          updated.delete(job.jobId);
+          return updated;
+        });
       }
     })();
   };
@@ -1166,6 +1553,12 @@ function AppContent() {
                 onOpen={setSelectedJob}
                 onViewAll={() => setShowLaunchInbox(false)}
                 applicationStatuses={applicationStatuses}
+                onSaveForWeb={saveForWeb}
+                savingJobIds={savingJobIds}
+                hiddenJobIds={hiddenJobIds}
+                onHideLocally={hideLocally}
+                hiddenFeedbackJob={hiddenFeedbackJob}
+                onUndoHide={undoHideLocally}
               />
             ) : (
               <>
@@ -1203,27 +1596,46 @@ function AppContent() {
                   }
                   ListFooterComponent={roleSections.length === 1 && roleSections[0]?.kind === "new" ? <CaughtUpDivider showSeenLabel={false} /> : null}
                   renderItem={({ item, index, section }) =>
-                    section.kind === "new" ? (
+                    hiddenFeedbackJob?.jobId === item.jobId ? (
+                      <HiddenRolePlaceholder onUndo={undoHideLocally} />
+                    ) : section.kind === "new" ? (
                       <NewRoleCard
                         job={item}
                         index={index}
                         onOpen={() => setSelectedJob(item)}
                         applicationStatus={applicationStatuses.get(item.jobId)}
+                        onSaveForWeb={() => saveForWeb(item)}
+                        isSavingForWeb={savingJobIds.has(item.jobId)}
+                        onHideLocally={() => hideLocally(item)}
                       />
                     ) : (
                       <JobCard
                         job={item}
                         onOpen={() => setSelectedJob(item)}
                         applicationStatus={applicationStatuses.get(item.jobId)}
+                        onSaveForWeb={() => saveForWeb(item)}
+                        isSavingForWeb={savingJobIds.has(item.jobId)}
+                        onHideLocally={() => hideLocally(item)}
                       />
                     )
                   }
                   ListEmptyComponent={
-                    <EmptyState
-                      eyebrow="Search"
-                      title="Nothing fits that search yet."
-                      description="Try a company, role, or location with fewer terms."
-                    />
+                    catalogError ? (
+                      <View style={styles.catalogUnavailable}>
+                        <EmptyState
+                          eyebrow="Catalog unavailable"
+                          title="Your latest opportunities will appear here."
+                          description="We couldn't refresh the catalog right now. Check your connection and try again."
+                        />
+                        <ActionButton label="Try again" onPress={() => setCatalogRefresh((value) => value + 1)} />
+                      </View>
+                    ) : (
+                      <EmptyState
+                        eyebrow="Search"
+                        title="Nothing fits that search yet."
+                        description="Try a company, role, or location with fewer terms."
+                      />
+                    )
                   }
                 />
               </>
@@ -1236,11 +1648,14 @@ function AppContent() {
               alertSettings={preferences.alertSettings ?? defaultAlertSettings}
               alertsEnabled={preferences.alertsEnabled}
               onChanged={() => void load()}
+              onOpenOfficialApplication={(job) => void openOfficialApplication(job.applyUrl)}
             />
           ) : (
             <Profile
               token={token}
               preferences={preferences}
+              hiddenJobs={catalogJobs.filter((job) => hiddenJobIds.has(job.jobId))}
+              onRestoreHiddenRole={restoreHiddenRole}
               onPreferencesChanged={(updated) => setPreferences(updated)}
               onSignOut={async () => {
                 await sessionStorage.clear();
@@ -1256,9 +1671,11 @@ function AppContent() {
         signedIn
         onDismiss={() => setSelectedJob(null)}
         onApply={(job) => {
-          setSelectedJob(null);
           if (job.open) void apply(job);
           else void openOfficialApplication(job.applyUrl);
+        }}
+        onOpenListing={(job) => {
+          void openOfficialApplication(job.applyUrl);
         }}
       />
     </SafeAreaView>
@@ -1278,11 +1695,19 @@ function GuestExperience({
   jobs,
   jobStatus,
   onJobStatusChange,
+  hiddenJobIds,
+  hiddenFeedbackJob,
+  onHideLocally,
+  onUndoHide,
   onSession,
 }: {
   jobs: Job[];
   jobStatus: "open" | "closed";
   onJobStatusChange: (status: "open" | "closed") => void;
+  hiddenJobIds: Set<string>;
+  hiddenFeedbackJob?: Job;
+  onHideLocally: (job: Job) => void;
+  onUndoHide: () => void;
   onSession: (token: string) => void;
 }) {
   const { width } = useWindowDimensions();
@@ -1298,6 +1723,7 @@ function GuestExperience({
   const filtered = useMemo(
     () =>
       jobs
+        .filter((job) => !hiddenJobIds.has(job.jobId) || hiddenFeedbackJob?.jobId === job.jobId)
         .filter((job) => employerFilter === "all" || (job.employerCategory ?? "normal") === employerFilter)
         .filter((job) => !hideUsCitizenshipRequired || !job.requirements?.requiresUsCitizenship)
         .filter((job) => !hideAdvancedDegreeRequired || !job.requirements?.advancedDegreeRequired)
@@ -1306,7 +1732,7 @@ function GuestExperience({
             .toLowerCase()
             .includes(query.toLowerCase()),
         ),
-    [employerFilter, hideAdvancedDegreeRequired, hideUsCitizenshipRequired, jobs, query],
+    [employerFilter, hiddenFeedbackJob, hiddenJobIds, hideAdvancedDegreeRequired, hideUsCitizenshipRequired, jobs, query],
   );
   if (showAccount)
     return (
@@ -1345,9 +1771,16 @@ function GuestExperience({
                 data={filtered}
                 keyExtractor={(job) => job.jobId}
                 contentContainerStyle={styles.feedListContent}
-                renderItem={({ item }) => (
-                  <JobCard job={item} onOpen={() => setSelectedJob(item)} />
-                )}
+                renderItem={({ item }) =>
+                  hiddenFeedbackJob?.jobId === item.jobId ? (
+                    <HiddenRolePlaceholder onUndo={onUndoHide} />
+                  ) : (
+                    <JobCard
+                      job={item}
+                      onOpen={() => setSelectedJob(item)}
+                      onHideLocally={() => onHideLocally(item)}
+                    />
+                  )}
                 ListEmptyComponent={
                   <EmptyState
                     eyebrow="Search"
@@ -1375,7 +1808,9 @@ function GuestExperience({
         signedIn={false}
         onDismiss={() => setSelectedJob(null)}
         onApply={(job) => {
-          setSelectedJob(null);
+          void openOfficialApplication(job.applyUrl);
+        }}
+        onOpenListing={(job) => {
           void openOfficialApplication(job.applyUrl);
         }}
       />
@@ -1559,6 +1994,7 @@ function Applications({
   alertSettings,
   alertsEnabled,
   onChanged,
+  onOpenOfficialApplication,
 }: {
   applications: Application[];
   jobs: Job[];
@@ -1566,6 +2002,7 @@ function Applications({
   alertSettings: AlertSettings;
   alertsEnabled: boolean;
   onChanged: () => void;
+  onOpenOfficialApplication: (job: Job) => void;
 }) {
   return (
     <FlatList
@@ -1591,6 +2028,15 @@ function Applications({
             <View style={styles.statusPill}>
               <Text style={styles.statusPillText}>{item.status.toUpperCase()}</Text>
             </View>
+            {job?.open ? (
+              <View style={styles.applicationActionGap}>
+                <ApplyNowButton
+                  label="Open official application"
+                  hint="Opens the employer's official application in your browser."
+                  onPress={() => onOpenOfficialApplication(job)}
+                />
+              </View>
+            ) : null}
             <ActionButton
               label={
                 nextStatus === item.status
@@ -1683,11 +2129,15 @@ function aliasesFromText(value: string) {
 function Profile({
   token,
   preferences,
+  hiddenJobs,
+  onRestoreHiddenRole,
   onPreferencesChanged,
   onSignOut,
 }: {
   token: string;
   preferences: Preference;
+  hiddenJobs: Job[];
+  onRestoreHiddenRole: (job: Job) => void;
   onPreferencesChanged: (value: Preference) => void;
   onSignOut: () => void;
 }) {
@@ -1782,8 +2232,21 @@ function Profile({
   }, [preferences]);
   if (loading) return <ProfileLoadingSkeleton />;
   const contact = profile.contact as
-    | { name?: string; email?: string }
+    | { name?: string; firstName?: string; lastName?: string; email?: string; phone?: string }
     | undefined;
+  const updateContact = (next: Partial<NonNullable<typeof contact>>) =>
+    setProfile((current) => {
+      const currentContact = (current.contact as NonNullable<typeof contact> | undefined) ?? {};
+      const updated = { ...currentContact, ...next };
+      const fullName = [updated.firstName, updated.lastName]
+        .map((value) => value?.trim())
+        .filter(Boolean)
+        .join(" ");
+      return {
+        ...current,
+        contact: { ...updated, ...(fullName ? { name: fullName } : {}) },
+      };
+    });
   const toggleCategory = <T extends string,>(
     category: T,
     selected: T[],
@@ -1984,17 +2447,48 @@ function Profile({
       <Text style={styles.intro}>
         Keep the essentials ready for the next role you want to pursue.
       </Text>
+      {hiddenJobs.length ? (
+        <>
+          <Text style={styles.profileSectionLabel}>Hidden roles</Text>
+          <Text style={styles.muted}>
+            These roles are hidden only on this device.
+          </Text>
+          <View style={styles.hiddenRolesList}>
+            {hiddenJobs.map((job) => (
+              <View key={job.jobId} style={styles.hiddenRoleRow}>
+                <View style={styles.hiddenRoleCopy}>
+                  <Text style={styles.company}>{job.company}</Text>
+                  <Text style={styles.hiddenRoleTitle} numberOfLines={2}>{job.title}</Text>
+                </View>
+                <ActionButton
+                  compact
+                  label="Restore"
+                  onPress={() => onRestoreHiddenRole(job)}
+                />
+              </View>
+            ))}
+          </View>
+          <View style={styles.spacer} />
+        </>
+      ) : null}
       <Text style={styles.profileSectionLabel}>Contact</Text>
-      <Text style={styles.inputLabel}>Full name</Text>
+      <Text style={styles.inputLabel}>First name</Text>
       <TextInput
         style={styles.search}
-        accessibilityLabel="Full name"
-        placeholder="Your name"
+        accessibilityLabel="First name"
+        placeholder="First name"
         placeholderTextColor={colors.placeholder}
-        value={contact?.name ?? ""}
-        onChangeText={(name) =>
-          setProfile({ ...profile, contact: { ...contact, name } })
-        }
+        value={contact?.firstName ?? ""}
+        onChangeText={(firstName) => updateContact({ firstName })}
+      />
+      <Text style={styles.inputLabel}>Last name</Text>
+      <TextInput
+        style={styles.search}
+        accessibilityLabel="Last name"
+        placeholder="Last name"
+        placeholderTextColor={colors.placeholder}
+        value={contact?.lastName ?? ""}
+        onChangeText={(lastName) => updateContact({ lastName })}
       />
       <Text style={styles.inputLabel}>Email</Text>
       <TextInput
@@ -2003,9 +2497,17 @@ function Profile({
         placeholder="you@example.com"
         placeholderTextColor={colors.placeholder}
         value={contact?.email ?? ""}
-        onChangeText={(email) =>
-          setProfile({ ...profile, contact: { ...contact, email } })
-        }
+        onChangeText={(email) => updateContact({ email })}
+      />
+      <Text style={styles.inputLabel}>Phone</Text>
+      <TextInput
+        style={styles.search}
+        accessibilityLabel="Phone"
+        placeholder="Phone number"
+        placeholderTextColor={colors.placeholder}
+        keyboardType="phone-pad"
+        value={contact?.phone ?? ""}
+        onChangeText={(phone) => updateContact({ phone })}
       />
       <Text style={styles.inputLabel}>Location</Text>
       <TextInput
@@ -2689,10 +3191,42 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.separator,
   },
+  swipeCard: { marginBottom: 12, position: "relative" },
+  swipeCardSurface: { marginBottom: 0 },
+  swipeSaveAction: {
+    alignItems: "center",
+    backgroundColor: colors.signal,
+    borderRadius: 14,
+    bottom: 0,
+    flexDirection: "row",
+    gap: 6,
+    justifyContent: "center",
+    paddingLeft: 16,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    width: 112,
+  },
+  swipeSaveActionText: { color: colors.onDark, fontSize: 14, fontWeight: "800" },
+  swipeHideAction: {
+    alignItems: "center",
+    backgroundColor: colors.body,
+    borderRadius: 14,
+    bottom: 0,
+    flexDirection: "row",
+    gap: 6,
+    justifyContent: "center",
+    paddingRight: 16,
+    position: "absolute",
+    left: 0,
+    top: 0,
+    width: 112,
+  },
+  swipeHideActionText: { color: colors.onDark, fontSize: 14, fontWeight: "800" },
   newRoleGlow: {
     backgroundColor: colors.signalGlow,
     borderRadius: 14,
-    bottom: 12,
+    bottom: 0,
     left: 0,
     position: "absolute",
     right: 0,
@@ -2757,6 +3291,17 @@ const styles = StyleSheet.create({
   },
   sheetClosedText: { color: colors.danger, fontSize: 14, fontWeight: "600", lineHeight: 20 },
   sheetActions: { gap: 12, marginTop: 28 },
+  applyNowButton: {
+    alignItems: "center",
+    backgroundColor: colors.ink,
+    borderRadius: 12,
+    justifyContent: "center",
+    minHeight: 52,
+    paddingHorizontal: 16,
+    position: "relative",
+  },
+  applyNowTitle: { color: colors.onDark, fontSize: 17, fontWeight: "700", lineHeight: 22, textAlign: "center" },
+  applyNowArrow: { position: "absolute", right: 16 },
   sheetHelper: {
     color: colors.muted,
     fontSize: 13,
@@ -2764,6 +3309,7 @@ const styles = StyleSheet.create({
     marginTop: 14,
     textAlign: "center",
   },
+  catalogUnavailable: { gap: 16 },
   company: {
     color: colors.signal,
     flexShrink: 1,
@@ -3012,6 +3558,22 @@ const styles = StyleSheet.create({
   saveFeedbackError: { backgroundColor: colors.dangerSoft, borderColor: colors.dangerBorder },
   saveFeedbackText: { color: colors.body, fontSize: 14, lineHeight: 20 },
   saveFeedbackRetry: { color: colors.signal, fontSize: 14, fontWeight: "700", marginTop: 8 },
+  hiddenRolePlaceholder: {
+    alignItems: "center",
+    backgroundColor: colors.signalSoft,
+    borderColor: colors.separator,
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 14,
+    justifyContent: "center",
+    marginBottom: 12,
+    minHeight: 88,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+  },
+  hiddenRolePlaceholderText: { color: colors.body, fontSize: 14, fontWeight: "600" },
+  hiddenRolePlaceholderUndo: { color: colors.signal, fontSize: 14, fontWeight: "800" },
   profileSectionLabel: {
     color: colors.signal,
     fontSize: 12,
@@ -3033,6 +3595,18 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0.5,
   },
+  hiddenRolesList: { marginTop: 12, gap: 8 },
+  hiddenRoleRow: {
+    alignItems: "center",
+    borderTopColor: colors.separator,
+    borderTopWidth: 1,
+    flexDirection: "row",
+    gap: 12,
+    paddingTop: 12,
+  },
+  hiddenRoleCopy: { flex: 1 },
+  hiddenRoleTitle: { color: colors.ink, fontSize: 15, fontWeight: "700", lineHeight: 20, marginTop: 2 },
+  applicationActionGap: { marginTop: 14 },
   buttonGap: { height: 12 },
   spacer: { height: 24 },
   gate: { flex: 1, justifyContent: "flex-start", paddingHorizontal: 20, paddingTop: 32 },

@@ -4,7 +4,7 @@ import { validateApplicationUrl, type ApplicationUrlValidator } from './core/app
 import { defaultPushTemplates, ExpoPushPublisher, inspectExpoPushReceipts, NtfyPublisher, sendDigest, sendNewJobNotifications, sendPendingNotifications, SesEmailSender, type EmailSender, type PushPublisher } from './notifications.js';
 import { Poller } from './poll.js';
 import { DynamoInternshipStore, DynamoUserStore, type InternshipStore, type UserStore } from './store.js';
-import { defaultSources } from './sources/github.js';
+import { defaultSources } from './sources/index.js';
 import type { SourceAdapter } from './types.js';
 
 export interface RuntimeConfig {

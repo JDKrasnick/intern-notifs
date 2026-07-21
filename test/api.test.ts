@@ -64,4 +64,45 @@ describe('public API ownership boundary', () => {
     });
     expect(hasUndefined(preference)).toBe(false);
   });
+  it('creates a versioned, no-submit Greenhouse assistance session while keeping unknown and LinkedIn destinations manual', async () => {
+    const jobs = new MemoryInternshipStore();
+    const greenhouse = { ...job, jobId: 'greenhouse', applyUrl: 'https://boards.greenhouse.io/acme/jobs/123', normalizedUrl: 'https://boards.greenhouse.io/acme/jobs/123' };
+    const linkedin = { ...job, jobId: 'linkedin', applyUrl: 'https://www.linkedin.com/jobs/view/123', normalizedUrl: 'https://www.linkedin.com/jobs/view/123' };
+    await jobs.putInternship(greenhouse); await jobs.putInternship(linkedin);
+    const users = new MemoryUserStore();
+    const handler = createApiHandler({ jobs, users, now: () => '2026-07-20T12:00:00.000Z' });
+
+    expect(JSON.parse((await handler(event(undefined, 'GET', '/jobs/greenhouse'))).body)).toMatchObject({ assistance: { eligibility: 'headed-supported', primaryAction: 'assist-in-safari' } });
+    expect(JSON.parse((await handler(event(undefined, 'GET', '/jobs/linkedin'))).body)).toMatchObject({ assistance: { eligibility: 'manual-only', reasonCode: 'destination-policy-prohibits-automation' } });
+
+    const application = JSON.parse((await handler(event('student-a', 'POST', '/me/applications', { jobId: 'greenhouse' }))).body) as { applicationId: string; status: string };
+    expect(application.status).toBe('saved');
+    const queue = JSON.parse((await handler(event('student-a', 'GET', '/me/applications', undefined, { status: 'saved' }))).body) as { applications: Array<{ job: { assistance: { eligibility: string } } }> };
+    expect(queue.applications).toMatchObject([{ job: { assistance: { eligibility: 'headed-supported' } } }]);
+
+    const created = await handler(event('student-a', 'POST', `/me/applications/${application.applicationId}/assistance-sessions`, { mode: 'headed' }));
+    expect(created.statusCode).toBe(201);
+    const handoff = JSON.parse(created.body) as { session: { sessionId: string; userId?: string; version: number }; handoff: { sessionId: string; code: string } };
+    expect(handoff.session).toMatchObject({ version: 0 });
+    expect(handoff.session.userId).toBeUndefined();
+
+    const exchanged = await handler(event(undefined, 'POST', '/assist/exchange', { sessionId: handoff.handoff.sessionId, code: handoff.handoff.code }));
+    expect(exchanged.statusCode).toBe(200);
+    const bearer = (JSON.parse(exchanged.body) as { bearer: string }).bearer;
+    expect((await handler(event(undefined, 'POST', '/assist/exchange', { sessionId: handoff.handoff.sessionId, code: handoff.handoff.code }))).statusCode).toBe(401);
+
+    const assistedEvent = (payload: unknown) => handler({ ...event(undefined, 'POST', '/assist/session/events', payload), headers: { authorization: `Bearer ${bearer}` } });
+    expect((await assistedEvent({ eventId: 'runner-start', expectedVersion: 1, event: { type: 'start' } })).statusCode).toBe(200);
+    const field = { key: 'first_name', label: 'First name', required: true, resolved: true, classification: 'standard', confidence: 'exact', valueRef: { source: 'profile', key: 'contact.name' }, maskedPreview: 'S•••' };
+    expect((await assistedEvent({ eventId: 'runner-fill', expectedVersion: 2, event: { type: 'fill-completed', fields: [field] } })).statusCode).toBe(200);
+    const replay = await assistedEvent({ eventId: 'runner-fill', expectedVersion: 2, event: { type: 'fill-completed', fields: [field] } });
+    expect(JSON.parse(replay.body)).toMatchObject({ replayed: true, session: { version: 3 } });
+    expect((await assistedEvent({ eventId: 'runner-submit', expectedVersion: 3, event: { type: 'submission-confirmed' } })).statusCode).toBe(400);
+
+    const approve = await handler(event('student-a', 'POST', `/me/application-sessions/${handoff.session.sessionId}/events`, { eventId: 'student-review', expectedVersion: 3, event: { type: 'review-approved' } }));
+    expect(approve.statusCode).toBe(200);
+    const submitted = await handler(event('student-a', 'POST', `/me/application-sessions/${handoff.session.sessionId}/events`, { eventId: 'student-confirmed', expectedVersion: 4, event: { type: 'submission-confirmed' } }));
+    expect(submitted.statusCode).toBe(200);
+    expect((await users.getApplication('student-a', application.applicationId))?.status).toBe('applied');
+  });
 });

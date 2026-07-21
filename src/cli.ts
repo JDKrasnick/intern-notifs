@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { defaultSources } from './sources/github.js';
+import { defaultSources } from './sources/index.js';
 import { Poller } from './poll.js';
 import { DynamoInternshipStore, MemoryInternshipStore } from './store.js';
 import { ExpoPushPublisher, sendDigest, SesEmailSender } from './notifications.js';

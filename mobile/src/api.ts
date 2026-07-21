@@ -38,3 +38,22 @@ export const sessionStorage = {
   set: (token: string) => AsyncStorage.setItem('internnotifs.idToken', token),
   clear: () => AsyncStorage.removeItem('internnotifs.idToken')
 };
+
+/** Public catalog responses are safe to retain locally for a fast first view. */
+export const responseCache = {
+  async get<T>(key: string): Promise<T | undefined> {
+    try {
+      const value = await AsyncStorage.getItem(key);
+      return value ? JSON.parse(value) as T : undefined;
+    } catch {
+      return undefined;
+    }
+  },
+  async set(key: string, value: unknown): Promise<void> {
+    try {
+      await AsyncStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      // The live catalog remains fully usable when device storage is unavailable.
+    }
+  },
+};
