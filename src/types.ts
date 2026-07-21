@@ -1,4 +1,5 @@
 import type { JobFilter } from './core/filters.js';
+import type { EmployerCategory } from './core/employers.js';
 
 export type ApplicationStatus =
   | 'saved' | 'applied' | 'assessment' | 'interview' | 'offer' | 'rejected' | 'withdrawn';
@@ -14,11 +15,27 @@ export interface ApplicationRecord {
   applyMode?: 'official-form' | 'partner';
 }
 
+export type AlertDelivery = 'immediate' | 'daily-digest';
+
+/** Delivery preferences are stored separately from the role filter so they can evolve independently. */
+export interface AlertSettings {
+  delivery: AlertDelivery;
+  quietHours?: { start: string; end: string; timezone: string };
+  applicationReminders: boolean;
+  followUpDays: number;
+}
+
 export interface UserPreferences {
   userId: string;
   filter: JobFilter;
   alertsEnabled: boolean;
   onboardingComplete: boolean;
+  /**
+   * The bounded timestamp used by the signed-in launch inbox. A missing value
+   * means this is the user's first launch after the feature was introduced.
+   */
+  lastCatalogOpenedAt?: string;
+  alertSettings?: AlertSettings;
   /** Uses the same safe placeholders as the legacy compact ntfy notification. */
   push?: { titleTemplate?: string; descriptionTemplate?: string; roleAbbreviations?: Record<string, string> };
   updatedAt: string;
@@ -36,7 +53,14 @@ export interface DeviceToken {
 /** Core details are deliberately separate from optional sensitive application answers. */
 export interface ApplicantProfile {
   userId: string;
-  contact: { name: string; email: string; phone?: string };
+  contact: {
+    name: string;
+    /** Explicit parts prevent unsafe guessing from an international full name. */
+    firstName?: string;
+    lastName?: string;
+    email: string;
+    phone?: string;
+  };
   location: string;
   workAuthorization: string;
   links: Record<string, string>;
@@ -83,11 +107,19 @@ export interface SourceReference {
   sourceUrl: string;
   row: number;
   postedAt?: string;
+  /** Source-declared workplace arrangement; absent when the source does not declare one. */
+  workMode?: 'remote' | 'hybrid' | 'onsite';
 }
 
 export interface Compensation {
   raw: string;
   maxHourlyUSD?: number;
+}
+
+/** Source-declared constraints; absence never implies that a constraint does not exist. */
+export interface JobRequirements {
+  requiresUsCitizenship: boolean;
+  advancedDegreeRequired: boolean;
 }
 
 export interface SourceOccurrence extends SourceReference {
@@ -97,6 +129,7 @@ export interface SourceOccurrence extends SourceReference {
   season: string;
   applyUrl: string;
   compensation: Compensation;
+  requirements?: JobRequirements;
   state: 'open' | 'closed';
 }
 
@@ -119,8 +152,15 @@ export interface Internship {
   season: string;
   applyUrl: string;
   normalizedUrl: string;
+  /** Present only after the official destination has resolved successfully. */
+  applicationUrlValidatedAt?: string;
+  /** A confirmed broken URL remains hidden until a source supplies a different destination. */
+  invalidApplicationUrl?: string;
   fingerprint: string;
   compensation: Compensation;
+  requirements?: JobRequirements;
+  /** Set at ingest time; older stored records are classified from company name when read. */
+  employerCategory?: EmployerCategory;
   sourceReferences: SourceOccurrence[];
   open: boolean;
   firstSeenAt: string;
@@ -136,6 +176,8 @@ export interface SourceAdapter {
 export interface SourceFetchResult {
   sourceId: string;
   listings: RawListing[];
+  /** Rows withheld before publication because their application URL violates baseline policy. */
+  rejectedApplicationUrls?: Array<{ row: number; url: string; reason: string }>;
   checkpoint: SourceCheckpoint;
   notModified: boolean;
 }

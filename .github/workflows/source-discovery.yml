@@ -1,0 +1,24 @@
+name: Source discovery
+on:
+  schedule:
+    - cron: '23 8 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  firecrawl-review-queue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run discover:firecrawl -- artifacts/firecrawl-discovery-review.json
+        env:
+          FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: firecrawl-discovery-review
+          path: artifacts/firecrawl-discovery-review.json
+          if-no-files-found: warn

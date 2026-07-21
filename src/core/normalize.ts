@@ -4,6 +4,34 @@ import { companyWeight } from '../config/weights.js';
 
 const tracking = new Set(['fbclid', 'gclid', 'mc_cid', 'mc_eid', 'ref', 'source', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content']);
 const clean = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
+const corporateSuffixes = new Set(['co', 'company', 'corp', 'corporation', 'inc', 'incorporated', 'limited', 'llc', 'ltd', 'plc']);
+
+/**
+ * A conservative identity key for the same role as it appears in different
+ * public lists. It deliberately does not guess employer aliases (for example,
+ * IBM versus International Business Machines) because a false merge is worse
+ * than retaining a possible duplicate.
+ */
+function identityTerms(value: string) {
+  return value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+}
+function canonicalCompany(value: string) {
+  const terms = identityTerms(value);
+  while (terms.length > 1 && corporateSuffixes.has(terms.at(-1)!)) terms.pop();
+  return terms.join(' ');
+}
+function canonicalTitle(value: string) {
+  const replacements: Record<string, string[]> = { swe: ['software', 'engineer'], engineering: ['engineer'], internship: ['intern'], internships: ['intern'] };
+  const terms = identityTerms(value).flatMap((term) => replacements[term] ?? [term]);
+  return [...new Set(terms)].sort().join(' ');
+}
+function canonicalLocation(value: string) {
+  const terms = identityTerms(value).join(' ');
+  if (/^(nyc|new york city|new york ny)$/.test(terms)) return 'new york ny';
+  if (/^remote( us| usa| united states)?$/.test(terms)) return 'remote';
+  return terms;
+}
+function canonicalSeason(value: string) { return identityTerms(value).join(' '); }
 
 export function normalizeUrl(input: string): string {
   const url = new URL(input.trim());
@@ -15,7 +43,14 @@ export function normalizeUrl(input: string): string {
 }
 
 export function fingerprint(company: string, title: string, location: string, season: string): string {
-  return createHash('sha256').update([company, title, location, season].map(clean).join('|')).digest('hex');
+  return createHash('sha256').update([canonicalCompany(company), canonicalTitle(title), canonicalLocation(location), canonicalSeason(season)].join('|')).digest('hex');
+}
+
+/** A migration-safe lookup order for records written before canonical role identity keys. */
+export function fingerprintCandidates(company: string, title: string, location: string, season: string): string[] {
+  const canonical = fingerprint(company, title, location, season);
+  const legacy = createHash('sha256').update([company, title, location, season].map(clean).join('|')).digest('hex');
+  return canonical === legacy ? [canonical] : [canonical, legacy];
 }
 
 export function jobId(normalizedUrl: string, key: string): string {

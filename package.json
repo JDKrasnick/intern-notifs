@@ -10,9 +10,16 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:integration": "vitest run test/integration.workflow.test.ts",
+    "test:unit": "vitest run --exclude test/integration.workflow.test.ts --exclude test/api.workflow.test.ts --exclude test/full-day.workflow.test.ts",
+    "test:integration": "vitest run test/integration.workflow.test.ts test/api.workflow.test.ts test/full-day.workflow.test.ts",
     "test:watch": "vitest",
+    "audit:employers": "tsx scripts/audit-employer-classification.ts",
+    "audit:browser-companion": "tsx scripts/audit-browser-companion.ts",
+    "source:quality": "tsx scripts/source-quality.ts",
+    "discover:lever": "tsx scripts/discover-lever.ts",
+    "discover:firecrawl": "tsx scripts/firecrawl-discovery.ts",
     "migrate:open-index": "tsx src/migrate-open-index.ts",
+    "build:browser-companion": "esbuild browser-companion/content.ts --bundle --format=iife --platform=browser --outfile=browser-companion/dist/content.js",
     "cdk": "cdk --app 'npx tsx infra/app.ts'"
   },
   "dependencies": {

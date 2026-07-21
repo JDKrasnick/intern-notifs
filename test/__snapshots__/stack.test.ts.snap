@@ -232,7 +232,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
           "S3Bucket": {
             "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
           },
-          "S3Key": "c0d9f24649426c60a1bc01108070535a40353ae6cd8ceccb812969319b936e5d.zip",
+          "S3Key": "<lambda-asset>.zip",
         },
         "Handler": "__entrypoint__.handler",
         "MemorySize": 128,
@@ -481,6 +481,14 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
             "AttributeName": "openSk",
             "AttributeType": "S",
           },
+          {
+            "AttributeName": "closedPk",
+            "AttributeType": "S",
+          },
+          {
+            "AttributeName": "closedSk",
+            "AttributeType": "S",
+          },
         ],
         "BillingMode": "PAY_PER_REQUEST",
         "GlobalSecondaryIndexes": [
@@ -541,6 +549,22 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
               },
               {
                 "AttributeName": "openSk",
+                "KeyType": "RANGE",
+              },
+            ],
+            "Projection": {
+              "ProjectionType": "ALL",
+            },
+          },
+          {
+            "IndexName": "closedJobsIndex",
+            "KeySchema": [
+              {
+                "AttributeName": "closedPk",
+                "KeyType": "HASH",
+              },
+              {
+                "AttributeName": "closedSk",
                 "KeyType": "RANGE",
               },
             ],
@@ -614,7 +638,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
           "S3Bucket": {
             "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
           },
-          "S3Key": "64bb9800f15de52eac287a10e90b11944c42a647254662cc6a14e83981fbe022.zip",
+          "S3Key": "<lambda-asset>.zip",
         },
         "Environment": {
           "Variables": {
@@ -892,7 +916,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
           "S3Bucket": {
             "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
           },
-          "S3Key": "94ae925c3393eeae84524ef581b3053c0b8da205c16dd6bc7142f7a72bebc01f.zip",
+          "S3Key": "<lambda-asset>.zip",
         },
         "Environment": {
           "Variables": {
@@ -1680,6 +1704,10 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
             "AttributeName": "receiptPk",
             "AttributeType": "S",
           },
+          {
+            "AttributeName": "activeSessionPk",
+            "AttributeType": "S",
+          },
         ],
         "BillingMode": "PAY_PER_REQUEST",
         "GlobalSecondaryIndexes": [
@@ -1719,6 +1747,18 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
               "ProjectionType": "ALL",
             },
           },
+          {
+            "IndexName": "activeSessionsIndex",
+            "KeySchema": [
+              {
+                "AttributeName": "activeSessionPk",
+                "KeyType": "HASH",
+              },
+            ],
+            "Projection": {
+              "ProjectionType": "ALL",
+            },
+          },
         ],
         "KeySchema": [
           {
@@ -1735,6 +1775,10 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         },
         "SSESpecification": {
           "SSEEnabled": true,
+        },
+        "TimeToLiveSpecification": {
+          "AttributeName": "expiresAtEpoch",
+          "Enabled": true,
         },
       },
       "Type": "AWS::DynamoDB::Table",

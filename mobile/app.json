@@ -6,7 +6,7 @@
     "version": "1.0.0",
     "icon": "./assets/icon.png",
     "orientation": "portrait",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.internnotifs.app",
@@ -17,7 +17,9 @@
     },
     "android": {
       "package": "com.internnotifs.app",
-      "permissions": ["POST_NOTIFICATIONS"]
+      "permissions": [
+        "POST_NOTIFICATIONS"
+      ]
     },
     "plugins": [
       [
@@ -32,9 +34,10 @@
           "image": "./assets/splash-icon.png",
           "imageWidth": 180,
           "resizeMode": "contain",
-          "backgroundColor": "#0F172A"
+          "backgroundColor": "#061A33"
         }
-      ]
+      ],
+      "expo-font"
     ],
     "extra": {
       "apiUrl": "${EXPO_PUBLIC_API_URL}",

@@ -9,12 +9,12 @@ const adapter: SourceAdapter = { id: 'fixture', async fetch(previous?: SourceChe
 describe('AWS runtime commands', () => {
   it('uses the same quiet-baseline poll behavior as the CLI', async () => {
     const store = new MemoryInternshipStore(); const messages: PushMessage[] = [];
-    const result = await runRuntimeCommand('poll', { store, config: { ntfyTopic: 'test-topic', sesFrom: 'a@example.com', sesTo: 'b@example.com' }, sources: [adapter], notificationPublisher: { publish: async (message) => { messages.push(message); } } });
+    const result = await runRuntimeCommand('poll', { store, config: { ntfyTopic: 'test-topic', sesFrom: 'a@example.com', sesTo: 'b@example.com' }, sources: [adapter], linkValidator: async (url) => url, notificationPublisher: { publish: async (message) => { messages.push(message); } } });
     expect(result).toMatchObject({ poll: { baselineSources: ['fixture'], newJobs: [] }, notifications: { sent: 0, failed: 0 } }); expect(messages).toEqual([]);
   });
   it('keeps the personal ntfy fallback active alongside Expo delivery', async () => {
     const store = new MemoryInternshipStore(); const ntfy: PushMessage[] = []; await store.putCheckpoint({ sourceId: 'fixture', successfulFetches: 1, lastRowCount: 1 });
-    const result = await runRuntimeCommand('poll', { store, config: { ntfyTopic: 'test-topic', ntfyTitleTemplate: '{company}: {shortTitle}', sesFrom: 'a@example.com', sesTo: 'b@example.com' }, sources: [adapter], userStore: new MemoryUserStore(), ntfyPublisher: { publish: async (message) => { ntfy.push(message); } } });
+    const result = await runRuntimeCommand('poll', { store, config: { ntfyTopic: 'test-topic', ntfyTitleTemplate: '{company}: {shortTitle}', sesFrom: 'a@example.com', sesTo: 'b@example.com' }, sources: [adapter], linkValidator: async (url) => url, userStore: new MemoryUserStore(), ntfyPublisher: { publish: async (message) => { ntfy.push(message); } } });
     expect(result).toMatchObject({ ntfy: { sent: 1, failed: 0 } }); expect(ntfy).toMatchObject([{ title: 'Acme: SWE', click: 'https://example.com/apply' }]);
   });
   it('does not send an empty digest', async () => {

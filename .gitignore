@@ -1,5 +1,17 @@
 node_modules/
 dist/
+browser-companion/dist/
 cdk.out/
 coverage/
 .env
+.expo/
+.DS_Store
+# Local operational inventory; do not commit source research or credentials.
+SOURCES.md
+# Local employer catalog and internal tiering decisions.
+EMPLOYERS.json
+# Locally installed Codex/Claude skills and hook configuration.
+.agents/
+.codex/
+.github/hooks/
+.github/skills/

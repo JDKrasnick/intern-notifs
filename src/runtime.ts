@@ -1,9 +1,10 @@
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { isTechnicalJob } from './core/filters.js';
+import { validateApplicationUrl, type ApplicationUrlValidator } from './core/application-url.js';
 import { defaultPushTemplates, ExpoPushPublisher, inspectExpoPushReceipts, NtfyPublisher, sendDigest, sendNewJobNotifications, sendPendingNotifications, SesEmailSender, type EmailSender, type PushPublisher } from './notifications.js';
 import { Poller } from './poll.js';
 import { DynamoInternshipStore, DynamoUserStore, type InternshipStore, type UserStore } from './store.js';
-import { defaultSources } from './sources/github.js';
+import { defaultSources } from './sources/index.js';
 import type { SourceAdapter } from './types.js';
 
 export interface RuntimeConfig {
@@ -34,11 +35,19 @@ export interface RuntimeDependencies {
   notificationPublisher?: PushPublisher;
   ntfyPublisher?: PushPublisher;
   emailSender?: EmailSender;
+  /** Replaces live URL verification in deterministic tests. */
+  linkValidator?: ApplicationUrlValidator;
 }
 
 export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies: RuntimeDependencies) {
   if (command === 'poll') {
-    const poll = await new Poller(dependencies.sources ?? defaultSources, dependencies.store).poll();
+    const poll = await new Poller(
+      dependencies.sources ?? defaultSources,
+      dependencies.store,
+      undefined,
+      undefined,
+      dependencies.linkValidator ?? validateApplicationUrl,
+    ).poll();
     if (dependencies.userStore) {
       const publisher = dependencies.expoPublisher ?? new ExpoPushPublisher();
       const templates = { ...defaultPushTemplates, titleTemplate: dependencies.config.ntfyTitleTemplate ?? defaultPushTemplates.titleTemplate, descriptionTemplate: dependencies.config.ntfyDescriptionTemplate ?? defaultPushTemplates.descriptionTemplate };
