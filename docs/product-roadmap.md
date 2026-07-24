@@ -39,6 +39,7 @@
 - [x] Add the signed-in “new since last open” inbox with a calm first-open baseline, saved-filter matching, and count-led mobile launch screen.
 - [x] Add signed-in swipe-left save for later, synced to the responsive web Saved queue and official-form handoff.
 - [x] Add local swipe-right hide with Undo and Profile-based restore.
+- [x] Add cursor-based endless scrolling through every role in the selected availability catalog.
 - [x] Audit 25 representative employers through the GitHub Markdown ingestion and poller pipeline.
 - [ ] Implement Greenhouse source adapter and tests.
 - [x] Implement Lever source adapter, ETag checkpoints, technical-role mapping, and deterministic fixtures for Palantir, PlusAI, Hermeus, and Xsolla.

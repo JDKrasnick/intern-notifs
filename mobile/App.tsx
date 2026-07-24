@@ -27,6 +27,7 @@ import * as Notifications from "expo-notifications";
 import * as DocumentPicker from "expo-document-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { api, responseCache, sessionStorage } from "./src/api";
+import { appendCatalogPage, type CatalogPage } from "./src/catalog";
 import { confirmEmail, signIn, signUp } from "./src/auth";
 import {
   clearApplicationFollowUp,
@@ -62,6 +63,7 @@ type LaunchInbox = {
   previousOpenedAt: string | null;
   openedAt: string;
 };
+type CatalogCache = CatalogPage<Job>;
 type RoleSection = { kind: "new" | "seen" | "all"; data: Job[] };
 type JobFilter = {
   includeCategories?: string[];
@@ -96,7 +98,7 @@ const defaultAlertSettings: AlertSettings = {
   applicationReminders: true,
   followUpDays: 7,
 };
-const catalogCacheKey = "internnotifs.open-catalog.v1";
+const catalogCacheKey = "internnotifs.open-catalog.v2";
 const hiddenRolesCacheKey = "internnotifs.hidden-roles.v1";
 const nextApplicationStatuses: Record<string, Application["status"]> = {
   saved: "applied",
@@ -1117,6 +1119,54 @@ function CaughtUpDivider({ showSeenLabel = true }: { showSeenLabel?: boolean }) 
   );
 }
 
+function CatalogInitialLoading() {
+  return (
+    <View accessibilityRole="progressbar" accessibilityLabel="Loading internships" style={styles.catalogInitialLoading}>
+      {[0, 1, 2].map((index) => <LoadingRoleCard key={index} index={index} />)}
+    </View>
+  );
+}
+
+function CatalogPaginationFooter({
+  loading,
+  error,
+  reachedEnd,
+  searching,
+  onRetry,
+}: {
+  loading: boolean;
+  error?: string;
+  reachedEnd: boolean;
+  searching: boolean;
+  onRetry: () => void;
+}) {
+  if (loading) {
+    return (
+      <View accessibilityRole="progressbar" accessibilityLabel={searching ? "Searching every internship" : "Loading more internships"} style={styles.catalogPagination}>
+        <Text style={styles.catalogPaginationText}>{searching ? "Searching every internship…" : "Loading more internships…"}</Text>
+      </View>
+    );
+  }
+  if (error) {
+    return (
+      <View accessibilityRole="alert" style={styles.catalogPagination}>
+        <Text style={styles.catalogPaginationText}>We couldn’t load more internships.</Text>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Try loading more internships again" onPress={onRetry} style={styles.catalogPaginationRetry}>
+          <Text style={styles.catalogPaginationRetryText}>Try again</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+  if (reachedEnd) {
+    return (
+      <View accessibilityRole="text" accessibilityLabel="You have reached the end of the catalog" style={styles.catalogPagination}>
+        <Text style={styles.catalogPaginationText}>You’ve reached the end</Text>
+      </View>
+    );
+  }
+  return null;
+}
+
 function AppLoadingSkeleton() {
   const { width } = useWindowDimensions();
   const usesNavigationRail = width >= 700;
@@ -1221,12 +1271,17 @@ function AppContent() {
   const [preferenceError, setPreferenceError] = useState<string>();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [catalogError, setCatalogError] = useState<string>();
+  const [catalogInitialLoading, setCatalogInitialLoading] = useState(true);
+  const [catalogLoadingMore, setCatalogLoadingMore] = useState(false);
+  const [catalogMoreError, setCatalogMoreError] = useState<string>();
+  const [nextCatalogCursor, setNextCatalogCursor] = useState<string>();
   const [catalogRefresh, setCatalogRefresh] = useState(0);
   const [applications, setApplications] = useState<Application[]>([]);
   const [savingJobIds, setSavingJobIds] = useState<Set<string>>(() => new Set());
   const [hiddenJobIds, setHiddenJobIds] = useState<Set<string>>(() => new Set());
   const [hiddenFeedbackJob, setHiddenFeedbackJob] = useState<Job>();
   const [query, setQuery] = useState("");
+  const [guestSearchQuery, setGuestSearchQuery] = useState("");
   const [employerFilter, setEmployerFilter] = useState<EmployerCategory | "all">("all");
   const [jobStatus, setJobStatus] = useState<"open" | "closed">("open");
   const [hideUsCitizenshipRequired, setHideUsCitizenshipRequired] = useState(false);
@@ -1239,6 +1294,10 @@ function AppContent() {
   const [launchToken, setLaunchToken] = useState<string>();
   const launchRequestToken = useRef<string | undefined>(undefined);
   const launchRequestId = useRef(0);
+  const catalogJobsRef = useRef<Job[]>([]);
+  const catalogCursorRef = useRef<string | undefined>(undefined);
+  const catalogRequestGeneration = useRef(0);
+  const catalogRequestInFlight = useRef(false);
   useEffect(() => {
     void sessionStorage.get().then((value) => {
       setToken(value ?? undefined);
@@ -1259,9 +1318,12 @@ function AppContent() {
     // Show the last successful public catalog immediately. This is especially
     // useful after onboarding, when the launch inbox intentionally has no
     // historical "new" roles to show yet.
-    void responseCache.get<{ jobs: Job[] }>(catalogCacheKey).then((cached) => {
-      if (active && cached?.jobs.length) {
-        setJobs((current) => current.length ? current : cached.jobs);
+    void responseCache.get<CatalogCache>(catalogCacheKey).then((cached) => {
+      if (active && cached?.jobs.length && !catalogJobsRef.current.length) {
+        catalogJobsRef.current = cached.jobs;
+        catalogCursorRef.current = cached.cursor;
+        setJobs(cached.jobs);
+        setNextCatalogCursor(cached.cursor);
       }
     });
     return () => {
@@ -1269,29 +1331,80 @@ function AppContent() {
     };
   }, []);
   useEffect(() => {
-    let active = true;
+    const requestGeneration = ++catalogRequestGeneration.current;
+    catalogRequestInFlight.current = true;
+    catalogCursorRef.current = undefined;
+    setNextCatalogCursor(undefined);
+    setCatalogInitialLoading(true);
+    setCatalogLoadingMore(false);
     setCatalogError(undefined);
-    void api<{ jobs: Job[] }>(`/jobs?status=${jobStatus}`, "")
-      .then((feed) => {
-        if (!active) return;
-        setJobs(feed.jobs);
-        if (jobStatus === "open" && feed.jobs.length) {
-          void responseCache.set(catalogCacheKey, feed);
+    setCatalogMoreError(undefined);
+    void api<CatalogPage<Job>>(`/jobs?status=${jobStatus}&limit=25`, "")
+      .then((page) => {
+        if (catalogRequestGeneration.current !== requestGeneration) return;
+        catalogJobsRef.current = page.jobs;
+        catalogCursorRef.current = page.cursor;
+        setJobs(page.jobs);
+        setNextCatalogCursor(page.cursor);
+        if (jobStatus === "open") {
+          void responseCache.set(catalogCacheKey, page);
         }
       })
       .catch((error) => {
-        if (active) {
+        if (catalogRequestGeneration.current === requestGeneration) {
           setCatalogError(
             error instanceof Error
               ? error.message
               : "We couldn't refresh internships right now.",
           );
         }
+      })
+      .finally(() => {
+        if (catalogRequestGeneration.current === requestGeneration) {
+          catalogRequestInFlight.current = false;
+          setCatalogInitialLoading(false);
+        }
       });
     return () => {
-      active = false;
+      if (catalogRequestGeneration.current === requestGeneration) {
+        catalogRequestGeneration.current += 1;
+        catalogRequestInFlight.current = false;
+      }
     };
   }, [catalogRefresh, jobStatus]);
+  const loadNextCatalogPage = (retry = false) => {
+    const cursor = catalogCursorRef.current;
+    if (!cursor || catalogRequestInFlight.current || (!retry && catalogMoreError)) return;
+    const requestGeneration = catalogRequestGeneration.current;
+    catalogRequestInFlight.current = true;
+    setCatalogLoadingMore(true);
+    setCatalogMoreError(undefined);
+    void api<CatalogPage<Job>>(
+      `/jobs?status=${jobStatus}&limit=25&cursor=${encodeURIComponent(cursor)}`,
+      "",
+    )
+      .then((page) => {
+        if (catalogRequestGeneration.current !== requestGeneration) return;
+        const nextJobs = appendCatalogPage(catalogJobsRef.current, page);
+        catalogJobsRef.current = nextJobs;
+        catalogCursorRef.current = page.cursor;
+        setJobs(nextJobs);
+        setNextCatalogCursor(page.cursor);
+      })
+      .catch((error) => {
+        if (catalogRequestGeneration.current === requestGeneration) {
+          setCatalogMoreError(
+            error instanceof Error ? error.message : "We couldn't load more internships right now.",
+          );
+        }
+      })
+      .finally(() => {
+        if (catalogRequestGeneration.current === requestGeneration) {
+          catalogRequestInFlight.current = false;
+          setCatalogLoadingMore(false);
+        }
+      });
+  };
   const load = async (idToken = token) => {
     if (!idToken) return;
     setPreferenceError(undefined);
@@ -1374,12 +1487,12 @@ function AppContent() {
     return () => subscription.remove();
   }, []);
   const catalogJobs = useMemo(() => {
-    const newJobs = launchInbox?.jobs ?? [];
+    const newJobs = jobStatus === "open" ? launchInbox?.jobs ?? [] : [];
     return [
       ...newJobs,
       ...jobs.filter((job) => !newJobs.some((newJob) => newJob.jobId === job.jobId)),
     ];
-  }, [jobs, launchInbox]);
+  }, [jobStatus, jobs, launchInbox]);
   const filtered = useMemo(
     () =>
       catalogJobs
@@ -1394,12 +1507,17 @@ function AppContent() {
         ),
     [catalogJobs, employerFilter, hiddenFeedbackJob, hiddenJobIds, hideAdvancedDegreeRequired, hideUsCitizenshipRequired, query],
   );
+  const catalogSearchQuery = token ? query : guestSearchQuery;
+  useEffect(() => {
+    if (!catalogSearchQuery.trim() || !nextCatalogCursor || catalogInitialLoading || catalogLoadingMore || catalogMoreError) return;
+    loadNextCatalogPage();
+  }, [catalogInitialLoading, catalogLoadingMore, catalogMoreError, catalogSearchQuery, nextCatalogCursor]);
   const applicationStatuses = useMemo(
     () => new Map(applications.map((application) => [application.jobId, application.status])),
     [applications],
   );
   const roleSections = useMemo<RoleSection[]>(() => {
-    const newJobIds = new Set(launchInbox?.jobs.map((job) => job.jobId) ?? []);
+    const newJobIds = new Set(jobStatus === "open" ? launchInbox?.jobs.map((job) => job.jobId) ?? [] : []);
     if (!newJobIds.size) return [{ kind: "all", data: filtered }];
     const newJobs = filtered.filter((job) => newJobIds.has(job.jobId));
     if (!newJobs.length) return [{ kind: "all", data: filtered }];
@@ -1408,7 +1526,7 @@ function AppContent() {
       { kind: "new", data: newJobs },
       ...(seenJobs.length ? [{ kind: "seen" as const, data: seenJobs }] : []),
     ];
-  }, [filtered, launchInbox]);
+  }, [filtered, jobStatus, launchInbox]);
   const hideLocally = (job: Job) => {
     if (hiddenJobIds.has(job.jobId)) return;
     setHiddenJobIds((current) => {
@@ -1446,6 +1564,15 @@ function AppContent() {
         jobs={jobs}
         jobStatus={jobStatus}
         onJobStatusChange={setJobStatus}
+        onSearchQueryChange={setGuestSearchQuery}
+        catalogInitialLoading={catalogInitialLoading}
+        catalogError={catalogError}
+        catalogLoadingMore={catalogLoadingMore}
+        catalogMoreError={catalogMoreError}
+        catalogReachedEnd={!nextCatalogCursor && !catalogInitialLoading && !catalogError}
+        onLoadMore={() => loadNextCatalogPage()}
+        onRetryLoadMore={() => loadNextCatalogPage(true)}
+        onRetryCatalog={() => setCatalogRefresh((value) => value + 1)}
         hiddenJobIds={hiddenJobIds}
         hiddenFeedbackJob={hiddenFeedbackJob}
         onHideLocally={hideLocally}
@@ -1588,13 +1715,26 @@ function AppContent() {
                   sections={roleSections}
                   keyExtractor={(job) => job.jobId}
                   contentContainerStyle={styles.feedListContent}
+                  onEndReached={() => loadNextCatalogPage()}
+                  onEndReachedThreshold={0.6}
                   stickySectionHeadersEnabled={false}
                   renderSectionHeader={({ section }) =>
                     section.kind === "new" ? <Text style={styles.newRolesLabel}>New roles</Text>
                       : section.kind === "seen" ? <CaughtUpDivider />
                         : null
                   }
-                  ListFooterComponent={roleSections.length === 1 && roleSections[0]?.kind === "new" ? <CaughtUpDivider showSeenLabel={false} /> : null}
+                  ListFooterComponent={
+                    <>
+                      {roleSections.length === 1 && roleSections[0]?.kind === "new" ? <CaughtUpDivider showSeenLabel={false} /> : null}
+                      <CatalogPaginationFooter
+                        loading={catalogLoadingMore}
+                        error={catalogMoreError}
+                        reachedEnd={!nextCatalogCursor && !catalogInitialLoading && !catalogError}
+                        searching={Boolean(query.trim())}
+                        onRetry={() => loadNextCatalogPage(true)}
+                      />
+                    </>
+                  }
                   renderItem={({ item, index, section }) =>
                     hiddenFeedbackJob?.jobId === item.jobId ? (
                       <HiddenRolePlaceholder onUndo={undoHideLocally} />
@@ -1620,7 +1760,7 @@ function AppContent() {
                     )
                   }
                   ListEmptyComponent={
-                    catalogError ? (
+                    catalogInitialLoading ? <CatalogInitialLoading /> : catalogError ? (
                       <View style={styles.catalogUnavailable}>
                         <EmptyState
                           eyebrow="Catalog unavailable"
@@ -1695,6 +1835,15 @@ function GuestExperience({
   jobs,
   jobStatus,
   onJobStatusChange,
+  onSearchQueryChange,
+  catalogInitialLoading,
+  catalogError,
+  catalogLoadingMore,
+  catalogMoreError,
+  catalogReachedEnd,
+  onLoadMore,
+  onRetryLoadMore,
+  onRetryCatalog,
   hiddenJobIds,
   hiddenFeedbackJob,
   onHideLocally,
@@ -1704,6 +1853,15 @@ function GuestExperience({
   jobs: Job[];
   jobStatus: "open" | "closed";
   onJobStatusChange: (status: "open" | "closed") => void;
+  onSearchQueryChange: (query: string) => void;
+  catalogInitialLoading: boolean;
+  catalogError?: string;
+  catalogLoadingMore: boolean;
+  catalogMoreError?: string;
+  catalogReachedEnd: boolean;
+  onLoadMore: () => void;
+  onRetryLoadMore: () => void;
+  onRetryCatalog: () => void;
   hiddenJobIds: Set<string>;
   hiddenFeedbackJob?: Job;
   onHideLocally: (job: Job) => void;
@@ -1748,7 +1906,10 @@ function GuestExperience({
               <View style={styles.roleFeedControls}>
                 <TextInput
                   value={query}
-                  onChangeText={setQuery}
+                  onChangeText={(value) => {
+                    setQuery(value);
+                    onSearchQueryChange(value);
+                  }}
                   accessibilityLabel="Search roles, companies, and locations"
                   placeholder="Search roles, companies, locations"
                   placeholderTextColor={colors.placeholder}
@@ -1771,6 +1932,8 @@ function GuestExperience({
                 data={filtered}
                 keyExtractor={(job) => job.jobId}
                 contentContainerStyle={styles.feedListContent}
+                onEndReached={onLoadMore}
+                onEndReachedThreshold={0.6}
                 renderItem={({ item }) =>
                   hiddenFeedbackJob?.jobId === item.jobId ? (
                     <HiddenRolePlaceholder onUndo={onUndoHide} />
@@ -1782,10 +1945,28 @@ function GuestExperience({
                     />
                   )}
                 ListEmptyComponent={
-                  <EmptyState
+                  catalogInitialLoading ? <CatalogInitialLoading /> : catalogError ? (
+                    <View style={styles.catalogUnavailable}>
+                      <EmptyState
+                        eyebrow="Catalog unavailable"
+                        title="Your latest opportunities will appear here."
+                        description="We couldn't refresh the catalog right now. Check your connection and try again."
+                      />
+                      <ActionButton label="Try again" onPress={onRetryCatalog} />
+                    </View>
+                  ) : <EmptyState
                     eyebrow="Search"
                     title="Nothing fits that search yet."
                     description="Try a company, role, or location with fewer terms."
+                  />
+                }
+                ListFooterComponent={
+                  <CatalogPaginationFooter
+                    loading={catalogLoadingMore}
+                    error={catalogMoreError}
+                    reachedEnd={catalogReachedEnd}
+                    searching={Boolean(query.trim())}
+                    onRetry={onRetryLoadMore}
                   />
                 }
               />
@@ -3174,6 +3355,11 @@ const styles = StyleSheet.create({
     paddingBottom: 28,
     width: "100%",
   },
+  catalogInitialLoading: { paddingTop: 12 },
+  catalogPagination: { alignItems: "center", minHeight: 52, justifyContent: "center", paddingVertical: 12 },
+  catalogPaginationText: { color: colors.muted, fontSize: 14, lineHeight: 20, textAlign: "center" },
+  catalogPaginationRetry: { alignItems: "center", justifyContent: "center", minHeight: 44, paddingHorizontal: 12 },
+  catalogPaginationRetryText: { color: colors.signal, fontSize: 14, fontWeight: "700" },
   profileContent: {
     alignSelf: "center",
     maxWidth: 760,
