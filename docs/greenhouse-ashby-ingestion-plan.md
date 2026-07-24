@@ -32,6 +32,15 @@ The reviewed board list defines what the product covers. Each board entry includ
 
 There is no authoritative global directory of every Greenhouse or Ashby board. The product should therefore claim coverage of its approved board list—not an unprovable promise to index every employer globally. Discovery can propose boards, but only reviewed boards reach publication.
 
+### How boards enter the list
+
+1. Start with companies already found in InternNotifs' reviewed catalog feeds and employer roster.
+2. Visit the employer's own careers page and identify its Greenhouse or Ashby board there. Do not treat LinkedIn, Indeed, a search result, or another aggregator as the source of truth.
+3. Confirm the board belongs to that employer, identify the board token/name, and check that its public response identifies the expected employer or career page.
+4. Add the board in shadow mode with the official careers-page URL recorded as review evidence. A reviewer promotes it only after the output and application links pass the checks below.
+
+This deliberately grows a verified employer list; it does not crawl every URL that happens to look like an ATS board.
+
 ## Reading each provider
 
 Each source reader consumes the provider's public job-board data and produces a complete board snapshot in the shared listing format. It must:
@@ -42,6 +51,34 @@ Each source reader consumes the provider's public job-board data and produces a 
 4. Emit source health and a safe diagnostic result alongside listings, including a response hash or version signal when available.
 
 The shared rules keep polling, quality checks, duplicate handling, notification behavior, and operational monitoring consistent across providers.
+
+### Exact Greenhouse request and mapping
+
+For a reviewed Greenhouse board, fetch this public JSON endpoint:
+
+```text
+GET https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs?content=true
+```
+
+The `board_token` is the employer's Greenhouse board identifier, verified from its official careers page. The request needs no employer credentials. From each returned job, retain the job `id`, `title`, `location.name`, `updated_at`, `content`, departments/offices, and `absolute_url`. Store the API URL as the source URL and the job ID as the board-specific record ID. Reject prospect/general-interest posts (`internal_job_id` is `null`) and then apply the technical internship/co-op/apprenticeship checks.
+
+`absolute_url` is still validated as a live HTTPS official application destination before publication. Descriptions are converted to plain text before compensation and eligibility rules are evaluated; the original HTML is not needed in the public catalog.
+
+### Exact Ashby request and mapping
+
+For a reviewed Ashby board, fetch this public JSON endpoint:
+
+```text
+GET https://api.ashbyhq.com/posting-api/job-board/{job_board_name}?includeCompensation=true
+```
+
+The `job_board_name` is the final path component of the employer's Ashby hosted board, such as `https://jobs.ashbyhq.com/{job_board_name}`. It is obtained from the employer's official careers page, not guessed from the company name.
+
+Only retain jobs where `isListed` is `true`. Map `title`, `location`, `secondaryLocations`, `descriptionPlain`, `department`, `team`, `publishedAt`, `employmentType`, `workplaceType`, `applyUrl`, `jobUrl`, and disclosed compensation. A role must then pass the same technical internship/co-op/apprenticeship and live-link checks as every other source. `applyUrl` is the candidate handoff; `jobUrl` and the API URL provide traceable source history.
+
+These endpoints are public job-board reads only. InternNotifs does not call Greenhouse's application `POST` endpoint or authenticated Ashby employer-management APIs.
+
+Official API references: [Greenhouse Job Board API](https://developers.greenhouse.io/job-board) and [Ashby Job Postings API](https://developers.ashbyhq.com/docs/public-job-posting-api).
 
 ## Admission and publication lifecycle
 
