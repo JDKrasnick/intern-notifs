@@ -34,6 +34,27 @@ The reviewed board list defines what the product covers. Each board entry includ
 
 There is no authoritative global directory of every Greenhouse or Ashby board. The product should therefore claim coverage of its approved board list—not an unprovable promise to index every employer globally. Discovery can propose boards, but only reviewed boards reach publication.
 
+### Employer identity is not an API search
+
+Neither provider accepts an employer name as a job-search query. Greenhouse requires a known `board_token`; Ashby requires a known `job_board_name`. Never turn a user-entered company name directly into a URL such as `https://jobs.ashbyhq.com/{company}`: a name is ambiguous and a guessed board can point to the wrong employer or simply fail.
+
+Each owner-supplied employer therefore needs one canonical identity record before it is polled:
+
+```text
+employerId: google
+displayName: Google
+groupId: alphabet
+aliases: [Google, Google LLC, Google DeepMind]
+provider: greenhouse
+boardToken: google
+officialCareersUrl: https://careers.google.com
+expectedApplicationHosts: [careers.google.com, job-boards.greenhouse.io]
+```
+
+The input matcher first normalizes harmless formatting—case, whitespace, punctuation, accents, and corporate suffixes—then performs an exact lookup against stored IDs and aliases. It does not use fuzzy matching or guess a board name. A ticker such as `TSLA` resolves to `tesla` only if `TSLA` is an explicit stored alias. Likewise, `Alphabet` should resolve to the `alphabet` group and then its explicitly listed member board(s), not be silently treated as identical to every Google-branded job publisher.
+
+An unknown or ambiguous employer produces a review-needed result and makes no provider request. The catalog stores the canonical `displayName`; aliases are lookup-only, so one employer does not appear under several spellings.
+
 ### How boards enter the list
 
 1. Start with companies already found in InternNotifs' reviewed catalog feeds and employer roster.
@@ -64,7 +85,7 @@ GET https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs?content=true
 
 The `board_token` is the employer's Greenhouse board identifier, verified from its official careers page. The request needs no employer credentials. From each returned job, retain the job `id`, `title`, `location.name`, `updated_at`, `content`, departments/offices, and `absolute_url`. Store the API URL as the source URL and the job ID as the board-specific record ID. Reject prospect/general-interest posts (`internal_job_id` is `null`) and then apply the technical internship/co-op/apprenticeship checks.
 
-`absolute_url` is still validated as a live HTTPS official application destination before publication. Descriptions are converted to plain text before compensation and eligibility rules are evaluated; the original HTML is not needed in the public catalog. The source ID is `greenhouse-{board_token}` and the job `id` is the board-specific record ID.
+`absolute_url` is still validated as a live HTTPS official application destination before publication. Descriptions are converted to plain text before compensation and eligibility rules are evaluated; the original HTML is not needed in the public catalog. The source ID is `greenhouse-{board_token}` and the job `id` is the board-specific record ID. Before enabling a board, call `GET https://boards-api.greenhouse.io/v1/boards/{board_token}` once and require the returned board name to match the reviewed employer identity.
 
 ### Exact Ashby request and mapping
 
@@ -74,7 +95,7 @@ For a reviewed Ashby board, fetch this public JSON endpoint:
 GET https://api.ashbyhq.com/posting-api/job-board/{job_board_name}?includeCompensation=true
 ```
 
-The `job_board_name` is the final path component of the employer's Ashby hosted board, such as `https://jobs.ashbyhq.com/{job_board_name}`. It is obtained from the employer's official careers page, not guessed from the company name.
+The `job_board_name` is the final path component of the employer's Ashby hosted board, such as `https://jobs.ashbyhq.com/{job_board_name}`. It is obtained from the employer's official careers page, not guessed from the company name. During review, require returned `jobUrl` and `applyUrl` values to use the expected Ashby board path or an explicitly approved employer application host.
 
 Only retain jobs where `isListed` is `true`. Map `title`, `location`, `secondaryLocations`, `descriptionPlain`, `department`, `team`, `publishedAt`, `employmentType`, `workplaceType`, `applyUrl`, `jobUrl`, and disclosed compensation. A role must then pass the same technical internship/co-op/apprenticeship and live-link checks as every other source. `applyUrl` is the candidate handoff; `jobUrl` and the API URL provide traceable source history. The source ID is `ashby-{job_board_name}`; the normalized `applyUrl` is the stable board-specific role key when Ashby does not expose a separate posting ID.
 
@@ -87,10 +108,11 @@ Official API references: [Greenhouse Job Board API](https://developers.greenhous
 Each approved board gets an independent fetch task. The first deployment can run those tasks in the existing five-minute Lambda poll; the task boundary remains the same when the work later moves to a queue.
 
 1. Load the board's last successful source state: response hash, last row count, last success time, and active role IDs.
-2. Fetch the provider endpoint above with no credentials. Honor an HTTP ETag when a provider returns one; otherwise compare a local SHA-256 hash of the normalized, sorted response.
-3. On a successful response, discard non-public/prospect jobs, convert the remaining data into the shared role shape, and run the technical-internship filter.
-4. For a new application URL or a changed URL, require HTTPS, reject aggregator destinations, then check that the link resolves. Use `HEAD` first and a small ranged `GET` fallback for sites that reject `HEAD`.
-5. Commit the complete successful board result and its new source state together. Only then calculate new, changed, missing, and closed roles.
+2. Build the request only from the stored provider and board identifier. Use a fixed allowlisted API host, encode the identifier as one URL path segment, and reject any configuration that contains a URL, slash, query string, or unknown provider value.
+3. Fetch the provider endpoint above with no credentials. Honor an HTTP ETag when a provider returns one; otherwise compare a local SHA-256 hash of the normalized, sorted response.
+4. On a successful response, discard non-public/prospect jobs, convert the remaining data into the shared role shape, set the canonical employer name from the identity record, and run the technical-internship filter.
+5. For a new application URL or a changed URL, require HTTPS, reject aggregator destinations, require an expected application host or a reviewed exception, then check that the link resolves. Use `HEAD` first and a small ranged `GET` fallback for sites that reject `HEAD`.
+6. Commit the complete successful board result and its new source state together. Only then calculate new, changed, missing, and closed roles.
 
 No third-party wrapper or discovery repository supplies production roles. Those tools can help the owner find candidates, but production data always comes directly from the employer's public Greenhouse or Ashby endpoint.
 
