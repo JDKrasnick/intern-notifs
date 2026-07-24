@@ -46,6 +46,8 @@ For a small source list, the poll can continue to run in one Lambda while emitti
 
 Each task contains only the source ID, provider, board token/name, scheduled time, and retry count—never a job response or user data. A successful task writes both the complete source snapshot and its health record. A failed task preserves the previous catalog state, so a provider outage cannot make existing roles disappear.
 
+Company input is resolved before a task exists. The resolver normalizes formatting and then performs an exact match against an explicit employer ID/alias table; it does not guess board names from `Alphabet`, `Google`, `TSLA`, or any other free-form text. The task receives only the stored provider and board token/name, builds a request against an allowlisted provider host, and encodes that identifier as one path segment. Unknown, ambiguous, or malformed employer data becomes a configuration-review failure, not an outbound request.
+
 ## Failure domains and handling
 
 | Domain | Primary response | Escalate when |
@@ -64,6 +66,7 @@ Each result carries a run ID, stage, source/job identifier where relevant, failu
 | Result | Automatic action | Catalog effect |
 | --- | --- | --- |
 | Timeout, HTTP 429, or HTTP 5xx | Retry that board with increasing waits | Keep the last successful roles open |
+| Unknown employer alias, malformed board ID, or returned-employer mismatch | Stop before publication and request configuration review | No publication; keep the last successful roles open |
 | HTTP 404/401 or invalid provider JSON | Quarantine the board and send a prompt alert | Keep the last successful roles open |
 | Valid response with unexpected zero roles | Hold the result for review and alert | Do not close roles |
 | Valid response with changed content | Validate and reconcile the complete snapshot | Add/update/close roles only after checks pass |
