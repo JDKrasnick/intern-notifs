@@ -44,6 +44,8 @@ The existing Scheduler DLQ remains useful for failed schedule-to-Lambda delivery
 
 For a small source list, the poll can continue to run in one Lambda while emitting a durable success/failure record per source. When sources become numerous, the planner creates one queue task per board. Each task either commits a complete result, schedules a retry, or moves to the failure queue; it never silently disappears.
 
+Each task contains only the source ID, provider, board token/name, scheduled time, and retry count—never a job response or user data. A successful task writes both the complete source snapshot and its health record. A failed task preserves the previous catalog state, so a provider outage cannot make existing roles disappear.
+
 ## Failure domains and handling
 
 | Domain | Primary response | Escalate when |
@@ -56,6 +58,18 @@ For a small source list, the poll can continue to run in one Lambda while emitti
 | Push, email, and receipt handling | Retry delivery independently of ingestion | Delivery failure persists or affects many users |
 
 Each result carries a run ID, stage, source/job identifier where relevant, failure category, retry count, and a safe diagnostic summary. Do not put applicant data, credentials, or complete third-party responses in alerts.
+
+### Source-fetch decisions
+
+| Result | Automatic action | Catalog effect |
+| --- | --- | --- |
+| Timeout, HTTP 429, or HTTP 5xx | Retry that board with increasing waits | Keep the last successful roles open |
+| HTTP 404/401 or invalid provider JSON | Quarantine the board and send a prompt alert | Keep the last successful roles open |
+| Valid response with unexpected zero roles | Hold the result for review and alert | Do not close roles |
+| Valid response with changed content | Validate and reconcile the complete snapshot | Add/update/close roles only after checks pass |
+| Individual application link fails | Withhold or quarantine that role | Do not fail the entire board unless failures become widespread |
+
+Source retries end in the failure queue after the configured limit. Notification retries use a separate delivery queue, so a push-provider outage never causes the source to be fetched again or duplicates catalog records.
 
 ## Health model and alerts
 
