@@ -17,6 +17,12 @@ Make failures across catalog ingestion and notification delivery visible, recove
 - **Make state durable.** Logs explain an incident, but persisted health state answers whether a source is currently healthy.
 - **Prefer a clear signal over a high volume of email.** One alert should summarize an incident and its current recovery state.
 
+## Current starting point and gap
+
+Today EventBridge Scheduler starts the poll about every five minutes. One Lambda invocation asks each configured source for listings, validates new application links, writes roles to DynamoDB, and then sends alerts for newly discovered matching roles. The link check uses `HEAD` first and a small `GET` fallback when a career site does not support `HEAD`.
+
+This is a good small-catalog starting point, but a source fetch or parse error is currently added to the poll report and logged while the overall Lambda can still finish successfully. That means the Scheduler failure queue only sees failures to invoke Lambda; it does not see a failed Greenhouse, Ashby, Lever, GitHub, link-validation, or notification step. The plan closes that visibility gap.
+
 ## Target flow
 
 ```mermaid
@@ -36,6 +42,8 @@ flowchart LR
 
 The existing Scheduler DLQ remains useful for failed schedule-to-Lambda delivery. The target design adds application-level failure queues and health signals so a source fetch, parser, catalog write, or notification failure is not mistaken for a successful poll simply because the Lambda invocation completed.
 
+For a small source list, the poll can continue to run in one Lambda while emitting a durable success/failure record per source. When sources become numerous, the planner creates one queue task per board. Each task either commits a complete result, schedules a retry, or moves to the failure queue; it never silently disappears.
+
 ## Failure domains and handling
 
 | Domain | Primary response | Escalate when |
@@ -52,6 +60,8 @@ Each result carries a run ID, stage, source/job identifier where relevant, failu
 ## Health model and alerts
 
 Persist one health record per source and provider: last successful fetch, freshness target, latency, row count, response/content hash, most recent failure, and current incident state. Publish the same information as metrics for dashboards and alarms.
+
+The record should distinguish **no change** from **could not check**. A `304 Not Modified` or unchanged content hash is healthy; a timeout, HTTP 429/5xx response, malformed JSON, unexpected empty result, or failed catalog write is not. This distinction prevents a quiet but stale board from looking healthy.
 
 | Severity | Example | Delivery expectation |
 | --- | --- | --- |
