@@ -4,6 +4,12 @@
 
 Make failures across catalog ingestion and notification delivery visible, recoverable, and actionable without turning normal transient errors into operator noise. The system should continue processing unaffected work when a single source, link, or delivery provider fails.
 
+## Plain-language terms
+
+- **Failure queue (DLQ):** a holding queue for work that still failed after its allowed retries. It keeps the work available for investigation and safe replay.
+- **Source health:** the saved record of whether a job source is current and working, including when it last succeeded and why it last failed.
+- **Retry:** automatically try a temporary failure again after a controlled wait.
+
 ## Design principles
 
 - **Keep work small and isolated.** A broken employer board must not stall the catalog.
@@ -15,33 +21,33 @@ Make failures across catalog ingestion and notification delivery visible, recove
 
 ```mermaid
 flowchart LR
-    S[Schedule] --> C[Poll coordinator]
-    C --> Q[Source work queue]
-    Q --> W[Source worker]
+    S[Schedule] --> C[Poll planner]
+    C --> Q[One task per source]
+    Q --> W[Task runner]
     W -->|valid result| D[(Catalog and source health)]
-    W -->|temporary failure| R[Bounded retry]
+    W -->|temporary failure| R[Retry]
     R --> Q
-    W -->|exhausted or unsafe| LQ[Domain DLQ]
-    W --> M[Metrics and structured events]
+    W -->|still failing or unsafe| LQ[Failure queue]
+    W --> M[Metrics and standard results]
     LQ --> M
     M --> A[Alert policy]
     A --> G[Gmail operations labels]
 ```
 
-The existing Scheduler DLQ remains useful for failed schedule-to-Lambda delivery. The target design adds application-level queues and health signals so a source fetch, parser, catalog write, or notification failure is not mistaken for a successful poll simply because the Lambda invocation completed.
+The existing Scheduler DLQ remains useful for failed schedule-to-Lambda delivery. The target design adds application-level failure queues and health signals so a source fetch, parser, catalog write, or notification failure is not mistaken for a successful poll simply because the Lambda invocation completed.
 
 ## Failure domains and handling
 
 | Domain | Primary response | Escalate when |
 | --- | --- | --- |
-| Scheduler and worker execution | Managed retry; retain unprocessed work | The pipeline has no successful run within its freshness target |
-| Source fetch and provider outage | Per-source retry with backoff and jitter | Retries exhaust or a source becomes stale |
-| Parser or upstream schema change | Quarantine the source output | A previously healthy source fails repeatedly or returns an implausible snapshot |
+| Scheduler and task execution | Managed retry; retain unprocessed work | The pipeline has no successful run within its freshness target |
+| Source fetch and provider outage | Retry each source with increasing waits | Retries exhaust or a source becomes stale |
+| Parser or upstream data-format change | Quarantine the source output | A previously healthy source fails repeatedly or returns an implausible result |
 | Quality and official-link checks | Withhold or quarantine the affected role | The error rate indicates broad source degradation |
 | Catalog persistence | Retry the write without duplicating jobs | Data cannot be safely committed |
 | Push, email, and receipt handling | Retry delivery independently of ingestion | Delivery failure persists or affects many users |
 
-Each event carries a run ID, stage, source/job identifier where relevant, failure category, retry count, and a safe diagnostic summary. Do not put applicant data, credentials, or complete third-party responses in alerts.
+Each result carries a run ID, stage, source/job identifier where relevant, failure category, retry count, and a safe diagnostic summary. Do not put applicant data, credentials, or complete third-party responses in alerts.
 
 ## Health model and alerts
 
@@ -50,7 +56,7 @@ Persist one health record per source and provider: last successful fetch, freshn
 | Severity | Example | Delivery expectation |
 | --- | --- | --- |
 | Immediate | DLQ message, catalog unavailable, sustained delivery outage | Page/email immediately; keep in Inbox |
-| Prompt | Repeated board failure, stale source, unexpected empty snapshot | Send one incident alert and reminders only while unresolved |
+| Prompt | Repeated board failure, stale source, unexpected empty board result | Send one incident alert and reminders only while unresolved |
 | Digest | Isolated invalid link or one rejected row | Group into a scheduled operational summary |
 
 Route mail through a stable operations sender. Gmail labels should separate `InternNotifs/Operations`, `Scrape`, `Delivery`, and `Infrastructure`; new high-severity messages should remain in the Inbox until their signal quality is demonstrated.
@@ -59,13 +65,13 @@ Route mail through a stable operations sender. Gmail labels should separate `Int
 
 Operators need three safe controls: replay an individual failed work item, temporarily quarantine a source, and acknowledge or resolve an incident. Every alert should state the user impact, automatic recovery already attempted, last known good state, and the next safe action.
 
-Runbooks should cover provider outage, schema drift, unexpected zero-result snapshots, storage outage, and push/email degradation. Exercise DLQ replay and alert delivery periodically so recovery is tested rather than assumed.
+Runbooks should cover provider outage, unexpected data-format changes, unexpected zero-result boards, storage outage, and push/email degradation. Exercise failure-queue replay and alert delivery periodically so recovery is tested rather than assumed.
 
 ## Rollout
 
-1. Add structured outcomes and source-health persistence to the existing poller.
+1. Add standard result records and saved source health to the existing poller.
 2. Add metrics, dashboards, and Gmail-routed alarms while preserving the current scheduler DLQ.
-3. Move provider/source work to independently retryable queue messages as source count grows.
+3. Move provider/source work to separate retryable queue tasks as source count grows.
 4. Add replay tools, incident state, and regular recovery tests.
 
 Success means no silent stale source, no lost exhausted work, no alert storm from transient failures, and a clear operator path from alert to recovery.
