@@ -4,6 +4,8 @@
 
 Extend the catalog through reliable, employer-published Greenhouse and Ashby job-board data while preserving the product's direct-to-employer, technical-internship focus. This is an ingestion platform extension, not broad browser scraping and not application automation.
 
+Employer selection stays with the owner. This plan begins once the owner supplies an approved company and its official careers-page URL; it does not require InternNotifs to maintain or purchase a global company directory.
+
 ## Plain-language terms
 
 - **Reviewed board list:** InternNotifs' approved list of employer career boards to check.
@@ -62,7 +64,7 @@ GET https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs?content=true
 
 The `board_token` is the employer's Greenhouse board identifier, verified from its official careers page. The request needs no employer credentials. From each returned job, retain the job `id`, `title`, `location.name`, `updated_at`, `content`, departments/offices, and `absolute_url`. Store the API URL as the source URL and the job ID as the board-specific record ID. Reject prospect/general-interest posts (`internal_job_id` is `null`) and then apply the technical internship/co-op/apprenticeship checks.
 
-`absolute_url` is still validated as a live HTTPS official application destination before publication. Descriptions are converted to plain text before compensation and eligibility rules are evaluated; the original HTML is not needed in the public catalog.
+`absolute_url` is still validated as a live HTTPS official application destination before publication. Descriptions are converted to plain text before compensation and eligibility rules are evaluated; the original HTML is not needed in the public catalog. The source ID is `greenhouse-{board_token}` and the job `id` is the board-specific record ID.
 
 ### Exact Ashby request and mapping
 
@@ -74,11 +76,23 @@ GET https://api.ashbyhq.com/posting-api/job-board/{job_board_name}?includeCompen
 
 The `job_board_name` is the final path component of the employer's Ashby hosted board, such as `https://jobs.ashbyhq.com/{job_board_name}`. It is obtained from the employer's official careers page, not guessed from the company name.
 
-Only retain jobs where `isListed` is `true`. Map `title`, `location`, `secondaryLocations`, `descriptionPlain`, `department`, `team`, `publishedAt`, `employmentType`, `workplaceType`, `applyUrl`, `jobUrl`, and disclosed compensation. A role must then pass the same technical internship/co-op/apprenticeship and live-link checks as every other source. `applyUrl` is the candidate handoff; `jobUrl` and the API URL provide traceable source history.
+Only retain jobs where `isListed` is `true`. Map `title`, `location`, `secondaryLocations`, `descriptionPlain`, `department`, `team`, `publishedAt`, `employmentType`, `workplaceType`, `applyUrl`, `jobUrl`, and disclosed compensation. A role must then pass the same technical internship/co-op/apprenticeship and live-link checks as every other source. `applyUrl` is the candidate handoff; `jobUrl` and the API URL provide traceable source history. The source ID is `ashby-{job_board_name}`; the normalized `applyUrl` is the stable board-specific role key when Ashby does not expose a separate posting ID.
 
 These endpoints are public job-board reads only. InternNotifs does not call Greenhouse's application `POST` endpoint or authenticated Ashby employer-management APIs.
 
 Official API references: [Greenhouse Job Board API](https://developers.greenhouse.io/job-board) and [Ashby Job Postings API](https://developers.ashbyhq.com/docs/public-job-posting-api).
+
+### What runs every five minutes
+
+Each approved board gets an independent fetch task. The first deployment can run those tasks in the existing five-minute Lambda poll; the task boundary remains the same when the work later moves to a queue.
+
+1. Load the board's last successful source state: response hash, last row count, last success time, and active role IDs.
+2. Fetch the provider endpoint above with no credentials. Honor an HTTP ETag when a provider returns one; otherwise compare a local SHA-256 hash of the normalized, sorted response.
+3. On a successful response, discard non-public/prospect jobs, convert the remaining data into the shared role shape, and run the technical-internship filter.
+4. For a new application URL or a changed URL, require HTTPS, reject aggregator destinations, then check that the link resolves. Use `HEAD` first and a small ranged `GET` fallback for sites that reject `HEAD`.
+5. Commit the complete successful board result and its new source state together. Only then calculate new, changed, missing, and closed roles.
+
+No third-party wrapper or discovery repository supplies production roles. Those tools can help the owner find candidates, but production data always comes directly from the employer's public Greenhouse or Ashby endpoint.
 
 ## Admission and publication lifecycle
 
@@ -96,12 +110,13 @@ Shadow mode verifies employer ownership, official apply destinations, technical-
 
 Every successful board response is a current snapshot, rather than merely a list of additions. The update process:
 
-- creates newly seen eligible listings;
-- updates materially changed listings while preserving their source history;
-- marks that board's record of a role closed when it is absent from a later successful snapshot; and
+- saves the first successful response as a baseline without notifying users;
+- creates newly seen eligible listings and queues notifications only after the baseline;
+- updates materially changed listings while preserving their source history, without treating an edit as a new role;
+- records a role as missing on its first absence and closes that board's record only after two consecutive successful complete snapshots omit it; and
 - closes the catalog role only when no active source still supports it.
 
-This prevents stale roles from remaining open indefinitely while avoiding accidental closure during a failed or quarantined fetch.
+An empty result from a previously active board is never treated as a closure signal. It first triggers the quality gate and source-health alert; existing catalog roles remain unchanged until the board produces a trustworthy complete snapshot again.
 
 ## Scale and reliability
 
