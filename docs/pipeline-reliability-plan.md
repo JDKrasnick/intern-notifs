@@ -2,24 +2,70 @@
 
 ## Goal
 
-Make failures across catalog ingestion and notification delivery visible, recoverable, and actionable without turning normal transient errors into operator noise.
+Make failures across catalog ingestion and notification delivery visible, recoverable, and actionable without turning normal transient errors into operator noise. The system should continue processing unaffected work when a single source, link, or delivery provider fails.
 
-## System design
+## Design principles
 
-1. Treat scheduling, worker execution, source retrieval, parsing, source-quality checks, application-link validation, persistence, push delivery, and digests as distinct failure domains. Each emits a structured outcome with a run identifier and the relevant source or job context.
-2. Keep recovery separate from alerting. Transient failures retry with bounded backoff; invalid data is quarantined; exhausted work is retained in a domain-specific DLQ; alerts report a condition that needs attention rather than every failed attempt.
-3. Move source work to independently retryable units as ingestion grows. A coordinator schedules a run, workers handle individual sources, and one failing board cannot prevent the rest of the catalog from updating.
-4. Persist source health alongside catalog checkpoints: last successful fetch, freshness, latency, output count, failure category, and the most recent safe diagnostic evidence. This makes health queryable even when logs expire.
-5. Publish operational metrics and dashboards for run success, source freshness, DLQ depth and age, parser/quality failures, invalid-link rate, catalog write failures, and notification delivery outcomes.
+- **Keep work small and isolated.** A broken employer board must not stall the catalog.
+- **Recover before escalating.** Retry temporary failures; alert only when a condition remains actionable.
+- **Make state durable.** Logs explain an incident, but persisted health state answers whether a source is currently healthy.
+- **Prefer a clear signal over a high volume of email.** One alert should summarize an incident and its current recovery state.
 
-## Alerting policy
+## Target flow
 
-- **Immediate:** pipeline unavailable, worker or scheduler DLQ messages, data-loss risk, or delivery systems unavailable.
-- **Prompt:** a source is repeatedly failing, exceeds its freshness target, or has an unexpected output collapse.
-- **Digest:** isolated invalid links, one-off parser rejections, and other non-blocking degradation.
+```mermaid
+flowchart LR
+    S[Schedule] --> C[Poll coordinator]
+    C --> Q[Source work queue]
+    Q --> W[Source worker]
+    W -->|valid result| D[(Catalog and source health)]
+    W -->|temporary failure| R[Bounded retry]
+    R --> Q
+    W -->|exhausted or unsafe| LQ[Domain DLQ]
+    W --> M[Metrics and structured events]
+    LQ --> M
+    M --> A[Alert policy]
+    A --> G[Gmail operations labels]
+```
 
-Route alerts through a stable operations sender to Gmail. Apply labels such as `InternNotifs/Operations`, `Scrape`, `Delivery`, and `Infrastructure`; leave new high-severity alerts in the Inbox until their signal quality is proven.
+The existing Scheduler DLQ remains useful for failed schedule-to-Lambda delivery. The target design adds application-level queues and health signals so a source fetch, parser, catalog write, or notification failure is not mistaken for a successful poll simply because the Lambda invocation completed.
+
+## Failure domains and handling
+
+| Domain | Primary response | Escalate when |
+| --- | --- | --- |
+| Scheduler and worker execution | Managed retry; retain unprocessed work | The pipeline has no successful run within its freshness target |
+| Source fetch and provider outage | Per-source retry with backoff and jitter | Retries exhaust or a source becomes stale |
+| Parser or upstream schema change | Quarantine the source output | A previously healthy source fails repeatedly or returns an implausible snapshot |
+| Quality and official-link checks | Withhold or quarantine the affected role | The error rate indicates broad source degradation |
+| Catalog persistence | Retry the write without duplicating jobs | Data cannot be safely committed |
+| Push, email, and receipt handling | Retry delivery independently of ingestion | Delivery failure persists or affects many users |
+
+Each event carries a run ID, stage, source/job identifier where relevant, failure category, retry count, and a safe diagnostic summary. Do not put applicant data, credentials, or complete third-party responses in alerts.
+
+## Health model and alerts
+
+Persist one health record per source and provider: last successful fetch, freshness target, latency, row count, response/content hash, most recent failure, and current incident state. Publish the same information as metrics for dashboards and alarms.
+
+| Severity | Example | Delivery expectation |
+| --- | --- | --- |
+| Immediate | DLQ message, catalog unavailable, sustained delivery outage | Page/email immediately; keep in Inbox |
+| Prompt | Repeated board failure, stale source, unexpected empty snapshot | Send one incident alert and reminders only while unresolved |
+| Digest | Isolated invalid link or one rejected row | Group into a scheduled operational summary |
+
+Route mail through a stable operations sender. Gmail labels should separate `InternNotifs/Operations`, `Scrape`, `Delivery`, and `Infrastructure`; new high-severity messages should remain in the Inbox until their signal quality is demonstrated.
 
 ## Recovery and operations
 
-Every alert must identify the failed domain, impact, retry state, and safe next action. Provide replay tooling for DLQ messages, source quarantine controls, and runbooks for common failures. Test alert delivery and recovery paths periodically, not only the happy path.
+Operators need three safe controls: replay an individual failed work item, temporarily quarantine a source, and acknowledge or resolve an incident. Every alert should state the user impact, automatic recovery already attempted, last known good state, and the next safe action.
+
+Runbooks should cover provider outage, schema drift, unexpected zero-result snapshots, storage outage, and push/email degradation. Exercise DLQ replay and alert delivery periodically so recovery is tested rather than assumed.
+
+## Rollout
+
+1. Add structured outcomes and source-health persistence to the existing poller.
+2. Add metrics, dashboards, and Gmail-routed alarms while preserving the current scheduler DLQ.
+3. Move provider/source work to independently retryable queue messages as source count grows.
+4. Add replay tools, incident state, and regular recovery tests.
+
+Success means no silent stale source, no lost exhausted work, no alert storm from transient failures, and a clear operator path from alert to recovery.
