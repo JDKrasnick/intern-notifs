@@ -110,11 +110,32 @@ Store settings in a versioned, operator-managed record keyed by `sourceId`.
 The initial source definition can remain in code, but overrides need a durable
 store so a pause or cadence change does not require a release.
 
+### Priority policy
+
+Every top-tier employer with a confirmed, enabled provider board starts on the
+`priority` tier. It is due every five minutes; the source scheduler must keep
+its successful-fetch freshness at or below 15 minutes except during an active
+provider backoff. The top-tier list identifies employers, not board IDs: an
+employer without a confirmed Greenhouse (or other provider) board produces an
+`unknown_board` setup item and makes no speculative network calls.
+
+| Tier | Eligible source | Target schedule | Freshness target |
+| --- | --- | --- | --- |
+| `priority` | Every confirmed top-tier employer board | Every 5 minutes | At most 15 minutes |
+| `normal` | Other active, tracked employer boards | Every 1–4 hours | Tier interval + one scheduler cycle |
+| `quiet` | Stable, repeatedly empty boards | Daily | 36 hours |
+| `paused` | Invalid, disabled, or operator-paused board | No fetch | Not applicable |
+
+The source scheduler must reserve enough worker capacity for all due priority
+sources before it begins normal or quiet work. A priority source may back off
+only for documented temporary provider failures; an invalid board identifier
+requires repair rather than repeated five-minute requests.
+
 ```ts
 {
   sourceId: 'greenhouse:acme',
   enabled: true,
-  pollTier: 'normal',              // maps to an interval, not a raw cron string
+  pollTier: 'priority',            // all confirmed top-tier sources start here
   expectedApplicationHosts: ['jobs.acme.com', 'job-boards.greenhouse.io'],
   maxConsecutiveTemporaryFailures: 6,
   quietBoardBackoff: 'daily',
@@ -145,7 +166,8 @@ treated as invalid configuration.
    attaching paging alarms. Keep standard logs for 30 days and aggregated
    metrics longer, subject to the project's retention/cost decision.
 3. Add the versioned source-settings store in read-only mode, then let it
-   control `enabled` and polling tier. Log every setting change.
+   control `enabled` and polling tier. Seed `priority` settings for every
+   confirmed top-tier employer board, and log every setting change.
 4. Add automatic backoff, source freshness alerts, and provider-specific
    Greenhouse settings after the system shows real operating data.
 
@@ -159,3 +181,6 @@ treated as invalid configuration.
   page storm.
 - A source pause, cadence adjustment, or expected-host repair takes effect on
   the next eligible run and records its configuration version.
+- Every confirmed, enabled top-tier employer board is configured as `priority`
+  and is either freshly fetched within 15 minutes or has a recorded backoff or
+  repair outcome.
