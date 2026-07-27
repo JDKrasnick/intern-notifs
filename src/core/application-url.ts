@@ -42,6 +42,8 @@ export interface ApplicationPageConfidence {
 
 export interface ApplicationPageEvidence {
   url: string;
+  /** A specific source path collapsed to a site's root after redirecting. */
+  redirectedToGenericDestination?: boolean;
   title?: string;
   description?: string;
   expectedPostingId?: string;
@@ -110,6 +112,10 @@ export function assessApplicationPageForListing(role: string, evidence: Applicat
   if (agreement === 'strong' && substantiveJobContent) {
     score = Math.max(score, 75);
     signals.push('source role matches public job content');
+  }
+  if (evidence.redirectedToGenericDestination) {
+    score = Math.min(score, 65);
+    signals.push('specific posting redirected to generic destination');
   } else if (genericCareerTitle(evidence.title) && agreement !== 'strong') {
     score = Math.min(score, 65);
     signals.push('generic career-page title lacks source-role match');
@@ -165,6 +171,12 @@ function explicitErrorDestination(url: URL): boolean {
   const pathLooksLikeError = /(?:^|\/)(?:404|not[-_]?found|error(?:page)?)(?:\/|$)/i.test(url.pathname);
   const errorCode = [...url.searchParams.entries()].some(([key, value]) => /(?:error|status|code)/i.test(key) && /(?:404|not[-_]?found)/i.test(value));
   return pathLooksLikeError && errorCode;
+}
+
+function postingRedirectedToGenericDestination(source: URL, destination: URL): boolean {
+  return source.hostname === destination.hostname
+    && source.pathname !== '/'
+    && destination.pathname === '/';
 }
 
 function confidenceFor(input: { html: boolean; title?: string; description?: string; contentExcerpt?: string; expectedPostingId?: string; postingIdPresent?: boolean; accessRestricted?: boolean; temporarilyUnavailable?: boolean }): ApplicationPageConfidence {
@@ -341,6 +353,9 @@ export async function validateApplicationUrlWithEvidence(
     throw new ApplicationUrlValidationError(`Resolved application link host ${resolved.hostname} is not an approved destination host`);
   }
   const evidence = await inspectApplicationPage(resolved, fetcher);
+  if (postingRedirectedToGenericDestination(sourceUrl, resolved)) {
+    return { url: resolved.toString(), evidence: { ...evidence, redirectedToGenericDestination: true } };
+  }
   return { url: resolved.toString(), evidence };
 }
 

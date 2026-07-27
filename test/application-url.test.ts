@@ -84,6 +84,14 @@ describe('application URL validation', () => {
     expect(evidence.confidence).toMatchObject({ level: 'medium', score: 65 });
     expect(assessApplicationPageForListing('Software Engineer Intern', evidence)).toMatchObject({ level: 'high', score: 75, recommendation: 'alert-eligible', signals: expect.arrayContaining(['source role matches public job content']) });
   });
+  it('does not alert when a specific posting collapses to a generic destination', () => {
+    const confidence = assessApplicationPageForListing('Software Engineer Intern', {
+      url: 'https://careers.example.com/', redirectedToGenericDestination: true,
+      contentExcerpt: `${'Software Engineer Intern. '.repeat(20)}Responsibilities include testing distributed systems.`,
+      confidence: { score: 75, level: 'high', recommendation: 'alert-eligible', signals: ['substantive page content', 'job-description language'] },
+    });
+    expect(confidence).toMatchObject({ score: 65, level: 'medium', recommendation: 'catalog-only', signals: expect.arrayContaining(['specific posting redirected to generic destination']) });
+  });
   it('treats bot protection as unverified rather than a dead link', async () => {
     await expect(inspectApplicationPage('https://careers.example.com/jobs/123456', async () =>
       new Response('Access denied', { status: 403 }),
