@@ -1,5 +1,5 @@
 import { fingerprint, fingerprintCandidates, jobId, normalizeUrl } from './core/normalize.js';
-import type { ApplicationUrlValidator } from './core/application-url.js';
+import { assessApplicationPageForListing, canonicalApplicationUrl, type ApplicationPageConfidence, type ApplicationUrlValidator } from './core/application-url.js';
 import { isTechnicalJob, matchesJobFilter, type JobFilter } from './core/filters.js';
 import { employerCategory } from './core/employers.js';
 import { sourceQualityFailures } from './sources/quality.js';
@@ -79,12 +79,15 @@ export class Poller {
         const processListing = async () => {
           const listing = result.listings[nextListing++];
           if (!listing) return;
+          const canonicalUrl = canonicalApplicationUrl(listing.applyUrl);
+          const canonicalListing = canonicalUrl === listing.applyUrl ? listing : { ...listing, applyUrl: canonicalUrl };
+          let applicationConfidence: ApplicationPageConfidence | undefined;
           let existing: Internship | undefined;
           let validatingLink = false;
           try {
-            const normalizedUrl = normalizeUrl(listing.applyUrl);
+            const normalizedUrl = normalizeUrl(canonicalListing.applyUrl);
             existing = await this.store.findByUrl(normalizedUrl);
-            for (const candidate of fingerprintCandidates(listing.company, listing.title, listing.location, listing.season)) {
+            for (const candidate of fingerprintCandidates(canonicalListing.company, canonicalListing.title, canonicalListing.location, canonicalListing.season)) {
               if (existing) break;
               existing = await this.store.findByFingerprint(candidate);
             }
@@ -93,15 +96,18 @@ export class Poller {
             // same employer endpoint.
             const needsValidation = Boolean(this.validateApplicationUrl && existing?.invalidApplicationUrl !== normalizedUrl && (!existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
             validatingLink = needsValidation;
-            if (needsValidation) await this.validateApplicationUrl!(listing.applyUrl);
-            const verifiedListing = listing;
-            const validatedAt = needsValidation ? now : undefined;
+            if (needsValidation) {
+              const validation = await this.validateApplicationUrl!(canonicalListing.applyUrl);
+              if (typeof validation !== 'string') applicationConfidence = assessApplicationPageForListing(canonicalListing.title, validation.evidence);
+            }
+            const verifiedListing = canonicalListing;
+            const validatedAt = needsValidation && applicationConfidence?.level !== 'low' ? now : undefined;
             validatingLink = false;
             if (existing) await this.store.putInternship(merge(existing, verifiedListing, now, validatedAt));
             else {
               const created = newJob(verifiedListing, now, validatedAt);
               if (baseline) created.notification = { smsPending: false, digestPending: false };
-              else if (created.open && isTechnicalJob(created) && matchesJobFilter(created, this.filter)) report.newJobs.push(created);
+              else if (created.open && isTechnicalJob(created) && matchesJobFilter(created, this.filter) && applicationConfidence?.recommendation !== 'catalog-only' && applicationConfidence?.recommendation !== 'review') report.newJobs.push(created);
               else { created.notification = { smsPending: false, digestPending: false }; report.filteredJobs.push(created); }
               await this.store.putInternship(created);
             }

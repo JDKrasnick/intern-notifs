@@ -72,6 +72,9 @@ function text(value: string): string {
 
 function links(value: string): string[] {
   const values = [
+    // Curated lists commonly render an Apply button as an image nested in a
+    // Markdown link. Capture the outer destination before the image source.
+    ...[...value.matchAll(/\[!\[[^\]]*\]\([^)]*\)\]\((https?:\/\/[^\s)]+)\)/gi)].map((m) => m[1]),
     ...[...value.matchAll(/\[[^\]]*\]\((https?:\/\/[^\s)]+)\)/gi)].map((m) => m[1]),
     ...[...value.matchAll(/<a\s+[^>]*href\s*=\s*["'](https?:\/\/[^"']+)["'][^>]*>/gi)].map((m) => m[1]),
     ...[...value.matchAll(/(?<!["'(])(https?:\/\/[^\s<>)]+)/gi)].map((m) => m[1])

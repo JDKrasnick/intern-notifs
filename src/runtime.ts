@@ -1,6 +1,6 @@
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { isTechnicalJob } from './core/filters.js';
-import { validateApplicationUrl, type ApplicationUrlValidator } from './core/application-url.js';
+import { validateApplicationUrlWithEvidence, type ApplicationUrlValidator } from './core/application-url.js';
 import { defaultPushTemplates, ExpoPushPublisher, inspectExpoPushReceipts, NtfyPublisher, sendDigest, sendNewJobNotifications, sendPendingNotifications, SesEmailSender, type EmailSender, type PushPublisher } from './notifications.js';
 import { Poller } from './poll.js';
 import { DynamoInternshipStore, DynamoUserStore, type InternshipStore, type UserStore } from './store.js';
@@ -46,7 +46,7 @@ export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies
       dependencies.store,
       undefined,
       undefined,
-      dependencies.linkValidator ?? validateApplicationUrl,
+      dependencies.linkValidator ?? validateApplicationUrlWithEvidence,
     ).poll();
     if (dependencies.userStore) {
       const publisher = dependencies.expoPublisher ?? new ExpoPushPublisher();
