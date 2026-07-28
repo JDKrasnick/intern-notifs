@@ -91,6 +91,9 @@ export interface DeliveryReceipt {
   updatedAt: string;
 }
 
+/** Reason a source fetch or snapshot did not produce a trusted result. */
+export type SourceFailureCategory = 'http' | 'json' | 'transport' | 'identity' | 'link' | 'empty';
+
 export interface SourceCheckpoint {
   sourceId: string;
   etag?: string;
