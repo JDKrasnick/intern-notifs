@@ -1,4 +1,5 @@
 import type { SourceCheckpoint, SourceFetchResult } from '../types.js';
+import { reviewedGreenhouseSources, type ReviewedGreenhouseSource } from './greenhouse-config.js';
 
 export type SourceClass = 'curated' | 'lever' | 'greenhouse' | 'ashby' | 'smartrecruiters';
 
@@ -8,6 +9,8 @@ export interface SourceQualityPolicy {
   /** Sources announced as dormant are checked for URL policy but exempt from row-count drift. */
   dormant?: boolean;
   leverSite?: string;
+  /** Reviewed application hosts a verified Greenhouse board's roles may use. */
+  greenhouseAllowedHosts?: string[];
   /** Curated lists should represent the market, not a single mirror/ATS. */
   minimumDistinctApplicationHosts?: number;
   maximumApplicationHostShare?: number;
@@ -51,15 +54,53 @@ export function applicationUrlRejection(url: string): string | undefined {
   return undefined;
 }
 
-function urlFailure(url: string, policy: SourceQualityPolicy): string | undefined {
+/**
+ * Adapter-facing host gate: baseline policy plus the reviewed board's allowed
+ * hosts, so an off-allowlist destination is pre-withheld at the row level rather
+ * than left for a separate source-quality pass to discover.
+ */
+export function greenhouseApplicationUrlRejection(url: string, allowedHosts: string[]): string | undefined {
+  const baseline = applicationUrlRejection(url);
+  if (baseline) return baseline;
+  const { hostname } = new URL(url); // Baseline already confirmed a parseable HTTPS URL.
+  if (!hostMatchesAllowlist(hostname, allowedHosts)) return `application host ${hostname} is not a reviewed Greenhouse destination`;
+  return undefined;
+}
+
+interface UrlFailure {
+  reason: string;
+  /** A withheld-role result (does not fail the whole source) versus a gate breach. */
+  roleLevel: boolean;
+}
+
+function urlFailure(url: string, policy: SourceQualityPolicy): UrlFailure | undefined {
   const baselineFailure = applicationUrlRejection(url);
-  if (baselineFailure) return baselineFailure;
+  if (baselineFailure) return { reason: baselineFailure, roleLevel: false };
   const parsed = new URL(url);
   if (policy.sourceClass === 'lever') {
     const expectedPath = new RegExp(`^/${escapeRegExp(policy.leverSite ?? '')}/[^/]+/apply/?$`);
-    if (parsed.hostname !== 'jobs.lever.co' || !expectedPath.test(parsed.pathname)) return `expected direct Lever URL jobs.lever.co/${policy.leverSite}/<posting>/apply`;
+    if (parsed.hostname !== 'jobs.lever.co' || !expectedPath.test(parsed.pathname)) {
+      return { reason: `expected direct Lever URL jobs.lever.co/${policy.leverSite}/<posting>/apply`, roleLevel: false };
+    }
+  }
+  if (policy.sourceClass === 'greenhouse') {
+    const allowed = policy.greenhouseAllowedHosts ?? [];
+    // An off-allowlist Greenhouse destination withholds only that role; the rest
+    // of the board's snapshot is still valid, so it is not a source failure.
+    if (!hostMatchesAllowlist(parsed.hostname, allowed)) {
+      return { reason: `application host ${parsed.hostname} is not a reviewed Greenhouse destination`, roleLevel: true };
+    }
   }
   return undefined;
+}
+
+/** Exact host or dot-boundary subdomain match; `greenhouse.io.evil.test` never matches `greenhouse.io`. */
+function hostMatchesAllowlist(hostname: string, allowedHosts: string[]): boolean {
+  const normalized = hostname.toLowerCase();
+  return allowedHosts.some((allowed) => {
+    const candidate = allowed.trim().toLowerCase();
+    return normalized === candidate || normalized.endsWith(`.${candidate}`);
+  });
 }
 
 function escapeRegExp(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -68,15 +109,19 @@ function reportFor(input: SourceQualityInput): SourceQualityRowReport {
   const { policy, result, previous } = input;
   const rejectedUrls: SourceQualityRowReport['rejectedUrls'] = [...(result.rejectedApplicationUrls ?? [])];
   const hosts: Record<string, number> = {};
+  // Pre-publication URL rejections are expected policy enforcement and remain
+  // visible in the report. A URL that survives into listings and violates a
+  // role-level host policy is withheld; one that breaches the baseline gate is a
+  // source failure.
+  const policyFailures: string[] = [];
   for (const listing of result.listings) {
-    const failure = urlFailure(listing.applyUrl, policy);
     const applicationHost = host(listing.applyUrl);
     if (applicationHost) hosts[applicationHost] = (hosts[applicationHost] ?? 0) + 1;
-    if (failure) rejectedUrls.push({ row: listing.row, url: listing.applyUrl, reason: failure });
+    const failure = urlFailure(listing.applyUrl, policy);
+    if (!failure) continue;
+    rejectedUrls.push({ row: listing.row, url: listing.applyUrl, reason: failure.reason });
+    if (!failure.roleLevel) policyFailures.push(`${policy.id}: row ${listing.row}: ${failure.reason}`);
   }
-  // Pre-publication URL rejections are expected policy enforcement and remain
-  // visible in the report. A URL that survives into listings is a gate failure.
-  const policyFailures = rejectedUrls.slice(result.rejectedApplicationUrls?.length ?? 0).map((rejected) => `${policy.id}: row ${rejected.row}: ${rejected.reason}`);
   if (!result.notModified && !policy.dormant && (previous?.successfulFetches ?? 0) > 0 && (previous?.lastRowCount ?? 0) > 0 && result.listings.length === 0) {
     policyFailures.push(`${policy.id}: suspicious zero-row result after ${previous?.lastRowCount} rows; investigate parser/source drift`);
   }
@@ -97,7 +142,28 @@ export function verifySourceQuality(inputs: SourceQualityInput[], generatedAt = 
   return { generatedAt, sources, failures: sources.flatMap((source) => source.policyFailures) };
 }
 
+/** A reviewed Greenhouse board contributes a quality policy only once its adapter is enabled. */
+export function greenhouseQualityPolicy(source: ReviewedGreenhouseSource): SourceQualityPolicy {
+  return {
+    id: source.id,
+    sourceClass: 'greenhouse',
+    greenhouseAllowedHosts: [...new Set([...source.allowedInitialHosts, ...source.allowedFinalHosts])],
+  };
+}
+
+/**
+ * Registers a quality policy only for boards whose adapter is enabled in
+ * production (`published`). A merely reviewed or shadow board contributes its
+ * policy through the shadow-run path, not the catalog-wide static gate.
+ */
+export function enabledGreenhouseQualityPolicies(
+  sources: ReviewedGreenhouseSource[] = reviewedGreenhouseSources,
+): SourceQualityPolicy[] {
+  return sources.filter((source) => source.status === 'published').map(greenhouseQualityPolicy);
+}
+
 export const sourceQualityPolicies: SourceQualityPolicy[] = [
+  ...enabledGreenhouseQualityPolicies(),
   { id: 'vanshb03-summer-2027', sourceClass: 'curated' },
   { id: 'simplify-summer-2026', sourceClass: 'curated' },
   { id: 'zapply-2027', sourceClass: 'curated' },

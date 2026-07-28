@@ -175,6 +175,8 @@ export interface SourceAdapter {
 
 export interface SourceFetchResult {
   sourceId: string;
+  /** Total source rows before lifecycle/technical/link withholding filters. */
+  rawRowCount?: number;
   listings: RawListing[];
   /** Rows withheld before publication because their application URL violates baseline policy. */
   rejectedApplicationUrls?: Array<{ row: number; url: string; reason: string }>;
