@@ -11,6 +11,20 @@ const hasUndefined = (value: unknown): boolean =>
   (value !== null && typeof value === 'object' && Object.values(value).some(hasUndefined));
 
 describe('public API ownership boundary', () => {
+  it('publishes provider-neutral company coverage without requiring an account', async () => {
+    const handler = createApiHandler({ jobs: new MemoryInternshipStore(), users: new MemoryUserStore() });
+    const response = await handler(event(undefined, 'GET', '/coverage', undefined, { q: 'figma', limit: '10' }));
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toMatchObject({
+      counts: { internshipObserved: expect.any(Number), directShadow: expect.any(Number) },
+      matchedCompanies: 1,
+      companies: [{
+        displayName: 'Figma',
+        coverageState: 'direct-shadow',
+        directProviders: ['greenhouse']
+      }]
+    });
+  });
   it('makes the feed public while keeping applications private to their Cognito subject', async () => {
     const jobs = new MemoryInternshipStore(); await jobs.putInternship(job); await jobs.putInternship({ ...job, jobId: 'closed-job', open: false }); const users = new MemoryUserStore(); const handler = createApiHandler({ jobs, users });
     expect(JSON.parse((await handler(event(undefined, 'GET', '/jobs'))).body).jobs).toHaveLength(1);

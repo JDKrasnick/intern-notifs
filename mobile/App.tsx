@@ -65,6 +65,28 @@ type LaunchInbox = {
 };
 type CatalogCache = CatalogPage<Job>;
 type RoleSection = { kind: "new" | "seen" | "all"; data: Job[] };
+type CompanyCoverageState = "direct-published" | "direct-shadow" | "feed-observed" | "candidate-only";
+type CompanyCoverageResponse = {
+  generatedAt: string;
+  methodology: string;
+  counts: {
+    companies: number;
+    internshipObserved: number;
+    directPublished: number;
+    directShadow: number;
+    feedObservedOnly: number;
+    candidateOnly: number;
+    activeListingObservations: number;
+  };
+  matchedCompanies: number;
+  companies: Array<{
+    companyId: string;
+    displayName: string;
+    coverageState: CompanyCoverageState;
+    activeListingCount: number;
+    directProviders: Array<"greenhouse" | "lever">;
+  }>;
+};
 type JobFilter = {
   includeCategories?: string[];
   includeKeywords?: string[];
@@ -766,6 +788,126 @@ function RoleFilters({
             onHideUsCitizenshipRequiredChange={onHideUsCitizenshipRequiredChange}
             onHideAdvancedDegreeRequiredChange={onHideAdvancedDegreeRequiredChange}
           />
+        </View>
+      ) : null}
+      <CompanyCoverageDisclosure />
+    </View>
+  );
+}
+
+const coverageStateLabels: Record<CompanyCoverageState, string> = {
+  "direct-published": "Direct source",
+  "direct-shadow": "Direct source in review",
+  "feed-observed": "Internship observed",
+  "candidate-only": "Company candidate",
+};
+
+function CompanyCoverageDisclosure() {
+  const [expanded, setExpanded] = useState(false);
+  const [query, setQuery] = useState("");
+  const [coverage, setCoverage] = useState<CompanyCoverageResponse>();
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    let active = true;
+    const timeout = setTimeout(() => {
+      const normalized = query.trim();
+      void api<CompanyCoverageResponse>(
+        `/coverage?limit=12${normalized ? `&q=${encodeURIComponent(normalized)}` : ""}`,
+        "",
+      )
+        .then((response) => {
+          if (active) {
+            setCoverage(response);
+            setError(false);
+          }
+        })
+        .catch(() => {
+          if (active) setError(true);
+        });
+    }, query.trim() ? 250 : 0);
+    return () => {
+      active = false;
+      clearTimeout(timeout);
+    };
+  }, [query]);
+  if (Platform.OS !== "web") return null;
+  return (
+    <View style={styles.coverageRegion}>
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        onPress={() => setExpanded((value) => !value)}
+        style={styles.coverageToggle}
+      >
+        <View>
+          <Text style={styles.coverageToggleTitle}>Company coverage</Text>
+          <Text style={styles.coverageToggleSummary}>
+            {coverage
+              ? `${coverage.counts.internshipObserved.toLocaleString()} companies with current internship evidence`
+              : error
+                ? "Coverage unavailable"
+                : "Loading coverage…"}
+          </Text>
+        </View>
+        <Text style={styles.filterToggleGlyph}>{expanded ? "−" : "+"}</Text>
+      </TouchableOpacity>
+      {expanded ? (
+        <View style={styles.coveragePanel}>
+          {coverage ? (
+            <View style={styles.coverageStats}>
+              <View>
+                <Text style={styles.coverageStatValue}>{coverage.counts.activeListingObservations.toLocaleString()}</Text>
+                <Text style={styles.coverageStatLabel}>listing observations</Text>
+              </View>
+              <View>
+                <Text style={styles.coverageStatValue}>{coverage.counts.directPublished}</Text>
+                <Text style={styles.coverageStatLabel}>direct sources</Text>
+              </View>
+              <View>
+                <Text style={styles.coverageStatValue}>{coverage.counts.directShadow}</Text>
+                <Text style={styles.coverageStatLabel}>in review</Text>
+              </View>
+            </View>
+          ) : null}
+          <Text style={styles.coverageExplanation}>
+            Search the tracked company universe. Community-feed evidence and reviewed employer sources are labeled separately.
+          </Text>
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            accessibilityLabel="Search company coverage"
+            placeholder="Search tracked companies"
+            placeholderTextColor={colors.placeholder}
+            style={styles.coverageSearch}
+          />
+          {error ? (
+            <Text style={styles.coverageExplanation}>We couldn’t load coverage right now.</Text>
+          ) : coverage?.companies.length ? (
+            <View style={styles.coverageResults}>
+              {coverage.companies.map((company) => (
+                <View key={company.companyId} style={styles.coverageRow}>
+                  <View style={styles.coverageCompanyCopy}>
+                    <Text style={styles.coverageCompany}>{company.displayName}</Text>
+                    <Text style={styles.coverageCompanyState}>
+                      {coverageStateLabels[company.coverageState]}
+                      {company.directProviders.length ? ` · ${company.directProviders.join(", ")}` : ""}
+                    </Text>
+                  </View>
+                  <Text style={styles.coverageRoleCount}>
+                    {company.activeListingCount ? `${company.activeListingCount} listing${company.activeListingCount === 1 ? "" : "s"}` : "No current listings"}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : coverage && query.trim() ? (
+            <Text style={styles.coverageExplanation}>No tracked company matches that search.</Text>
+          ) : null}
+          {coverage ? (
+            <Text style={styles.coverageAsOf}>
+              Snapshot {new Date(coverage.generatedAt).toLocaleDateString()}
+            </Text>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -3590,6 +3732,55 @@ const styles = StyleSheet.create({
     marginTop: 4,
     paddingTop: 16,
   },
+  coverageRegion: {
+    borderTopColor: colors.separator,
+    borderTopWidth: 1,
+    marginTop: 4,
+  },
+  coverageToggle: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    minHeight: 58,
+    paddingVertical: 8,
+  },
+  coverageToggleTitle: { color: colors.ink, fontSize: 15, fontWeight: "700" },
+  coverageToggleSummary: { color: colors.muted, fontSize: 13, lineHeight: 19, marginTop: 2 },
+  coveragePanel: { paddingBottom: 12 },
+  coverageStats: {
+    flexDirection: "row",
+    gap: 28,
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  coverageStatValue: { color: colors.ink, fontSize: 21, fontWeight: "800" },
+  coverageStatLabel: { color: colors.muted, fontSize: 12, marginTop: 2 },
+  coverageExplanation: { color: colors.muted, fontSize: 14, lineHeight: 20, marginBottom: 12 },
+  coverageSearch: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 10,
+    borderWidth: 1,
+    color: colors.ink,
+    fontSize: 15,
+    minHeight: 46,
+    paddingHorizontal: 12,
+  },
+  coverageResults: { marginTop: 8 },
+  coverageRow: {
+    alignItems: "center",
+    borderBottomColor: colors.separator,
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    minHeight: 56,
+    paddingVertical: 8,
+  },
+  coverageCompanyCopy: { flex: 1, paddingRight: 16 },
+  coverageCompany: { color: colors.ink, fontSize: 15, fontWeight: "700" },
+  coverageCompanyState: { color: colors.muted, fontSize: 12, marginTop: 3, textTransform: "capitalize" },
+  coverageRoleCount: { color: colors.body, fontSize: 13, fontWeight: "600" },
+  coverageAsOf: { color: colors.muted, fontSize: 12, marginTop: 12 },
   filterLabel: { color: colors.body, fontSize: 13, fontWeight: "700", marginBottom: 8 },
   companyFilter: {
     flexDirection: "row",

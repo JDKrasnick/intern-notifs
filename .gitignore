@@ -3,6 +3,12 @@ dist/
 browser-companion/dist/
 cdk.out/
 coverage/
+!coverage/
+coverage/*
+!coverage/README.md
+!coverage/sources.json
+!coverage/companies.json
+!coverage/summary.ts
 .env
 mobile/.env.local
 .expo/

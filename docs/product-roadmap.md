@@ -19,9 +19,9 @@
 
 | Milestone | Status | Exit criteria |
 | --- | --- | --- |
-| Catalog definition | In progress | Initial employer roster, source rules, taxonomy, and reliability targets approved |
-| Official source adapters | In progress | Lever ingestion is live for reviewed boards; Greenhouse, Ashby, and SmartRecruiters remain planned |
-| Catalog operations | In progress | Shared source-quality gates, live reports, roster review queue, and bounded Firecrawl research workflow operate |
+| Catalog definition | In progress | Continuous employer discovery, source rules, taxonomy, and reliability targets operate without an owner-selected roster |
+| Official source adapters | In progress | Lever ingestion is live; the Greenhouse reader and admission gates are implemented but remain shadow-only and unscheduled; Ashby and SmartRecruiters remain planned |
+| Catalog operations | In progress | Shared source-quality gates, live reports, source-candidate review queue, and bounded Firecrawl research workflow operate |
 | Mobile discovery MVP | In progress | Filtered feed, native deep-link alerts, official-form handoff, and tracker are polished |
 | Human-reviewed application assistance | In progress | Headed pilot fills a supported official form, pauses for unknowns and verification, and leaves final submission to the user |
 | Headless application preparation | Planned | Isolated runner reuses proven mappings, supports live user handoff, and never bypasses verification or non-partner submission controls |
@@ -33,7 +33,7 @@
 
 ### Codex
 
-- [ ] Draft a first 100–200 employer roster with an explicit international/student-friendly coverage strategy.
+- [ ] Continuously discover and verify the broadest practical employer set, then prioritize active sources by technical-internship relevance and international/student-friendly coverage.
 - [x] Define source-admission, attribution, removal, and source-quality policies.
 - [x] Add internal source-aware filtering (FAANG, verified startups/YC, normal, U.S.-citizenship requirement, advanced-degree requirement, and open/closed status) to catalog ingestion, alerts, and mobile discovery.
 - [x] Add the signed-in “new since last open” inbox with a calm first-open baseline, saved-filter matching, and count-led mobile launch screen.
@@ -41,11 +41,13 @@
 - [x] Add local swipe-right hide with Undo and Profile-based restore.
 - [x] Add cursor-based endless scrolling through every role in the selected availability catalog.
 - [x] Audit 25 representative employers through the GitHub Markdown ingestion and poller pipeline.
-- [ ] Implement Greenhouse source adapter and tests.
+- [x] Add a provider-neutral company-coverage snapshot, public search API, and responsive web disclosure seeded from live internship evidence and reviewed ATS registries.
+- [x] Implement the Greenhouse source adapter, admission gates, deterministic fixtures, and live contract tests.
+- [ ] Add the Greenhouse batch probe/review workflow, scheduled shadow runner, and reviewed production promotion path described in [`greenhouse-registry-expansion-plan.md`](greenhouse-registry-expansion-plan.md).
 - [x] Implement Lever source adapter, ETag checkpoints, technical-role mapping, and deterministic fixtures for Palantir, PlusAI, Hermeus, and Xsolla.
 - [ ] Add job freshness/source labels and notification deep links to the mobile product.
 - [ ] Add user-facing settings, account deletion, and data export surface.
-- [x] Add source-quality reports, drift gates, nightly live probing, roster review artifacts, and Firecrawl discovery-only workflow.
+- [x] Add source-quality reports, drift gates, nightly live probing, source-candidate review artifacts, and Firecrawl discovery-only workflow.
 - [x] Define the shared headed/headless application-session state machine and trust boundaries.
 - [x] Keep official-form opens in the persistent To Apply queue; mark Applied only after user confirmation.
 - [x] Add the reviewed default-deny assistance policy, versioned session API, short-lived handoff credentials, and session metadata TTL.
@@ -58,7 +60,7 @@
 
 - [ ] Connect a GitHub account/repository with permission to create a GitHub Project and issues.
 - [ ] Create a deploy-only AWS role or Identity Center permission set; stop using root credentials for deployment.
-- [ ] Decide the initial geographic emphasis and approve the first employer roster.
+- [ ] Decide the default geographic emphasis for discovery ranking and the mobile experience; do not gate source verification on a hand-selected roster.
 - [ ] Provide/approve privacy policy, terms, support email, and retention policy.
 - [ ] Enroll in Apple Developer Program and Google Play Console when beta builds are ready.
 - [ ] Recruit 30–50 beta testers with iOS and Android devices.
@@ -82,5 +84,6 @@
 | 2026-07-19 | Initial roles are technical | Focus increases catalog quality and relevance |
 | 2026-07-19 | Use official-form handoff, not universal direct submit | Better reliability and employer authorization boundary |
 | 2026-07-20 | Explore headed assistance before headless preparation; require user review, verification, and final submit | Keeps the user in control while establishing reliable field mappings and challenge rates |
+| 2026-07-29 | Track company coverage separately from any ATS provider and distinguish feed observations from reviewed direct sources | Makes broad discovery measurable without overstating community-list evidence as employer verification |
 | 2026-07-19 | GitHub Project will be the shared external tracker | Fits open-source workflow and links work to code/issues |
 | 2026-07-19 | Use FAANG, startup, and normal as the initial company-type filters | Small, understandable filters; startup begins with a reviewed YC-backed allowlist and unknown employers remain normal |
