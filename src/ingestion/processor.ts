@@ -60,7 +60,9 @@ export function processPosting(posting: SourcedPosting): { listing?: ProcessedLi
   if (urlReason) {
     return { decision: { externalId: posting.externalId, outcome: 'withheld', reason: urlReason } };
   }
-  const workMode = inferWorkMode(posting.declaredWorkMode ?? `${location} ${content}`);
+  // A structured provider field is authoritative; prose only fills the gap when
+  // the source declares nothing usable.
+  const workMode = inferWorkMode(posting.declaredWorkMode) ?? inferWorkMode(`${location} ${content}`);
   const listing: ProcessedListing = {
     sourceId: posting.sourceId,
     externalId: posting.externalId,

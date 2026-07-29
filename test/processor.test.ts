@@ -32,6 +32,20 @@ describe('shared posting processor', () => {
     });
   });
 
+  it('prefers a declared work mode and infers one only when the source declares nothing usable', () => {
+    const modes = (postings: Parameters<typeof processSnapshot>[0]['postings']) => processSnapshot({
+      sourceId: 'lever-acme', outcome: 'changed', complete: true, postings, rawCount: postings.length,
+      contentHash: 'hash', checkpoint: { sourceId: 'lever-acme', successfulFetches: 1 },
+    }).listings.map((listing) => listing.workMode);
+
+    expect(modes([
+      posting({ externalId: 'declared', declaredWorkMode: 'hybrid', locations: ['New York, NY (Onsite)'] }),
+      posting({ externalId: 'unusable', declaredWorkMode: 'unspecified', locations: ['Remote'] }),
+      posting({ externalId: 'absent', locations: ['Remote'], content: [] }),
+      posting({ externalId: 'silent', locations: ['New York, NY'], content: [] }),
+    ])).toEqual(['hybrid', 'remote', 'remote', undefined]);
+  });
+
   it('keeps a reviewed early-career document as the lifecycle authority', () => {
     const result = processSnapshot({
       sourceId: 'markdown-list', outcome: 'changed', complete: true, rawCount: 2, contentHash: 'hash',
