@@ -4,7 +4,7 @@ import { dispatchGreenhouseBoards, GREENHOUSE_POLL_INTERVAL_MS, greenhouseWorkMe
 import { processGreenhouseQueue, runGreenhouseBoard } from '../src/greenhouse-worker.js';
 import { MemoryInternshipStore } from '../src/store.js';
 import { acmeJobsResponse, acmeSource, technicalInternship } from './fixtures/greenhouse.js';
-import type { ReviewedGreenhouseSource } from '../src/sources/greenhouse-config.js';
+import { reviewedGreenhouseSources, type ReviewedGreenhouseSource } from '../src/sources/greenhouse-config.js';
 
 const scheduledAt = '2026-07-29T12:00:00.000Z';
 const message = (sourceId = acmeSource.id): GreenhouseWorkMessage => ({ version: 1, sourceId, scheduledAt });
@@ -16,6 +16,10 @@ const response = (jobs = acmeJobsResponse) => new Response(JSON.stringify(jobs),
 describe('Greenhouse queue dispatch', () => {
   it('creates one versioned work item per reviewed board', () => {
     expect(greenhouseWorkMessages([acmeSource], new Date(scheduledAt))).toEqual([message()]);
+    expect(greenhouseWorkMessages()).toHaveLength(166);
+    expect(greenhouseWorkMessages().map((item) => item.sourceId)).toEqual(
+      reviewedGreenhouseSources.map((source) => source.id),
+    );
   });
 
   it('queues FIFO work in API-sized batches with per-board ordering and window deduplication', async () => {
