@@ -171,13 +171,18 @@ export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
     const sourceUrl = `https://api.lever.co/v0/postings/${this.options.site}?mode=json`;
     const postings: LeverPosting[] = [];
     let etag: string | undefined;
+    // Lever's ETag covers one page, and its postings are not ordered by date, so
+    // a board that needed more than one page must refetch every page: a 304 on
+    // the first page says nothing about the rest. Boards that fit in one page
+    // keep the cheap conditional request.
+    const conditional = (previous?.lastRawCount ?? Number.POSITIVE_INFINITY) < LEVER_PAGE_SIZE;
     for (let page = 0; page < LEVER_MAX_PAGES; page += 1) {
       const skip = page * LEVER_PAGE_SIZE;
       const pageUrl = `${sourceUrl}&skip=${skip}&limit=${LEVER_PAGE_SIZE}`;
       const response = await this.fetchImpl(pageUrl, {
         headers: {
           Accept: 'application/json',
-          ...(page === 0 && previous?.etag ? { 'If-None-Match': previous.etag } : {}),
+          ...(page === 0 && conditional && previous?.etag ? { 'If-None-Match': previous.etag } : {}),
         },
       });
       if (page === 0 && response.status === 304) {
