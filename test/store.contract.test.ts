@@ -1,6 +1,6 @@
 import type { DynamoDBDocumentClient, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it, vi } from 'vitest';
-import { DynamoInternshipStore, DynamoUserStore, MemoryUserStore } from '../src/store.js';
+import { createDynamoDocumentClient, DynamoInternshipStore, DynamoUserStore, MemoryUserStore } from '../src/store.js';
 import type { Internship } from '../src/types.js';
 
 const job = (title = 'Software Engineering Intern'): Internship => ({
@@ -14,6 +14,13 @@ const fakeClient = () => {
 };
 
 describe('DynamoDB persistence contract', () => {
+  it('removes undefined optional values when marshalling records', () => {
+    const client = createDynamoDocumentClient();
+    expect(client.config.translateConfig).toMatchObject({
+      marshallOptions: { removeUndefinedValues: true },
+    });
+  });
+
   it('writes canonical and query-index keys only for open technical roles', async () => {
     const { send, client } = fakeClient(); const store = new DynamoInternshipStore('jobs-table', client);
     await store.putInternship(job());
