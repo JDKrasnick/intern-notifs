@@ -21,16 +21,6 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         ],
       },
     },
-    "GreenhouseQueueUrl": {
-      "Value": {
-        "Ref": "GreenhouseWorkQueue8AB07ACC",
-      },
-    },
-    "GreenhouseWorkerFunctionName": {
-      "Value": {
-        "Ref": "GreenhouseWorker18B26F84",
-      },
-    },
     "InternshipsTableName": {
       "Value": {
         "Ref": "InternshipsB67F358B",
@@ -454,554 +444,6 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
       },
       "Type": "Custom::AWSCDKOpenIdConnectProvider",
       "UpdateReplacePolicy": "Delete",
-    },
-    "GreenhouseDeadLetterAlarm2B738E6F": {
-      "Properties": {
-        "AlarmDescription": "At least one Greenhouse board exhausted its bounded retries.",
-        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
-        "Dimensions": [
-          {
-            "Name": "QueueName",
-            "Value": {
-              "Fn::GetAtt": [
-                "GreenhouseDeadLetterQueue2671BFDC",
-                "QueueName",
-              ],
-            },
-          },
-        ],
-        "EvaluationPeriods": 1,
-        "MetricName": "ApproximateNumberOfMessagesVisible",
-        "Namespace": "AWS/SQS",
-        "Period": 300,
-        "Statistic": "Maximum",
-        "Threshold": 1,
-      },
-      "Type": "AWS::CloudWatch::Alarm",
-    },
-    "GreenhouseDeadLetterQueue2671BFDC": {
-      "DeletionPolicy": "Delete",
-      "Properties": {
-        "FifoQueue": true,
-        "MessageRetentionPeriod": 1209600,
-        "SqsManagedSseEnabled": true,
-      },
-      "Type": "AWS::SQS::Queue",
-      "UpdateReplacePolicy": "Delete",
-    },
-    "GreenhouseDispatcherE949E589": {
-      "DependsOn": [
-        "GreenhouseDispatcherServiceRoleDefaultPolicy8251AF39",
-        "GreenhouseDispatcherServiceRole7EE192DF",
-      ],
-      "Properties": {
-        "Code": {
-          "S3Bucket": {
-            "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
-          },
-          "S3Key": "<lambda-asset>.zip",
-        },
-        "Environment": {
-          "Variables": {
-            "GREENHOUSE_QUEUE_URL": {
-              "Ref": "GreenhouseWorkQueue8AB07ACC",
-            },
-            "INTERNSHIPS_TABLE": {
-              "Ref": "InternshipsB67F358B",
-            },
-          },
-        },
-        "Handler": "index.handler",
-        "MemorySize": 256,
-        "Role": {
-          "Fn::GetAtt": [
-            "GreenhouseDispatcherServiceRole7EE192DF",
-            "Arn",
-          ],
-        },
-        "Runtime": "nodejs22.x",
-        "Timeout": 30,
-      },
-      "Type": "AWS::Lambda::Function",
-    },
-    "GreenhouseDispatcherServiceRole7EE192DF": {
-      "Properties": {
-        "AssumeRolePolicyDocument": {
-          "Statement": [
-            {
-              "Action": "sts:AssumeRole",
-              "Effect": "Allow",
-              "Principal": {
-                "Service": "lambda.amazonaws.com",
-              },
-            },
-          ],
-          "Version": "2012-10-17",
-        },
-        "ManagedPolicyArns": [
-          {
-            "Fn::Join": [
-              "",
-              [
-                "arn:",
-                {
-                  "Ref": "AWS::Partition",
-                },
-                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
-              ],
-            ],
-          },
-        ],
-      },
-      "Type": "AWS::IAM::Role",
-    },
-    "GreenhouseDispatcherServiceRoleDefaultPolicy8251AF39": {
-      "Properties": {
-        "PolicyDocument": {
-          "Statement": [
-            {
-              "Action": [
-                "sqs:SendMessage",
-                "sqs:GetQueueAttributes",
-                "sqs:GetQueueUrl",
-              ],
-              "Effect": "Allow",
-              "Resource": {
-                "Fn::GetAtt": [
-                  "GreenhouseWorkQueue8AB07ACC",
-                  "Arn",
-                ],
-              },
-            },
-            {
-              "Action": [
-                "dynamodb:BatchGetItem",
-                "dynamodb:Query",
-                "dynamodb:GetItem",
-                "dynamodb:Scan",
-                "dynamodb:ConditionCheckItem",
-                "dynamodb:DescribeTable",
-              ],
-              "Effect": "Allow",
-              "Resource": [
-                {
-                  "Fn::GetAtt": [
-                    "InternshipsB67F358B",
-                    "Arn",
-                  ],
-                },
-                {
-                  "Fn::Join": [
-                    "",
-                    [
-                      {
-                        "Fn::GetAtt": [
-                          "InternshipsB67F358B",
-                          "Arn",
-                        ],
-                      },
-                      "/index/*",
-                    ],
-                  ],
-                },
-              ],
-            },
-            {
-              "Action": [
-                "dynamodb:GetRecords",
-                "dynamodb:GetShardIterator",
-              ],
-              "Effect": "Allow",
-              "Resource": [
-                {
-                  "Fn::GetAtt": [
-                    "InternshipsB67F358B",
-                    "Arn",
-                  ],
-                },
-                {
-                  "Fn::Join": [
-                    "",
-                    [
-                      {
-                        "Fn::GetAtt": [
-                          "InternshipsB67F358B",
-                          "Arn",
-                        ],
-                      },
-                      "/index/*",
-                    ],
-                  ],
-                },
-              ],
-            },
-          ],
-          "Version": "2012-10-17",
-        },
-        "PolicyName": "GreenhouseDispatcherServiceRoleDefaultPolicy8251AF39",
-        "Roles": [
-          {
-            "Ref": "GreenhouseDispatcherServiceRole7EE192DF",
-          },
-        ],
-      },
-      "Type": "AWS::IAM::Policy",
-    },
-    "GreenhousePollSchedule": {
-      "Properties": {
-        "FlexibleTimeWindow": {
-          "Mode": "OFF",
-        },
-        "ScheduleExpression": "cron(2,12,22,32,42,52 * * * ? *)",
-        "ScheduleExpressionTimezone": "UTC",
-        "State": "ENABLED",
-        "Target": {
-          "Arn": {
-            "Fn::GetAtt": [
-              "GreenhouseDispatcherE949E589",
-              "Arn",
-            ],
-          },
-          "DeadLetterConfig": {
-            "Arn": {
-              "Fn::GetAtt": [
-                "SchedulerDeadLetterQueueFA1FB96A",
-                "Arn",
-              ],
-            },
-          },
-          "Input": "{"command":"greenhouse-dispatch"}",
-          "RetryPolicy": {
-            "MaximumEventAgeInSeconds": 3600,
-            "MaximumRetryAttempts": 2,
-          },
-          "RoleArn": {
-            "Fn::GetAtt": [
-              "SchedulerInvokeRoleE2A7D616",
-              "Arn",
-            ],
-          },
-        },
-      },
-      "Type": "AWS::Scheduler::Schedule",
-    },
-    "GreenhouseQueueAgeAlarm54C95A90": {
-      "Properties": {
-        "AlarmDescription": "Greenhouse polling work has remained queued for more than ten minutes.",
-        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
-        "Dimensions": [
-          {
-            "Name": "QueueName",
-            "Value": {
-              "Fn::GetAtt": [
-                "GreenhouseWorkQueue8AB07ACC",
-                "QueueName",
-              ],
-            },
-          },
-        ],
-        "EvaluationPeriods": 2,
-        "MetricName": "ApproximateAgeOfOldestMessage",
-        "Namespace": "AWS/SQS",
-        "Period": 300,
-        "Statistic": "Maximum",
-        "Threshold": 600,
-      },
-      "Type": "AWS::CloudWatch::Alarm",
-    },
-    "GreenhouseWorkQueue8AB07ACC": {
-      "DeletionPolicy": "Delete",
-      "Properties": {
-        "ContentBasedDeduplication": false,
-        "FifoQueue": true,
-        "MessageRetentionPeriod": 86400,
-        "RedrivePolicy": {
-          "deadLetterTargetArn": {
-            "Fn::GetAtt": [
-              "GreenhouseDeadLetterQueue2671BFDC",
-              "Arn",
-            ],
-          },
-          "maxReceiveCount": 4,
-        },
-        "SqsManagedSseEnabled": true,
-        "VisibilityTimeout": 360,
-      },
-      "Type": "AWS::SQS::Queue",
-      "UpdateReplacePolicy": "Delete",
-    },
-    "GreenhouseWorker18B26F84": {
-      "DependsOn": [
-        "GreenhouseWorkerServiceRoleDefaultPolicy693C99A2",
-        "GreenhouseWorkerServiceRole58696E7B",
-      ],
-      "Properties": {
-        "Code": {
-          "S3Bucket": {
-            "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
-          },
-          "S3Key": "<lambda-asset>.zip",
-        },
-        "Environment": {
-          "Variables": {
-            "INTERNSHIPS_TABLE": {
-              "Ref": "InternshipsB67F358B",
-            },
-            "USERS_TABLE": {
-              "Ref": "UserData6A2E227B",
-            },
-          },
-        },
-        "Handler": "index.handler",
-        "MemorySize": 512,
-        "ReservedConcurrentExecutions": 4,
-        "Role": {
-          "Fn::GetAtt": [
-            "GreenhouseWorkerServiceRole58696E7B",
-            "Arn",
-          ],
-        },
-        "Runtime": "nodejs22.x",
-        "Timeout": 120,
-      },
-      "Type": "AWS::Lambda::Function",
-    },
-    "GreenhouseWorkerErrorsAlarm9F139480": {
-      "Properties": {
-        "AlarmDescription": "The Greenhouse queue worker returned an invocation error.",
-        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
-        "Dimensions": [
-          {
-            "Name": "FunctionName",
-            "Value": {
-              "Ref": "GreenhouseWorker18B26F84",
-            },
-          },
-        ],
-        "EvaluationPeriods": 1,
-        "MetricName": "Errors",
-        "Namespace": "AWS/Lambda",
-        "Period": 300,
-        "Statistic": "Sum",
-        "Threshold": 1,
-      },
-      "Type": "AWS::CloudWatch::Alarm",
-    },
-    "GreenhouseWorkerServiceRole58696E7B": {
-      "Properties": {
-        "AssumeRolePolicyDocument": {
-          "Statement": [
-            {
-              "Action": "sts:AssumeRole",
-              "Effect": "Allow",
-              "Principal": {
-                "Service": "lambda.amazonaws.com",
-              },
-            },
-          ],
-          "Version": "2012-10-17",
-        },
-        "ManagedPolicyArns": [
-          {
-            "Fn::Join": [
-              "",
-              [
-                "arn:",
-                {
-                  "Ref": "AWS::Partition",
-                },
-                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
-              ],
-            ],
-          },
-        ],
-      },
-      "Type": "AWS::IAM::Role",
-    },
-    "GreenhouseWorkerServiceRoleDefaultPolicy693C99A2": {
-      "Properties": {
-        "PolicyDocument": {
-          "Statement": [
-            {
-              "Action": [
-                "sqs:ReceiveMessage",
-                "sqs:ChangeMessageVisibility",
-                "sqs:GetQueueUrl",
-                "sqs:DeleteMessage",
-                "sqs:GetQueueAttributes",
-              ],
-              "Effect": "Allow",
-              "Resource": {
-                "Fn::GetAtt": [
-                  "GreenhouseWorkQueue8AB07ACC",
-                  "Arn",
-                ],
-              },
-            },
-            {
-              "Action": [
-                "dynamodb:BatchGetItem",
-                "dynamodb:Query",
-                "dynamodb:GetItem",
-                "dynamodb:Scan",
-                "dynamodb:ConditionCheckItem",
-                "dynamodb:BatchWriteItem",
-                "dynamodb:PutItem",
-                "dynamodb:UpdateItem",
-                "dynamodb:DeleteItem",
-                "dynamodb:DescribeTable",
-              ],
-              "Effect": "Allow",
-              "Resource": [
-                {
-                  "Fn::GetAtt": [
-                    "InternshipsB67F358B",
-                    "Arn",
-                  ],
-                },
-                {
-                  "Fn::Join": [
-                    "",
-                    [
-                      {
-                        "Fn::GetAtt": [
-                          "InternshipsB67F358B",
-                          "Arn",
-                        ],
-                      },
-                      "/index/*",
-                    ],
-                  ],
-                },
-              ],
-            },
-            {
-              "Action": [
-                "dynamodb:GetRecords",
-                "dynamodb:GetShardIterator",
-              ],
-              "Effect": "Allow",
-              "Resource": [
-                {
-                  "Fn::GetAtt": [
-                    "InternshipsB67F358B",
-                    "Arn",
-                  ],
-                },
-                {
-                  "Fn::Join": [
-                    "",
-                    [
-                      {
-                        "Fn::GetAtt": [
-                          "InternshipsB67F358B",
-                          "Arn",
-                        ],
-                      },
-                      "/index/*",
-                    ],
-                  ],
-                },
-              ],
-            },
-            {
-              "Action": [
-                "dynamodb:BatchGetItem",
-                "dynamodb:Query",
-                "dynamodb:GetItem",
-                "dynamodb:Scan",
-                "dynamodb:ConditionCheckItem",
-                "dynamodb:BatchWriteItem",
-                "dynamodb:PutItem",
-                "dynamodb:UpdateItem",
-                "dynamodb:DeleteItem",
-                "dynamodb:DescribeTable",
-              ],
-              "Effect": "Allow",
-              "Resource": [
-                {
-                  "Fn::GetAtt": [
-                    "UserData6A2E227B",
-                    "Arn",
-                  ],
-                },
-                {
-                  "Fn::Join": [
-                    "",
-                    [
-                      {
-                        "Fn::GetAtt": [
-                          "UserData6A2E227B",
-                          "Arn",
-                        ],
-                      },
-                      "/index/*",
-                    ],
-                  ],
-                },
-              ],
-            },
-            {
-              "Action": [
-                "dynamodb:GetRecords",
-                "dynamodb:GetShardIterator",
-              ],
-              "Effect": "Allow",
-              "Resource": [
-                {
-                  "Fn::GetAtt": [
-                    "UserData6A2E227B",
-                    "Arn",
-                  ],
-                },
-                {
-                  "Fn::Join": [
-                    "",
-                    [
-                      {
-                        "Fn::GetAtt": [
-                          "UserData6A2E227B",
-                          "Arn",
-                        ],
-                      },
-                      "/index/*",
-                    ],
-                  ],
-                },
-              ],
-            },
-          ],
-          "Version": "2012-10-17",
-        },
-        "PolicyName": "GreenhouseWorkerServiceRoleDefaultPolicy693C99A2",
-        "Roles": [
-          {
-            "Ref": "GreenhouseWorkerServiceRole58696E7B",
-          },
-        ],
-      },
-      "Type": "AWS::IAM::Policy",
-    },
-    "GreenhouseWorkerSqsEventSourceSnapshotGreenhouseWorkQueueBFBD0903860738E2": {
-      "Properties": {
-        "BatchSize": 10,
-        "EventSourceArn": {
-          "Fn::GetAtt": [
-            "GreenhouseWorkQueue8AB07ACC",
-            "Arn",
-          ],
-        },
-        "FunctionName": {
-          "Ref": "GreenhouseWorker18B26F84",
-        },
-        "FunctionResponseTypes": [
-          "ReportBatchItemFailures",
-        ],
-        "ScalingConfig": {
-          "MaximumConcurrency": 4,
-        },
-      },
-      "Type": "AWS::Lambda::EventSourceMapping",
     },
     "InternshipsB67F358B": {
       "DeletionPolicy": "Retain",
@@ -2254,32 +1696,6 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
               ],
             },
             {
-              "Action": "lambda:InvokeFunction",
-              "Effect": "Allow",
-              "Resource": [
-                {
-                  "Fn::GetAtt": [
-                    "GreenhouseDispatcherE949E589",
-                    "Arn",
-                  ],
-                },
-                {
-                  "Fn::Join": [
-                    "",
-                    [
-                      {
-                        "Fn::GetAtt": [
-                          "GreenhouseDispatcherE949E589",
-                          "Arn",
-                        ],
-                      },
-                      ":*",
-                    ],
-                  ],
-                },
-              ],
-            },
-            {
               "Action": [
                 "sqs:SendMessage",
                 "sqs:GetQueueAttributes",
@@ -2506,6 +1922,807 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         },
       },
       "Type": "AWS::Cognito::UserPoolClient",
+    },
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5",
+                  ],
+                  {
+                    "Ref": "BootstrapVersion",
+                  },
+                ],
+              },
+            ],
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI.",
+        },
+      ],
+    },
+  },
+}
+`;
+
+exports[`CDK stack > queues Greenhouse boards every ten minutes with bounded worker concurrency 1`] = `
+{
+  "Outputs": {
+    "GreenhouseDispatcherFunctionName": {
+      "Value": {
+        "Ref": "GreenhouseDispatcherE949E589",
+      },
+    },
+    "GreenhouseQueueUrl": {
+      "Value": {
+        "Ref": "GreenhouseWorkQueue8AB07ACC",
+      },
+    },
+    "GreenhouseWorkerFunctionName": {
+      "Value": {
+        "Ref": "GreenhouseWorker18B26F84",
+      },
+    },
+  },
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>",
+    },
+  },
+  "Resources": {
+    "GreenhouseDeadLetterAlarm2B738E6F": {
+      "Properties": {
+        "AlarmDescription": "At least one Greenhouse board exhausted its bounded retries.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "GreenhouseDeadLetterQueue2671BFDC",
+                "QueueName",
+              ],
+            },
+          },
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Namespace": "AWS/SQS",
+        "Period": 300,
+        "Statistic": "Maximum",
+        "Threshold": 1,
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+    "GreenhouseDeadLetterQueue2671BFDC": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "FifoQueue": true,
+        "MessageRetentionPeriod": 1209600,
+        "SqsManagedSseEnabled": true,
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "GreenhouseDispatcherE949E589": {
+      "DependsOn": [
+        "GreenhouseDispatcherServiceRoleDefaultPolicy8251AF39",
+        "GreenhouseDispatcherServiceRole7EE192DF",
+      ],
+      "Properties": {
+        "Code": {
+          "S3Bucket": {
+            "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
+          },
+          "S3Key": "<lambda-asset>.zip",
+        },
+        "Environment": {
+          "Variables": {
+            "GREENHOUSE_QUEUE_URL": {
+              "Ref": "GreenhouseWorkQueue8AB07ACC",
+            },
+            "INTERNSHIPS_TABLE": "internships",
+          },
+        },
+        "Handler": "index.handler",
+        "MemorySize": 256,
+        "Role": {
+          "Fn::GetAtt": [
+            "GreenhouseDispatcherServiceRole7EE192DF",
+            "Arn",
+          ],
+        },
+        "Runtime": "nodejs22.x",
+        "Timeout": 30,
+      },
+      "Type": "AWS::Lambda::Function",
+    },
+    "GreenhouseDispatcherServiceRole7EE192DF": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition",
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+              ],
+            ],
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "GreenhouseDispatcherServiceRoleDefaultPolicy8251AF39": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sqs:SendMessage",
+                "sqs:GetQueueAttributes",
+                "sqs:GetQueueUrl",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "GreenhouseWorkQueue8AB07ACC",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:DescribeTable",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/internships",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/internships/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/internships",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/internships/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "GreenhouseDispatcherServiceRoleDefaultPolicy8251AF39",
+        "Roles": [
+          {
+            "Ref": "GreenhouseDispatcherServiceRole7EE192DF",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "GreenhousePollSchedule": {
+      "Properties": {
+        "FlexibleTimeWindow": {
+          "Mode": "OFF",
+        },
+        "ScheduleExpression": "cron(2,12,22,32,42,52 * * * ? *)",
+        "ScheduleExpressionTimezone": "UTC",
+        "State": "ENABLED",
+        "Target": {
+          "Arn": {
+            "Fn::GetAtt": [
+              "GreenhouseDispatcherE949E589",
+              "Arn",
+            ],
+          },
+          "DeadLetterConfig": {
+            "Arn": {
+              "Fn::GetAtt": [
+                "GreenhouseSchedulerDeadLetterQueue00D318BE",
+                "Arn",
+              ],
+            },
+          },
+          "Input": "{"command":"greenhouse-dispatch"}",
+          "RetryPolicy": {
+            "MaximumEventAgeInSeconds": 3600,
+            "MaximumRetryAttempts": 2,
+          },
+          "RoleArn": {
+            "Fn::GetAtt": [
+              "GreenhouseSchedulerInvokeRole95CFF29A",
+              "Arn",
+            ],
+          },
+        },
+      },
+      "Type": "AWS::Scheduler::Schedule",
+    },
+    "GreenhouseQueueAgeAlarm54C95A90": {
+      "Properties": {
+        "AlarmDescription": "Greenhouse polling work has remained queued for more than ten minutes.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "GreenhouseWorkQueue8AB07ACC",
+                "QueueName",
+              ],
+            },
+          },
+        ],
+        "EvaluationPeriods": 2,
+        "MetricName": "ApproximateAgeOfOldestMessage",
+        "Namespace": "AWS/SQS",
+        "Period": 300,
+        "Statistic": "Maximum",
+        "Threshold": 600,
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+    "GreenhouseSchedulerDeadLetterQueue00D318BE": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "SqsManagedSseEnabled": true,
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "GreenhouseSchedulerInvokeRole95CFF29A": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "scheduler.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "GreenhouseSchedulerInvokeRoleDefaultPolicyC304A6D3": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "lambda:InvokeFunction",
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "GreenhouseDispatcherE949E589",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "GreenhouseDispatcherE949E589",
+                          "Arn",
+                        ],
+                      },
+                      ":*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "sqs:SendMessage",
+                "sqs:GetQueueAttributes",
+                "sqs:GetQueueUrl",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "GreenhouseSchedulerDeadLetterQueue00D318BE",
+                  "Arn",
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "GreenhouseSchedulerInvokeRoleDefaultPolicyC304A6D3",
+        "Roles": [
+          {
+            "Ref": "GreenhouseSchedulerInvokeRole95CFF29A",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "GreenhouseWorkQueue8AB07ACC": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "ContentBasedDeduplication": false,
+        "FifoQueue": true,
+        "MessageRetentionPeriod": 86400,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "GreenhouseDeadLetterQueue2671BFDC",
+              "Arn",
+            ],
+          },
+          "maxReceiveCount": 4,
+        },
+        "SqsManagedSseEnabled": true,
+        "VisibilityTimeout": 360,
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "GreenhouseWorker18B26F84": {
+      "DependsOn": [
+        "GreenhouseWorkerServiceRoleDefaultPolicy693C99A2",
+        "GreenhouseWorkerServiceRole58696E7B",
+      ],
+      "Properties": {
+        "Code": {
+          "S3Bucket": {
+            "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
+          },
+          "S3Key": "<lambda-asset>.zip",
+        },
+        "Environment": {
+          "Variables": {
+            "INTERNSHIPS_TABLE": "internships",
+            "USERS_TABLE": "users",
+          },
+        },
+        "Handler": "index.handler",
+        "MemorySize": 512,
+        "Role": {
+          "Fn::GetAtt": [
+            "GreenhouseWorkerServiceRole58696E7B",
+            "Arn",
+          ],
+        },
+        "Runtime": "nodejs22.x",
+        "Timeout": 120,
+      },
+      "Type": "AWS::Lambda::Function",
+    },
+    "GreenhouseWorkerErrorsAlarm9F139480": {
+      "Properties": {
+        "AlarmDescription": "The Greenhouse queue worker returned an invocation error.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "GreenhouseWorker18B26F84",
+            },
+          },
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "Errors",
+        "Namespace": "AWS/Lambda",
+        "Period": 300,
+        "Statistic": "Sum",
+        "Threshold": 1,
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+    "GreenhouseWorkerServiceRole58696E7B": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition",
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+              ],
+            ],
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "GreenhouseWorkerServiceRoleDefaultPolicy693C99A2": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sqs:ReceiveMessage",
+                "sqs:ChangeMessageVisibility",
+                "sqs:GetQueueUrl",
+                "sqs:DeleteMessage",
+                "sqs:GetQueueAttributes",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "GreenhouseWorkQueue8AB07ACC",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:DescribeTable",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/internships",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/internships/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/internships",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/internships/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:DescribeTable",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/users",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/users/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/users",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/users/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "GreenhouseWorkerServiceRoleDefaultPolicy693C99A2",
+        "Roles": [
+          {
+            "Ref": "GreenhouseWorkerServiceRole58696E7B",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "GreenhouseWorkerSqsEventSourceGreenhouseGreenhouseWorkQueue94F6F50851C4BB2A": {
+      "Properties": {
+        "BatchSize": 10,
+        "EventSourceArn": {
+          "Fn::GetAtt": [
+            "GreenhouseWorkQueue8AB07ACC",
+            "Arn",
+          ],
+        },
+        "FunctionName": {
+          "Ref": "GreenhouseWorker18B26F84",
+        },
+        "FunctionResponseTypes": [
+          "ReportBatchItemFailures",
+        ],
+        "ScalingConfig": {
+          "MaximumConcurrency": 4,
+        },
+      },
+      "Type": "AWS::Lambda::EventSourceMapping",
     },
   },
   "Rules": {
