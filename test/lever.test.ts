@@ -43,7 +43,7 @@ describe('LeverPostingsAdapter', () => {
     const result = await adapter.fetch({ sourceId: options.id, etag: '"lever-etag"', successfulFetches: 2, lastRowCount: 1 });
     expect(result.notModified).toBe(true);
     expect(result.listings).toEqual([]);
-    expect(calls[0]?.headers).toEqual({ 'If-None-Match': '"lever-etag"' });
+    expect(calls[0]?.headers).toEqual({ Accept: 'application/json', 'If-None-Match': '"lever-etag"' });
   });
   it('rejects malformed and error responses', async () => {
     const malformed = new LeverPostingsAdapter({ ...options, fetchImpl: async () => new Response('{', { status: 200 }) });

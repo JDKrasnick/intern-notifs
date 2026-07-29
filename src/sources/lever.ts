@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import { isTechnicalJob } from '../core/filters.js';
 import { parseCompensation } from '../core/normalize.js';
-import type { JobRequirements, RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult } from '../types.js';
+import { processSnapshot } from '../ingestion/processor.js';
+import { SourceFetchError } from './source-error.js';
+import type { JobRequirements, RawListing, SourceAdapter, SourceCheckpoint, SourceConnector, SourceFetchResult, SourceSnapshot, SourcedPosting } from '../types.js';
 
 export interface LeverPosting {
   id?: string;
@@ -91,7 +93,68 @@ export function mapLeverPosting(posting: LeverPosting, options: Pick<LeverAdapte
   return isTechnicalJob(listing) ? listing : undefined;
 }
 
-export class LeverPostingsAdapter implements SourceAdapter {
+export function mapLeverSourcedPosting(
+  posting: LeverPosting,
+  options: Pick<LeverAdapterOptions, 'id' | 'company' | 'site'>,
+  fetchedAt = new Date().toISOString(),
+  row = 1,
+): SourcedPosting {
+  if (!posting.id || !posting.text || !posting.applyUrl || !posting.hostedUrl) {
+    throw new SourceFetchError(`${options.id}: Lever posting shape was invalid`, 'json');
+  }
+  const expectedHosted = new RegExp(`^/${options.site.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/${posting.id}/?$`);
+  const expectedApply = new RegExp(`^/${options.site.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/${posting.id}/apply/?$`);
+  let hosted: URL;
+  let apply: URL;
+  try {
+    hosted = new URL(posting.hostedUrl);
+    apply = new URL(posting.applyUrl);
+  } catch {
+    throw new SourceFetchError(`${options.id}: Lever posting URL contract was invalid`, 'identity');
+  }
+  if (hosted.protocol !== 'https:' || apply.protocol !== 'https:' || hosted.hostname !== 'jobs.lever.co'
+    || apply.hostname !== 'jobs.lever.co' || !expectedHosted.test(hosted.pathname) || !expectedApply.test(apply.pathname)) {
+    throw new SourceFetchError(`${options.id}: Lever posting URL contract was invalid`, 'identity');
+  }
+  const content = [
+    posting.descriptionPlain,
+    posting.description,
+    posting.additionalPlain,
+    posting.additional,
+  ].filter((value): value is string => typeof value === 'string').map((value) => ({
+    kind: 'description' as const,
+    format: value.includes('<') ? 'html' as const : 'plain' as const,
+    value,
+  }));
+  return {
+    sourceId: options.id,
+    externalId: posting.id,
+    document: posting.id,
+    sourceUrl: `https://api.lever.co/v0/postings/${options.site}?mode=json`,
+    row,
+    fetchedAt,
+    employer: { name: options.company, authority: 'reviewed-registry' },
+    title: posting.text,
+    content,
+    locations: posting.categories?.location
+      ? [posting.categories.location]
+      : posting.categories?.allLocations ?? [],
+    applyUrl: posting.applyUrl,
+    hostedUrl: posting.hostedUrl,
+    sourceState: 'open',
+    ...(postedAt(posting) ? { publishedAt: postedAt(posting) } : {}),
+    classificationTags: [posting.categories?.commitment, posting.categories?.team].filter((value): value is string => Boolean(value)),
+    declaredWorkMode: posting.workplaceType,
+  };
+}
+
+function normalizedProjection(postings: LeverPosting[]): string {
+  return JSON.stringify([...postings].sort((a, b) => String(a.id ?? '').localeCompare(String(b.id ?? ''))));
+}
+
+type TransitionalLeverResult = SourceSnapshot & SourceFetchResult;
+
+export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
   readonly id: string;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => Date;
@@ -102,30 +165,57 @@ export class LeverPostingsAdapter implements SourceAdapter {
     this.now = options.now ?? (() => new Date());
   }
 
-  async fetch(previous?: SourceCheckpoint): Promise<SourceFetchResult> {
+  async fetch(previous?: SourceCheckpoint): Promise<TransitionalLeverResult> {
     const sourceUrl = `https://api.lever.co/v0/postings/${this.options.site}?mode=json`;
-    const response = await this.fetchImpl(sourceUrl, { headers: previous?.etag ? { 'If-None-Match': previous.etag } : {} });
+    const response = await this.fetchImpl(sourceUrl, {
+      headers: { Accept: 'application/json', ...(previous?.etag ? { 'If-None-Match': previous.etag } : {}) },
+    });
     if (response.status === 304) {
-      return { sourceId: this.id, listings: [], notModified: true, checkpoint: { ...previous, sourceId: this.id, lastSuccessAt: this.now().toISOString(), successfulFetches: previous?.successfulFetches ?? 0 } };
+      return {
+        sourceId: this.id,
+        outcome: 'unchanged',
+        complete: true,
+        postings: [],
+        rawCount: previous?.lastRowCount ?? 0,
+        contentHash: previous?.contentHash ?? '',
+        listings: [],
+        notModified: true,
+        checkpoint: { ...previous, sourceId: this.id, lastSuccessAt: this.now().toISOString(), successfulFetches: previous?.successfulFetches ?? 0 },
+      };
     }
-    if (!response.ok) throw new Error(`${this.id}: Lever fetch failed (${response.status})`);
+    if (!response.ok) throw new SourceFetchError(`${this.id}: Lever fetch failed (${response.status})`, 'http', response.status);
     let postings: unknown;
-    try { postings = await response.json(); } catch { throw new Error(`${this.id}: Lever returned malformed JSON`); }
-    if (!Array.isArray(postings)) throw new Error(`${this.id}: Lever response was not an array`);
+    try { postings = await response.json(); } catch { throw new SourceFetchError(`${this.id}: Lever returned malformed JSON`, 'json'); }
+    if (!Array.isArray(postings)) throw new SourceFetchError(`${this.id}: Lever response was not an array`, 'json');
     const fetchedAt = this.now().toISOString();
-    const listings = postings.map((posting, index) => mapLeverPosting(posting as LeverPosting, this.options, fetchedAt, index + 1)).filter((listing): listing is RawListing => Boolean(listing));
-    return {
+    const sourced = postings.map((posting, index) => mapLeverSourcedPosting(posting as LeverPosting, this.options, fetchedAt, index + 1));
+    if (new Set(sourced.map((posting) => posting.externalId)).size !== sourced.length) {
+      throw new SourceFetchError(`${this.id}: Lever returned duplicate posting IDs`, 'identity');
+    }
+    const contentHash = createHash('sha256').update(normalizedProjection(postings as LeverPosting[])).digest('hex');
+    const neutral: SourceSnapshot = {
       sourceId: this.id,
-      listings,
-      notModified: false,
+      outcome: contentHash === previous?.contentHash ? 'unchanged' : 'changed',
+      complete: true,
+      postings: sourced,
+      rawCount: postings.length,
+      contentHash,
       checkpoint: {
         sourceId: this.id,
         etag: response.headers.get('etag') ?? previous?.etag,
-        contentHash: createHash('sha256').update(JSON.stringify(postings)).digest('hex'),
+        contentHash,
         lastSuccessAt: fetchedAt,
         successfulFetches: (previous?.successfulFetches ?? 0) + 1,
-        lastRowCount: listings.length
-      }
+        lastRowCount: 0,
+        activeExternalIds: sourced.map((posting) => posting.externalId),
+      },
+    };
+    const processed = processSnapshot(neutral);
+    neutral.checkpoint.lastRowCount = processed.listings.length;
+    return {
+      ...neutral,
+      listings: processed.listings,
+      notModified: neutral.outcome === 'unchanged',
     };
   }
 }
