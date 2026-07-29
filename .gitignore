@@ -9,6 +9,8 @@ coverage/*
 !coverage/sources.json
 !coverage/companies.json
 !coverage/summary.ts
+!coverage/audits/
+!coverage/audits/*.md
 .env
 mobile/.env.local
 .expo/

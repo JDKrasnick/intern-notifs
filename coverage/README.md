@@ -45,3 +45,7 @@ offers internships. The app labels these states separately.
 Source definitions and licensing notes live in
 [`sources.json`](sources.json). The research and expansion process is documented
 in [`../docs/greenhouse-registry-expansion-plan.md`](../docs/greenhouse-registry-expansion-plan.md).
+
+Provider-discovery audits live in [`audits/`](audits/). They preserve bounded
+research results and rejected false positives, but do not add sources to the
+reviewed production or shadow registries.
