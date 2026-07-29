@@ -1,9 +1,21 @@
-import { fingerprint, fingerprintCandidates, jobId, normalizeUrl } from './core/normalize.js';
+import { createHash } from 'node:crypto';
 import { assessApplicationPageForListing, canonicalApplicationUrl, type ApplicationPageConfidence, type ApplicationUrlValidator } from './core/application-url.js';
-import { isTechnicalJob, matchesJobFilter, type JobFilter } from './core/filters.js';
-import { employerCategory } from './core/employers.js';
+import { fingerprintCandidates, normalizeUrl } from './core/normalize.js';
+import { isTechnicalJob, type JobFilter } from './core/filters.js';
+import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
+import { processSnapshot } from './ingestion/processor.js';
 import { sourceQualityFailures } from './sources/quality.js';
-import type { Internship, RawListing, SourceAdapter, SourceOccurrence } from './types.js';
+import { SourceFetchError } from './sources/source-error.js';
+import type {
+  Internship,
+  ProcessedListing,
+  ProcessedSnapshot,
+  SourceAdapter,
+  SourceCheckpoint,
+  SourceFetchResult,
+  SourceHealth,
+  SourceSnapshot,
+} from './types.js';
 import type { InternshipStore } from './store.js';
 
 export interface PollReport {
@@ -16,37 +28,106 @@ export interface PollReport {
   failures: string[];
 }
 
-function occurrence(listing: RawListing): SourceOccurrence {
-  return { sourceId: listing.sourceId, document: listing.document, sourceUrl: listing.sourceUrl, row: listing.row, postedAt: listing.postedAt, workMode: listing.workMode, company: listing.company, title: listing.title, location: listing.location, season: listing.season, applyUrl: listing.applyUrl, compensation: listing.compensation, ...(listing.requirements ? { requirements: listing.requirements } : {}), state: listing.state };
-}
-function genericLocation(value: string | undefined) {
-  return !value || /^(unknown|unspecified|n\/?a|not (?:listed|specified)|tbd|see (?:description|job))$/i.test(value.trim());
-}
-function merge(existing: Internship, listing: RawListing, now: string, applicationUrlValidatedAt?: string): Internship {
-  const reference = occurrence(listing);
-  const match = existing.sourceReferences.findIndex((item) => item.sourceId === reference.sourceId && item.document === reference.document && item.row === reference.row);
-  // Keep the first precise source value stable; secondary lists often flatten
-  // details such as “Remote (US)” into a less useful variant.
-  const location = genericLocation(existing.location) ? listing.location || existing.location : existing.location;
-  const company = existing.company || listing.company;
-  const sourceReferences = match >= 0 ? existing.sourceReferences.map((item, index) => index === match ? reference : item) : [...existing.sourceReferences, reference];
-  const listingNormalizedUrl = normalizeUrl(listing.applyUrl);
-  const keepQuarantined = existing.invalidApplicationUrl === listingNormalizedUrl;
-  const replaceStoredUrl = Boolean(applicationUrlValidatedAt && (!existing.applicationUrlValidatedAt || existing.normalizedUrl !== listingNormalizedUrl));
-  const base = { ...existing };
-  if (!keepQuarantined) delete base.invalidApplicationUrl;
-  return { ...base, company, title: existing.title || listing.title, location, applyUrl: replaceStoredUrl ? listing.applyUrl : existing.applyUrl || listing.applyUrl, normalizedUrl: replaceStoredUrl ? listingNormalizedUrl : existing.normalizedUrl, fingerprint: fingerprint(company, existing.title || listing.title, location, listing.season), compensation: listing.compensation.maxHourlyUSD ? listing.compensation : existing.compensation, requirements: listing.requirements ?? existing.requirements, employerCategory: employerCategory(company), sourceReferences, open: keepQuarantined ? false : sourceReferences.some((item) => item.state === 'open'), lastSeenAt: now, ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}) };
-}
-function newJob(listing: RawListing, now: string, applicationUrlValidatedAt?: string): Internship {
-  const normalizedUrl = normalizeUrl(listing.applyUrl); const key = fingerprint(listing.company, listing.title, listing.location, listing.season);
-  return { jobId: jobId(normalizedUrl, key), company: listing.company, title: listing.title, location: listing.location, season: listing.season, applyUrl: listing.applyUrl, normalizedUrl, ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}), fingerprint: key, compensation: listing.compensation, ...(listing.requirements ? { requirements: listing.requirements } : {}), employerCategory: employerCategory(listing.company), sourceReferences: [occurrence(listing)], open: listing.state === 'open', firstSeenAt: now, lastSeenAt: now, notification: { smsPending: true, digestPending: true } };
+interface TrustedBatch {
+  fetchResult: SourceFetchResult;
+  processed: ProcessedSnapshot;
+  snapshotHash: string;
+  activeExternalIds: Set<string>;
+  unchanged: boolean;
 }
 
-export class Poller {
-  constructor(private readonly adapters: SourceAdapter[], private readonly store: InternshipStore, private readonly now: () => Date = () => new Date(), private readonly filter?: JobFilter, private readonly validateApplicationUrl?: ApplicationUrlValidator) {}
-  private async quarantine(job: Internship) {
-    await this.store.putInternship({ ...job, open: false, invalidApplicationUrl: job.normalizedUrl, notification: { ...job.notification, smsPending: false, digestPending: false } });
+function providerFor(sourceId: string): SourceHealth['provider'] {
+  if (sourceId.startsWith('lever-')) return 'lever';
+  if (sourceId.includes('greenhouse-')) return 'greenhouse';
+  return sourceId ? 'github' : 'unknown';
+}
+
+function isSourceSnapshot(result: SourceFetchResult): result is SourceFetchResult & SourceSnapshot {
+  return 'postings' in result && 'complete' in result && 'outcome' in result;
+}
+
+function externalId(listing: ProcessedListing): string {
+  if (listing.externalId) return listing.externalId;
+  try { return `${listing.document}:${normalizeUrl(listing.applyUrl)}`; }
+  catch { return `${listing.document}:invalid:${listing.applyUrl}`; }
+}
+
+function legacyBatch(result: SourceFetchResult): TrustedBatch {
+  const listings = result.listings.map((listing) => ({
+    ...listing,
+    externalId: externalId(listing),
+    technical: listing.technical ?? isTechnicalJob(listing),
+  }));
+  const snapshotHash = result.checkpoint.contentHash
+    ?? createHash('sha256').update(JSON.stringify(listings, (key, value) => key === 'fetchedAt' ? undefined : value)).digest('hex');
+  return {
+    fetchResult: result,
+    processed: {
+      listings,
+      decisions: listings.map((listing) => ({ externalId: externalId(listing), outcome: 'included' as const, reason: 'source-policy' as const })),
+      counts: {
+        raw: result.rawRowCount ?? listings.length,
+        valid: listings.length,
+        eligible: listings.length,
+        filtered: 0,
+        withheld: result.rejectedApplicationUrls?.length ?? 0,
+      },
+    },
+    snapshotHash,
+    activeExternalIds: new Set(result.checkpoint.activeExternalIds ?? listings.map(externalId)),
+    unchanged: result.notModified,
+  };
+}
+
+function neutralBatch(result: SourceFetchResult & SourceSnapshot): TrustedBatch {
+  const processed = processSnapshot(result);
+  return {
+    fetchResult: result,
+    processed,
+    snapshotHash: result.contentHash,
+    activeExternalIds: new Set(result.checkpoint.activeExternalIds ?? result.postings.map((posting) => posting.externalId)),
+    unchanged: result.outcome === 'unchanged',
+  };
+}
+
+function retryable(error: unknown): boolean {
+  return error instanceof SourceFetchError ? error.retryable : error instanceof TypeError || (error as { name?: string })?.name === 'AbortError';
+}
+
+async function fetchWithRetry(adapter: SourceAdapter, checkpoint: SourceCheckpoint | undefined): Promise<SourceFetchResult> {
+  let finalError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await adapter.fetch(checkpoint);
+    } catch (error) {
+      finalError = error;
+      if (!retryable(error) || attempt === 3) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 25 * (2 ** (attempt - 1))));
+    }
   }
+  throw finalError;
+}
+
+export class IngestionRunner {
+  private readonly reconciler = new CatalogReconciler();
+
+  constructor(
+    private readonly connectors: SourceAdapter[],
+    private readonly store: InternshipStore,
+    private readonly now: () => Date = () => new Date(),
+    private readonly filter?: JobFilter,
+    private readonly validateApplicationUrl?: ApplicationUrlValidator,
+  ) {}
+
+  private async quarantine(job: Internship) {
+    await this.store.putInternship({
+      ...job,
+      open: false,
+      invalidApplicationUrl: job.normalizedUrl,
+      notification: { ...job.notification, smsPending: false, digestPending: false },
+    });
+  }
+
   private async validateUnverifiedOpenJobs(report: PollReport) {
     if (!this.validateApplicationUrl || !this.store.listOpen) return;
     let cursor: string | undefined;
@@ -71,74 +152,135 @@ export class Poller {
       }));
     } while (cursor);
   }
-  async poll(options: { seedOnly?: boolean } = {}): Promise<PollReport> {
-    const report: PollReport = { fetchedSources: 0, unchangedSources: [], baselineSources: [], processedListings: 0, newJobs: [], filteredJobs: [], failures: [] };
-    for (const adapter of this.adapters) {
-      const previous = await this.store.getCheckpoint(adapter.id);
+
+  private async resolveListings(listings: ProcessedListing[], report: PollReport) {
+    const resolved = new Map<string, Internship | undefined>();
+    const validatedAt = new Map<string, string>();
+    const alertEligible = new Set<string>();
+    const accepted: ProcessedListing[] = [];
+    for (const sourceListing of listings) {
+      const canonicalUrl = canonicalApplicationUrl(sourceListing.applyUrl);
+      const listing = {
+        ...sourceListing,
+        externalId: externalId(sourceListing),
+        applyUrl: canonicalUrl,
+        technical: sourceListing.technical ?? true,
+      };
+      const id = listing.externalId;
+      let existing: Internship | undefined;
+      let validatingLink = false;
       try {
-        const result = await adapter.fetch(previous); report.fetchedSources += 1;
-        if (result.notModified) {
-          report.unchangedSources.push(adapter.id);
-          await this.store.putCheckpoint(result.checkpoint);
-          continue;
+        const normalizedUrl = normalizeUrl(listing.applyUrl);
+        existing = await this.store.findByUrl(normalizedUrl);
+        for (const candidate of fingerprintCandidates(listing.company, listing.title, listing.location, listing.season)) {
+          if (existing) break;
+          existing = await this.store.findByFingerprint(candidate);
         }
+        let confidence: ApplicationPageConfidence | undefined;
+        const needsValidation = Boolean(this.validateApplicationUrl && existing?.invalidApplicationUrl !== normalizedUrl
+          && (!existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
+        validatingLink = needsValidation;
+        if (needsValidation) {
+          const validation = await this.validateApplicationUrl!(listing.applyUrl);
+          if (typeof validation !== 'string') confidence = assessApplicationPageForListing(listing.title, validation.evidence);
+        }
+        if (needsValidation && confidence?.level !== 'low') validatedAt.set(id, this.now().toISOString());
+        validatingLink = false;
+        if (confidence?.recommendation !== 'catalog-only' && confidence?.recommendation !== 'review') alertEligible.add(id);
+        resolved.set(id, existing);
+        accepted.push(listing);
+      } catch (error) {
+        if (validatingLink && existing?.open) await this.quarantine(existing);
+        report.failures.push(`${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return { accepted, resolved, validatedAt, alertEligible };
+  }
+
+  async run(options: { seedOnly?: boolean } = {}): Promise<PollReport> {
+    const report: PollReport = { fetchedSources: 0, unchangedSources: [], baselineSources: [], processedListings: 0, newJobs: [], filteredJobs: [], failures: [] };
+    for (const connector of this.connectors) {
+      const attemptedAt = this.now().toISOString();
+      const started = Date.now();
+      const previous = await this.store.getCheckpoint(connector.id);
+      const previousHealth = await this.store.getSourceHealth(connector.id);
+      try {
+        const result = await fetchWithRetry(connector, previous);
+        report.fetchedSources += 1;
         const qualityFailures = sourceQualityFailures(result, previous);
-        if (qualityFailures.length) throw new Error(qualityFailures.join('; '));
-        const baseline = !previous || previous.successfulFetches === 0 || options.seedOnly;
-        if (baseline) report.baselineSources.push(adapter.id);
-        report.processedListings += result.listings.length;
+        if (qualityFailures.length) throw new SourceFetchError(qualityFailures.join('; '), 'empty');
+        const batch = isSourceSnapshot(result) ? neutralBatch(result) : legacyBatch(result);
+        if (batch.unchanged) report.unchangedSources.push(connector.id);
+        const baseline = Boolean(!previous || previous.successfulFetches === 0 || options.seedOnly);
+        if (baseline) report.baselineSources.push(connector.id);
+        report.processedListings += batch.processed.listings.length;
         const now = this.now().toISOString();
-        let nextListing = 0;
-        const processListing = async () => {
-          const listing = result.listings[nextListing++];
-          if (!listing) return;
-          const canonicalUrl = canonicalApplicationUrl(listing.applyUrl);
-          const canonicalListing = canonicalUrl === listing.applyUrl ? listing : { ...listing, applyUrl: canonicalUrl };
-          let applicationConfidence: ApplicationPageConfidence | undefined;
-          let existing: Internship | undefined;
-          let validatingLink = false;
-          try {
-            const normalizedUrl = normalizeUrl(canonicalListing.applyUrl);
-            existing = await this.store.findByUrl(normalizedUrl);
-            for (const candidate of fingerprintCandidates(canonicalListing.company, canonicalListing.title, canonicalListing.location, canonicalListing.season)) {
-              if (existing) break;
-              existing = await this.store.findByFingerprint(candidate);
-            }
-            // Runtime polling supplies a live verifier. Existing validated URLs
-            // are cached so recurring polls do not repeatedly probe the same
-            // employer endpoint.
-            const needsValidation = Boolean(this.validateApplicationUrl && existing?.invalidApplicationUrl !== normalizedUrl && (!existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
-            validatingLink = needsValidation;
-            if (needsValidation) {
-              const validation = await this.validateApplicationUrl!(canonicalListing.applyUrl);
-              if (typeof validation !== 'string') applicationConfidence = assessApplicationPageForListing(canonicalListing.title, validation.evidence);
-            }
-            const verifiedListing = canonicalListing;
-            const validatedAt = needsValidation && applicationConfidence?.level !== 'low' ? now : undefined;
-            validatingLink = false;
-            if (existing) await this.store.putInternship(merge(existing, verifiedListing, now, validatedAt));
-            else {
-              const created = newJob(verifiedListing, now, validatedAt);
-              if (baseline) created.notification = { smsPending: false, digestPending: false };
-              else if (created.open && isTechnicalJob(created) && matchesJobFilter(created, this.filter) && applicationConfidence?.recommendation !== 'catalog-only' && applicationConfidence?.recommendation !== 'review') report.newJobs.push(created);
-              else { created.notification = { smsPending: false, digestPending: false }; report.filteredJobs.push(created); }
-              await this.store.putInternship(created);
-            }
-          } catch (error) {
-            if (validatingLink && existing?.open) {
-              await this.quarantine(existing);
-            }
-            report.failures.push(`${adapter.id}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`);
-          }
-        };
-        const workers = Array.from({ length: Math.min(24, result.listings.length) }, async () => {
-          while (nextListing < result.listings.length) await processListing();
+        const priorOccurrences = await this.store.getSourceOccurrences(connector.id);
+        const resolution = await this.resolveListings(batch.processed.listings, report);
+        for (const prior of priorOccurrences) {
+          if (!resolution.resolved.has(prior.externalId)) resolution.resolved.set(prior.externalId, await this.store.getJob(prior.jobId));
+        }
+        const plan = this.reconciler.reconcile({
+          sourceId: connector.id,
+          snapshotHash: batch.snapshotHash,
+          activeExternalIds: batch.activeExternalIds,
+          listings: resolution.accepted,
+          priorOccurrences,
+          resolvedJobs: resolution.resolved,
+          now,
+          baseline,
+          filter: this.filter,
+          validatedAt: resolution.validatedAt,
+          alertEligible: resolution.alertEligible,
         });
-        await Promise.all(workers);
-        await this.store.putCheckpoint(result.checkpoint);
-      } catch (error) { report.failures.push(error instanceof Error ? error.message : String(error)); }
+        for (const job of plan.jobs) await this.store.putInternship(job);
+        for (const occurrence of plan.occurrences) await this.store.putSourceOccurrence(occurrence);
+        for (const event of plan.notifications) await this.store.putNotificationEvent(event);
+        await this.store.putSourceHealth({
+          sourceId: connector.id,
+          provider: providerFor(connector.id),
+          lastAttemptAt: attemptedAt,
+          lastSuccessAt: now,
+          outcome: batch.unchanged ? 'unchanged' : 'changed',
+          durationMs: Date.now() - started,
+          snapshotHash: batch.snapshotHash,
+          counts: batch.processed.counts,
+          consecutiveFailures: 0,
+        });
+        await this.store.putCheckpoint({
+          ...result.checkpoint,
+          contentHash: batch.snapshotHash,
+          activeExternalIds: [...batch.activeExternalIds],
+        });
+        report.newJobs.push(...plan.newJobs);
+        report.filteredJobs.push(...plan.filteredJobs);
+        console.log(JSON.stringify({ event: 'source_ingestion_completed', sourceId: connector.id, provider: providerFor(connector.id), outcome: batch.unchanged ? 'unchanged' : 'changed', counts: batch.processed.counts, durationMs: Date.now() - started }));
+      } catch (error) {
+        const category = error instanceof SourceFetchError ? error.category : 'transport';
+        try {
+          await this.store.putSourceHealth({
+            sourceId: connector.id,
+            provider: providerFor(connector.id),
+            lastAttemptAt: attemptedAt,
+            lastSuccessAt: previousHealth?.lastSuccessAt,
+            outcome: 'failed',
+            durationMs: Date.now() - started,
+            consecutiveFailures: (previousHealth?.consecutiveFailures ?? 0) + 1,
+            diagnosticCategory: category,
+          });
+        } catch { /* The original source/persistence failure remains primary. */ }
+        report.failures.push(error instanceof Error ? error.message : String(error));
+        console.error(JSON.stringify({ event: 'source_ingestion_failed', sourceId: connector.id, provider: providerFor(connector.id), category, durationMs: Date.now() - started }));
+      }
     }
     await this.validateUnverifiedOpenJobs(report);
     return report;
+  }
+}
+
+/** @deprecated Compatibility facade; new code should construct `IngestionRunner`. */
+export class Poller extends IngestionRunner {
+  poll(options: { seedOnly?: boolean } = {}) {
+    return this.run(options);
   }
 }

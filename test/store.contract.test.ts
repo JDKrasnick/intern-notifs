@@ -6,6 +6,7 @@ import type { Internship } from '../src/types.js';
 const job = (title = 'Software Engineering Intern'): Internship => ({
   jobId: 'job-1', company: 'Acme', title, location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/job-1',
   normalizedUrl: 'https://careers.example.test/job-1', fingerprint: 'fingerprint-1', compensation: { raw: '$50/hr', maxHourlyUSD: 50 }, sourceReferences: [],
+  technical: title !== 'Graduate Clinical Intern',
   open: true, firstSeenAt: '2026-07-19T00:00:00.000Z', lastSeenAt: '2026-07-19T00:00:00.000Z', notification: { smsPending: true, digestPending: true },
 });
 const fakeClient = () => {

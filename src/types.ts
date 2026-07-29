@@ -128,6 +128,7 @@ export interface JobRequirements {
 }
 
 export interface SourceOccurrence extends SourceReference {
+  externalId?: string;
   company: string;
   title: string;
   location: string;
@@ -136,6 +137,39 @@ export interface SourceOccurrence extends SourceReference {
   compensation: Compensation;
   requirements?: JobRequirements;
   state: 'open' | 'closed';
+}
+
+export interface SourceOccurrenceState {
+  sourceId: string;
+  externalId: string;
+  jobId: string;
+  occurrence: SourceOccurrence;
+  present: boolean;
+  consecutiveOmissions: number;
+  snapshotHash: string;
+  updatedAt: string;
+}
+
+export interface NotificationEvent {
+  eventId: string;
+  sourceId: string;
+  externalId: string;
+  jobId: string;
+  kind: 'new-job';
+  createdAt: string;
+}
+
+export interface SourceHealth {
+  sourceId: string;
+  provider: 'github' | 'lever' | 'greenhouse' | 'unknown';
+  lastAttemptAt: string;
+  lastSuccessAt?: string;
+  outcome: 'changed' | 'unchanged' | 'failed';
+  durationMs: number;
+  snapshotHash?: string;
+  counts?: ProcessedSnapshot['counts'];
+  consecutiveFailures: number;
+  diagnosticCategory?: SourceFailureCategory | 'persistence' | 'quality';
 }
 
 export interface ProcessedListing extends SourceOccurrence {

@@ -1,8 +1,7 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { isTechnicalJob } from './core/filters.js';
 import { employerCategory } from './core/employers.js';
-import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, SourceCheckpoint, UserDocument, UserPreferences } from './types.js';
+import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, NotificationEvent, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
 import type { ApplicationSession } from './application-automation.js';
 
 function withEmployerCategory(job: Internship): Internship {
@@ -15,11 +14,16 @@ export interface InternshipStore {
   findByUrl(url: string): Promise<Internship | undefined>;
   findByFingerprint(fingerprint: string): Promise<Internship | undefined>;
   putInternship(job: Internship): Promise<void>;
+  getJob(jobId: string): Promise<Internship | undefined>;
+  getSourceOccurrences(sourceId: string): Promise<SourceOccurrenceState[]>;
+  putSourceOccurrence(occurrence: SourceOccurrenceState): Promise<void>;
+  getSourceHealth(sourceId: string): Promise<SourceHealth | undefined>;
+  putSourceHealth(health: SourceHealth): Promise<void>;
+  putNotificationEvent(event: NotificationEvent): Promise<void>;
   pendingSms(): Promise<Internship[]>;
   pendingDigest(): Promise<Internship[]>;
   markSmsSent(jobIds: string, sentAt: string): Promise<void>;
   markDigested(jobIds: string[], sentAt: string): Promise<void>;
-  getJob?(jobId: string): Promise<Internship | undefined>;
   listOpen?(cursor?: string, limit?: number, status?: 'open' | 'closed'): Promise<{ jobs: Internship[]; cursor?: string }>;
   /** Open technical roles discovered strictly after `after` and no later than `before`. */
   listOpenSince(after: string, before: string): Promise<Internship[]>;
@@ -28,20 +32,28 @@ export interface InternshipStore {
 export class MemoryInternshipStore implements InternshipStore {
   readonly jobs = new Map<string, Internship>();
   readonly checkpoints = new Map<string, SourceCheckpoint>();
+  readonly occurrences = new Map<string, SourceOccurrenceState>();
+  readonly health = new Map<string, SourceHealth>();
+  readonly notificationEvents = new Map<string, NotificationEvent>();
   async getCheckpoint(sourceId: string) { return this.checkpoints.get(sourceId); }
   async putCheckpoint(checkpoint: SourceCheckpoint) { this.checkpoints.set(checkpoint.sourceId, checkpoint); }
   async findByUrl(url: string) { return [...this.jobs.values()].find((job) => job.normalizedUrl === url); }
   async findByFingerprint(fingerprint: string) { return [...this.jobs.values()].find((job) => job.fingerprint === fingerprint); }
   async putInternship(job: Internship) { this.jobs.set(job.jobId, structuredClone(job)); }
+  async getSourceOccurrences(sourceId: string) { return [...this.occurrences.values()].filter((value) => value.sourceId === sourceId).map((value) => structuredClone(value)); }
+  async putSourceOccurrence(occurrence: SourceOccurrenceState) { this.occurrences.set(`${occurrence.sourceId}#${occurrence.externalId}`, structuredClone(occurrence)); }
+  async getSourceHealth(sourceId: string) { const value = this.health.get(sourceId); return value && structuredClone(value); }
+  async putSourceHealth(health: SourceHealth) { this.health.set(health.sourceId, structuredClone(health)); }
+  async putNotificationEvent(event: NotificationEvent) { this.notificationEvents.set(event.eventId, structuredClone(event)); }
   async pendingSms() { return [...this.jobs.values()].filter((job) => job.notification.smsPending && job.open); }
   async pendingDigest() { return [...this.jobs.values()].filter((job) => job.notification.digestPending && job.open); }
   async markSmsSent(jobId: string, sentAt: string) { const job = this.jobs.get(jobId); if (job) { job.notification.smsPending = false; job.notification.smsSentAt = sentAt; } }
   async markDigested(jobIds: string[], sentAt: string) { for (const jobId of jobIds) { const job = this.jobs.get(jobId); if (job) { job.notification.digestPending = false; job.notification.digestedAt = sentAt; } } }
   async getJob(jobId: string) { const job = this.jobs.get(jobId); return job && withEmployerCategory(job); }
-  async listOpen(cursor?: string, limit = 25, status: 'open' | 'closed' = 'open') { const jobs = [...this.jobs.values()].filter((job) => job.open === (status === 'open') && isTechnicalJob(job)).sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt)); const offset = cursor ? Number(cursor) : 0; const page = jobs.slice(offset, offset + limit).map(withEmployerCategory); return { jobs: page, cursor: offset + page.length < jobs.length ? String(offset + page.length) : undefined }; }
+  async listOpen(cursor?: string, limit = 25, status: 'open' | 'closed' = 'open') { const jobs = [...this.jobs.values()].filter((job) => job.open === (status === 'open') && job.technical !== false).sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt)); const offset = cursor ? Number(cursor) : 0; const page = jobs.slice(offset, offset + limit).map(withEmployerCategory); return { jobs: page, cursor: offset + page.length < jobs.length ? String(offset + page.length) : undefined }; }
   async listOpenSince(after: string, before: string) {
     return [...this.jobs.values()]
-      .filter((job) => job.open && isTechnicalJob(job) && job.firstSeenAt > after && job.firstSeenAt <= before)
+      .filter((job) => job.open && job.technical !== false && job.firstSeenAt > after && job.firstSeenAt <= before)
       .sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt))
       .map(withEmployerCategory);
   }
@@ -67,6 +79,35 @@ export class DynamoInternshipStore implements InternshipStore {
   async putCheckpoint(checkpoint: SourceCheckpoint): Promise<void> {
     await this.client.send(new PutCommand({ TableName: this.tableName, Item: { pk: `SOURCE#${checkpoint.sourceId}`, sk: 'CHECKPOINT', checkpoint } }));
   }
+  async getSourceOccurrences(sourceId: string): Promise<SourceOccurrenceState[]> {
+    return (await this.queryAll({
+      TableName: this.tableName,
+      KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
+      ExpressionAttributeValues: { ':pk': `SOURCE#${sourceId}`, ':prefix': 'OCCURRENCE#' },
+    })).map((item) => item.occurrence as SourceOccurrenceState);
+  }
+  async putSourceOccurrence(occurrence: SourceOccurrenceState): Promise<void> {
+    await this.client.send(new PutCommand({
+      TableName: this.tableName,
+      Item: { pk: `SOURCE#${occurrence.sourceId}`, sk: `OCCURRENCE#${occurrence.externalId}`, occurrence },
+    }));
+  }
+  async getSourceHealth(sourceId: string): Promise<SourceHealth | undefined> {
+    const result = await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: `SOURCE#${sourceId}`, sk: 'HEALTH' } }));
+    return result.Item?.health as SourceHealth | undefined;
+  }
+  async putSourceHealth(health: SourceHealth): Promise<void> {
+    await this.client.send(new PutCommand({ TableName: this.tableName, Item: { pk: `SOURCE#${health.sourceId}`, sk: 'HEALTH', health } }));
+  }
+  async putNotificationEvent(event: NotificationEvent): Promise<void> {
+    await this.client.send(new PutCommand({
+      TableName: this.tableName,
+      Item: { pk: `OUTBOX#${event.eventId}`, sk: 'EVENT', event },
+      ConditionExpression: 'attribute_not_exists(pk)',
+    })).catch((error: unknown) => {
+      if ((error as { name?: string }).name !== 'ConditionalCheckFailedException') throw error;
+    });
+  }
   private async find(index: 'urlIndex' | 'fingerprintIndex', attribute: 'urlPk' | 'fingerprintPk', value: string) {
     const result = await this.client.send(new QueryCommand({ TableName: this.tableName, IndexName: index, KeyConditionExpression: '#key = :value', ExpressionAttributeNames: { '#key': attribute }, ExpressionAttributeValues: { ':value': value }, Limit: 1 }));
     return result.Items?.[0]?.job as Internship | undefined;
@@ -77,8 +118,8 @@ export class DynamoInternshipStore implements InternshipStore {
     const item: JobItem = { pk: `JOB#${job.jobId}`, sk: 'META', urlPk: `URL#${job.normalizedUrl}`, fingerprintPk: `FP#${job.fingerprint}`, job };
     if (job.notification.smsPending) item.smsPk = 'PENDING#SMS';
     if (job.notification.digestPending) item.digestPk = 'PENDING#DIGEST';
-    if (job.open && isTechnicalJob(job)) { item.openPk = 'OPEN'; item.openSk = `${job.firstSeenAt}#${job.jobId}`; }
-    if (!job.open && isTechnicalJob(job)) { item.closedPk = 'CLOSED'; item.closedSk = `${job.lastSeenAt}#${job.jobId}`; }
+    if (job.open && job.technical !== false) { item.openPk = 'OPEN'; item.openSk = `${job.firstSeenAt}#${job.jobId}`; }
+    if (!job.open && job.technical !== false) { item.closedPk = 'CLOSED'; item.closedSk = `${job.lastSeenAt}#${job.jobId}`; }
     await this.client.send(new PutCommand({ TableName: this.tableName, Item: item }));
   }
   private async pending(index: 'pendingSmsIndex' | 'pendingDigestIndex', attribute: 'smsPk' | 'digestPk', value: string): Promise<Internship[]> {

@@ -32,8 +32,10 @@ export function markdownListingToSourcedPosting(listing: RawListing): SourcedPos
 }
 
 function postingProjection(postings: SourcedPosting[]): string {
-  return JSON.stringify(postings.map(({ fetchedAt: _fetchedAt, row: _row, ...posting }) => posting)
-    .sort((a, b) => a.externalId.localeCompare(b.externalId)));
+  return JSON.stringify(
+    [...postings].sort((a, b) => a.externalId.localeCompare(b.externalId)),
+    (key, value) => key === 'fetchedAt' || key === 'row' ? undefined : value,
+  );
 }
 
 type TransitionalMarkdownResult = SourceSnapshot & SourceFetchResult;
