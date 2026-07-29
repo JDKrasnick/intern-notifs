@@ -22,6 +22,7 @@
     "discover:lever": "tsx scripts/discover-lever.ts",
     "discover:firecrawl": "tsx scripts/firecrawl-discovery.ts",
     "migrate:open-index": "tsx src/migrate-open-index.ts",
+    "migrate:source-occurrences": "tsx src/migrate-source-occurrences.ts",
     "build:browser-companion": "esbuild browser-companion/content.ts --bundle --format=iife --platform=browser --outfile=browser-companion/dist/content.js",
     "cdk": "cdk --app 'npx tsx infra/app.ts'"
   },

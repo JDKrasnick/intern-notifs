@@ -147,9 +147,19 @@ export interface SourceOccurrenceState {
   occurrence: SourceOccurrence;
   present: boolean;
   consecutiveOmissions: number;
-  /** Snapshot that last changed this occurrence; confirmations reuse the checkpoint's active IDs. */
-  snapshotHash: string;
-  updatedAt: string;
+  /** Snapshot in which this occurrence last changed. */
+  changedSnapshotHash: string;
+  changedAt: string;
+}
+
+/**
+ * Read-time view of one occurrence. Change facts are durable per occurrence;
+ * confirmation is derived from the source checkpoint, which already records the
+ * active ID set, so confirming a snapshot costs no per-occurrence write.
+ */
+export interface SourceOccurrenceStatus extends SourceOccurrenceState {
+  confirmedSnapshotHash?: string;
+  confirmedAt?: string;
 }
 
 export interface NotificationEvent {

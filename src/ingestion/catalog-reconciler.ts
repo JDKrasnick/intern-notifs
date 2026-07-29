@@ -215,8 +215,8 @@ export class CatalogReconciler {
         occurrence: occurrence(listing, externalId),
         present: true,
         consecutiveOmissions: 0,
-        snapshotHash: input.snapshotHash,
-        updatedAt: input.now,
+        changedSnapshotHash: input.snapshotHash,
+        changedAt: input.now,
       };
       if (occurrenceChanged(priorById.get(externalId), next)) occurrences.push(next);
     }
@@ -224,7 +224,7 @@ export class CatalogReconciler {
     for (const prior of input.priorOccurrences) {
       if (includedIds.has(prior.externalId)) continue;
       if (input.activeExternalIds.has(prior.externalId)) {
-        const confirmed = { ...prior, present: true, consecutiveOmissions: 0, snapshotHash: input.snapshotHash, updatedAt: input.now };
+        const confirmed = { ...prior, present: true, consecutiveOmissions: 0, changedSnapshotHash: input.snapshotHash, changedAt: input.now };
         if (occurrenceChanged(prior, confirmed)) occurrences.push(confirmed);
         continue;
       }
@@ -233,8 +233,8 @@ export class CatalogReconciler {
         ...prior,
         present: false,
         consecutiveOmissions,
-        snapshotHash: input.snapshotHash,
-        updatedAt: input.now,
+        changedSnapshotHash: input.snapshotHash,
+        changedAt: input.now,
         occurrence: consecutiveOmissions >= 2 ? { ...prior.occurrence, state: 'closed' as const } : prior.occurrence,
       };
       occurrences.push(next);

@@ -17,8 +17,12 @@ export function htmlToText(value: string | undefined): string {
   return decoded.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-/** Title-led lifecycle signal: an internship, co-op, or apprenticeship must be named in the title. */
-export const lifecycleTitlePattern = /\b(?:intern(?:ship)?|co[ -]?op|cooperative education|apprentice(?:ship)?)\b/i;
+/**
+ * Title-led lifecycle signal: an internship, co-op, or apprenticeship must be
+ * named in the title. Boards post plurals ("AI Internships"), so the plural is
+ * matched too; "internal" and "international" still fail the word boundary.
+ */
+export const lifecycleTitlePattern = /\b(?:interns?(?:hips?)?|co[ -]?ops?|cooperative education|apprentices?(?:hips?)?)\b/i;
 
 export function hasLifecycleTitleSignal(title: string): boolean {
   return lifecycleTitlePattern.test(title);
