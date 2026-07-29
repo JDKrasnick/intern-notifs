@@ -304,6 +304,8 @@ export class GreenhouseBoardAdapter implements SourceAdapter {
         lastSuccessAt: fetchedAt,
         successfulFetches: (previous?.successfulFetches ?? 0) + 1,
         lastRowCount: listings.length,
+        lastRawRowCount: jobs.length,
+        lastWithheldRowCount: rejectedApplicationUrls.length,
       },
     };
   }

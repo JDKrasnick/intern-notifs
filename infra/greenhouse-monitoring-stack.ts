@@ -1,4 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
+import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
+import * as apigatewayIntegrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -6,6 +8,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import type { Construct } from 'constructs';
 
@@ -70,6 +73,41 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
     internships.grantReadWriteData(worker);
     users.grantReadWriteData(worker);
 
+    const operationsSecret = new secretsmanager.Secret(this, 'GreenhouseOperationsSecret', {
+      description: 'Server-to-server credential for the private Greenhouse operations dashboard.',
+      generateSecretString: { excludePunctuation: true, passwordLength: 48 },
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+    const operationsHandler = new lambdaNodejs.NodejsFunction(this, 'GreenhouseOperationsApi', {
+      entry: 'src/greenhouse-operations-api.ts',
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      timeout: cdk.Duration.seconds(29),
+      memorySize: 512,
+      environment: {
+        INTERNSHIPS_TABLE: internships.tableName,
+        GREENHOUSE_QUEUE_URL: queue.queueUrl,
+        GREENHOUSE_DEAD_LETTER_QUEUE_URL: deadLetterQueue.queueUrl,
+        OPERATIONS_SHARED_SECRET: operationsSecret.secretValue.unsafeUnwrap(),
+      },
+      bundling: { externalModules: [] },
+    });
+    operationsHandler.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['dynamodb:BatchGetItem', 'dynamodb:GetItem'],
+      resources: [internships.tableArn],
+    }));
+    operationsHandler.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['sqs:GetQueueAttributes'],
+      resources: [queue.queueArn, deadLetterQueue.queueArn],
+    }));
+    operationsHandler.addToRolePolicy(new iam.PolicyStatement({ actions: ['cloudwatch:DescribeAlarms'], resources: ['*'] }));
+    const operationsApi = new apigatewayv2.HttpApi(this, 'GreenhouseOperationsHttpApi');
+    const operationsStage = operationsApi.defaultStage?.node.defaultChild as apigatewayv2.CfnStage | undefined;
+    if (operationsStage) operationsStage.defaultRouteSettings = { throttlingBurstLimit: 10, throttlingRateLimit: 5 };
+    const operationsIntegration = new apigatewayIntegrations.HttpLambdaIntegration('GreenhouseOperationsIntegration', operationsHandler);
+    operationsApi.addRoutes({ path: '/operations/sources', methods: [apigatewayv2.HttpMethod.GET], integration: operationsIntegration });
+    operationsApi.addRoutes({ path: '/operations/sources/{sourceId}', methods: [apigatewayv2.HttpMethod.GET], integration: operationsIntegration });
+
     const schedulerDeadLetterQueue = new sqs.Queue(this, 'GreenhouseSchedulerDeadLetterQueue', {
       retentionPeriod: cdk.Duration.days(14),
       encryption: sqs.QueueEncryption.SQS_MANAGED,
@@ -115,5 +153,7 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'GreenhouseQueueUrl', { value: queue.queueUrl });
     new cdk.CfnOutput(this, 'GreenhouseWorkerFunctionName', { value: worker.functionName });
     new cdk.CfnOutput(this, 'GreenhouseDispatcherFunctionName', { value: dispatcher.functionName });
+    new cdk.CfnOutput(this, 'GreenhouseOperationsApiUrl', { value: operationsApi.apiEndpoint });
+    new cdk.CfnOutput(this, 'GreenhouseOperationsSecretArn', { value: operationsSecret.secretArn });
   }
 }

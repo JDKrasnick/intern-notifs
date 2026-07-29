@@ -1,8 +1,8 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { BatchGetCommand, DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { isTechnicalJob } from './core/filters.js';
 import { employerCategory } from './core/employers.js';
-import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, SourceCheckpoint, UserDocument, UserPreferences } from './types.js';
+import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, SourceCheckpoint, SourceHealth, UserDocument, UserPreferences } from './types.js';
 import type { ApplicationSession } from './application-automation.js';
 
 function withEmployerCategory(job: Internship): Internship {
@@ -17,6 +17,9 @@ export function createDynamoDocumentClient(client = new DynamoDBClient({})): Dyn
 export interface InternshipStore {
   getCheckpoint(sourceId: string): Promise<SourceCheckpoint | undefined>;
   putCheckpoint(checkpoint: SourceCheckpoint): Promise<void>;
+  getSourceHealth(sourceId: string): Promise<SourceHealth | undefined>;
+  getSourceHealthMany(sourceIds: string[]): Promise<SourceHealth[]>;
+  putSourceHealth(health: SourceHealth): Promise<void>;
   findByUrl(url: string): Promise<Internship | undefined>;
   findByFingerprint(fingerprint: string): Promise<Internship | undefined>;
   putInternship(job: Internship): Promise<void>;
@@ -33,8 +36,12 @@ export interface InternshipStore {
 export class MemoryInternshipStore implements InternshipStore {
   readonly jobs = new Map<string, Internship>();
   readonly checkpoints = new Map<string, SourceCheckpoint>();
+  readonly sourceHealth = new Map<string, SourceHealth>();
   async getCheckpoint(sourceId: string) { return this.checkpoints.get(sourceId); }
   async putCheckpoint(checkpoint: SourceCheckpoint) { this.checkpoints.set(checkpoint.sourceId, checkpoint); }
+  async getSourceHealth(sourceId: string) { return this.sourceHealth.get(sourceId); }
+  async getSourceHealthMany(sourceIds: string[]) { return sourceIds.map((id) => this.sourceHealth.get(id)).filter((value): value is SourceHealth => Boolean(value)); }
+  async putSourceHealth(health: SourceHealth) { this.sourceHealth.set(health.sourceId, structuredClone(health)); }
   async findByUrl(url: string) { return [...this.jobs.values()].find((job) => job.normalizedUrl === url); }
   async findByFingerprint(fingerprint: string) { return [...this.jobs.values()].find((job) => job.fingerprint === fingerprint); }
   async putInternship(job: Internship) { this.jobs.set(job.jobId, structuredClone(job)); }
@@ -71,6 +78,25 @@ export class DynamoInternshipStore implements InternshipStore {
   }
   async putCheckpoint(checkpoint: SourceCheckpoint): Promise<void> {
     await this.client.send(new PutCommand({ TableName: this.tableName, Item: { pk: `SOURCE#${checkpoint.sourceId}`, sk: 'CHECKPOINT', checkpoint } }));
+  }
+  async getSourceHealth(sourceId: string): Promise<SourceHealth | undefined> {
+    const result = await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: `SOURCE#${sourceId}`, sk: 'HEALTH' } }));
+    return result.Item?.health as SourceHealth | undefined;
+  }
+  async getSourceHealthMany(sourceIds: string[]): Promise<SourceHealth[]> {
+    const health: SourceHealth[] = [];
+    for (let offset = 0; offset < sourceIds.length; offset += 100) {
+      let keys = sourceIds.slice(offset, offset + 100).map((sourceId) => ({ pk: `SOURCE#${sourceId}`, sk: 'HEALTH' }));
+      do {
+        const result = await this.client.send(new BatchGetCommand({ RequestItems: { [this.tableName]: { Keys: keys } } }));
+        health.push(...((result.Responses?.[this.tableName] ?? []).map((item) => item.health as SourceHealth)));
+        keys = result.UnprocessedKeys?.[this.tableName]?.Keys as typeof keys ?? [];
+      } while (keys.length);
+    }
+    return health;
+  }
+  async putSourceHealth(health: SourceHealth): Promise<void> {
+    await this.client.send(new PutCommand({ TableName: this.tableName, Item: { pk: `SOURCE#${health.sourceId}`, sk: 'HEALTH', health } }));
   }
   private async find(index: 'urlIndex' | 'fingerprintIndex', attribute: 'urlPk' | 'fingerprintPk', value: string) {
     const result = await this.client.send(new QueryCommand({ TableName: this.tableName, IndexName: index, KeyConditionExpression: '#key = :value', ExpressionAttributeNames: { '#key': attribute }, ExpressionAttributeValues: { ':value': value }, Limit: 1 }));

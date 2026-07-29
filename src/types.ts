@@ -92,7 +92,7 @@ export interface DeliveryReceipt {
 }
 
 /** Reason a source fetch or snapshot did not produce a trusted result. */
-export type SourceFailureCategory = 'http' | 'json' | 'transport' | 'identity' | 'link' | 'empty';
+export type SourceFailureCategory = 'http' | 'json' | 'transport' | 'identity' | 'link' | 'empty' | 'quality' | 'persistence';
 
 export interface SourceCheckpoint {
   sourceId: string;
@@ -102,6 +102,41 @@ export interface SourceCheckpoint {
   lastSuccessAt?: string;
   successfulFetches: number;
   lastRowCount?: number;
+  lastRawRowCount?: number;
+  lastWithheldRowCount?: number;
+}
+
+export type SourceHealthState = 'healthy' | 'degraded' | 'quarantined' | 'never-succeeded';
+
+export interface SourceHealth {
+  sourceId: string;
+  state: SourceHealthState;
+  lastAttemptAt: string;
+  lastSuccessAt?: string;
+  consecutiveFailures: number;
+  rawRows?: number;
+  eligibleRows?: number;
+  withheldRows?: number;
+  durationMs: number;
+  failureCategory?: SourceFailureCategory;
+  diagnostic?: string;
+  quarantinedAt?: string;
+  quarantineReason?: string;
+  recentRuns: SourceRun[];
+}
+
+export interface SourceRun {
+  runId: string;
+  sourceId: string;
+  state: 'succeeded' | 'failed' | 'quarantined';
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+  rawRows?: number;
+  eligibleRows?: number;
+  withheldRows?: number;
+  failureCategory?: SourceFailureCategory;
+  diagnostic?: string;
 }
 
 export interface SourceReference {

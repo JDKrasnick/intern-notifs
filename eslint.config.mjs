@@ -10,6 +10,7 @@ export default tseslint.config(
       'coverage/**',
       'node_modules/**',
       'mobile/**',
+      '.context/**',
       '**/.agents/**',
       '**/.codex/**',
       '**/.github/hooks/**',
