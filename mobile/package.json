@@ -6,8 +6,8 @@
     "start": "expo start",
     "ios": "expo run:ios",
     "android": "expo run:android",
-    "test": "jest",
-    "typecheck": "tsc --noEmit --jsx react-jsx --esModuleInterop --moduleResolution bundler --module esnext --target esnext --skipLibCheck App.tsx src/api.ts src/auth.ts src/notifications.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "release:check": "node scripts/release-check.mjs"
   },
   "dependencies": {
@@ -29,7 +29,8 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.10",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "vitest": "^3.2.4"
   },
   "version": "1.0.0"
 }

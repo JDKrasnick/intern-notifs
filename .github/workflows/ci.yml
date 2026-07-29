@@ -56,5 +56,6 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm, cache-dependency-path: mobile/package-lock.json }
       - run: npm ci
+      - run: npm test
       - run: npm run typecheck
       - run: npx expo config --type public

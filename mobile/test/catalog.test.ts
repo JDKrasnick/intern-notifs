@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendCatalogPage } from '../mobile/src/catalog.js';
+import { appendCatalogPage } from '../src/catalog.js';
 
 describe('mobile catalog pagination', () => {
   it('appends later pages in order without duplicating a refreshed role', () => {
