@@ -45,6 +45,60 @@ const focusPatterns: Array<[JobFocus, RegExp]> = [
   ['Design', /\b(design|ux|ui|user experience)\b/i]
 ];
 
+/**
+ * Technical evidence the six coarse categories miss. Category patterns drive
+ * user-facing filters, so they stay as they are; eligibility additionally
+ * accepts a named technical domain.
+ *
+ * All three patterns match the role title and its classification context only,
+ * never the company: "Palantir Technologies" must not make its marketing roles
+ * technical.
+ *
+ * `strong` names a domain no other function shares, so it settles eligibility on
+ * its own.
+ */
+const strongTechnicalPattern = new RegExp([
+  String.raw`\b(?:software|swe|sde+|firmware|hardware|embedded|silicon|semiconductor|fpga|asic|vlsi|rtl|pcb)\b`,
+  String.raw`\b(?:programming|programmer|developer|coding|compiler|algorithms?|computational|bioinformatics)\b`,
+  String.raw`\b(?:computer (?:science|engineer(?:ing)?|vision)|(?:applied|research|data|computer) scientist)\b`,
+  String.raw`\b(?:infrastructure|devops|\bsre\b|site reliability|kubernetes|observability|\biot\b|robotics|mechatronics)\b`,
+  String.raw`\b(?:cloud|databases?|\bsql\b|nosql|distributed systems?|windows|linux|unix|macos)\b`,
+  String.raw`\b(?:cyber ?security|infosec|appsec|cryptograph\w*|penetration test\w*)\b`,
+  String.raw`\b(?:machine learning|deep learning|gen(?:erative)? ?ai|artificial intelligence|\bml\b|\bnlp\b|\bllm\b|inference)\b`,
+  String.raw`\bdata (?:engineer\w*|analyst\w*|analytics|scien\w+|pipeline|platform|integration|extraction|warehouse|modeling)\b`,
+  String.raw`\b(?:sdet|test automation|quality (?:assurance|engineer(?:ing)?)|technical staff)\b`,
+  String.raw`\b(?:ios|android|front ?end|back ?end|full ?stack)\b`,
+  // Quantitative finance is in scope, and its titles often also say "sales".
+  String.raw`\b(?:quant|quantitative|trading|trader|algorithmic)\b`,
+].join('|'), 'i');
+
+/** Acronyms whose lowercase forms are ordinary English words, so case matters. */
+const technicalAcronymPattern = /\b(?:IT|QA|BI|ETL|DBA)\b/;
+
+/**
+ * `qualified` evidence is technical only alongside a technical role word:
+ * "Platform Engineer" is, "Platform Campaign" is not.
+ */
+const qualifiedTechnicalPattern = new RegExp([
+  String.raw`\b(?:platform|systems?|network\w*|security|technolog\w+|analytics|business intelligence|\bqa\b|mobile|web)\b[^,|(]{0,24}\b(?:engineer\w*|developer|architect\w*|analyst\w*|administrator|administration|operations?|intern(?:ship)?s?|co-?op)\b`,
+  String.raw`\b(?:engineer\w*|analyst\w*|intern(?:ship)?s?|co-?op)\b[^,|(]{0,24}\b(?:platform|systems?|network\w*|security|technolog\w+|analytics|business intelligence)\b`,
+].join('|'), 'i');
+
+/**
+ * A business function outranks evidence it merely shares a word with: "Talent
+ * Acquisition Technology Intern" recruits and "Platform Campaign Intern"
+ * markets, while a strong signal such as "Data Science Intern (Customer
+ * Success)" still stands.
+ */
+const nontechnicalFunctionPattern = new RegExp([
+  String.raw`\b(?:talent acquisition|recruit\w*|people operations|human resources|\bhr\b)\b`,
+  String.raw`\b(?:marketing|campaign|brand|advertis\w*|social media|public relations|communications?)\b`,
+  String.raw`\b(?:sales|account executive|business development|partnerships?|customer (?:success|advocacy|service|experience))\b`,
+  String.raw`\b(?:supply chain|logistics|procurement|purchasing|warehouse operations|facilities|real estate)\b`,
+  String.raw`\b(?:legal|paralegal|compliance officer|accounting|payroll|\btax\b|audit(?:or|ing)?)\b`,
+  String.raw`\b(?:event|concierge|hospitality|volunteer|fundrais\w*|philanthrop\w*)\b`,
+].join('|'), 'i');
+
 function terms(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season'>) {
   return `${listing.company} ${listing.title} ${listing.location} ${listing.season}`.replace(/\s+/g, ' ').trim();
 }
@@ -55,8 +109,17 @@ export function classifyJob(listing: Pick<RawListing, 'company' | 'title' | 'loc
   const value = terms(listing);
   return jobCategories.filter((category) => matchesCategory(value, category));
 }
+/**
+ * Eligibility reads the role, never the employer or its city: not every job at
+ * "Jump Trading Group" is quantitative, and not every job in "Research Triangle
+ * Park" is research. User-facing keyword filters still match the whole listing.
+ */
 export function isTechnicalJob(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season'>) {
-  return classifyJob(listing).some((category) => technicalJobCategories.includes(category));
+  if (strongTechnicalPattern.test(listing.title) || technicalAcronymPattern.test(listing.title)) return true;
+  if (nontechnicalFunctionPattern.test(listing.title)) return false;
+  const role = { company: '', title: listing.title, location: '', season: '' };
+  return classifyJob(role).some((category) => technicalJobCategories.includes(category))
+    || qualifiedTechnicalPattern.test(listing.title);
 }
 
 /** Deterministic title-keyword classification for compact notification context; it does not infer qualifications. */

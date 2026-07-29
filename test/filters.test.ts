@@ -64,6 +64,28 @@ describe('job filters', () => {
     expect(isTechnicalJob(listing('Software Engineering Intern', 'https://example.com/swe'))).toBe(true);
     expect(isTechnicalJob(listing('Human Resources Intern', 'https://example.com/hr'))).toBe(false);
   });
+  it('admits technical domains the six coarse categories never named', () => {
+    for (const title of ['Data Engineer Intern', 'Cybersecurity Analyst Intern', 'Hardware Engineer (FPGA/ASIC) Intern',
+      'Platform Engineer Intern', 'Network Engineer Intern', 'Windows Engineer Intern', 'IT Operations Intern',
+      'DevOps/SRE Intern', 'Analytics Intern', 'Firmware Internship 2027', 'Member of Technical Staff Intern']) {
+      expect(isTechnicalJob(listing(title, 'https://example.com/role')), title).toBe(true);
+    }
+  });
+  it('lets a business function outrank a technical word it merely shares', () => {
+    for (const title of ['AI Marketing Intern', 'Talent Acquisition Technology Intern', 'Platform Campaign Project Intern',
+      'Technical Recruiting Intern - AI & Automation', 'Supply Chain Intern', 'Administrative Business Partner - Security',
+      'Structural Engineer Intern', 'Intern - Mechanical Engineer']) {
+      expect(isTechnicalJob(listing(title, 'https://example.com/role')), title).toBe(false);
+    }
+  });
+  it('keeps a strong technical signal even inside a business-function title', () => {
+    expect(isTechnicalJob(listing('Data Science Intern (Customer Success)', 'https://example.com/ds'))).toBe(true);
+    expect(isTechnicalJob(listing('Sales and Trading Intern', 'https://example.com/st'))).toBe(true);
+  });
+  it('never lets a company name make a role technical', () => {
+    expect(isTechnicalJob(listing('Marketing Intern', 'https://example.com/m', 'Palantir Technologies'))).toBe(false);
+    expect(isTechnicalJob(listing('Office Coordinator Intern', 'https://example.com/o', 'Data Systems Software Inc'))).toBe(false);
+  });
   it('stores filtered jobs but never queues them for push or email', async () => {
     const store = new MemoryInternshipStore();
     await new Poller([new Adapter([listing('Software Engineering Intern', 'https://example.com/initial')])], store).poll();
