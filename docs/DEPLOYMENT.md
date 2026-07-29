@@ -14,7 +14,7 @@ InternNotifs is an Expo mobile app with a serverless AWS backend.
 | Personal data | Encrypted DynamoDB `UserData`; legacy `Applications` retained |
 | Résumés | Private, versioned, KMS-encrypted S3 objects with presigned uploads |
 | Ingestion and delivery | EventBridge Scheduler, FIFO SQS, bounded Lambda workers, Lambda notifier, Expo Push Service, SSM runtime config |
-| Infrastructure | AWS CDK in `infra/intern-notifs-stack.ts` |
+| Infrastructure | AWS CDK in `infra/intern-notifs-stack.ts` and `infra/greenhouse-monitoring-stack.ts` |
 | CI | GitHub Actions in `.github/workflows/ci.yml` |
 
 The catalog is public. Accounts, preferences, device tokens, profiles, documents, and application tracking are private to the Cognito subject.
@@ -60,6 +60,38 @@ npx cdk deploy -c githubRepository=JDKrasnick/intern-notifs -c emailAddress=DEPL
 ```
 
 The deployment email and SSM runtime configuration are operational values; retrieve them from the approved AWS/EAS configuration, not from source control. The stack retains durable data resources. Never use destructive CDK commands or replace retained tables/buckets without explicit approval.
+
+### Greenhouse monitoring deployment
+
+Deploy Greenhouse monitoring independently. The stack imports the retained
+tables from `InternNotifs` and owns only the Greenhouse scheduler, dispatcher,
+queues, worker, and alarms.
+
+```bash
+INTERNSHIPS_TABLE="$(aws cloudformation describe-stacks \
+  --stack-name InternNotifs \
+  --query 'Stacks[0].Outputs[?OutputKey==`InternshipsTableName`].OutputValue | [0]' \
+  --output text)"
+USERS_TABLE="$(aws cloudformation describe-stacks \
+  --stack-name InternNotifs \
+  --query 'Stacks[0].Outputs[?OutputKey==`UserDataTableName`].OutputValue | [0]' \
+  --output text)"
+
+npx cdk diff InternNotifsGreenhouse \
+  -c target=greenhouse \
+  -c internshipsTableName="$INTERNSHIPS_TABLE" \
+  -c usersTableName="$USERS_TABLE"
+
+npx cdk deploy InternNotifsGreenhouse \
+  -c target=greenhouse \
+  -c internshipsTableName="$INTERNSHIPS_TABLE" \
+  -c usersTableName="$USERS_TABLE"
+```
+
+Review the diff before deploying. A Greenhouse-only diff must not replace or
+delete resources in `InternNotifs`. The architecture and operating limits are
+documented in
+[`greenhouse/architecture.md`](greenhouse/architecture.md).
 
 ## EAS environments
 

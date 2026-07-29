@@ -5,6 +5,19 @@
 The source is [architecture.mmd](architecture.mmd); a scalable
 [SVG rendering](architecture.svg) is included as well.
 
+## Deployment boundary
+
+Greenhouse monitoring is deployed as the independent
+`InternNotifsGreenhouse` CDK stack. It owns the scheduler, dispatcher, queues,
+worker, and alarms, while importing the retained internships and user tables
+by name from the existing `InternNotifs` stack. This separation permits a
+Greenhouse-only deployment without modifying the lifecycle of the public API,
+operations API, authentication, or durable data resources.
+
+Use the exact deployment procedure in
+[`../DEPLOYMENT.md`](../DEPLOYMENT.md#greenhouse-monitoring-deployment). Do not
+deploy the main stack as a substitute for a Greenhouse-only change.
+
 ## Runtime flow
 
 EventBridge invokes a small dispatcher every ten minutes. The dispatcher
