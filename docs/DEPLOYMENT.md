@@ -13,11 +13,18 @@ InternNotifs is an Expo mobile app with a serverless AWS backend.
 | Job catalog | DynamoDB `Internships` table and open-jobs index |
 | Personal data | Encrypted DynamoDB `UserData`; legacy `Applications` retained |
 | Résumés | Private, versioned, KMS-encrypted S3 objects with presigned uploads |
-| Ingestion and delivery | EventBridge Scheduler, Lambda notifier, Expo Push Service, SSM runtime config |
+| Ingestion and delivery | EventBridge Scheduler, FIFO SQS, bounded Lambda workers, Lambda notifier, Expo Push Service, SSM runtime config |
 | Infrastructure | AWS CDK in `infra/intern-notifs-stack.ts` |
 | CI | GitHub Actions in `.github/workflows/ci.yml` |
 
 The catalog is public. Accounts, preferences, device tokens, profiles, documents, and application tracking are private to the Cognito subject.
+
+Greenhouse uses a dedicated ten-minute EventBridge schedule, dispatcher Lambda,
+FIFO work queue, two-minute worker, and dead-letter queue. Active boards are
+checked every ten minutes; boards whose last successful snapshot had zero
+eligible roles are staggered across six-hour checks. See
+[`greenhouse/architecture.md`](greenhouse/architecture.md) for the complete
+shadow, promotion, retry, and alarm flow.
 
 ## Safe operational identifiers
 

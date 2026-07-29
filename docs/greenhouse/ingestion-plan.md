@@ -20,7 +20,7 @@ Employer selection stays with the owner. This plan starts when an owner supplies
 flowchart LR
     A[Owner supplies employer and careers page] --> I[Verify employer identity and board token]
     I --> S[Shadow fetch]
-    S -->|trusted| P[Five-minute production fetch]
+    S -->|trusted| P[Ten-minute queued production fetch]
     S -->|bad data or mismatch| Q[Quarantine and review]
     P --> V[Validate, normalize, and deduplicate]
     V --> C[Catalog update]
@@ -84,9 +84,12 @@ Ignore prospect/general-interest posts where `internal_job_id` is `null`. The st
 
 Official reference: [Greenhouse Job Board API](https://developers.greenhouse.io/job-board).
 
-## Five-minute fetch and update cycle
+## Queued fetch and update cycle
 
-Each approved board receives an independent task every five minutes. Initially these tasks can run inside the existing poll Lambda; the task boundary stays the same when the source count later requires a queue.
+EventBridge dispatches active boards every ten minutes. Reviewed boards with no
+eligible roles automatically move to a staggered six-hour check until roles
+appear. Each board is one FIFO SQS message; Lambda receives batches of ten and
+scales to at most four concurrent workers.
 
 1. Load the board's last successful hash, row count, success time, and active role IDs.
 2. Build the request from the stored provider and board token only. Use the fixed `boards-api.greenhouse.io` host, encode the token as one path segment, and reject configuration that contains a URL, slash, query string, or unknown provider.
@@ -94,6 +97,8 @@ Each approved board receives an independent task every five minutes. Initially t
 4. Discard prospects, convert the response to the common role shape, and keep only technical internships, co-ops, and apprenticeships.
 5. For every new or changed application URL, require HTTPS, reject aggregators, require an expected host or reviewed exception, then validate resolution with `HEAD` and a small ranged `GET` fallback.
 6. Commit the complete successful snapshot and new source state together. Only then calculate role additions, edits, omissions, and closures.
+7. Retry only failed SQS records. After four receives, move a persistent failure
+   to the Greenhouse dead-letter queue and alarm.
 
 ## Catalog and notification behavior
 
