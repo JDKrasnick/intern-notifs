@@ -102,6 +102,8 @@ export interface SourceCheckpoint {
   lastSuccessAt?: string;
   successfulFetches: number;
   lastRowCount?: number;
+  /** Stable posting IDs in the last trusted complete snapshot. */
+  activeExternalIds?: string[];
 }
 
 export interface SourceReference {
@@ -136,8 +138,79 @@ export interface SourceOccurrence extends SourceReference {
   state: 'open' | 'closed';
 }
 
-export interface RawListing extends SourceOccurrence {
+export interface ProcessedListing extends SourceOccurrence {
+  /** Stable within one source; row numbers are diagnostics only. */
+  externalId?: string;
   fetchedAt: string;
+  /** Classification is decided before persistence and never recomputed by the store. */
+  technical?: boolean;
+}
+
+/** @deprecated Use `ProcessedListing`; retained only while callers migrate. */
+export type RawListing = ProcessedListing;
+
+export interface SourcedPosting {
+  sourceId: string;
+  externalId: string;
+  sourceUrl: string;
+  document?: string;
+  row?: number;
+  fetchedAt: string;
+  employer: {
+    id?: string;
+    name: string;
+    authority: 'reviewed-registry' | 'source-row';
+  };
+  title: string;
+  content: Array<{
+    kind: 'description' | 'requirements' | 'additional';
+    format: 'plain' | 'html' | 'markdown';
+    value: string;
+  }>;
+  locations: string[];
+  applyUrl: string;
+  hostedUrl?: string;
+  sourceState: 'open' | 'closed' | 'prospect';
+  publishedAt?: string;
+  seasonHint?: string;
+  classificationTags?: string[];
+  declaredWorkMode?: string;
+  compensationText?: string;
+  declaredRequirements?: Partial<JobRequirements>;
+}
+
+export interface SourceSnapshot {
+  sourceId: string;
+  outcome: 'changed' | 'unchanged';
+  complete: true;
+  postings: SourcedPosting[];
+  rawCount: number;
+  contentHash: string;
+  checkpoint: SourceCheckpoint;
+}
+
+export interface PostingDecision {
+  externalId: string;
+  outcome: 'included' | 'filtered' | 'withheld';
+  reason:
+    | 'prospect'
+    | 'not-early-career'
+    | 'nontechnical'
+    | 'invalid-application-url'
+    | 'aggregator-destination'
+    | 'source-policy';
+}
+
+export interface ProcessedSnapshot {
+  listings: ProcessedListing[];
+  decisions: PostingDecision[];
+  counts: {
+    raw: number;
+    valid: number;
+    eligible: number;
+    filtered: number;
+    withheld: number;
+  };
 }
 
 export interface NotificationState {
@@ -165,6 +238,8 @@ export interface Internship {
   /** Set at ingest time; older stored records are classified from company name when read. */
   employerCategory?: EmployerCategory;
   sourceReferences: SourceOccurrence[];
+  /** Persisted preprocessing result used by indexes and queries. */
+  technical?: boolean;
   open: boolean;
   firstSeenAt: string;
   lastSeenAt: string;
@@ -174,6 +249,11 @@ export interface Internship {
 export interface SourceAdapter {
   readonly id: string;
   fetch(checkpoint?: SourceCheckpoint): Promise<SourceFetchResult>;
+}
+
+export interface SourceConnector {
+  readonly id: string;
+  fetch(checkpoint?: SourceCheckpoint): Promise<SourceSnapshot>;
 }
 
 export interface SourceFetchResult {
