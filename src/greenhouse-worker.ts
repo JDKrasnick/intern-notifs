@@ -1,4 +1,3 @@
-import { isTechnicalJob } from './core/filters.js';
 import { createSourceUrlValidator, type ApplicationUrlValidator } from './core/application-url.js';
 import { ExpoPushPublisher, sendNewJobNotifications } from './notifications.js';
 import { Poller } from './poll.js';
@@ -110,7 +109,7 @@ export async function runGreenhouseBoard(
   if (poll.failures.length) throw new Error(poll.failures.join('; '));
   const notifications = dependencies.userStore
     ? await sendNewJobNotifications(
-      poll.newJobs.filter(isTechnicalJob),
+      poll.newJobs.filter((job) => job.technical !== false),
       dependencies.userStore,
       dependencies.publisher ?? new ExpoPushPublisher(),
     )

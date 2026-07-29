@@ -22,7 +22,7 @@ describe('shared posting processor', () => {
       sourceId: 'lever-acme', outcome: 'changed', complete: true, postings: [posting()],
       rawCount: 1, contentHash: 'hash', checkpoint: { sourceId: 'lever-acme', successfulFetches: 1 },
     });
-    expect(result.counts).toEqual({ raw: 1, valid: 1, eligible: 1, filtered: 0, withheld: 0 });
+    expect(result.counts).toEqual({ raw: 1, valid: 1, eligible: 1, shelved: 0, filtered: 0, withheld: 0 });
     expect(result.decisions).toEqual([{ externalId: 'role-1', outcome: 'included', reason: 'source-policy' }]);
     expect(result.listings[0]).toMatchObject({
       externalId: 'role-1', company: 'Acme', workMode: 'hybrid', season: 'summer-2027',
@@ -57,9 +57,14 @@ describe('shared posting processor', () => {
     });
     expect(result.decisions).toEqual([
       { externalId: 'new-grad', outcome: 'included', reason: 'source-policy' },
-      { externalId: 'recruiter', outcome: 'filtered', reason: 'nontechnical' },
+      { externalId: 'recruiter', outcome: 'shelved', reason: 'nontechnical' },
     ]);
-    expect(result.listings.map((listing) => listing.title)).toEqual(['Software Engineer, New Grad']);
+    expect(result.counts).toMatchObject({ eligible: 1, shelved: 1 });
+    // The shelved role is still persisted; only the catalog-eligible one is technical.
+    expect(result.listings.map((listing) => [listing.title, listing.technical])).toEqual([
+      ['Software Engineer, New Grad', true],
+      ['Campus Recruiter', false],
+    ]);
   });
 
   it('reports prospect, lifecycle, technical, invalid URL, and aggregator decisions', () => {
@@ -77,7 +82,7 @@ describe('shared posting processor', () => {
     expect(result.decisions.map(({ externalId, outcome, reason }) => ({ externalId, outcome, reason }))).toEqual([
       { externalId: 'prospect', outcome: 'filtered', reason: 'prospect' },
       { externalId: 'senior', outcome: 'filtered', reason: 'not-early-career' },
-      { externalId: 'marketing', outcome: 'filtered', reason: 'nontechnical' },
+      { externalId: 'marketing', outcome: 'shelved', reason: 'nontechnical' },
       { externalId: 'http', outcome: 'withheld', reason: 'invalid-application-url' },
       { externalId: 'aggregator', outcome: 'withheld', reason: 'aggregator-destination' },
     ]);

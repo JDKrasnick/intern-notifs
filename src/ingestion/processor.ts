@@ -1,5 +1,5 @@
 import { earlyCareerRequirements, hasLifecycleTitleSignal, htmlToText, inferSeason, inferWorkMode } from '../core/early-career.js';
-import { isTechnicalJob } from '../core/filters.js';
+import { assessTechnicalRole } from '../core/filters.js';
 import { parseCompensation } from '../core/normalize.js';
 import { applicationUrlRejection } from '../sources/quality.js';
 import type {
@@ -53,9 +53,7 @@ export function processPosting(posting: SourcedPosting): { listing?: ProcessedLi
   const location = posting.locations.map(htmlToText).filter(Boolean).join(' / ') || 'Unspecified';
   const season = posting.seasonHint ?? inferSeason(title, content);
   const classificationTitle = [title, ...(posting.classificationTags ?? []).map(htmlToText)].filter(Boolean).join(' ');
-  if (!isTechnicalJob({ company, title: classificationTitle, location, season })) {
-    return { decision: { externalId: posting.externalId, outcome: 'filtered', reason: 'nontechnical' } };
-  }
+  const assessment = assessTechnicalRole({ company, title: classificationTitle, location, season }, content);
   const urlReason = withheldReason(posting.applyUrl);
   if (urlReason) {
     return { decision: { externalId: posting.externalId, outcome: 'withheld', reason: urlReason } };
@@ -80,9 +78,14 @@ export function processPosting(posting: SourcedPosting): { listing?: ProcessedLi
     ...(posting.publishedAt ? { postedAt: posting.publishedAt } : {}),
     ...(workMode ? { workMode } : {}),
     fetchedAt: posting.fetchedAt,
-    technical: true,
+    technical: assessment.technical,
   };
-  return { listing, decision: { externalId: posting.externalId, outcome: 'included', reason: 'source-policy' } };
+  // A non-technical early-career role is still worth keeping: it is persisted,
+  // stays out of every catalog index and alert, and remains available if the
+  // catalog's scope ever widens.
+  return assessment.technical
+    ? { listing, decision: { externalId: posting.externalId, outcome: 'included', reason: 'source-policy' } }
+    : { listing, decision: { externalId: posting.externalId, outcome: 'shelved', reason: 'nontechnical' } };
 }
 
 export function processSnapshot(snapshot: SourceSnapshot): ProcessedSnapshot {
@@ -93,17 +96,18 @@ export function processSnapshot(snapshot: SourceSnapshot): ProcessedSnapshot {
     decisions.push(result.decision);
     if (result.listing) listings.push(result.listing);
   }
-  const filtered = decisions.filter((decision) => decision.outcome === 'filtered').length;
-  const withheld = decisions.filter((decision) => decision.outcome === 'withheld').length;
+  const count = (outcome: PostingDecision['outcome']) => decisions.filter((decision) => decision.outcome === outcome).length;
+  const shelved = count('shelved');
   return {
     listings,
     decisions,
     counts: {
       raw: snapshot.rawCount,
       valid: snapshot.postings.length,
-      eligible: listings.length,
-      filtered,
-      withheld,
+      eligible: listings.length - shelved,
+      shelved,
+      filtered: count('filtered'),
+      withheld: count('withheld'),
     },
   };
 }

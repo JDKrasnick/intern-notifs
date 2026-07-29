@@ -161,7 +161,8 @@ function legacyBatch(result: SourceFetchResult): TrustedBatch {
       counts: {
         raw: result.rawRowCount ?? listings.length,
         valid: listings.length,
-        eligible: listings.length,
+        eligible: listings.filter((listing) => listing.technical !== false).length,
+        shelved: listings.filter((listing) => listing.technical === false).length,
         filtered: 0,
         withheld: result.rejectedApplicationUrls?.length ?? 0,
       },
@@ -273,7 +274,10 @@ export class IngestionRunner {
           existing = await this.store.findByFingerprint(candidate);
         }
         let confidence: ApplicationPageConfidence | undefined;
-        const needsValidation = Boolean(this.validateApplicationUrl && existing?.invalidApplicationUrl !== normalizedUrl
+        // Shelved roles never surface or alert, so they are not worth an
+        // employer request.
+        const needsValidation = Boolean(this.validateApplicationUrl && listing.technical !== false
+          && existing?.invalidApplicationUrl !== normalizedUrl
           && (!existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
         validatingLink = needsValidation;
         if (needsValidation) {
@@ -318,7 +322,7 @@ export class IngestionRunner {
         if (batch.unchanged) report.unchangedSources.push(connector.id);
         const baseline = Boolean(!previous || previous.successfulFetches === 0 || options.seedOnly);
         if (baseline) report.baselineSources.push(connector.id);
-        report.processedListings += batch.processed.listings.length;
+        report.processedListings += batch.processed.counts.eligible;
         const now = this.now().toISOString();
         const priorOccurrences = await this.store.getSourceOccurrences(connector.id);
         // An unchanged snapshot repeats postings the checkpoint already trusts, so

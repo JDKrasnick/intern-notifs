@@ -125,12 +125,13 @@ export class GitHubMarkdownAdapter implements SourceAdapter, SourceConnector {
       },
     };
     const processed = processSnapshot(neutral);
-    neutral.checkpoint.lastRowCount = processed.listings.length;
+    const eligible = processed.listings.filter((listing) => listing.technical !== false);
+    neutral.checkpoint.lastRowCount = eligible.length;
     return {
       ...neutral,
       rawRowCount: neutral.rawCount,
       processed,
-      listings: processed.listings,
+      listings: eligible,
       ...(rejectedApplicationUrls.length ? { rejectedApplicationUrls } : {}),
       notModified: neutral.outcome === 'unchanged',
     };

@@ -110,16 +110,85 @@ export function classifyJob(listing: Pick<RawListing, 'company' | 'title' | 'loc
   return jobCategories.filter((category) => matchesCategory(value, category));
 }
 /**
+ * Tools and practices that only appear in technical job text. Individually weak
+ * — a marketing post can mention SQL — so these only ever accumulate a score for
+ * a role whose title decided nothing.
+ */
+const technicalStackPattern = new RegExp([
+  String.raw`\b(?:python|java|javascript|typescript|kotlin|swift|golang|scala|matlab|verilog|vhdl)\b`,
+  String.raw`(?:\bc\+\+|\bc#|\bobjective-c\b|\.net\b)`,
+  String.raw`\b(?:react|angular|vue|node(?:\.?js)?|django|flask|spring boot|rails)\b`,
+  String.raw`\b(?:docker|terraform|ansible|jenkins|ci/cd|git(?:hub|lab)?|jira)\b`,
+  String.raw`\b(?:aws|gcp|azure|lambda|s3|ec2|serverless|microservices?)\b`,
+  String.raw`\b(?:pytorch|tensorflow|scikit|pandas|numpy|spark|hadoop|kafka|airflow|dbt|tableau|power bi)\b`,
+  String.raw`\b(?:rest(?:ful)? api|graphql|grpc|webhooks?|sdk|\bapi\b|\bcli\b)\b`,
+  String.raw`\b(?:data structures?|object[- ]oriented|unit test\w*|code review|debugg\w*|refactor\w*|version control)\b`,
+  String.raw`\b(?:relational database|schema design|query optimization|latency|throughput|scalab\w+)\b`,
+].join('|'), 'i');
+
+export type TechnicalBasis = 'title' | 'business-function' | 'description' | 'no-evidence';
+
+export interface TechnicalAssessment {
+  technical: boolean;
+  basis: TechnicalBasis;
+  /** Present only when the title was inconclusive and description text decided it. */
+  score?: number;
+  signals?: string[];
+}
+
+/** Distinct matches only: one word repeated twenty times is still one signal. */
+function distinctMatches(value: string, pattern: RegExp): string[] {
+  return [...new Set([...value.matchAll(new RegExp(pattern.source, 'gi'))].map((match) => match[0].toLowerCase()))];
+}
+
+const DESCRIPTION_SCORE_THRESHOLD = 4;
+/**
+ * Company boilerplate says "we build silicon and software", so domain words
+ * alone once made a truck driver technical. Named tools and practices appear in
+ * what a technical role actually asks of a candidate, so an uncertain role must
+ * show several of them.
+ */
+const DESCRIPTION_STACK_MINIMUM = 2;
+
+/**
  * Eligibility reads the role, never the employer or its city: not every job at
  * "Jump Trading Group" is quantitative, and not every job in "Research Triangle
  * Park" is research. User-facing keyword filters still match the whole listing.
+ *
+ * A title that names a domain, or names a business function, settles the question
+ * by itself. Only a title that decides nothing falls through to scoring the
+ * description, so the cost and the false-positive surface of keyword counting
+ * stay confined to genuinely uncertain roles.
  */
-export function isTechnicalJob(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season'>) {
-  if (strongTechnicalPattern.test(listing.title) || technicalAcronymPattern.test(listing.title)) return true;
-  if (nontechnicalFunctionPattern.test(listing.title)) return false;
+export function assessTechnicalRole(
+  listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season'>,
+  description?: string,
+): TechnicalAssessment {
+  if (strongTechnicalPattern.test(listing.title) || technicalAcronymPattern.test(listing.title)) {
+    return { technical: true, basis: 'title' };
+  }
+  if (nontechnicalFunctionPattern.test(listing.title)) return { technical: false, basis: 'business-function' };
   const role = { company: '', title: listing.title, location: '', season: '' };
-  return classifyJob(role).some((category) => technicalJobCategories.includes(category))
-    || qualifiedTechnicalPattern.test(listing.title);
+  if (classifyJob(role).some((category) => technicalJobCategories.includes(category))
+    || qualifiedTechnicalPattern.test(listing.title)) {
+    return { technical: true, basis: 'title' };
+  }
+  const text = (description ?? '').trim();
+  if (!text) return { technical: false, basis: 'no-evidence' };
+  const domain = distinctMatches(text, strongTechnicalPattern);
+  const stack = distinctMatches(text, technicalStackPattern);
+  const business = distinctMatches(text, nontechnicalFunctionPattern);
+  const score = Math.min(domain.length, 3) * 3 + Math.min(stack.length, 6) - business.length * 2;
+  return {
+    technical: score >= DESCRIPTION_SCORE_THRESHOLD && stack.length >= DESCRIPTION_STACK_MINIMUM,
+    basis: 'description',
+    score,
+    signals: [...domain.slice(0, 3), ...stack.slice(0, 6)],
+  };
+}
+
+export function isTechnicalJob(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season'>, description?: string) {
+  return assessTechnicalRole(listing, description).technical;
 }
 
 /** Deterministic title-keyword classification for compact notification context; it does not infer qualifications. */

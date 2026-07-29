@@ -243,7 +243,8 @@ export interface SourceSnapshot {
 
 export interface PostingDecision {
   externalId: string;
-  outcome: 'included' | 'filtered' | 'withheld';
+  /** `shelved` is stored but kept out of every catalog index and alert. */
+  outcome: 'included' | 'shelved' | 'filtered' | 'withheld';
   reason:
     | 'prospect'
     | 'not-early-career'
@@ -260,6 +261,7 @@ export interface ProcessedSnapshot {
     raw: number;
     valid: number;
     eligible: number;
+    shelved: number;
     filtered: number;
     withheld: number;
   };

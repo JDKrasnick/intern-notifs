@@ -345,7 +345,7 @@ export class GreenhouseBoardAdapter implements SourceAdapter, SourceConnector {
       },
     };
     const processed = processSnapshot(neutral);
-    const listings = processed.listings;
+    const listings = processed.listings.filter((listing) => listing.technical !== false);
     neutral.checkpoint.lastRowCount = listings.length;
     return {
       ...neutral,

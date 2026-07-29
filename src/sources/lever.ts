@@ -234,12 +234,13 @@ export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
       },
     };
     const processed = processSnapshot(neutral);
-    neutral.checkpoint.lastRowCount = processed.listings.length;
+    const eligible = processed.listings.filter((listing) => listing.technical !== false);
+    neutral.checkpoint.lastRowCount = eligible.length;
     return {
       ...neutral,
       rawRowCount: postings.length,
       processed,
-      listings: processed.listings,
+      listings: eligible,
       notModified: neutral.outcome === 'unchanged',
     };
   }
