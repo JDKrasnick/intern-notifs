@@ -27,6 +27,8 @@ export interface GreenhouseJobsResponse {
 
 export interface GreenhouseAdapterOptions {
   source: ReviewedGreenhouseSource;
+  /** Shadow polling uses a separate checkpoint so promotion always starts quietly. */
+  checkpointId?: string;
   fetchImpl?: typeof fetch;
   now?: () => Date;
 }
@@ -250,7 +252,7 @@ export class GreenhouseBoardAdapter implements SourceAdapter {
   private readonly now: () => Date;
 
   constructor(private readonly options: GreenhouseAdapterOptions) {
-    this.id = options.source.id;
+    this.id = options.checkpointId ?? options.source.id;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.now = options.now ?? (() => new Date());
   }
@@ -259,7 +261,7 @@ export class GreenhouseBoardAdapter implements SourceAdapter {
     const url = greenhouseJobsUrl(this.options.source.boardToken);
     const response = await this.fetchImpl(url, {
       headers: { Accept: 'application/json', ...(previous?.etag ? { 'If-None-Match': previous.etag } : {}) },
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(8_000),
     });
     if (response.status === 304) {
       return {

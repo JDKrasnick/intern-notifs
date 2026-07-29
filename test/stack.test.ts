@@ -14,7 +14,8 @@ describe('CDK stack', () => {
   it('has durable tables and main-branch OIDC trust', () => {
     const app = new cdk.App(); const stack = new InternNotifsStack(app, 'Test', { githubRepository: 'owner/repo', emailAddress: 'me@example.com' }); const template = Template.fromStack(stack);
     template.resourceCountIs('AWS::DynamoDB::Table', 3);
-    template.resourceCountIs('AWS::Scheduler::Schedule', 3);
+    template.resourceCountIs('AWS::Scheduler::Schedule', 4);
+    template.resourceCountIs('AWS::SQS::Queue', 3);
     template.hasResourceProperties('AWS::IAM::Role', { AssumeRolePolicyDocument: { Statement: [{ Condition: { StringEquals: { 'token.actions.githubusercontent.com:sub': 'repo:owner/repo:ref:refs/heads/main' } } }] } });
   });
   it('keeps an infrastructure snapshot', () => {
@@ -28,5 +29,15 @@ describe('CDK stack', () => {
   it('enables a DST-aware morning digest schedule', () => {
     const app = new cdk.App(); const stack = new InternNotifsStack(app, 'Schedules', { githubRepository: 'owner/repo', emailAddress: 'me@example.com' });
     Template.fromStack(stack).hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: 'cron(0 9 * * ? *)', ScheduleExpressionTimezone: 'America/New_York', State: 'ENABLED', FlexibleTimeWindow: { Mode: 'OFF' } });
+  });
+  it('queues Greenhouse boards every ten minutes with bounded worker concurrency', () => {
+    const app = new cdk.App(); const stack = new InternNotifsStack(app, 'Greenhouse', { githubRepository: 'owner/repo', emailAddress: 'me@example.com' }); const template = Template.fromStack(stack);
+    template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: 'cron(2,12,22,32,42,52 * * * ? *)', State: 'ENABLED' });
+    template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
+      BatchSize: 10,
+      FunctionResponseTypes: ['ReportBatchItemFailures'],
+      ScalingConfig: { MaximumConcurrency: 4 },
+    });
+    template.hasResourceProperties('AWS::Lambda::Function', { ReservedConcurrentExecutions: 4, Timeout: 120 });
   });
 });
