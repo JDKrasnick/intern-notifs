@@ -29,8 +29,20 @@ does not introduce automated application submission.
 
 ## Current baseline
 
-As of 2026-07-29, the repository contains three reviewed, shadow-only sources.
-A fresh run of the existing candidate probe and live contract produced:
+On 2026-07-29, the owner chose a single-user rollout that publishes
+API-responsive boards before completing first-party ownership review. This
+supersedes the staged shadow-first sequence below without weakening runtime
+identity, schema, host, link, or quiet-baseline gates.
+
+The official registry now contains 166 published sources: three with completed
+manual evidence and 163 marked `api-probed` for post-publication ownership
+review. A fresh batch probe found 17,564 raw jobs, 304 candidate-eligible
+technical internships, and zero malformed rows. The full live contract ran
+against all 166 entries; 164 completed every check, while Mixpanel had a
+transport-inconclusive identity request and Nirmata had one transport-
+inconclusive link check. Neither was treated as a deterministic failure.
+
+The original manually reviewed cohort remains:
 
 | Employer | Board token | Raw jobs | Prospect jobs | Eligible technical internships | Malformed rows | Initial application host | ETag | Live contract |
 | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- |
@@ -68,9 +80,11 @@ Point72 (10). The small web-search sample independently found Liberate,
 DoubleVerify, Everpure/Pure Storage, Financial Times, Nirmata, Clockwork.io,
 Xometry, Ritual, and Brevium outside the current internship-list candidate set.
 
-The focused deterministic suite currently has 107 passing tests. The
-registry-to-fixture manifest, typecheck, lint, identity checks, schema checks,
-ETag checks, and eligible-role link checks pass for the three boards.
+The registry manifest, typecheck, identity checks, schema checks, ETag checks,
+and eligible-role link checks cover the publication path. Bespoke sanitized
+fixtures remain mandatory for the three manually reviewed boards; API-probed
+entries use current live identity and host evidence until post-publication
+review supplies equivalent artifacts.
 
 What already exists:
 
@@ -87,16 +101,15 @@ What already exists:
 What is still missing:
 
 - a multi-source, continuous discovery harvester;
-- a candidate ledger and separate verified-board index;
+- a durable provenance ledger beyond the checked-in registry data;
 - a batch command around the existing candidate probe;
 - agent tooling and evidence rules for first-party identity verification;
-- an exception review queue and registry patch generator;
-- an actual scheduled shadow path;
-- production registration of published Greenhouse adapters.
+- a post-publication exception review queue and registry patch generator;
+- retained per-board live-contract reports rather than workflow logs alone.
 
-The current `shadow` value is only registry state. Greenhouse sources are not
-present in `defaultSources`, so they are not yet polled by the production
-runtime.
+Published Greenhouse sources are present in `defaultSources`. The poller creates
+a quiet baseline independently for every source, so existing roles become
+visible without being announced as newly posted.
 
 ## External contract
 
@@ -567,6 +580,10 @@ npm run test:greenhouse:live
 
 ## Stage 6: make shadow mode real
 
+> Superseded for the owner-only rollout on 2026-07-29. The live contract remains
+> scheduled for post-publication validation, but published sources enter the
+> catalog directly with a quiet per-source baseline.
+
 Add a shadow runner that constructs adapters for registry entries whose status
 is `shadow`, but never sends their listings to catalog reconciliation or
 notifications.
@@ -606,6 +623,9 @@ nothing, rather than being treated as a failure.
 
 ## Stage 7: publish a board
 
+> Completed in bulk for the 166-board owner-only rollout. The steps below remain
+> the intended policy when the product expands beyond its single user.
+
 Promotion is an explicit reviewed code change:
 
 1. change the registry status from `shadow` to `published`;
@@ -615,8 +635,8 @@ Promotion is an explicit reviewed code change:
 5. verify catalog entries without notifications;
 6. allow later genuinely new roles to enter notification evaluation.
 
-Changing `status` alone is not sufficient in the current code: production
-adapter wiring still needs to be implemented.
+Published entries are wired into `defaultSources`; changing registry status is
+therefore sufficient to control adapter registration.
 
 Publication must preserve the existing catalog rules:
 

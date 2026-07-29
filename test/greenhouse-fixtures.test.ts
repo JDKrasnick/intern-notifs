@@ -28,7 +28,9 @@ function resolvedResponse(url: string): Response {
 
 const fetchedAt = new Date('2026-07-27T00:00:00.000Z');
 
-describe.each(reviewedGreenhouseSources.map((source) => [source.id, source] as const))('%s fixture contract', (_id, source) => {
+const fixtureBackedSources = reviewedGreenhouseSources.filter((source) => source.evidenceStatus !== 'api-probed');
+
+describe.each(fixtureBackedSources.map((source) => [source.id, source] as const))('%s fixture contract', (_id, source) => {
   const identity = readFixture<{ name: string }>(source, 'identity.json');
   const board = readFixture<GreenhouseJobsResponse>(source, 'jobs.json');
   const jobs = board.jobs ?? [];

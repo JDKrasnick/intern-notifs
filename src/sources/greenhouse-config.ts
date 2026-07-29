@@ -1,4 +1,5 @@
 import type { SourceClass } from './quality.js';
+import { apiProbedGreenhouseSources } from './greenhouse-registry-data.js';
 
 /** The only Greenhouse board host we ever read identity/jobs from. */
 export const GREENHOUSE_BOARD_API_HOST = 'boards-api.greenhouse.io';
@@ -34,33 +35,44 @@ export interface ReviewedGreenhouseSource {
   /** Hosts an application URL may finally resolve to after redirects. */
   allowedFinalHosts: string[];
   status: ReviewedGreenhouseStatus;
+  /** `api-probed` entries are published now and queued for later ownership review. */
+  evidenceStatus?: 'reviewed' | 'api-probed';
   /** Required justification when a board uses a non-Greenhouse careers host. */
   hostExceptionReason?: string;
   sourceClass?: Extract<SourceClass, 'greenhouse'>;
 }
 
 /**
- * Small, deliberately shadow-only starter cohort. Every board was checked
+ * Original manually reviewed starter cohort. Every board was checked
  * against its official careers page and the fixed public Greenhouse identity
- * endpoint on 2026-07-27. No board is published or allowed to notify yet.
+ * endpoint on 2026-07-27.
  */
-export const reviewedGreenhouseSources: ReviewedGreenhouseSource[] = [
+const manuallyReviewedGreenhouseSources: ReviewedGreenhouseSource[] = [
   {
     id: 'greenhouse-figma', employerId: 'figma', displayName: 'Figma', aliases: ['Figma, Inc.'], boardToken: 'figma',
     careersUrl: 'https://www.figma.com/careers/', expectedBoardNames: ['Figma'], admittedBoardName: 'Figma', admittedAt: '2026-07-27T21:13:00.000Z',
-    allowedInitialHosts: ['boards.greenhouse.io'], allowedFinalHosts: ['job-boards.greenhouse.io'], status: 'shadow', sourceClass: 'greenhouse',
+    allowedInitialHosts: ['boards.greenhouse.io'], allowedFinalHosts: ['job-boards.greenhouse.io'], status: 'published', evidenceStatus: 'reviewed', sourceClass: 'greenhouse',
   },
   {
     id: 'greenhouse-datadog', employerId: 'datadog', displayName: 'Datadog', aliases: ['Datadog, Inc.'], boardToken: 'datadog',
     careersUrl: 'https://careers.datadoghq.com/', expectedBoardNames: ['Datadog'], admittedBoardName: 'Datadog', admittedAt: '2026-07-27T21:13:00.000Z',
-    allowedInitialHosts: ['careers.datadoghq.com'], allowedFinalHosts: ['careers.datadoghq.com'], status: 'shadow', sourceClass: 'greenhouse',
+    allowedInitialHosts: ['careers.datadoghq.com'], allowedFinalHosts: ['careers.datadoghq.com'], status: 'published', evidenceStatus: 'reviewed', sourceClass: 'greenhouse',
     hostExceptionReason: 'Datadog serves its official Greenhouse application flow from careers.datadoghq.com.',
   },
   {
     id: 'greenhouse-cloudflare', employerId: 'cloudflare', displayName: 'Cloudflare', aliases: ['Cloudflare, Inc.'], boardToken: 'cloudflare',
     careersUrl: 'https://www.cloudflare.com/careers/', expectedBoardNames: ['Cloudflare'], admittedBoardName: 'Cloudflare', admittedAt: '2026-07-27T21:13:00.000Z',
-    allowedInitialHosts: ['boards.greenhouse.io'], allowedFinalHosts: ['job-boards.greenhouse.io'], status: 'shadow', sourceClass: 'greenhouse',
+    allowedInitialHosts: ['boards.greenhouse.io'], allowedFinalHosts: ['job-boards.greenhouse.io'], status: 'published', evidenceStatus: 'reviewed', sourceClass: 'greenhouse',
   },
+];
+
+/**
+ * Official Greenhouse source registry. API-probed entries use the current board
+ * identity as their catalog name and remain queued for later ownership review.
+ */
+export const reviewedGreenhouseSources: ReviewedGreenhouseSource[] = [
+  ...manuallyReviewedGreenhouseSources,
+  ...apiProbedGreenhouseSources,
 ];
 
 /** Greenhouse board tokens are lowercase slugs; anything URL-shaped is rejected. */
@@ -181,6 +193,9 @@ export function reviewedSourceConfigError(source: ReviewedGreenhouseSource): str
     return 'a non-Greenhouse application host requires hostExceptionReason';
   }
   if (source.status !== 'shadow' && source.status !== 'published') return 'status must be shadow or published';
+  if (source.evidenceStatus !== undefined && source.evidenceStatus !== 'reviewed' && source.evidenceStatus !== 'api-probed') {
+    return 'evidenceStatus must be reviewed or api-probed';
+  }
   return undefined;
 }
 

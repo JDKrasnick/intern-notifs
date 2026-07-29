@@ -90,10 +90,10 @@ function approvalArtifactError(raw: unknown, source: ReviewedGreenhouseSource): 
 }
 
 /**
- * Every reviewed board must ship a sanitized identity/jobs fixture and a small
- * approval artifact from its manually reviewed live run. CI fails when a source
- * has no matching material, when the material does not cover that company's
- * hosts and filtering cases, or when fixture material has no reviewed source.
+ * Manually reviewed boards ship sanitized identity/jobs fixtures and a small
+ * approval artifact. API-probed boards are official sources but intentionally
+ * enter the ownership-review queue after publication; their live identity,
+ * schema, and host gates remain fail-closed at runtime.
  */
 const REQUIRED_FIXTURES: Array<{
   file: string;
@@ -113,6 +113,7 @@ export function collectManifestViolations(
   const unclaimedDirs = new Set(fs.listBoardDirs(root));
   for (const source of registry) {
     unclaimedDirs.delete(source.boardToken);
+    if (source.evidenceStatus === 'api-probed') continue;
     const dir = `${root}/${source.boardToken}`;
     const missing = REQUIRED_FIXTURES.filter(({ file }) => !fs.fileExists(`${dir}/${file}`));
     for (const { file } of missing) violations.push(`${source.id}: missing ${file}`);

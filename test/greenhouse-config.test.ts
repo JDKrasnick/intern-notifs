@@ -51,9 +51,12 @@ function jsonResponse(body: unknown, url: string, status = 200): Response {
 }
 
 describe('reviewed Greenhouse registry', () => {
-  it('ships with a bounded, shadow-only starter cohort', () => {
-    expect(reviewedGreenhouseSources.map((source) => source.id)).toEqual(['greenhouse-figma', 'greenhouse-datadog', 'greenhouse-cloudflare']);
-    expect(reviewedGreenhouseSources.every((source) => source.status === 'shadow')).toBe(true);
+  it('publishes the full API-responsive board inventory', () => {
+    expect(reviewedGreenhouseSources).toHaveLength(166);
+    expect(reviewedGreenhouseSources.slice(0, 3).map((source) => source.id)).toEqual(['greenhouse-figma', 'greenhouse-datadog', 'greenhouse-cloudflare']);
+    expect(reviewedGreenhouseSources.every((source) => source.status === 'published')).toBe(true);
+    expect(reviewedGreenhouseSources.filter((source) => source.evidenceStatus === 'reviewed')).toHaveLength(3);
+    expect(reviewedGreenhouseSources.filter((source) => source.evidenceStatus === 'api-probed')).toHaveLength(163);
   });
 
   it('keeps every future reviewed entry within the admission contract', () => {
@@ -79,6 +82,7 @@ describe('reviewed Greenhouse registry', () => {
         expect(source.hostExceptionReason?.trim()).not.toBe('');
       }
       expect(source.status === 'shadow' || source.status === 'published').toBe(true);
+      expect(source.evidenceStatus === 'reviewed' || source.evidenceStatus === 'api-probed').toBe(true);
       expect(seenIds.has(source.id)).toBe(false);
       expect(seenTokens.has(source.boardToken)).toBe(false);
       seenIds.add(source.id);

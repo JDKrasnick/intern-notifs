@@ -1,8 +1,10 @@
 # Greenhouse per-company evidence
 
-Every entry in `reviewedGreenhouseSources` must ship matching material in this
-directory or `npm run greenhouse:manifest` (and CI) fails. This is the
-registry-to-fixture manifest gate from Part 1 of the ingestion plan.
+Every manually reviewed entry in `reviewedGreenhouseSources` must ship matching
+material in this directory or `npm run greenhouse:manifest` (and CI) fails.
+Entries marked `api-probed` are published in the owner-only rollout and queued
+for post-publication ownership review; they remain protected by live identity,
+schema, host, link-health, and per-source baseline gates.
 
 Layout per reviewed board:
 
