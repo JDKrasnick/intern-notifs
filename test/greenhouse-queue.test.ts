@@ -114,19 +114,22 @@ describe('Greenhouse queue worker', () => {
   });
 
   it('returns only failed SQS record IDs for bounded retry', async () => {
+    const store = new MemoryInternshipStore();
     const result = await processGreenhouseQueue({
       Records: [
         { messageId: 'good', body: JSON.stringify(message()) },
         { messageId: 'bad', body: JSON.stringify(message('greenhouse-unknown')) },
       ],
     }, {
-      store: new MemoryInternshipStore(),
+      store,
       sources: [acmeSource],
       fetchImpl: async () => response(),
       linkValidator: async (url) => url,
     });
 
     expect(result).toEqual({ batchItemFailures: [{ itemIdentifier: 'bad' }] });
+    expect((await store.getSourceHealth(acmeSource.id))?.state).toBe('healthy');
+    expect((await store.getSourceHealth('greenhouse-unknown'))?.state).toBe('degraded');
   });
 
   it('does not process later FIFO records from a board whose earlier record failed', async () => {
