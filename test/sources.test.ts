@@ -10,7 +10,7 @@ describe('GitHub source adapters', () => {
   it('ships each requested feed and document', () => {
     expect(defaultSources.map((source) => source.id)).toEqual(['vanshb03-summer-2027', 'simplify-summer-2026', 'zapply-2027', 'speedyapply-2027-swe', 'speedyapply-2027-ai', 'northwestern-fintech-2027-quant', 'canadian-tech-2027']);
   });
-  it('registers reviewed Lever boards but keeps Greenhouse outside the scheduled registry', () => {
+  it('registers reviewed Lever boards but keeps queued Greenhouse work outside the general poll registry', () => {
     expect(productionSources.map((source) => source.id)).toEqual(expect.arrayContaining(['lever-palantir', 'lever-plusai', 'lever-hermeus', 'lever-xsolla']));
     expect(productionSources.filter((source) => source.id.startsWith('greenhouse-'))).toEqual([]);
   });

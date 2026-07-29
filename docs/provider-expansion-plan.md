@@ -43,7 +43,7 @@ The owner verifies `job_board_name` from the employer's official careers page, c
 
 Retain only jobs where `isListed` is `true`. Map `title`, `location`, `secondaryLocations`, `descriptionPlain`, `department`, `team`, `publishedAt`, `employmentType`, `workplaceType`, `applyUrl`, `jobUrl`, and disclosed compensation. Use `ashby-{job_board_name}` as the source ID and normalized `applyUrl` as the board-specific role key when no distinct posting ID is present.
 
-During admission, require returned `jobUrl` and `applyUrl` values to match the reviewed Ashby board path or an explicitly approved employer application host. Later fetches use the same five-minute task, content-hash/ETag comparison, quiet baseline, link validation, two-snapshot closure rule, and error handling defined for Greenhouse.
+During admission, require returned `jobUrl` and `applyUrl` values to match the reviewed Ashby board path or an explicitly approved employer application host. Later fetches use the same queued cadence, bounded concurrency, content-hash/ETag comparison, quiet baseline, link validation, two-snapshot closure rule, and error handling defined for Greenhouse.
 
 ## Admission standard for every future provider
 

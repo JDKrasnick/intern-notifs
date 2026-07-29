@@ -6,7 +6,15 @@ import { sourceQualityFailures } from './sources/quality.js';
 import type { Internship, RawListing, SourceAdapter, SourceOccurrence } from './types.js';
 import type { InternshipStore } from './store.js';
 
-export interface PollReport { fetchedSources: number; baselineSources: string[]; newJobs: Internship[]; filteredJobs: Internship[]; failures: string[]; }
+export interface PollReport {
+  fetchedSources: number;
+  unchangedSources: string[];
+  baselineSources: string[];
+  processedListings: number;
+  newJobs: Internship[];
+  filteredJobs: Internship[];
+  failures: string[];
+}
 
 function occurrence(listing: RawListing): SourceOccurrence {
   return { sourceId: listing.sourceId, document: listing.document, sourceUrl: listing.sourceUrl, row: listing.row, postedAt: listing.postedAt, workMode: listing.workMode, company: listing.company, title: listing.title, location: listing.location, season: listing.season, applyUrl: listing.applyUrl, compensation: listing.compensation, ...(listing.requirements ? { requirements: listing.requirements } : {}), state: listing.state };
@@ -64,16 +72,21 @@ export class Poller {
     } while (cursor);
   }
   async poll(options: { seedOnly?: boolean } = {}): Promise<PollReport> {
-    const report: PollReport = { fetchedSources: 0, baselineSources: [], newJobs: [], filteredJobs: [], failures: [] };
+    const report: PollReport = { fetchedSources: 0, unchangedSources: [], baselineSources: [], processedListings: 0, newJobs: [], filteredJobs: [], failures: [] };
     for (const adapter of this.adapters) {
       const previous = await this.store.getCheckpoint(adapter.id);
       try {
         const result = await adapter.fetch(previous); report.fetchedSources += 1;
-        if (result.notModified) continue;
+        if (result.notModified) {
+          report.unchangedSources.push(adapter.id);
+          await this.store.putCheckpoint(result.checkpoint);
+          continue;
+        }
         const qualityFailures = sourceQualityFailures(result, previous);
         if (qualityFailures.length) throw new Error(qualityFailures.join('; '));
         const baseline = !previous || previous.successfulFetches === 0 || options.seedOnly;
         if (baseline) report.baselineSources.push(adapter.id);
+        report.processedListings += result.listings.length;
         const now = this.now().toISOString();
         let nextListing = 0;
         const processListing = async () => {
@@ -92,8 +105,8 @@ export class Poller {
               existing = await this.store.findByFingerprint(candidate);
             }
             // Runtime polling supplies a live verifier. Existing validated URLs
-            // are cached so the five-minute poll does not repeatedly probe the
-            // same employer endpoint.
+            // are cached so recurring polls do not repeatedly probe the same
+            // employer endpoint.
             const needsValidation = Boolean(this.validateApplicationUrl && existing?.invalidApplicationUrl !== normalizedUrl && (!existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
             validatingLink = needsValidation;
             if (needsValidation) {

@@ -23,8 +23,8 @@ The workflow is deliberately hybrid:
 - deterministic scheduled code performs all later ingestion.
 
 This plan expands the implementation in
-[`src/sources/greenhouse.ts`](../src/sources/greenhouse.ts) and
-[`src/sources/greenhouse-config.ts`](../src/sources/greenhouse-config.ts). It
+[`src/sources/greenhouse.ts`](../../src/sources/greenhouse.ts) and
+[`src/sources/greenhouse-config.ts`](../../src/sources/greenhouse-config.ts). It
 does not introduce automated application submission.
 
 ## Current baseline
@@ -82,7 +82,13 @@ What already exists:
 - application-host allowlists;
 - ETag and content-hash checkpoints;
 - per-company fixtures and approval artifacts;
-- a read-only live contract.
+- a read-only live contract;
+- a ten-minute EventBridge dispatcher;
+- a FIFO SQS work queue with per-board ordering and deduplication;
+- batches of ten with maximum worker concurrency four;
+- isolated scheduled shadow checkpoints and link checks;
+- a status-driven published path with a quiet first catalog baseline;
+- partial-batch retries, a dedicated dead-letter queue, and CloudWatch alarms.
 
 What is still missing:
 
@@ -91,12 +97,14 @@ What is still missing:
 - a batch command around the existing candidate probe;
 - agent tooling and evidence rules for first-party identity verification;
 - an exception review queue and registry patch generator;
-- an actual scheduled shadow path;
-- production registration of published Greenhouse adapters.
+- deployment and 24-hour observation of the first scheduled shadow cohort;
+- reviewed promotion of the first production board.
 
-The current `shadow` value is only registry state. Greenhouse sources are not
-present in `defaultSources`, so they are not yet polled by the production
-runtime.
+The current registry entries remain `shadow`, so they are checked by the
+Greenhouse queue without catalog writes or notifications. Greenhouse is
+intentionally separate from `defaultSources`; changing a reviewed entry to
+`published` routes that board through catalog reconciliation and notifications
+after a quiet first baseline.
 
 ## External contract
 
@@ -489,8 +497,8 @@ npm run greenhouse:admit -- \
 A standard generated patch begins with `status: "shadow"`. An exception patch
 cannot be generated until its review fields are complete.
 
-Verified boards with zero eligible roles stay out of five-minute ingestion and
-receive a lower-frequency jobs re-probe. When eligible roles appear, they
+Verified boards with zero eligible roles stay out of ten-minute ingestion and
+receive a staggered six-hour jobs re-probe. When eligible roles appear, they
 automatically become active-registry candidates without rediscovery.
 
 ### Operating cadence
@@ -505,7 +513,8 @@ automatically become active-registry candidates without rediscovery.
 | Probe newly discovered tokens | Immediately, with concurrency 4 and backoff |
 | Work agent identity queue | Continuously in bounded batches |
 | Re-probe verified zero-eligible boards | Weekly |
-| Poll active shadow/published boards | Existing five-minute target |
+| Poll active shadow/published boards | Every ten minutes |
+| Re-probe verified zero-eligible boards | Staggered every six hours |
 
 Cadence is configurable and must back off on `429`, `5xx`, transport failure,
 or provider-specific quota exhaustion.
@@ -543,7 +552,7 @@ for every zero-eligible board. It is validated by:
 - deterministic captured-response tests for the index generator.
 
 This separation lets InternNotifs verify hundreds or thousands of boards
-without pretending they all need five-minute polling or manufacturing an
+without pretending they all need ten-minute polling or manufacturing an
 eligible fixture for boards that have no relevant role.
 
 Required CI commands:
@@ -565,11 +574,12 @@ The live suite remains separate because network failure is inconclusive:
 npm run test:greenhouse:live
 ```
 
-## Stage 6: make shadow mode real
+## Stage 6: make shadow mode real — implemented
 
-Add a shadow runner that constructs adapters for registry entries whose status
-is `shadow`, but never sends their listings to catalog reconciliation or
-notifications.
+The scheduled queue worker constructs adapters for registry entries whose
+status is `shadow`, but never sends their listings to catalog reconciliation or
+notifications. Shadow checkpoints use a separate key so promotion always
+starts with a quiet published baseline.
 
 Each run records:
 
@@ -609,14 +619,14 @@ nothing, rather than being treated as a failure.
 Promotion is an explicit reviewed code change:
 
 1. change the registry status from `shadow` to `published`;
-2. register adapters for published Greenhouse sources in `defaultSources`;
-3. include their quality policies;
-4. deploy with a quiet first snapshot;
-5. verify catalog entries without notifications;
-6. allow later genuinely new roles to enter notification evaluation.
+2. deploy the reviewed registry change;
+3. let the queue worker create a quiet first published snapshot;
+4. verify catalog entries without notifications;
+5. allow later genuinely new roles to enter notification evaluation.
 
-Changing `status` alone is not sufficient in the current code: production
-adapter wiring still needs to be implemented.
+The queue worker resolves the current registry status at processing time.
+Changing `status` is therefore the only runtime routing change, but review,
+tests, deployment, and baseline verification remain required promotion gates.
 
 Publication must preserve the existing catalog rules:
 
@@ -670,7 +680,7 @@ Exit criterion: standard boards can become identity-verified without an
 owner-selected roster, while ambiguous and custom-host cases reliably stop in
 the exception queue.
 
-### PR 4 — Scheduled shadow runner
+### PR 4 — Scheduled shadow runner — implemented
 
 - schedule shadow-only adapters;
 - persist safe health reports;
@@ -683,7 +693,6 @@ catalog state.
 ### PR 5 — Cloudflare production pilot
 
 - publish Cloudflare first;
-- wire published Greenhouse adapters into `defaultSources`;
 - seed a quiet baseline;
 - verify the five currently eligible roles or explain live count changes;
 - monitor source health and notification suppression.
@@ -702,7 +711,7 @@ the first snapshot sends no alerts, and later polls reconcile safely.
 - update `docs/product-roadmap.md`;
 - record actual admission yield, custom-host rate, zero-eligible rate, probe
   duration, and failure categories;
-- use those measurements to decide when independent queue tasks are needed.
+- use those measurements to tune the existing independent queue tasks.
 
 ## Ownership
 

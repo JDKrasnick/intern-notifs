@@ -20,7 +20,7 @@
 | Milestone | Status | Exit criteria |
 | --- | --- | --- |
 | Catalog definition | In progress | Continuous employer discovery, source rules, taxonomy, and reliability targets operate without an owner-selected roster |
-| Official source adapters | In progress | Lever ingestion is live; the Greenhouse reader and admission gates are implemented but remain shadow-only and unscheduled; Ashby and SmartRecruiters remain planned |
+| Official source adapters | In progress | Lever ingestion is live; Greenhouse has a scheduled SQS-backed shadow/published runtime but its current boards remain shadow-only; Ashby and SmartRecruiters remain planned |
 | Catalog operations | In progress | Shared source-quality gates, live reports, source-candidate review queue, and bounded Firecrawl research workflow operate |
 | Mobile discovery MVP | In progress | Filtered feed, native deep-link alerts, official-form handoff, and tracker are polished |
 | Human-reviewed application assistance | In progress | Headed pilot fills a supported official form, pauses for unknowns and verification, and leaves final submission to the user |
@@ -43,7 +43,8 @@
 - [x] Audit 25 representative employers through the GitHub Markdown ingestion and poller pipeline.
 - [x] Add a provider-neutral company-coverage snapshot, public search API, and responsive web disclosure seeded from live internship evidence and reviewed ATS registries.
 - [x] Implement the Greenhouse source adapter, admission gates, deterministic fixtures, and live contract tests.
-- [ ] Add the Greenhouse batch probe/review workflow, scheduled shadow runner, and reviewed production promotion path described in [`greenhouse-registry-expansion-plan.md`](greenhouse-registry-expansion-plan.md).
+- [x] Add the SQS-backed Greenhouse shadow/published runner with ten-minute active polling, adaptive inactive polling, bounded concurrency, isolated retries, alarms, and a quiet promotion baseline.
+- [ ] Add the Greenhouse batch probe/review workflow and promote the first reviewed production board described in [`greenhouse/registry-expansion-plan.md`](greenhouse/registry-expansion-plan.md).
 - [x] Implement Lever source adapter, ETag checkpoints, technical-role mapping, and deterministic fixtures for Palantir, PlusAI, Hermeus, and Xsolla.
 - [ ] Add job freshness/source labels and notification deep links to the mobile product.
 - [ ] Add user-facing settings, account deletion, and data export surface.

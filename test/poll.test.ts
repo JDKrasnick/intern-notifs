@@ -9,6 +9,24 @@ class Adapter implements SourceAdapter {
   async fetch(previous?: SourceCheckpoint): Promise<SourceFetchResult> { return { sourceId: this.id, listings: this.rows, notModified: false, checkpoint: { sourceId: this.id, successfulFetches: (previous?.successfulFetches ?? 0) + 1, lastRowCount: this.rows.length } }; }
 }
 describe('polling', () => {
+  it('persists successful not-modified checkpoints for source-health visibility', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putCheckpoint({ sourceId: 'unchanged', successfulFetches: 1, lastRowCount: 3 });
+    const adapter: SourceAdapter = {
+      id: 'unchanged',
+      async fetch(previous) {
+        return {
+          sourceId: 'unchanged',
+          listings: [],
+          notModified: true,
+          checkpoint: { ...previous!, sourceId: 'unchanged', successfulFetches: 1, lastSuccessAt: '2026-07-29T12:00:00.000Z' },
+        };
+      },
+    };
+    const report = await new Poller([adapter], store).poll();
+    expect(report.unchangedSources).toEqual(['unchanged']);
+    expect(await store.getCheckpoint('unchanged')).toMatchObject({ lastSuccessAt: '2026-07-29T12:00:00.000Z' });
+  });
   it('quietly seeds a source, then alerts a new canonical listing', async () => {
     const store = new MemoryInternshipStore();
     expect((await new Poller([new Adapter('one', [listing('https://jobs.example.com/a')])], store).poll()).newJobs).toHaveLength(0);

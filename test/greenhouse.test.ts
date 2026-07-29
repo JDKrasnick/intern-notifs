@@ -214,7 +214,7 @@ describe('validateApplicationUrl with a source policy', () => {
 });
 
 describe('greenhouse adapter registration', () => {
-  it('keeps reviewed boards out of scheduled production sources until the snapshot/shadow rollout is enabled', () => {
+  it('keeps queued Greenhouse boards out of the general poll Lambda', () => {
     const greenhouse = defaultSources.filter((source) => source.id.startsWith('greenhouse-'));
     expect(greenhouse).toEqual([]);
   });
