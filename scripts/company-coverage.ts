@@ -139,7 +139,7 @@ async function main() {
     sourceRows.push({
       sourceId: source.id,
       activeListingCount: result.listings.length,
-      publicationStatus: 'shadow',
+      publicationStatus: reviewedSource.status,
       evidenceUrls: [...new Set([reviewedSource.careersUrl, ...result.listings.map((listing) => listing.sourceUrl)])].sort(),
     });
     for (const listing of result.listings) {

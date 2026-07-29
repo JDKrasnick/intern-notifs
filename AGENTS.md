@@ -15,6 +15,12 @@ InternNotifs is a lightweight, simple mobile internship radar: it notifies stude
 
 The detailed product tracker is [`docs/product-roadmap.md`](docs/product-roadmap.md). Keep its milestone statuses and checkboxes current when work lands.
 
+## Architecture references
+
+- Greenhouse monitoring deployment boundaries, queue flow, cadence, retries,
+  shadow behavior, and rendered diagram:
+  [`docs/greenhouse/architecture.md`](docs/greenhouse/architecture.md).
+
 ## Owner preferences
 
 - Repository: `JDKrasnick/intern-notifs`; owner GitHub handle: `JDKrasnick`.

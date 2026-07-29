@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-29T00:00:00.000Z",
+  "generatedAt": "2026-07-29T21:07:31.798Z",
   "methodology": "Configured live technical-internship feeds plus reviewed direct ATS registries and maintained tech-company seeds.",
   "counts": {
-    "companies": 731,
-    "internshipObserved": 716,
-    "directPublished": 4,
-    "directShadow": 3,
-    "feedObservedOnly": 710,
-    "candidateOnly": 14,
-    "activeListingObservations": 2363
+    "companies": 800,
+    "internshipObserved": 744,
+    "directPublished": 170,
+    "directShadow": 0,
+    "feedObservedOnly": 621,
+    "candidateOnly": 9,
+    "activeListingObservations": 2660
   },
   "sourceRows": [
     {
@@ -21,28 +21,1199 @@
       ]
     },
     {
-      "sourceId": "greenhouse-cloudflare",
-      "activeListingCount": 5,
-      "publicationStatus": "shadow",
+      "sourceId": "greenhouse-ada18",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-aevexaerospace",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
       "evidenceUrls": [
-        "https://boards-api.greenhouse.io/v1/boards/cloudflare/jobs?content=true",
-        "https://www.cloudflare.com/careers/"
+        "https://boards-api.greenhouse.io/v1/boards/aevexaerospace/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-airbnb",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-algolia",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-alphagrepsecurities",
+      "activeListingCount": 3,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/alphagrepsecurities/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-amarok",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/amarok/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-amplitude",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-andurilindustries",
+      "activeListingCount": 4,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/andurilindustries/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-anthropic",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-aperaaiinc",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/aperaaiinc/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-appian",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/appian/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-appier",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/appier/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-apptronik",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/apptronik/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-aquaticcapitalmanagement",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/aquaticcapitalmanagement/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-argmax",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/argmax/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-artefactlinkedin",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/artefactlinkedin/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-asteraearlycareer2026",
+      "activeListingCount": 3,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/asteraearlycareer2026/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-astranis",
+      "activeListingCount": 11,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/astranis/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-auctane",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-axiomaticai",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/axiomaticai/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-axontalentcommunity",
+      "activeListingCount": 3,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/axontalentcommunity/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-billiontoone",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-bird",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-botauto",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/botauto/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-brex",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-celonis",
+      "activeListingCount": 4,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/celonis/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-checkr",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-clarityinnovates",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/clarityinnovates/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-clever",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-clockworksystems",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-cloudflare",
+      "activeListingCount": 4,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/cloudflare/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-coinbase",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-cresta",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-ctccampusboard",
+      "activeListingCount": 3,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/ctccampusboard/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-databricks",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/databricks/jobs?content=true"
       ]
     },
     {
       "sourceId": "greenhouse-datadog",
       "activeListingCount": 0,
-      "publicationStatus": "shadow",
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-diligentcorporation",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-docugami",
+      "activeListingCount": 3,
+      "publicationStatus": "published",
       "evidenceUrls": [
-        "https://careers.datadoghq.com/"
+        "https://boards-api.greenhouse.io/v1/boards/docugami/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-doubleverify",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-dropbox",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-drweng",
+      "activeListingCount": 13,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/drweng/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-engineersgate",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/engineersgate/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-enova",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-eulerity",
+      "activeListingCount": 5,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/eulerity/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-evolver",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/evolver/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-excelsportsmanagement",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/excelsportsmanagement/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-faire",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/faire/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-faradayfuture",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/faradayfuture/jobs?content=true"
       ]
     },
     {
       "sourceId": "greenhouse-figma",
       "activeListingCount": 0,
-      "publicationStatus": "shadow",
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-figureai",
+      "activeListingCount": 3,
+      "publicationStatus": "published",
       "evidenceUrls": [
-        "https://www.figma.com/careers/"
+        "https://boards-api.greenhouse.io/v1/boards/figureai/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-financialtimes33",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-fiveringsllc",
+      "activeListingCount": 3,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/fiveringsllc/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-fivetran",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-flagshippioneeringinc",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-flexport",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-flowtraders",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/flowtraders/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-fourhands",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-freeformfuturecorp",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/freeformfuturecorp/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-fspco-op012325",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-gardacp",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/gardacp/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-gemini",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/gemini/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-genscript",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-ginkgobioworks",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/ginkgobioworks/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-gitlab",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-gleanwork",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-goalhonduras",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/goalhonduras/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-goatgroup",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-gotion",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-groww",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-gusto",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-haizelabs",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/haizelabs/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-honehealth",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/honehealth/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-horizonindustrieslimited",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-icml",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/icml/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-iherb",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/iherb/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-imc",
+      "activeListingCount": 8,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/imc/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-instacart",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-instead",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/instead/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-integra",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/integra/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-intrinsicrobotics",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-ispottv",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-janestreet",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-jobsatphamily",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-jumptrading",
+      "activeListingCount": 24,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/jumptrading/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-kensingtontours",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-later",
+      "activeListingCount": 3,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/later/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-liberate",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-lilasciences",
+      "activeListingCount": 6,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/lilasciences/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-liveviewtechnologiesinc",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-lucidmotors",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/lucidmotors/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-matx",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-mixpanel",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-moloco",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/moloco/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-momentenergy",
+      "activeListingCount": 3,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/momentenergy/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-momentus",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-mongodb",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-msfcareers",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/msfcareers/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-neuralink",
+      "activeListingCount": 12,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/neuralink/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-newsbreak",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/newsbreak/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-nirmata",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/nirmata/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-odeko",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-offerup",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-oklo",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-oneethos",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/oneethos/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-onenergy",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/onenergy/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-optiver",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-optiverneurips",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-optiverprivate",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/optiverprivate/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-orennia",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-pagerduty",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-pdtpartners",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/pdtpartners/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-perscholashires",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/perscholashires/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-pinterest",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-point72",
+      "activeListingCount": 10,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/point72/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-pointc",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/pointc/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-purestorage",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/purestorage/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-queracomputinginc",
+      "activeListingCount": 3,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/queracomputinginc/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-radixuniversity",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/radixuniversity/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-reddit",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-rendezvousrobotics",
+      "activeListingCount": 8,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/rendezvousrobotics/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-rise8",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/rise8/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-roblox",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-rocketlab",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/rocketlab/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-safariai",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/safariai/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-samayaai",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/samayaai/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-samsungresearchamericainternship",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/samsungresearchamericainternship/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-scaleai",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/scaleai/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-schonfeld",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/schonfeld/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-scm",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/scm/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-scopely",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/scopely/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-sevenresearch",
+      "activeListingCount": 4,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/sevenresearch/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-sharkninjaoperatingllc",
+      "activeListingCount": 4,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/sharkninjaoperatingllc/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-shifttechnology",
+      "activeListingCount": 3,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/shifttechnology/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-smartasset",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-spacex",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/spacex/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-squarepointcapital",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/squarepointcapital/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-stackadapt-confidential",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/stackadapt-confidential/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-stripe",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/stripe/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-studiokraftonboard",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/studiokraftonboard/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-submittable",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/submittable/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-talentprograms",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-tenstorrentuniversity",
+      "activeListingCount": 21,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/tenstorrentuniversity/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-thetradedesk",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/thetradedesk/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-togetherai",
+      "activeListingCount": 3,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/togetherai/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-torcrobotics",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-toshibaglobalcommercesolutions",
+      "activeListingCount": 9,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/toshibaglobalcommercesolutions/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-transmarketgroup",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/transmarketgroup/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-tribalscale",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/tribalscale/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-trueanomalyinc",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/trueanomalyinc/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-truebill",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-truveta",
+      "activeListingCount": 3,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/truveta/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-twitch",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-twosixtechnologies",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-vardaspace",
+      "activeListingCount": 3,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/vardaspace/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-vast",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/vast/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-veeamsoftware",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-verkada",
+      "activeListingCount": 1,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/verkada/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-virtu",
+      "activeListingCount": 7,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/virtu/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-virturecruitinghidden",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/virturecruitinghidden/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-voloridgeinvestmentmanagement",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/voloridgeinvestmentmanagement/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-walleyecapital-external-students",
+      "activeListingCount": 7,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/walleyecapital-external-students/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-weave",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-webflow",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-worldquant",
+      "activeListingCount": 6,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/worldquant/jobs?content=true"
+      ]
+    },
+    {
+      "sourceId": "greenhouse-xometry",
+      "activeListingCount": 0,
+      "publicationStatus": "published",
+      "evidenceUrls": []
+    },
+    {
+      "sourceId": "greenhouse-xpengmotors",
+      "activeListingCount": 2,
+      "publicationStatus": "published",
+      "evidenceUrls": [
+        "https://boards-api.greenhouse.io/v1/boards/xpengmotors/jobs?content=true"
       ]
     },
     {
@@ -123,7 +1294,7 @@
     },
     {
       "sourceId": "zapply-2027",
-      "activeListingCount": 505,
+      "activeListingCount": 504,
       "publicationStatus": "published",
       "evidenceUrls": [
         "https://raw.githubusercontent.com/zapplyjobs/Internships-2027/main/README.md"
@@ -316,6 +1487,28 @@
       ]
     },
     {
+      "companyId": "ada",
+      "displayName": "Ada",
+      "aliases": [
+        "Ada"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-ada18",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "adobe",
       "displayName": "Adobe",
       "aliases": [],
@@ -367,6 +1560,34 @@
         ]
       },
       "directSources": [],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "aevex",
+      "displayName": "AEVEX",
+      "aliases": [
+        "AEVEX"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 1,
+        "sourceIds": [
+          "greenhouse-aevexaerospace"
+        ],
+        "seasons": [
+          "ongoing"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-aevexaerospace",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -434,15 +1655,23 @@
     {
       "companyId": "airbnb",
       "displayName": "Airbnb",
-      "aliases": [],
-      "coverageState": "candidate-only",
+      "aliases": [
+        "Airbnb"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "unknown",
         "activeListingCount": 0,
         "sourceIds": [],
         "seasons": []
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-airbnb",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "company-weights"
       ]
@@ -592,22 +1821,55 @@
       ]
     },
     {
+      "companyId": "algolia",
+      "displayName": "Algolia",
+      "aliases": [
+        "Algolia"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-algolia",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "alphagrep-securities",
       "displayName": "AlphaGrep Securities",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "AlphaGrep Securities"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 2,
+        "activeListingCount": 5,
         "sourceIds": [
+          "greenhouse-alphagrepsecurities",
           "speedyapply-2027-ai",
           "speedyapply-2027-swe"
         ],
         "seasons": [
+          "2010",
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-alphagrepsecurities",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -652,6 +1914,34 @@
         ]
       },
       "directSources": [],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "amarok",
+      "displayName": "AMAROK",
+      "aliases": [
+        "AMAROK"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 1,
+        "sourceIds": [
+          "greenhouse-amarok"
+        ],
+        "seasons": [
+          "ongoing"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-amarok",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -786,6 +2076,28 @@
       ]
     },
     {
+      "companyId": "amplitude",
+      "displayName": "Amplitude",
+      "aliases": [
+        "Amplitude"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-amplitude",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "analog-devices",
       "displayName": "Analog Devices",
       "aliases": [],
@@ -852,6 +2164,35 @@
       ]
     },
     {
+      "companyId": "anduril-industries",
+      "displayName": "Anduril Industries",
+      "aliases": [
+        "Anduril Industries"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 4,
+        "sourceIds": [
+          "greenhouse-andurilindustries"
+        ],
+        "seasons": [
+          "summer-2027",
+          "winter-2027"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-andurilindustries",
+          "status": "published"
+        }
+      ],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
       "companyId": "anthelion-capital",
       "displayName": "Anthelion Capital",
       "aliases": [],
@@ -876,15 +2217,23 @@
     {
       "companyId": "anthropic",
       "displayName": "Anthropic",
-      "aliases": [],
-      "coverageState": "candidate-only",
+      "aliases": [
+        "Anthropic"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "unknown",
         "activeListingCount": 0,
         "sourceIds": [],
         "seasons": []
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-anthropic",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "company-weights"
       ]
@@ -892,19 +2241,29 @@
     {
       "companyId": "apera-ai",
       "displayName": "Apera AI",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Apera AI Inc"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 3,
         "sourceIds": [
+          "greenhouse-aperaaiinc",
           "simplify-summer-2026"
         ],
         "seasons": [
+          "2025",
           "offseason-2026"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-aperaaiinc",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -932,12 +2291,15 @@
     {
       "companyId": "appian",
       "displayName": "Appian",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Appian Corporation"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 10,
+        "activeListingCount": 12,
         "sourceIds": [
+          "greenhouse-appian",
           "simplify-summer-2026",
           "speedyapply-2027-swe",
           "vanshb03-summer-2027",
@@ -948,7 +2310,13 @@
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-appian",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -956,19 +2324,29 @@
     {
       "companyId": "appier",
       "displayName": "Appier",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Appier"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 3,
         "sourceIds": [
+          "greenhouse-appier",
           "speedyapply-2027-ai"
         ],
         "seasons": [
+          "2012",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-appier",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -1043,12 +2421,15 @@
     {
       "companyId": "apptronik",
       "displayName": "Apptronik",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Apptronik"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 6,
+        "activeListingCount": 8,
         "sourceIds": [
+          "greenhouse-apptronik",
           "simplify-summer-2026",
           "speedyapply-2027-swe",
           "vanshb03-summer-2027",
@@ -1057,10 +2438,17 @@
         "seasons": [
           "offseason-2026",
           "offseason-2027",
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-apptronik",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -1149,12 +2537,15 @@
     {
       "companyId": "aquatic-capital-management",
       "displayName": "Aquatic Capital Management",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Aquatic Capital Management"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 2,
+        "activeListingCount": 4,
         "sourceIds": [
+          "greenhouse-aquaticcapitalmanagement",
           "speedyapply-2027-ai",
           "speedyapply-2027-swe"
         ],
@@ -1162,7 +2553,13 @@
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-aquaticcapitalmanagement",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -1230,19 +2627,29 @@
     {
       "companyId": "argmax",
       "displayName": "Argmax",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Argmax"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-argmax",
           "simplify-summer-2026"
         ],
         "seasons": [
-          "offseason-2026"
+          "offseason-2026",
+          "ongoing"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-argmax",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -1493,25 +2900,64 @@
       ]
     },
     {
-      "companyId": "astranis",
-      "displayName": "Astranis",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "companyId": "astera-labs-early-career",
+      "displayName": "Astera Labs Early Career",
+      "aliases": [
+        "Astera Labs Early Career"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 15,
+        "activeListingCount": 3,
         "sourceIds": [
+          "greenhouse-asteraearlycareer2026"
+        ],
+        "seasons": [
+          "2026",
+          "ongoing"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-asteraearlycareer2026",
+          "status": "published"
+        }
+      ],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "astranis",
+      "displayName": "Astranis",
+      "aliases": [
+        "Astranis"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 26,
+        "sourceIds": [
+          "greenhouse-astranis",
           "simplify-summer-2026",
           "vanshb03-summer-2027",
           "zapply-2027"
         ],
         "seasons": [
+          "fall-2026",
           "offseason-2026",
           "offseason-2027",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-astranis",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -1636,8 +3082,10 @@
     {
       "companyId": "auctane",
       "displayName": "Auctane",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Auctane"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 1,
@@ -1648,7 +3096,13 @@
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-auctane",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -1660,7 +3114,7 @@
       "coverageState": "feed-observed",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 3,
+        "activeListingCount": 2,
         "sourceIds": [
           "speedyapply-2027-swe",
           "zapply-2027"
@@ -1715,6 +3169,34 @@
         ]
       },
       "directSources": [],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "axiomatic-ai",
+      "displayName": "Axiomatic_AI",
+      "aliases": [
+        "Axiomatic_AI"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 1,
+        "sourceIds": [
+          "greenhouse-axiomaticai"
+        ],
+        "seasons": [
+          "2030"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-axiomaticai",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -2014,6 +3496,28 @@
       ]
     },
     {
+      "companyId": "billiontoone",
+      "displayName": "BillionToOne",
+      "aliases": [
+        "BillionToOne"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-billiontoone",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "binance-us",
       "displayName": "Binance.US",
       "aliases": [],
@@ -2073,6 +3577,28 @@
       "candidateSources": [
         "configured-feeds"
       ]
+    },
+    {
+      "companyId": "bird",
+      "displayName": "Bird",
+      "aliases": [
+        "Bird"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-bird",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
     },
     {
       "companyId": "blackrock",
@@ -2376,19 +3902,29 @@
     {
       "companyId": "bot-auto",
       "displayName": "Bot Auto",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Bot Auto"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-botauto",
           "simplify-summer-2026"
         ],
         "seasons": [
-          "offseason-2026"
+          "offseason-2026",
+          "ongoing"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-botauto",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -2412,6 +3948,28 @@
       "candidateSources": [
         "configured-feeds"
       ]
+    },
+    {
+      "companyId": "brex",
+      "displayName": "Brex",
+      "aliases": [
+        "Brex"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-brex",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
     },
     {
       "companyId": "brookfield",
@@ -2760,19 +4318,30 @@
     {
       "companyId": "celonis",
       "displayName": "Celonis",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Celonis"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 3,
+        "activeListingCount": 7,
         "sourceIds": [
+          "greenhouse-celonis",
           "speedyapply-2027-ai"
         ],
         "seasons": [
+          "2026",
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-celonis",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -2861,6 +4430,28 @@
       "candidateSources": [
         "configured-feeds"
       ]
+    },
+    {
+      "companyId": "checkr",
+      "displayName": "Checkr",
+      "aliases": [
+        "Checkr"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-checkr",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
     },
     {
       "companyId": "chevron",
@@ -3090,21 +4681,31 @@
     {
       "companyId": "clarity-innovations",
       "displayName": "Clarity Innovations",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Clarity Innovations"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 2,
+        "activeListingCount": 3,
         "sourceIds": [
+          "greenhouse-clarityinnovates",
           "simplify-summer-2026",
           "zapply-2027"
         ],
         "seasons": [
+          "ongoing",
           "summer-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-clarityinnovates",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -3130,16 +4731,60 @@
       ]
     },
     {
+      "companyId": "clever",
+      "displayName": "Clever",
+      "aliases": [
+        "Clever"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-clever",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
+      "companyId": "clockwork-io",
+      "displayName": "Clockwork.io",
+      "aliases": [
+        "Clockwork.io"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-clockworksystems",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "cloudflare",
       "displayName": "Cloudflare",
       "aliases": [
         "Cloudflare, Inc.",
         "🔥 Cloudflare"
       ],
-      "coverageState": "direct-shadow",
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 15,
+        "activeListingCount": 14,
         "sourceIds": [
           "greenhouse-cloudflare",
           "simplify-summer-2026",
@@ -3159,7 +4804,7 @@
         {
           "provider": "greenhouse",
           "sourceId": "greenhouse-cloudflare",
-          "status": "shadow"
+          "status": "published"
         }
       ],
       "candidateSources": [
@@ -3231,15 +4876,23 @@
     {
       "companyId": "coinbase",
       "displayName": "Coinbase",
-      "aliases": [],
-      "coverageState": "candidate-only",
+      "aliases": [
+        "Coinbase"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "unknown",
         "activeListingCount": 0,
         "sourceIds": [],
         "seasons": []
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-coinbase",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "company-weights"
       ]
@@ -3621,8 +5274,10 @@
     {
       "companyId": "cresta",
       "displayName": "Cresta",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Cresta"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 2,
@@ -3634,7 +5289,13 @@
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-cresta",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -3655,6 +5316,34 @@
         ]
       },
       "directSources": [],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "ctc-campus-external-not-advertised",
+      "displayName": "CTC Campus - External, Not Advertised",
+      "aliases": [
+        "CTC Campus - External, Not Advertised"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 3,
+        "sourceIds": [
+          "greenhouse-ctccampusboard"
+        ],
+        "seasons": [
+          "summer-2027"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-ctccampusboard",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -3825,19 +5514,29 @@
     {
       "companyId": "databricks",
       "displayName": "Databricks",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Databricks"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 3,
         "sourceIds": [
+          "greenhouse-databricks",
           "zapply-2027"
         ],
         "seasons": [
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-databricks",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "company-weights",
         "configured-feeds"
@@ -3849,7 +5548,7 @@
       "aliases": [
         "Datadog, Inc."
       ],
-      "coverageState": "direct-shadow",
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 1,
@@ -3864,7 +5563,7 @@
         {
           "provider": "greenhouse",
           "sourceId": "greenhouse-datadog",
-          "status": "shadow"
+          "status": "published"
         }
       ],
       "candidateSources": [
@@ -4159,6 +5858,28 @@
       ]
     },
     {
+      "companyId": "diligent",
+      "displayName": "Diligent Corporation",
+      "aliases": [
+        "Diligent Corporation"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-diligentcorporation",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "dimehealth-ai",
       "displayName": "DimeHealth AI",
       "aliases": [],
@@ -4221,19 +5942,30 @@
     {
       "companyId": "docugami",
       "displayName": "Docugami",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Docugami"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 4,
         "sourceIds": [
+          "greenhouse-docugami",
           "zapply-2027"
         ],
         "seasons": [
+          "2018",
+          "2020",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-docugami",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -4253,6 +5985,28 @@
       "candidateSources": [
         "company-weights"
       ]
+    },
+    {
+      "companyId": "doubleverify",
+      "displayName": "DoubleVerify",
+      "aliases": [
+        "DoubleVerify"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-doubleverify",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
     },
     {
       "companyId": "dow",
@@ -4297,6 +6051,28 @@
       ]
     },
     {
+      "companyId": "dropbox",
+      "displayName": "Dropbox",
+      "aliases": [
+        "Dropbox"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-dropbox",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "droyd-robotics",
       "displayName": "Droyd Robotics",
       "aliases": [],
@@ -4319,12 +6095,15 @@
     {
       "companyId": "drw",
       "displayName": "DRW",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "DRW"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 22,
+        "activeListingCount": 35,
         "sourceIds": [
+          "greenhouse-drweng",
           "northwestern-fintech-2027-quant",
           "simplify-summer-2026",
           "speedyapply-2027-ai",
@@ -4332,11 +6111,18 @@
           "zapply-2027"
         ],
         "seasons": [
+          "2027",
           "summer-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-drweng",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -4528,19 +6314,29 @@
     {
       "companyId": "engineers-gate",
       "displayName": "Engineers Gate",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Engineers Gate"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-engineersgate",
           "speedyapply-2027-ai"
         ],
         "seasons": [
+          "2014",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-engineersgate",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -4548,8 +6344,10 @@
     {
       "companyId": "enova-international",
       "displayName": "Enova International",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Enova International"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 1,
@@ -4560,7 +6358,13 @@
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-enova",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -4816,23 +6620,33 @@
     {
       "companyId": "eulerity",
       "displayName": "Eulerity",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Eulerity"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 9,
+        "activeListingCount": 13,
         "sourceIds": [
+          "greenhouse-eulerity",
           "simplify-summer-2026",
           "speedyapply-2027-ai",
           "speedyapply-2027-swe",
           "zapply-2027"
         ],
         "seasons": [
+          "ongoing",
           "summer-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-eulerity",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -4900,6 +6714,34 @@
       ]
     },
     {
+      "companyId": "everpure",
+      "displayName": "Everpure",
+      "aliases": [
+        "Everpure"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 1,
+        "sourceIds": [
+          "greenhouse-purestorage"
+        ],
+        "seasons": [
+          "ongoing"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-purestorage",
+          "status": "published"
+        }
+      ],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
       "companyId": "eversource-energy",
       "displayName": "Eversource Energy",
       "aliases": [],
@@ -4922,21 +6764,31 @@
     {
       "companyId": "evolver",
       "displayName": "Evolver",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Evolver"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 2,
+        "activeListingCount": 3,
         "sourceIds": [
+          "greenhouse-evolver",
           "simplify-summer-2026",
           "zapply-2027"
         ],
         "seasons": [
+          "ongoing",
           "summer-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-evolver",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -4964,19 +6816,29 @@
     {
       "companyId": "excel-sports-management",
       "displayName": "Excel Sports Management",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Excel Sports Management"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 2,
+        "activeListingCount": 3,
         "sourceIds": [
+          "greenhouse-excelsportsmanagement",
           "simplify-summer-2026"
         ],
         "seasons": [
+          "fall-2026",
           "offseason-2026"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-excelsportsmanagement",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -5048,19 +6910,29 @@
     {
       "companyId": "faire",
       "displayName": "Faire",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Faire"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-faire",
           "zapply-2027"
         ],
         "seasons": [
+          "fall-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-faire",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -5068,19 +6940,29 @@
     {
       "companyId": "faraday-future",
       "displayName": "Faraday Future",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Faraday Future"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-faradayfuture",
           "speedyapply-2027-ai"
         ],
         "seasons": [
+          "2014",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-faradayfuture",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -5131,7 +7013,7 @@
       "aliases": [
         "Figma, Inc."
       ],
-      "coverageState": "direct-shadow",
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "unknown",
         "activeListingCount": 0,
@@ -5142,7 +7024,7 @@
         {
           "provider": "greenhouse",
           "sourceId": "greenhouse-figma",
-          "status": "shadow"
+          "status": "published"
         }
       ],
       "candidateSources": [
@@ -5152,19 +7034,29 @@
     {
       "companyId": "figure",
       "displayName": "Figure",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Figure"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 3,
+        "activeListingCount": 6,
         "sourceIds": [
+          "greenhouse-figureai",
           "simplify-summer-2026"
         ],
         "seasons": [
+          "fall-2026",
           "offseason-2026"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-figureai",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -5188,6 +7080,28 @@
       "candidateSources": [
         "configured-feeds"
       ]
+    },
+    {
+      "companyId": "financial-times",
+      "displayName": "Financial Times",
+      "aliases": [
+        "Financial Times"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-financialtimes33",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
     },
     {
       "companyId": "finmid",
@@ -5316,6 +7230,56 @@
       ]
     },
     {
+      "companyId": "five-rings-llc-careers",
+      "displayName": "Five Rings LLC - Careers",
+      "aliases": [
+        "Five Rings LLC - Careers"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 3,
+        "sourceIds": [
+          "greenhouse-fiveringsllc"
+        ],
+        "seasons": [
+          "summer-2027"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-fiveringsllc",
+          "status": "published"
+        }
+      ],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "fivetran",
+      "displayName": "Fivetran",
+      "aliases": [
+        "Fivetran"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-fivetran",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "flagright",
       "displayName": "Flagright",
       "aliases": [],
@@ -5338,8 +7302,10 @@
     {
       "companyId": "flagship-pioneering",
       "displayName": "Flagship Pioneering",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Flagship Pioneering, Inc."
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 2,
@@ -5350,10 +7316,60 @@
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-flagshippioneeringinc",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
+    },
+    {
+      "companyId": "flagship-pioneering-co-op-program",
+      "displayName": "Flagship Pioneering Co-Op Program",
+      "aliases": [
+        "Flagship Pioneering Co-Op Program"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-fspco-op012325",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
+      "companyId": "flexport",
+      "displayName": "Flexport",
+      "aliases": [
+        "Flexport"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-flexport",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
     },
     {
       "companyId": "flir-systems",
@@ -5378,12 +7394,15 @@
     {
       "companyId": "flow-traders",
       "displayName": "Flow Traders",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Flow Traders"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 3,
+        "activeListingCount": 4,
         "sourceIds": [
+          "greenhouse-flowtraders",
           "northwestern-fintech-2027-quant",
           "speedyapply-2027-ai",
           "zapply-2027"
@@ -5392,7 +7411,13 @@
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-flowtraders",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -5463,8 +7488,10 @@
     {
       "companyId": "four-hands",
       "displayName": "Four Hands",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Four Hands"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 1,
@@ -5475,7 +7502,13 @@
           "offseason-2026"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-fourhands",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -5503,19 +7536,29 @@
     {
       "companyId": "freeform",
       "displayName": "Freeform",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Freeform"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 2,
+        "activeListingCount": 4,
         "sourceIds": [
+          "greenhouse-freeformfuturecorp",
           "zapply-2027"
         ],
         "seasons": [
+          "fall-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-freeformfuturecorp",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -5563,19 +7606,29 @@
     {
       "companyId": "garda-capital-partners",
       "displayName": "Garda Capital Partners",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Garda Capital Partners"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-gardacp",
           "speedyapply-2027-ai"
         ],
         "seasons": [
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-gardacp",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -5651,21 +7704,31 @@
     {
       "companyId": "gemini",
       "displayName": "Gemini",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Gemini"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 2,
+        "activeListingCount": 4,
         "sourceIds": [
+          "greenhouse-gemini",
           "speedyapply-2027-swe",
           "vanshb03-summer-2027"
         ],
         "seasons": [
+          "fall-2026",
           "offseason-2027",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-gemini",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -5795,6 +7858,28 @@
       ]
     },
     {
+      "companyId": "genscript-probio",
+      "displayName": "GenScript/ProBio",
+      "aliases": [
+        "GenScript/ProBio"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-genscript",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "geocomply",
       "displayName": "GeoComply",
       "aliases": [],
@@ -5839,22 +7924,76 @@
     {
       "companyId": "ginkgo-bioworks",
       "displayName": "Ginkgo Bioworks",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Ginkgo Bioworks Inc."
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 3,
         "sourceIds": [
+          "greenhouse-ginkgobioworks",
           "zapply-2027"
         ],
         "seasons": [
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-ginkgobioworks",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
+    },
+    {
+      "companyId": "gitlab",
+      "displayName": "GitLab",
+      "aliases": [
+        "GitLab"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-gitlab",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
+      "companyId": "glean",
+      "displayName": "Glean",
+      "aliases": [
+        "Glean"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-gleanwork",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
     },
     {
       "companyId": "global-infrastructure",
@@ -5921,6 +8060,56 @@
       ]
     },
     {
+      "companyId": "goal-honduras",
+      "displayName": "GOAL Honduras",
+      "aliases": [
+        "GOAL Honduras"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 2,
+        "sourceIds": [
+          "greenhouse-goalhonduras"
+        ],
+        "seasons": [
+          "2026"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-goalhonduras",
+          "status": "published"
+        }
+      ],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "goat-group",
+      "displayName": "GOAT Group",
+      "aliases": [
+        "GOAT Group"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-goatgroup",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "google",
       "displayName": "Google",
       "aliases": [],
@@ -5946,8 +8135,10 @@
     {
       "companyId": "gotion",
       "displayName": "Gotion",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Gotion, Inc."
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 2,
@@ -5958,7 +8149,13 @@
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-gotion",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -6054,6 +8251,28 @@
       ]
     },
     {
+      "companyId": "groww",
+      "displayName": "Groww",
+      "aliases": [
+        "Groww"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-groww",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "gsa",
       "displayName": "GSA",
       "aliases": [],
@@ -6115,6 +8334,28 @@
       ]
     },
     {
+      "companyId": "gusto",
+      "displayName": "Gusto, Inc.",
+      "aliases": [
+        "Gusto, Inc."
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-gusto",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "h-and",
       "displayName": "H&CO",
       "aliases": [],
@@ -6137,19 +8378,30 @@
     {
       "companyId": "haize-labs",
       "displayName": "Haize Labs",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Haize Labs"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 3,
         "sourceIds": [
+          "greenhouse-haizelabs",
           "zapply-2027"
         ],
         "seasons": [
+          "2024",
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-haizelabs",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -6479,21 +8731,31 @@
     {
       "companyId": "hone-health",
       "displayName": "Hone Health",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Hone Health"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 2,
+        "activeListingCount": 3,
         "sourceIds": [
+          "greenhouse-honehealth",
           "simplify-summer-2026",
           "speedyapply-2027-ai"
         ],
         "seasons": [
+          "fall-2026",
           "offseason-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-honehealth",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -6521,8 +8783,10 @@
     {
       "companyId": "horizon-industries",
       "displayName": "Horizon Industries",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Horizon Industries"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 1,
@@ -6533,7 +8797,13 @@
           "offseason-2026"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-horizonindustrieslimited",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -6669,6 +8939,28 @@
       ]
     },
     {
+      "companyId": "hunter-douglas-talent-programs",
+      "displayName": "Hunter Douglas - Talent Programs",
+      "aliases": [
+        "Hunter Douglas - Talent Programs"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-talentprograms",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "huntsman",
       "displayName": "Huntsman",
       "aliases": [],
@@ -6788,22 +9080,32 @@
     {
       "companyId": "iherb",
       "displayName": "iHerb",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "iHerb"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 3,
+        "activeListingCount": 4,
         "sourceIds": [
+          "greenhouse-iherb",
           "simplify-summer-2026",
           "speedyapply-2027-swe",
           "zapply-2027"
         ],
         "seasons": [
+          "ongoing",
           "summer-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-iherb",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -6811,19 +9113,29 @@
     {
       "companyId": "imc",
       "displayName": "IMC",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "IMC"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 4,
+        "activeListingCount": 12,
         "sourceIds": [
+          "greenhouse-imc",
           "vanshb03-summer-2027"
         ],
         "seasons": [
+          "2027",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-imc",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "company-weights",
         "configured-feeds"
@@ -6871,21 +9183,53 @@
       ]
     },
     {
+      "companyId": "instacart",
+      "displayName": "Instacart",
+      "aliases": [
+        "Instacart"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-instacart",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "instead",
       "displayName": "Instead",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Instead"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-instead",
           "simplify-summer-2026"
         ],
         "seasons": [
+          "2026",
           "summer-2026"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-instead",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -6948,6 +9292,34 @@
         ]
       },
       "directSources": [],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "integrafec",
+      "displayName": "IntegraFEC",
+      "aliases": [
+        "IntegraFEC"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 2,
+        "sourceIds": [
+          "greenhouse-integra"
+        ],
+        "seasons": [
+          "ongoing"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-integra",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -7060,6 +9432,28 @@
       ]
     },
     {
+      "companyId": "intrinsic",
+      "displayName": "Intrinsic",
+      "aliases": [
+        "Intrinsic"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-intrinsicrobotics",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "intuitive",
       "displayName": "Intuitive",
       "aliases": [],
@@ -7098,6 +9492,28 @@
       "candidateSources": [
         "configured-feeds"
       ]
+    },
+    {
+      "companyId": "ispot",
+      "displayName": "iSpot",
+      "aliases": [
+        "iSpot"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-ispottv",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
     },
     {
       "companyId": "ivy-tech-community-college",
@@ -7142,8 +9558,10 @@
     {
       "companyId": "jane-street",
       "displayName": "Jane Street",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Jane Street"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 32,
@@ -7158,7 +9576,13 @@
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-janestreet",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "company-weights",
         "configured-feeds"
@@ -7225,6 +9649,34 @@
       ]
     },
     {
+      "companyId": "join-our-talent-community",
+      "displayName": "Join Our Talent Community",
+      "aliases": [
+        "Join Our Talent Community"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 3,
+        "sourceIds": [
+          "greenhouse-axontalentcommunity"
+        ],
+        "seasons": [
+          "2027"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-axontalentcommunity",
+          "status": "published"
+        }
+      ],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
       "companyId": "jp-morgan-chase",
       "displayName": "JP Morgan Chase",
       "aliases": [],
@@ -7250,11 +9702,12 @@
       "aliases": [
         "Jump Trading"
       ],
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 46,
+        "activeListingCount": 70,
         "sourceIds": [
+          "greenhouse-jumptrading",
           "simplify-summer-2026",
           "speedyapply-2027-ai",
           "speedyapply-2027-swe",
@@ -7262,12 +9715,21 @@
           "zapply-2027"
         ],
         "seasons": [
+          "2015",
+          "2026",
           "offseason-2026",
+          "ongoing",
           "summer-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-jumptrading",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "company-weights",
         "configured-feeds"
@@ -7359,8 +9821,10 @@
     {
       "companyId": "kensington",
       "displayName": "Kensington",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Kensington"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 2,
@@ -7371,7 +9835,13 @@
           "summer-2026"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-kensingtontours",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -7667,6 +10137,34 @@
       ]
     },
     {
+      "companyId": "krafton-montreal-studio",
+      "displayName": "KRAFTON Montréal Studio",
+      "aliases": [
+        "KRAFTON Montréal Studio"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 1,
+        "sourceIds": [
+          "greenhouse-studiokraftonboard"
+        ],
+        "seasons": [
+          "fall-2026"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-studiokraftonboard",
+          "status": "published"
+        }
+      ],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
       "companyId": "latent-defense",
       "displayName": "Latent Defense",
       "aliases": [],
@@ -7689,12 +10187,15 @@
     {
       "companyId": "later",
       "displayName": "Later",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Later"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 8,
+        "activeListingCount": 11,
         "sourceIds": [
+          "greenhouse-later",
           "simplify-summer-2026",
           "speedyapply-2027-ai",
           "speedyapply-2027-swe",
@@ -7703,11 +10204,18 @@
         "seasons": [
           "offseason-2026",
           "offseason-2027",
+          "ongoing",
           "summer-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-later",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -7853,6 +10361,28 @@
       ]
     },
     {
+      "companyId": "liberate",
+      "displayName": "Liberate",
+      "aliases": [
+        "Liberate"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-liberate",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "lightguide",
       "displayName": "LightGuide, Inc.",
       "aliases": [],
@@ -7875,12 +10405,15 @@
     {
       "companyId": "lila-sciences",
       "displayName": "Lila Sciences",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Lila Sciences"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 11,
+        "activeListingCount": 17,
         "sourceIds": [
+          "greenhouse-lilasciences",
           "simplify-summer-2026",
           "speedyapply-2027-ai",
           "speedyapply-2027-swe",
@@ -7888,11 +10421,18 @@
         ],
         "seasons": [
           "offseason-2026",
+          "ongoing",
           "summer-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-lilasciences",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -7931,6 +10471,34 @@
       "directSources": [],
       "candidateSources": [
         "company-weights"
+      ]
+    },
+    {
+      "companyId": "linkedin-job-wrapping",
+      "displayName": "LinkedIn Job Wrapping",
+      "aliases": [
+        "LinkedIn Job Wrapping"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 2,
+        "sourceIds": [
+          "greenhouse-artefactlinkedin"
+        ],
+        "seasons": [
+          "ongoing"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-artefactlinkedin",
+          "status": "published"
+        }
+      ],
+      "candidateSources": [
+        "configured-feeds"
       ]
     },
     {
@@ -8057,19 +10625,29 @@
     {
       "companyId": "lucid-motors",
       "displayName": "Lucid Motors",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Lucid Motors"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-lucidmotors",
           "zapply-2027"
         ],
         "seasons": [
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-lucidmotors",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -8097,8 +10675,10 @@
     {
       "companyId": "lvt",
       "displayName": "LVT",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "LVT"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 1,
@@ -8109,7 +10689,13 @@
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-liveviewtechnologiesinc",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -8449,8 +11035,10 @@
     {
       "companyId": "matx",
       "displayName": "MatX",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "MatX"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 1,
@@ -8461,7 +11049,13 @@
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-matx",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -8511,19 +11105,29 @@
     {
       "companyId": "medecins-sans-frontieres-doctors-without-borders-united-states",
       "displayName": "Medecins Sans Frontieres (Doctors Without Borders) - United States",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Medecins Sans Frontieres (Doctors Without Borders) - United States"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-msfcareers",
           "speedyapply-2027-ai"
         ],
         "seasons": [
+          "2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-msfcareers",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -8802,6 +11406,28 @@
       ]
     },
     {
+      "companyId": "mixpanel",
+      "displayName": "Mixpanel",
+      "aliases": [
+        "Mixpanel"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-mixpanel",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "mobius-renewables",
       "displayName": "Mobius Renewables",
       "aliases": [],
@@ -8849,19 +11475,29 @@
     {
       "companyId": "moloco",
       "displayName": "Moloco",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Moloco"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 3,
         "sourceIds": [
+          "greenhouse-moloco",
           "speedyapply-2027-swe"
         ],
         "seasons": [
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-moloco",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -8869,35 +11505,75 @@
     {
       "companyId": "moment-energy",
       "displayName": "Moment Energy",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Moment Energy"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 2,
+        "activeListingCount": 5,
         "sourceIds": [
+          "greenhouse-momentenergy",
           "simplify-summer-2026"
         ],
         "seasons": [
-          "offseason-2026"
+          "offseason-2026",
+          "ongoing"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-momentenergy",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
     },
     {
-      "companyId": "mongodb",
-      "displayName": "MongoDB",
-      "aliases": [],
-      "coverageState": "candidate-only",
+      "companyId": "momentus-space",
+      "displayName": "Momentus Space LLC",
+      "aliases": [
+        "Momentus Space LLC"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "unknown",
         "activeListingCount": 0,
         "sourceIds": [],
         "seasons": []
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-momentus",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
+      "companyId": "mongodb",
+      "displayName": "MongoDB",
+      "aliases": [
+        "MongoDB"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-mongodb",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "company-weights"
       ]
@@ -9431,20 +12107,30 @@
     {
       "companyId": "neuralink",
       "displayName": "Neuralink",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Neuralink"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 9,
+        "activeListingCount": 21,
         "sourceIds": [
+          "greenhouse-neuralink",
           "speedyapply-2027-swe",
           "zapply-2027"
         ],
         "seasons": [
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-neuralink",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -9452,19 +12138,29 @@
     {
       "companyId": "newsbreak",
       "displayName": "NewsBreak",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "NewsBreak"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 2,
+        "activeListingCount": 3,
         "sourceIds": [
+          "greenhouse-newsbreak",
           "zapply-2027"
         ],
         "seasons": [
+          "2015",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-newsbreak",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -9596,6 +12292,34 @@
         ]
       },
       "directSources": [],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "nirmata",
+      "displayName": "Nirmata",
+      "aliases": [
+        "Nirmata"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 2,
+        "sourceIds": [
+          "greenhouse-nirmata"
+        ],
+        "seasons": [
+          "2027"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-nirmata",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -9797,6 +12521,28 @@
       ]
     },
     {
+      "companyId": "odeko",
+      "displayName": "Odeko",
+      "aliases": [
+        "Odeko"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-odeko",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "odin-dynamics",
       "displayName": "Odin Dynamics, Inc",
       "aliases": [
@@ -9819,6 +12565,50 @@
       "candidateSources": [
         "configured-feeds"
       ]
+    },
+    {
+      "companyId": "offerup",
+      "displayName": "OfferUp",
+      "aliases": [
+        "OfferUp"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-offerup",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
+      "companyId": "oklo",
+      "displayName": "Oklo",
+      "aliases": [
+        "Oklo"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-oklo",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
     },
     {
       "companyId": "old-mission",
@@ -9885,19 +12675,57 @@
     {
       "companyId": "on-energy",
       "displayName": "ON.energy",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "ON.energy"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 2,
+        "sourceIds": [
+          "greenhouse-onenergy",
+          "speedyapply-2027-ai"
+        ],
+        "seasons": [
+          "ongoing",
+          "summer-2027"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-onenergy",
+          "status": "published"
+        }
+      ],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "oneethos",
+      "displayName": "OneEthos",
+      "aliases": [
+        "OneEthos"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 1,
         "sourceIds": [
-          "speedyapply-2027-ai"
+          "greenhouse-oneethos"
         ],
         "seasons": [
-          "summer-2027"
+          "fall-2026"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-oneethos",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -9983,8 +12811,10 @@
     {
       "companyId": "optiver",
       "displayName": "Optiver",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Optiver"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 14,
@@ -9999,9 +12829,93 @@
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-optiver",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "company-weights",
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "optiver-icml",
+      "displayName": "Optiver - ICML",
+      "aliases": [
+        "Optiver - ICML"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 1,
+        "sourceIds": [
+          "greenhouse-icml"
+        ],
+        "seasons": [
+          "summer-2027"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-icml",
+          "status": "published"
+        }
+      ],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "optiver-neurips",
+      "displayName": "Optiver - NeurIPS",
+      "aliases": [
+        "Optiver - NeurIPS"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-optiverneurips",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
+      "companyId": "optiver-private-jobs",
+      "displayName": "Optiver Private Jobs",
+      "aliases": [
+        "Optiver Private Jobs"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 1,
+        "sourceIds": [
+          "greenhouse-optiverprivate"
+        ],
+        "seasons": [
+          "2027"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-optiverprivate",
+          "status": "published"
+        }
+      ],
+      "candidateSources": [
         "configured-feeds"
       ]
     },
@@ -10071,8 +12985,10 @@
     {
       "companyId": "orennia",
       "displayName": "Orennia",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Orennia"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 1,
@@ -10083,7 +12999,13 @@
           "offseason-2026"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-orennia",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -10209,6 +13131,28 @@
       "candidateSources": [
         "configured-feeds"
       ]
+    },
+    {
+      "companyId": "pagerduty",
+      "displayName": "PagerDuty",
+      "aliases": [
+        "PagerDuty"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-pagerduty",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
     },
     {
       "companyId": "palantir-technologies",
@@ -10420,12 +13364,15 @@
     {
       "companyId": "pdt-partners",
       "displayName": "PDT Partners",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "PDT Partners"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 4,
+        "activeListingCount": 6,
         "sourceIds": [
+          "greenhouse-pdtpartners",
           "speedyapply-2027-swe",
           "vanshb03-summer-2027",
           "zapply-2027"
@@ -10434,7 +13381,13 @@
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-pdtpartners",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -10543,19 +13496,29 @@
     {
       "companyId": "per-scholas",
       "displayName": "Per Scholas",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Per Scholas"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-perscholashires",
           "zapply-2027"
         ],
         "seasons": [
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-perscholashires",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -10650,8 +13613,10 @@
     {
       "companyId": "phamily",
       "displayName": "Phamily",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Phamily"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 1,
@@ -10662,7 +13627,13 @@
           "summer-2026"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-jobsatphamily",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -10775,8 +13746,10 @@
     {
       "companyId": "pinterest",
       "displayName": "Pinterest",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Pinterest"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 3,
@@ -10787,7 +13760,13 @@
           "offseason-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-pinterest",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "company-weights",
         "configured-feeds"
@@ -10845,19 +13824,29 @@
     {
       "companyId": "point-c",
       "displayName": "Point C",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Point C"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-pointc",
           "speedyapply-2027-ai"
         ],
         "seasons": [
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-pointc",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -10865,20 +13854,32 @@
     {
       "companyId": "point72",
       "displayName": "Point72",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Point72"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 6,
+        "activeListingCount": 16,
         "sourceIds": [
+          "greenhouse-point72",
           "vanshb03-summer-2027",
           "zapply-2027"
         ],
         "seasons": [
+          "fall-2026",
+          "ongoing",
+          "summer-2025",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-point72",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -11170,19 +14171,30 @@
     {
       "companyId": "quera-computing",
       "displayName": "QuEra Computing",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "QuEra Computing, Inc."
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 4,
         "sourceIds": [
+          "greenhouse-queracomputinginc",
           "zapply-2027"
         ],
         "seasons": [
+          "fall-2026",
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-queracomputinginc",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -11204,6 +14216,34 @@
         ]
       },
       "directSources": [],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "radix-trading-university-job-board",
+      "displayName": "Radix Trading University Job Board",
+      "aliases": [
+        "Radix Trading University Job Board"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 1,
+        "sourceIds": [
+          "greenhouse-radixuniversity"
+        ],
+        "seasons": [
+          "ongoing"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-radixuniversity",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -11389,6 +14429,48 @@
       ]
     },
     {
+      "companyId": "reddit",
+      "displayName": "Reddit",
+      "aliases": [
+        "Reddit"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-reddit",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
+      "companyId": "redwood-materials",
+      "displayName": "Redwood Materials",
+      "aliases": [],
+      "coverageState": "feed-observed",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 1,
+        "sourceIds": [
+          "zapply-2027"
+        ],
+        "seasons": [
+          "summer-2027"
+        ]
+      },
+      "directSources": [],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
       "companyId": "reframe-systems",
       "displayName": "Reframe Systems",
       "aliases": [],
@@ -11451,19 +14533,30 @@
     {
       "companyId": "rendezvous-robotics",
       "displayName": "Rendezvous Robotics",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Rendezvous Robotics"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 2,
+        "activeListingCount": 10,
         "sourceIds": [
+          "greenhouse-rendezvousrobotics",
           "vanshb03-summer-2027"
         ],
         "seasons": [
-          "offseason-2027"
+          "fall-2026",
+          "offseason-2027",
+          "spring-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-rendezvousrobotics",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -11640,19 +14733,29 @@
     {
       "companyId": "rise8",
       "displayName": "Rise8",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Rise8"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-rise8",
           "simplify-summer-2026"
         ],
         "seasons": [
-          "offseason-2026"
+          "offseason-2026",
+          "ongoing"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-rise8",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -11727,15 +14830,23 @@
     {
       "companyId": "roblox",
       "displayName": "Roblox",
-      "aliases": [],
-      "coverageState": "candidate-only",
+      "aliases": [
+        "Roblox"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "unknown",
         "activeListingCount": 0,
         "sourceIds": [],
         "seasons": []
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-roblox",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "company-weights"
       ]
@@ -11784,22 +14895,54 @@
     {
       "companyId": "rocket-lab",
       "displayName": "Rocket Lab",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Rocket Lab Corporation"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 5,
+        "activeListingCount": 7,
         "sourceIds": [
+          "greenhouse-rocketlab",
           "zapply-2027"
         ],
         "seasons": [
+          "fall-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-rocketlab",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
+    },
+    {
+      "companyId": "rocket-money",
+      "displayName": "Rocket Money",
+      "aliases": [
+        "Rocket Money"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-truebill",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
     },
     {
       "companyId": "rockwell-automation",
@@ -11930,19 +15073,29 @@
     {
       "companyId": "safari-ai",
       "displayName": "Safari AI",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Safari AI"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-safariai",
           "zapply-2027"
         ],
         "seasons": [
+          "2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-safariai",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -11971,19 +15124,29 @@
     {
       "companyId": "samaya-ai",
       "displayName": "Samaya AI",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Samaya AI"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-samayaai",
           "zapply-2027"
         ],
         "seasons": [
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-samayaai",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -12004,6 +15167,34 @@
         ]
       },
       "directSources": [],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "samsung-research-america-internship",
+      "displayName": "Samsung Research America Internship",
+      "aliases": [
+        "Samsung Research America Internship"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 1,
+        "sourceIds": [
+          "greenhouse-samsungresearchamericainternship"
+        ],
+        "seasons": [
+          "2026"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-samsungresearchamericainternship",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -12133,23 +15324,33 @@
     {
       "companyId": "scale-ai",
       "displayName": "Scale AI",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Scale AI"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 3,
+        "activeListingCount": 5,
         "sourceIds": [
+          "greenhouse-scaleai",
           "simplify-summer-2026",
           "speedyapply-2027-ai",
           "vanshb03-summer-2027"
         ],
         "seasons": [
           "offseason-2027",
+          "ongoing",
           "summer-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-scaleai",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -12157,20 +15358,31 @@
     {
       "companyId": "schonfeld",
       "displayName": "Schonfeld",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Schonfeld"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 2,
+        "activeListingCount": 4,
         "sourceIds": [
+          "greenhouse-schonfeld",
           "speedyapply-2027-ai",
           "zapply-2027"
         ],
         "seasons": [
+          "2026",
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-schonfeld",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -12201,19 +15413,29 @@
     {
       "companyId": "scopely",
       "displayName": "Scopely",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Scopely"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 3,
         "sourceIds": [
+          "greenhouse-scopely",
           "speedyapply-2027-ai"
         ],
         "seasons": [
+          "2011",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-scopely",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -12305,21 +15527,31 @@
     {
       "companyId": "seven-research",
       "displayName": "Seven Research",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Seven Research"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 8,
+        "activeListingCount": 12,
         "sourceIds": [
+          "greenhouse-sevenresearch",
           "northwestern-fintech-2027-quant",
           "simplify-summer-2026"
         ],
         "seasons": [
           "offseason-2026",
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-sevenresearch",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -12327,20 +15559,30 @@
     {
       "companyId": "sharkninja",
       "displayName": "SharkNinja",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "SharkNinja"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 9,
+        "activeListingCount": 13,
         "sourceIds": [
+          "greenhouse-sharkninjaoperatingllc",
           "speedyapply-2027-ai",
           "zapply-2027"
         ],
         "seasons": [
+          "fall-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-sharkninjaoperatingllc",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -12401,6 +15643,36 @@
         ]
       },
       "directSources": [],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "shift-technology",
+      "displayName": "Shift Technology",
+      "aliases": [
+        "Shift Technology"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 3,
+        "sourceIds": [
+          "greenhouse-shifttechnology"
+        ],
+        "seasons": [
+          "2000",
+          "2027",
+          "ongoing"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-shifttechnology",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -12593,6 +15865,28 @@
       ]
     },
     {
+      "companyId": "smartasset",
+      "displayName": "SmartAsset",
+      "aliases": [
+        "SmartAsset"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-smartasset",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "smiths-detection-group",
       "displayName": "Smiths Detection Group",
       "aliases": [],
@@ -12729,21 +16023,31 @@
     {
       "companyId": "spacex",
       "displayName": "SpaceX",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "SpaceX"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 3,
+        "activeListingCount": 5,
         "sourceIds": [
+          "greenhouse-spacex",
           "vanshb03-summer-2027",
           "zapply-2027"
         ],
         "seasons": [
+          "fall-2026",
           "offseason-2027",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-spacex",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "company-weights",
         "configured-feeds"
@@ -12816,19 +16120,29 @@
     {
       "companyId": "squarepoint-capital",
       "displayName": "Squarepoint Capital",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Squarepoint Capital"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-squarepointcapital",
           "simplify-summer-2026"
         ],
         "seasons": [
-          "offseason-2026"
+          "offseason-2026",
+          "ongoing"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-squarepointcapital",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -12871,6 +16185,34 @@
         ]
       },
       "directSources": [],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "stackadapt-confidential",
+      "displayName": "StackAdapt - Confidential",
+      "aliases": [
+        "StackAdapt - Confidential"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 1,
+        "sourceIds": [
+          "greenhouse-stackadapt-confidential"
+        ],
+        "seasons": [
+          "fall-2026"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-stackadapt-confidential",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -12939,6 +16281,34 @@
       ]
     },
     {
+      "companyId": "stevens-capital-management-lp",
+      "displayName": "Stevens Capital Management LP",
+      "aliases": [
+        "Stevens Capital Management LP"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 2,
+        "sourceIds": [
+          "greenhouse-scm"
+        ],
+        "seasons": [
+          "ongoing"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-scm",
+          "status": "published"
+        }
+      ],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
       "companyId": "stevens-institute-of-technology",
       "displayName": "Stevens Institute of Technology",
       "aliases": [],
@@ -12982,19 +16352,29 @@
     {
       "companyId": "stripe",
       "displayName": "Stripe",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Stripe"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-stripe",
           "speedyapply-2027-swe"
         ],
         "seasons": [
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-stripe",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "company-weights",
         "configured-feeds"
@@ -13003,19 +16383,29 @@
     {
       "companyId": "submittable",
       "displayName": "Submittable",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Submittable"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-submittable",
           "speedyapply-2027-ai"
         ],
         "seasons": [
+          "fall-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-submittable",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -13476,6 +16866,35 @@
       ]
     },
     {
+      "companyId": "tenstorrent-university-jobs",
+      "displayName": "Tenstorrent University Jobs",
+      "aliases": [
+        "Tenstorrent University Jobs"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 21,
+        "sourceIds": [
+          "greenhouse-tenstorrentuniversity"
+        ],
+        "seasons": [
+          "fall-2026",
+          "ongoing"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-tenstorrentuniversity",
+          "status": "published"
+        }
+      ],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
       "companyId": "terranova",
       "displayName": "Terranova",
       "aliases": [],
@@ -13707,20 +17126,31 @@
     {
       "companyId": "the-trade-desk",
       "displayName": "The Trade Desk",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "The Trade Desk"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 2,
+        "activeListingCount": 4,
         "sourceIds": [
+          "greenhouse-thetradedesk",
           "speedyapply-2027-swe",
           "zapply-2027"
         ],
         "seasons": [
-          "summer-2027"
+          "summer-2026",
+          "summer-2027",
+          "summer-2028"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-thetradedesk",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -13888,21 +17318,31 @@
     {
       "companyId": "together-ai",
       "displayName": "Together AI",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Together AI"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 5,
+        "activeListingCount": 8,
         "sourceIds": [
+          "greenhouse-togetherai",
           "simplify-summer-2026",
           "zapply-2027"
         ],
         "seasons": [
+          "fall-2026",
           "offseason-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-togetherai",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -13931,8 +17371,10 @@
     {
       "companyId": "torc-robotics",
       "displayName": "Torc Robotics",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Torc Robotics"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 1,
@@ -13943,7 +17385,13 @@
           "summer-2026"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-torcrobotics",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -13984,6 +17432,34 @@
         ]
       },
       "directSources": [],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "toshiba-global-commerce-solutions-external",
+      "displayName": "Toshiba Global Commerce Solutions - External",
+      "aliases": [
+        "Toshiba Global Commerce Solutions - External"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 9,
+        "sourceIds": [
+          "greenhouse-toshibaglobalcommercesolutions"
+        ],
+        "seasons": [
+          "fall-2026"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-toshibaglobalcommercesolutions",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -14076,21 +17552,32 @@
     {
       "companyId": "transmarket-group",
       "displayName": "TransMarket Group",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "TransMarket Group"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 3,
+        "activeListingCount": 5,
         "sourceIds": [
+          "greenhouse-transmarketgroup",
           "vanshb03-summer-2027",
           "zapply-2027"
         ],
         "seasons": [
           "offseason-2027",
+          "ongoing",
+          "spring-2028",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-transmarketgroup",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -14158,21 +17645,31 @@
     {
       "companyId": "tribalscale",
       "displayName": "TribalScale",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "TribalScale"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 2,
+        "activeListingCount": 3,
         "sourceIds": [
+          "greenhouse-tribalscale",
           "simplify-summer-2026",
           "speedyapply-2027-swe"
         ],
         "seasons": [
+          "ongoing",
           "summer-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-tribalscale",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -14240,19 +17737,29 @@
     {
       "companyId": "true-anomaly",
       "displayName": "True Anomaly",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "True Anomaly"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-trueanomalyinc",
           "zapply-2027"
         ],
         "seasons": [
+          "2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-trueanomalyinc",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -14280,22 +17787,54 @@
     {
       "companyId": "truveta",
       "displayName": "Truveta",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Truveta"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 4,
         "sourceIds": [
+          "greenhouse-truveta",
           "zapply-2027"
         ],
         "seasons": [
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-truveta",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
+    },
+    {
+      "companyId": "twitch",
+      "displayName": "Twitch",
+      "aliases": [
+        "Twitch"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-twitch",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
     },
     {
       "companyId": "two-sigma",
@@ -14316,8 +17855,10 @@
     {
       "companyId": "two-six-technologies",
       "displayName": "Two Six Technologies",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Two Six Technologies"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 2,
@@ -14330,7 +17871,13 @@
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-twosixtechnologies",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -14519,21 +18066,60 @@
       ]
     },
     {
-      "companyId": "vast",
-      "displayName": "VAST",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "companyId": "varda-space-industries",
+      "displayName": "Varda Space Industries",
+      "aliases": [
+        "Varda Space Industries"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 3,
         "sourceIds": [
+          "greenhouse-vardaspace"
+        ],
+        "seasons": [
+          "fall-2026",
+          "summer-2026"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-vardaspace",
+          "status": "published"
+        }
+      ],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "vast",
+      "displayName": "VAST",
+      "aliases": [
+        "Vast"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 2,
+        "sourceIds": [
+          "greenhouse-vast",
           "zapply-2027"
         ],
         "seasons": [
+          "2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-vast",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -14541,8 +18127,10 @@
     {
       "companyId": "veeam-software",
       "displayName": "Veeam Software",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Veeam Software"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
         "activeListingCount": 2,
@@ -14553,7 +18141,13 @@
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-veeamsoftware",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -14621,19 +18215,29 @@
     {
       "companyId": "verkada",
       "displayName": "Verkada",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Verkada"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-verkada",
           "zapply-2027"
         ],
         "seasons": [
+          "fall-2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-verkada",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -14701,24 +18305,62 @@
       ]
     },
     {
-      "companyId": "virtu-financial",
-      "displayName": "Virtu Financial",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "companyId": "virtu-careers",
+      "displayName": "Virtu Careers",
+      "aliases": [
+        "Virtu Careers"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 13,
+        "activeListingCount": 2,
         "sourceIds": [
+          "greenhouse-virturecruitinghidden"
+        ],
+        "seasons": [
+          "2027"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-virturecruitinghidden",
+          "status": "published"
+        }
+      ],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "virtu-financial",
+      "displayName": "Virtu Financial",
+      "aliases": [
+        "Virtu Financial"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 20,
+        "sourceIds": [
+          "greenhouse-virtu",
           "speedyapply-2027-ai",
           "speedyapply-2027-swe",
           "vanshb03-summer-2027",
           "zapply-2027"
         ],
         "seasons": [
+          "2027",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-virtu",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -14792,19 +18434,29 @@
     {
       "companyId": "voloridge-investment-management",
       "displayName": "Voloridge Investment Management",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "Voloridge Investment Management"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 1,
+        "activeListingCount": 3,
         "sourceIds": [
+          "greenhouse-voloridgeinvestmentmanagement",
           "vanshb03-summer-2027"
         ],
         "seasons": [
+          "2027",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-voloridgeinvestmentmanagement",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -14827,6 +18479,34 @@
         ]
       },
       "directSources": [],
+      "candidateSources": [
+        "configured-feeds"
+      ]
+    },
+    {
+      "companyId": "walleye-capital-internships",
+      "displayName": "Walleye Capital Internships",
+      "aliases": [
+        "Walleye Capital Internships"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "current",
+        "activeListingCount": 7,
+        "sourceIds": [
+          "greenhouse-walleyecapital-external-students"
+        ],
+        "seasons": [
+          "summer-2027"
+        ]
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-walleyecapital-external-students",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -14912,6 +18592,28 @@
       ]
     },
     {
+      "companyId": "weave",
+      "displayName": "Weave",
+      "aliases": [
+        "Weave"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-weave",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "weaviate",
       "displayName": "Weaviate",
       "aliases": [],
@@ -14930,6 +18632,28 @@
       "candidateSources": [
         "configured-feeds"
       ]
+    },
+    {
+      "companyId": "webflow",
+      "displayName": "Webflow",
+      "aliases": [
+        "Webflow"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-webflow",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
     },
     {
       "companyId": "wells-fargo",
@@ -15139,19 +18863,30 @@
     {
       "companyId": "worldquant",
       "displayName": "WorldQuant",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "WorldQuant"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 2,
+        "activeListingCount": 8,
         "sourceIds": [
+          "greenhouse-worldquant",
           "zapply-2027"
         ],
         "seasons": [
+          "2025",
+          "2026",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-worldquant",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]
@@ -15198,21 +18933,53 @@
       ]
     },
     {
+      "companyId": "xometry",
+      "displayName": "Xometry",
+      "aliases": [
+        "Xometry"
+      ],
+      "coverageState": "direct-published",
+      "internshipEvidence": {
+        "status": "unknown",
+        "activeListingCount": 0,
+        "sourceIds": [],
+        "seasons": []
+      },
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-xometry",
+          "status": "published"
+        }
+      ],
+      "candidateSources": []
+    },
+    {
       "companyId": "xpeng",
       "displayName": "XPENG",
-      "aliases": [],
-      "coverageState": "feed-observed",
+      "aliases": [
+        "XPENG"
+      ],
+      "coverageState": "direct-published",
       "internshipEvidence": {
         "status": "current",
-        "activeListingCount": 2,
+        "activeListingCount": 4,
         "sourceIds": [
+          "greenhouse-xpengmotors",
           "speedyapply-2027-ai"
         ],
         "seasons": [
+          "ongoing",
           "summer-2027"
         ]
       },
-      "directSources": [],
+      "directSources": [
+        {
+          "provider": "greenhouse",
+          "sourceId": "greenhouse-xpengmotors",
+          "status": "published"
+        }
+      ],
       "candidateSources": [
         "configured-feeds"
       ]

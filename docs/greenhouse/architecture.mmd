@@ -1,20 +1,30 @@
 flowchart LR
-  EB["EventBridge Scheduler<br/>every 10 minutes"] --> D["Dispatch Lambda<br/>active every 10 min · empty every 6 hr<br/>30 second ceiling"]
-  D --> Q["Greenhouse FIFO work queue<br/>one message per reviewed board"]
+  subgraph GH["InternNotifsGreenhouse stack"]
+    EB["EventBridge Scheduler<br/>every 10 minutes"] --> D["Dispatch Lambda<br/>active every 10 min · empty every 6 hr<br/>30 second ceiling"]
+    D --> Q["Greenhouse FIFO work queue<br/>one message per reviewed board"]
 
-  Q --> W["Worker Lambda<br/>batch 10 · max concurrency 4<br/>2 minute ceiling"]
-  W --> R{"Registry status"}
+    Q --> W["Worker Lambda<br/>batch 10 · max concurrency 4<br/>2 minute ceiling"]
+    W --> R{"Registry status"}
 
-  R -->|shadow| S["Shadow validation<br/>API shape · mapping · quality · links"]
-  S --> SC["Isolated shadow checkpoint<br/>no catalog jobs · no alerts"]
+    R -->|shadow| S["Shadow validation<br/>API shape · mapping · quality · links"]
 
-  R -->|published| P["Catalog poller<br/>ETag · map · dedupe · validate"]
-  P --> DB[("DynamoDB<br/>jobs + published checkpoint")]
-  DB --> N["Matching user notifications"]
+    R -->|published| P["Catalog poller<br/>ETag · map · dedupe · validate"]
 
-  W -->|failed record| Q
-  Q -->|after 4 receives| DLQ["Greenhouse dead-letter queue<br/>14 day retention"]
+    W -->|failed record| Q
+    Q -->|after 4 receives| DLQ["Greenhouse dead-letter queue<br/>14 day retention"]
 
-  Q -. queue age .-> CW["CloudWatch alarms"]
-  W -. invocation errors .-> CW
-  DLQ -. visible messages .-> CW
+    Q -. queue age .-> CW["CloudWatch alarms"]
+    W -. invocation errors .-> CW
+    DLQ -. visible messages .-> CW
+  end
+
+  subgraph MAIN["Existing retained data plane"]
+    DB[("DynamoDB internships table<br/>jobs + isolated checkpoints")]
+    UDB[("DynamoDB user table")]
+    N["Matching user notifications"]
+  end
+
+  S --> SC["Shadow checkpoint<br/>no catalog jobs · no alerts"] --> DB
+  P --> DB
+  P --> UDB
+  DB --> N

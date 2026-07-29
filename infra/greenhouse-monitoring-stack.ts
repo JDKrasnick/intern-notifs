@@ -1,0 +1,119 @@
+import * as cdk from 'aws-cdk-lib';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
+import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
+import * as scheduler from 'aws-cdk-lib/aws-scheduler';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
+import type { Construct } from 'constructs';
+
+export interface GreenhouseMonitoringStackProps extends cdk.StackProps {
+  internshipsTableName: string;
+  usersTableName: string;
+}
+
+/**
+ * Independently deployable monitoring plane. Importing the retained catalog
+ * tables keeps this stack from replacing or deleting resources in InternNotifs.
+ */
+export class GreenhouseMonitoringStack extends cdk.Stack {
+  constructor(scope: Construct, id: string, props: GreenhouseMonitoringStackProps) {
+    super(scope, id, props);
+    const internships = dynamodb.Table.fromTableAttributes(this, 'Internships', {
+      tableName: props.internshipsTableName,
+      globalIndexes: ['urlIndex', 'fingerprintIndex', 'pendingSmsIndex', 'pendingDigestIndex', 'openJobsIndex', 'closedJobsIndex'],
+    });
+    const users = dynamodb.Table.fromTableAttributes(this, 'UserData', {
+      tableName: props.usersTableName,
+      globalIndexes: ['activeDevicesIndex', 'tokenIndex', 'pendingReceiptsIndex', 'activeSessionsIndex'],
+    });
+    const deadLetterQueue = new sqs.Queue(this, 'GreenhouseDeadLetterQueue', {
+      fifo: true,
+      retentionPeriod: cdk.Duration.days(14),
+      encryption: sqs.QueueEncryption.SQS_MANAGED,
+    });
+    const queue = new sqs.Queue(this, 'GreenhouseWorkQueue', {
+      fifo: true,
+      contentBasedDeduplication: false,
+      visibilityTimeout: cdk.Duration.minutes(6),
+      retentionPeriod: cdk.Duration.days(1),
+      encryption: sqs.QueueEncryption.SQS_MANAGED,
+      deadLetterQueue: { queue: deadLetterQueue, maxReceiveCount: 4 },
+    });
+    const dispatcher = new lambdaNodejs.NodejsFunction(this, 'GreenhouseDispatcher', {
+      entry: 'src/greenhouse-dispatch.ts',
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256,
+      environment: { GREENHOUSE_QUEUE_URL: queue.queueUrl, INTERNSHIPS_TABLE: internships.tableName },
+      bundling: { externalModules: [] },
+    });
+    queue.grantSendMessages(dispatcher);
+    internships.grantReadData(dispatcher);
+    const worker = new lambdaNodejs.NodejsFunction(this, 'GreenhouseWorker', {
+      entry: 'src/greenhouse-worker.ts',
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      timeout: cdk.Duration.minutes(2),
+      memorySize: 512,
+      environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName },
+      bundling: { externalModules: [] },
+    });
+    worker.addEventSource(new lambdaEventSources.SqsEventSource(queue, {
+      batchSize: 10,
+      maxConcurrency: 4,
+      reportBatchItemFailures: true,
+    }));
+    internships.grantReadWriteData(worker);
+    users.grantReadWriteData(worker);
+
+    const schedulerDeadLetterQueue = new sqs.Queue(this, 'GreenhouseSchedulerDeadLetterQueue', {
+      retentionPeriod: cdk.Duration.days(14),
+      encryption: sqs.QueueEncryption.SQS_MANAGED,
+    });
+    const schedulerRole = new iam.Role(this, 'GreenhouseSchedulerInvokeRole', {
+      assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com'),
+    });
+    dispatcher.grantInvoke(schedulerRole);
+    schedulerDeadLetterQueue.grantSendMessages(schedulerRole);
+    new scheduler.CfnSchedule(this, 'GreenhousePollSchedule', {
+      flexibleTimeWindow: { mode: 'OFF' },
+      scheduleExpression: 'cron(2,12,22,32,42,52 * * * ? *)',
+      scheduleExpressionTimezone: 'UTC',
+      state: 'ENABLED',
+      target: {
+        arn: dispatcher.functionArn,
+        roleArn: schedulerRole.roleArn,
+        input: JSON.stringify({ command: 'greenhouse-dispatch' }),
+        deadLetterConfig: { arn: schedulerDeadLetterQueue.queueArn },
+        retryPolicy: { maximumEventAgeInSeconds: 3600, maximumRetryAttempts: 2 },
+      },
+    });
+
+    new cloudwatch.Alarm(this, 'GreenhouseQueueAgeAlarm', {
+      metric: queue.metricApproximateAgeOfOldestMessage(),
+      threshold: 600,
+      evaluationPeriods: 2,
+      alarmDescription: 'Greenhouse polling work has remained queued for more than ten minutes.',
+    });
+    new cloudwatch.Alarm(this, 'GreenhouseDeadLetterAlarm', {
+      metric: deadLetterQueue.metricApproximateNumberOfMessagesVisible(),
+      threshold: 1,
+      evaluationPeriods: 1,
+      alarmDescription: 'At least one Greenhouse board exhausted its bounded retries.',
+    });
+    new cloudwatch.Alarm(this, 'GreenhouseWorkerErrorsAlarm', {
+      metric: worker.metricErrors(),
+      threshold: 1,
+      evaluationPeriods: 1,
+      alarmDescription: 'The Greenhouse queue worker returned an invocation error.',
+    });
+
+    new cdk.CfnOutput(this, 'GreenhouseQueueUrl', { value: queue.queueUrl });
+    new cdk.CfnOutput(this, 'GreenhouseWorkerFunctionName', { value: worker.functionName });
+    new cdk.CfnOutput(this, 'GreenhouseDispatcherFunctionName', { value: dispatcher.functionName });
+  }
+}

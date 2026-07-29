@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as cdk from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
+import { GreenhouseMonitoringStack } from '../infra/greenhouse-monitoring-stack.js';
 import { InternNotifsStack } from '../infra/intern-notifs-stack.js';
 
 function snapshotTemplate(template: Record<string, unknown>) {
@@ -14,8 +15,8 @@ describe('CDK stack', () => {
   it('has durable tables and main-branch OIDC trust', () => {
     const app = new cdk.App(); const stack = new InternNotifsStack(app, 'Test', { githubRepository: 'owner/repo', emailAddress: 'me@example.com' }); const template = Template.fromStack(stack);
     template.resourceCountIs('AWS::DynamoDB::Table', 3);
-    template.resourceCountIs('AWS::Scheduler::Schedule', 4);
-    template.resourceCountIs('AWS::SQS::Queue', 3);
+    template.resourceCountIs('AWS::Scheduler::Schedule', 3);
+    template.resourceCountIs('AWS::SQS::Queue', 1);
     template.hasResourceProperties('AWS::IAM::Role', { AssumeRolePolicyDocument: { Statement: [{ Condition: { StringEquals: { 'token.actions.githubusercontent.com:sub': 'repo:owner/repo:ref:refs/heads/main' } } }] } });
   });
   it('keeps an infrastructure snapshot', () => {
@@ -31,13 +32,15 @@ describe('CDK stack', () => {
     Template.fromStack(stack).hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: 'cron(0 9 * * ? *)', ScheduleExpressionTimezone: 'America/New_York', State: 'ENABLED', FlexibleTimeWindow: { Mode: 'OFF' } });
   });
   it('queues Greenhouse boards every ten minutes with bounded worker concurrency', () => {
-    const app = new cdk.App(); const stack = new InternNotifsStack(app, 'Greenhouse', { githubRepository: 'owner/repo', emailAddress: 'me@example.com' }); const template = Template.fromStack(stack);
+    const app = new cdk.App(); const stack = new GreenhouseMonitoringStack(app, 'Greenhouse', { internshipsTableName: 'internships', usersTableName: 'users' }); const template = Template.fromStack(stack);
+    template.resourceCountIs('AWS::SQS::Queue', 3);
     template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: 'cron(2,12,22,32,42,52 * * * ? *)', State: 'ENABLED' });
     template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
       BatchSize: 10,
       FunctionResponseTypes: ['ReportBatchItemFailures'],
       ScalingConfig: { MaximumConcurrency: 4 },
     });
-    template.hasResourceProperties('AWS::Lambda::Function', { ReservedConcurrentExecutions: 4, Timeout: 120 });
+    template.hasResourceProperties('AWS::Lambda::Function', { Timeout: 120 });
+    expect(snapshotTemplate(template.toJSON())).toMatchSnapshot();
   });
 });

@@ -5,6 +5,8 @@ on:
       - 'src/sources/greenhouse*'
       - 'src/greenhouse-*'
       - 'infra/intern-notifs-stack.ts'
+      - 'infra/greenhouse-monitoring-stack.ts'
+      - 'infra/app.ts'
       - 'docs/greenhouse/**'
       - 'src/sources/index.ts'
       - 'src/sources/quality.ts'

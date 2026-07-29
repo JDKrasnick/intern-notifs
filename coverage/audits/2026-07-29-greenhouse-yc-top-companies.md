@@ -2,10 +2,10 @@
 
 Audit date: 2026-07-29
 
-This audit expands the Greenhouse discovery backlog without changing the
-reviewed source registry. A successful result means the fixed Greenhouse Job
-Board API returned a board identity and jobs payload that matched the company
-record. It does not grant production publication or notification access.
+This audit originally expanded the Greenhouse discovery backlog without
+changing the reviewed source registry. Later on 2026-07-29, the owner approved
+an owner-only bulk rollout: current API board identities entered the official
+registry as published sources, with ownership review continuing afterward.
 
 ## Results
 
@@ -73,4 +73,4 @@ Publication still requires scheduled shadow evidence and an explicit reviewed
 promotion.
 
 The full workflow and promotion criteria are defined in
-[`../../docs/greenhouse-registry-expansion-plan.md`](../../docs/greenhouse-registry-expansion-plan.md).
+[`../../docs/greenhouse/registry-expansion-plan.md`](../../docs/greenhouse/registry-expansion-plan.md).

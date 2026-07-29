@@ -2,12 +2,10 @@ import * as cdk from 'aws-cdk-lib';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as authorizers from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
-import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as ses from 'aws-cdk-lib/aws-ses';
@@ -65,58 +63,6 @@ export class InternNotifsStack extends cdk.Stack {
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['ses:SendEmail'], resources: [identity.emailIdentityArn] }));
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameter'], resources: [`arn:${this.partition}:ssm:${this.region}:${this.account}:parameter${runtimeConfigParameterName}`] }));
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['kms:Decrypt'], resources: [`arn:${this.partition}:kms:${this.region}:${this.account}:key/*`], conditions: { StringEquals: { 'kms:ViaService': `ssm.${this.region}.amazonaws.com` } } }));
-    const greenhouseDeadLetterQueue = new sqs.Queue(this, 'GreenhouseDeadLetterQueue', {
-      fifo: true,
-      retentionPeriod: cdk.Duration.days(14),
-      encryption: sqs.QueueEncryption.SQS_MANAGED,
-    });
-    const greenhouseQueue = new sqs.Queue(this, 'GreenhouseWorkQueue', {
-      fifo: true,
-      contentBasedDeduplication: false,
-      visibilityTimeout: cdk.Duration.minutes(6),
-      retentionPeriod: cdk.Duration.days(1),
-      encryption: sqs.QueueEncryption.SQS_MANAGED,
-      deadLetterQueue: { queue: greenhouseDeadLetterQueue, maxReceiveCount: 4 },
-    });
-    const greenhouseDispatcher = new lambdaNodejs.NodejsFunction(this, 'GreenhouseDispatcher', {
-      entry: 'src/greenhouse-dispatch.ts', handler: 'handler', runtime: lambda.Runtime.NODEJS_22_X,
-      timeout: cdk.Duration.seconds(30), memorySize: 256,
-      environment: { GREENHOUSE_QUEUE_URL: greenhouseQueue.queueUrl, INTERNSHIPS_TABLE: internships.tableName },
-      bundling: { externalModules: [] },
-    });
-    greenhouseQueue.grantSendMessages(greenhouseDispatcher);
-    internships.grantReadData(greenhouseDispatcher);
-    const greenhouseWorker = new lambdaNodejs.NodejsFunction(this, 'GreenhouseWorker', {
-      entry: 'src/greenhouse-worker.ts', handler: 'handler', runtime: lambda.Runtime.NODEJS_22_X,
-      timeout: cdk.Duration.minutes(2), memorySize: 512, reservedConcurrentExecutions: 4,
-      environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName },
-      bundling: { externalModules: [] },
-    });
-    greenhouseWorker.addEventSource(new lambdaEventSources.SqsEventSource(greenhouseQueue, {
-      batchSize: 10,
-      maxConcurrency: 4,
-      reportBatchItemFailures: true,
-    }));
-    internships.grantReadWriteData(greenhouseWorker);
-    users.grantReadWriteData(greenhouseWorker);
-    new cloudwatch.Alarm(this, 'GreenhouseQueueAgeAlarm', {
-      metric: greenhouseQueue.metricApproximateAgeOfOldestMessage(),
-      threshold: 600,
-      evaluationPeriods: 2,
-      alarmDescription: 'Greenhouse polling work has remained queued for more than ten minutes.',
-    });
-    new cloudwatch.Alarm(this, 'GreenhouseDeadLetterAlarm', {
-      metric: greenhouseDeadLetterQueue.metricApproximateNumberOfMessagesVisible(),
-      threshold: 1,
-      evaluationPeriods: 1,
-      alarmDescription: 'At least one Greenhouse board exhausted its bounded retries.',
-    });
-    new cloudwatch.Alarm(this, 'GreenhouseWorkerErrorsAlarm', {
-      metric: greenhouseWorker.metricErrors(),
-      threshold: 1,
-      evaluationPeriods: 1,
-      alarmDescription: 'The Greenhouse queue worker returned an invocation error.',
-    });
     const apiHandler = new lambdaNodejs.NodejsFunction(this, 'PublicApi', { entry: 'src/api.ts', handler: 'handler', runtime: lambda.Runtime.NODEJS_22_X, timeout: cdk.Duration.seconds(29), memorySize: 512, environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName, DOCUMENTS_BUCKET: documents.bucketName, USER_POOL_ID: userPool.userPoolId }, bundling: { externalModules: [] } });
     apiHandler.addToRolePolicy(new iam.PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:DeleteItem', 'dynamodb:Query'], resources: [internships.tableArn, `${internships.tableArn}/index/*`, users.tableArn, `${users.tableArn}/index/*`] }));
     documents.grantReadWrite(apiHandler); userPool.grant(apiHandler, 'cognito-idp:AdminDeleteUser');
@@ -133,11 +79,9 @@ export class InternNotifsStack extends cdk.Stack {
     if (defaultStage) defaultStage.defaultRouteSettings = { throttlingBurstLimit: 50, throttlingRateLimit: 25 };
     const deadLetterQueue = new sqs.Queue(this, 'SchedulerDeadLetterQueue', { retentionPeriod: cdk.Duration.days(14), encryption: sqs.QueueEncryption.SQS_MANAGED });
     const schedulerRole = new iam.Role(this, 'SchedulerInvokeRole', { assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com') });
-    notifier.grantInvoke(schedulerRole); greenhouseDispatcher.grantInvoke(schedulerRole); deadLetterQueue.grantSendMessages(schedulerRole);
+    notifier.grantInvoke(schedulerRole); deadLetterQueue.grantSendMessages(schedulerRole);
     const target = (command: 'poll' | 'digest'): scheduler.CfnSchedule.TargetProperty => ({ arn: notifier.functionArn, roleArn: schedulerRole.roleArn, input: JSON.stringify({ command }), deadLetterConfig: { arn: deadLetterQueue.queueArn }, retryPolicy: { maximumEventAgeInSeconds: 3600, maximumRetryAttempts: 2 } });
-    const greenhouseTarget: scheduler.CfnSchedule.TargetProperty = { arn: greenhouseDispatcher.functionArn, roleArn: schedulerRole.roleArn, input: JSON.stringify({ command: 'greenhouse-dispatch' }), deadLetterConfig: { arn: deadLetterQueue.queueArn }, retryPolicy: { maximumEventAgeInSeconds: 3600, maximumRetryAttempts: 2 } };
     new scheduler.CfnSchedule(this, 'PollSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(2,7,12,17,22,27,32,37,42,47,52,57 * * * ? *)', scheduleExpressionTimezone: 'UTC', state: 'ENABLED', target: target('poll') });
-    new scheduler.CfnSchedule(this, 'GreenhousePollSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(2,12,22,32,42,52 * * * ? *)', scheduleExpressionTimezone: 'UTC', state: 'ENABLED', target: greenhouseTarget });
     new scheduler.CfnSchedule(this, 'MorningDigestSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(0 9 * * ? *)', scheduleExpressionTimezone: 'America/New_York', state: 'ENABLED', target: target('digest') });
     new scheduler.CfnSchedule(this, 'EveningDigestSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(0 17 * * ? *)', scheduleExpressionTimezone: 'America/New_York', state: 'ENABLED', target: target('digest') });
     new cdk.CfnOutput(this, 'InternshipsTableName', { value: internships.tableName });
@@ -151,7 +95,5 @@ export class InternNotifsStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'Region', { value: this.region });
     new cdk.CfnOutput(this, 'RuntimeConfigParameterName', { value: runtimeConfigParameterName });
     new cdk.CfnOutput(this, 'NotifierFunctionName', { value: notifier.functionName });
-    new cdk.CfnOutput(this, 'GreenhouseQueueUrl', { value: greenhouseQueue.queueUrl });
-    new cdk.CfnOutput(this, 'GreenhouseWorkerFunctionName', { value: greenhouseWorker.functionName });
   }
 }

@@ -8,6 +8,11 @@ function withEmployerCategory(job: Internship): Internship {
   return { ...structuredClone(job), employerCategory: job.employerCategory ?? employerCategory(job.company) };
 }
 
+/** Optional listing/profile fields are omitted rather than rejected by DynamoDB. */
+export function createDynamoDocumentClient(client = new DynamoDBClient({})): DynamoDBDocumentClient {
+  return DynamoDBDocumentClient.from(client, { marshallOptions: { removeUndefinedValues: true } });
+}
+
 export interface InternshipStore {
   getCheckpoint(sourceId: string): Promise<SourceCheckpoint | undefined>;
   putCheckpoint(checkpoint: SourceCheckpoint): Promise<void>;
@@ -68,7 +73,7 @@ type JobItem = { pk: string; sk: 'META'; urlPk: string; fingerprintPk: string; s
 
 export class DynamoInternshipStore implements InternshipStore {
   private readonly client: DynamoDBDocumentClient;
-  constructor(private readonly tableName: string, client?: DynamoDBDocumentClient) { this.client = client ?? DynamoDBDocumentClient.from(new DynamoDBClient({})); }
+  constructor(private readonly tableName: string, client?: DynamoDBDocumentClient) { this.client = client ?? createDynamoDocumentClient(); }
   private async queryAll(command: ConstructorParameters<typeof QueryCommand>[0]) {
     const items: Record<string, unknown>[] = []; let cursor: Record<string, unknown> | undefined;
     do {
@@ -207,7 +212,7 @@ export class MemoryUserStore implements UserStore {
 type UserItem = { pk: string; sk: string; kind: string; value: unknown; activePk?: string; tokenPk?: string; receiptPk?: string; activeSessionPk?: string; expiresAtEpoch?: number };
 export class DynamoUserStore implements UserStore {
   private readonly client: DynamoDBDocumentClient;
-  constructor(private readonly tableName: string, client?: DynamoDBDocumentClient) { this.client = client ?? DynamoDBDocumentClient.from(new DynamoDBClient({})); }
+  constructor(private readonly tableName: string, client?: DynamoDBDocumentClient) { this.client = client ?? createDynamoDocumentClient(); }
   private async queryAll(command: ConstructorParameters<typeof QueryCommand>[0]) {
     const items: Record<string, unknown>[] = []; let cursor: Record<string, unknown> | undefined;
     do {

@@ -16,11 +16,11 @@ describe('public API ownership boundary', () => {
     const response = await handler(event(undefined, 'GET', '/coverage', undefined, { q: 'figma', limit: '10' }));
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(response.body)).toMatchObject({
-      counts: { internshipObserved: expect.any(Number), directShadow: expect.any(Number) },
+      counts: { internshipObserved: expect.any(Number), directPublished: expect.any(Number) },
       matchedCompanies: 1,
       companies: [{
         displayName: 'Figma',
-        coverageState: 'direct-shadow',
+        coverageState: 'direct-published',
         directProviders: ['greenhouse']
       }]
     });

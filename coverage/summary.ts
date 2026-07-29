@@ -15,16 +15,16 @@ export interface CompanyCoverageSnapshot {
 }
 export const companyCoverage: CompanyCoverageSnapshot = {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-29T00:00:00.000Z",
+  "generatedAt": "2026-07-29T21:07:31.798Z",
   "methodology": "Configured live technical-internship feeds plus reviewed direct ATS registries and maintained tech-company seeds.",
   "counts": {
-    "companies": 731,
-    "internshipObserved": 716,
-    "directPublished": 4,
-    "directShadow": 3,
-    "feedObservedOnly": 710,
-    "candidateOnly": 14,
-    "activeListingObservations": 2363
+    "companies": 800,
+    "internshipObserved": 744,
+    "directPublished": 170,
+    "directShadow": 0,
+    "feedObservedOnly": 621,
+    "candidateOnly": 9,
+    "activeListingObservations": 2660
   },
   "companies": [
     {
@@ -91,6 +91,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "ada",
+      "displayName": "Ada",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "adobe",
       "displayName": "Adobe",
       "coverageState": "candidate-only",
@@ -110,6 +119,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 1,
       "directProviders": []
+    },
+    {
+      "companyId": "aevex",
+      "displayName": "AEVEX",
+      "coverageState": "direct-published",
+      "activeListingCount": 1,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "aevex-aerospace",
@@ -135,9 +153,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "airbnb",
       "displayName": "Airbnb",
-      "coverageState": "candidate-only",
+      "coverageState": "direct-published",
       "activeListingCount": 0,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "airbus",
@@ -189,11 +209,22 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "algolia",
+      "displayName": "Algolia",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "alphagrep-securities",
       "displayName": "AlphaGrep Securities",
-      "coverageState": "feed-observed",
-      "activeListingCount": 2,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 5,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "altasciences",
@@ -208,6 +239,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 5,
       "directProviders": []
+    },
+    {
+      "companyId": "amarok",
+      "displayName": "AMAROK",
+      "coverageState": "direct-published",
+      "activeListingCount": 1,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "amarok-security",
@@ -252,6 +292,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "amplitude",
+      "displayName": "Amplitude",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "analog-devices",
       "displayName": "Analog Devices",
       "coverageState": "feed-observed",
@@ -273,6 +322,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "anduril-industries",
+      "displayName": "Anduril Industries",
+      "coverageState": "direct-published",
+      "activeListingCount": 4,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "anthelion-capital",
       "displayName": "Anthelion Capital",
       "coverageState": "feed-observed",
@@ -282,16 +340,20 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "anthropic",
       "displayName": "Anthropic",
-      "coverageState": "candidate-only",
+      "coverageState": "direct-published",
       "activeListingCount": 0,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "apera-ai",
       "displayName": "Apera AI",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "apex-technology",
@@ -303,16 +365,20 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "appian",
       "displayName": "Appian",
-      "coverageState": "feed-observed",
-      "activeListingCount": 10,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 12,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "appier",
       "displayName": "Appier",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "apple",
@@ -338,9 +404,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "apptronik",
       "displayName": "Apptronik",
-      "coverageState": "feed-observed",
-      "activeListingCount": 6,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 8,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "aptiv",
@@ -373,9 +441,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "aquatic-capital-management",
       "displayName": "Aquatic Capital Management",
-      "coverageState": "feed-observed",
-      "activeListingCount": 2,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 4,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "arcadis",
@@ -401,9 +471,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "argmax",
       "displayName": "Argmax",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "argonne-national-laboratory",
@@ -490,11 +562,22 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "astera-labs-early-career",
+      "displayName": "Astera Labs Early Career",
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "astranis",
       "displayName": "Astranis",
-      "coverageState": "feed-observed",
-      "activeListingCount": 15,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 26,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "astranis-space-technologies",
@@ -541,15 +624,17 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "auctane",
       "displayName": "Auctane",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 1,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "auctor",
       "displayName": "Auctor",
       "coverageState": "feed-observed",
-      "activeListingCount": 3,
+      "activeListingCount": 2,
       "directProviders": []
     },
     {
@@ -565,6 +650,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 4,
       "directProviders": []
+    },
+    {
+      "companyId": "axiomatic-ai",
+      "displayName": "Axiomatic_AI",
+      "coverageState": "direct-published",
+      "activeListingCount": 1,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "axiomaticai",
@@ -665,6 +759,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "billiontoone",
+      "displayName": "BillionToOne",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "binance-us",
       "displayName": "Binance.US",
       "coverageState": "feed-observed",
@@ -684,6 +787,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 1,
       "directProviders": []
+    },
+    {
+      "companyId": "bird",
+      "displayName": "Bird",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "blackrock",
@@ -793,9 +905,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "bot-auto",
       "displayName": "Bot Auto",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "bree",
@@ -803,6 +917,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 1,
       "directProviders": []
+    },
+    {
+      "companyId": "brex",
+      "displayName": "Brex",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "brookfield",
@@ -919,9 +1042,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "celonis",
       "displayName": "Celonis",
-      "coverageState": "feed-observed",
-      "activeListingCount": 3,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 7,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "centerfield",
@@ -950,6 +1075,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 1,
       "directProviders": []
+    },
+    {
+      "companyId": "checkr",
+      "displayName": "Checkr",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "chevron",
@@ -1024,9 +1158,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "clarity-innovations",
       "displayName": "Clarity Innovations",
-      "coverageState": "feed-observed",
-      "activeListingCount": 2,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "clera",
@@ -1036,10 +1172,28 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "clever",
+      "displayName": "Clever",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
+      "companyId": "clockwork-io",
+      "displayName": "Clockwork.io",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "cloudflare",
       "displayName": "Cloudflare",
-      "coverageState": "direct-shadow",
-      "activeListingCount": 15,
+      "coverageState": "direct-published",
+      "activeListingCount": 14,
       "directProviders": [
         "greenhouse"
       ]
@@ -1068,9 +1222,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "coinbase",
       "displayName": "Coinbase",
-      "coverageState": "candidate-only",
+      "coverageState": "direct-published",
       "activeListingCount": 0,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "colgate-palmolive",
@@ -1201,9 +1357,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "cresta",
       "displayName": "Cresta",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 2,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "cribl",
@@ -1211,6 +1369,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 1,
       "directProviders": []
+    },
+    {
+      "companyId": "ctc-campus-external-not-advertised",
+      "displayName": "CTC Campus - External, Not Advertised",
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "ctgt",
@@ -1271,14 +1438,16 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "databricks",
       "displayName": "Databricks",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "datadog",
       "displayName": "Datadog",
-      "coverageState": "direct-shadow",
+      "coverageState": "direct-published",
       "activeListingCount": 1,
       "directProviders": [
         "greenhouse"
@@ -1383,6 +1552,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "diligent",
+      "displayName": "Diligent Corporation",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "dimehealth-ai",
       "displayName": "DimeHealth AI",
       "coverageState": "feed-observed",
@@ -1406,9 +1584,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "docugami",
       "displayName": "Docugami",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 4,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "doordash",
@@ -1416,6 +1596,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "candidate-only",
       "activeListingCount": 0,
       "directProviders": []
+    },
+    {
+      "companyId": "doubleverify",
+      "displayName": "DoubleVerify",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "dow",
@@ -1432,6 +1621,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "dropbox",
+      "displayName": "Dropbox",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "droyd-robotics",
       "displayName": "Droyd Robotics",
       "coverageState": "feed-observed",
@@ -1441,9 +1639,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "drw",
       "displayName": "DRW",
-      "coverageState": "feed-observed",
-      "activeListingCount": 22,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 35,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "dupont",
@@ -1511,16 +1711,20 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "engineers-gate",
       "displayName": "Engineers Gate",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "enova-international",
       "displayName": "Enova International",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 1,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "enpal",
@@ -1609,9 +1813,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "eulerity",
       "displayName": "Eulerity",
-      "coverageState": "feed-observed",
-      "activeListingCount": 9,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 13,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "eurofins",
@@ -1635,6 +1841,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "everpure",
+      "displayName": "Everpure",
+      "coverageState": "direct-published",
+      "activeListingCount": 1,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "eversource-energy",
       "displayName": "Eversource Energy",
       "coverageState": "feed-observed",
@@ -1644,9 +1859,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "evolver",
       "displayName": "Evolver",
-      "coverageState": "feed-observed",
-      "activeListingCount": 2,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "evonik",
@@ -1658,9 +1875,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "excel-sports-management",
       "displayName": "Excel Sports Management",
-      "coverageState": "feed-observed",
-      "activeListingCount": 2,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "exowatt",
@@ -1686,16 +1905,20 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "faire",
       "displayName": "Faire",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "faraday-future",
       "displayName": "Faraday Future",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "field-ai",
@@ -1714,7 +1937,7 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "figma",
       "displayName": "Figma",
-      "coverageState": "direct-shadow",
+      "coverageState": "direct-published",
       "activeListingCount": 0,
       "directProviders": [
         "greenhouse"
@@ -1723,9 +1946,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "figure",
       "displayName": "Figure",
-      "coverageState": "feed-observed",
-      "activeListingCount": 3,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 6,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "figure-ai",
@@ -1733,6 +1958,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 3,
       "directProviders": []
+    },
+    {
+      "companyId": "financial-times",
+      "displayName": "Financial Times",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "finmid",
@@ -1777,6 +2011,24 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "five-rings-llc-careers",
+      "displayName": "Five Rings LLC - Careers",
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
+      "companyId": "fivetran",
+      "displayName": "Fivetran",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "flagright",
       "displayName": "Flagright",
       "coverageState": "feed-observed",
@@ -1786,9 +2038,29 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "flagship-pioneering",
       "displayName": "Flagship Pioneering",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 2,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
+      "companyId": "flagship-pioneering-co-op-program",
+      "displayName": "Flagship Pioneering Co-Op Program",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
+      "companyId": "flexport",
+      "displayName": "Flexport",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "flir-systems",
@@ -1800,9 +2072,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "flow-traders",
       "displayName": "Flow Traders",
-      "coverageState": "feed-observed",
-      "activeListingCount": 3,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 4,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "fluxergy",
@@ -1828,9 +2102,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "four-hands",
       "displayName": "Four Hands",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 1,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "fox",
@@ -1842,9 +2118,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "freeform",
       "displayName": "Freeform",
-      "coverageState": "feed-observed",
-      "activeListingCount": 2,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 4,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "frontier-health",
@@ -1863,9 +2141,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "garda-capital-partners",
       "displayName": "Garda Capital Partners",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "ge-aerospace",
@@ -1891,9 +2171,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "gemini",
       "displayName": "Gemini",
-      "coverageState": "feed-observed",
-      "activeListingCount": 2,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 4,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "gen",
@@ -1938,6 +2220,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "genscript-probio",
+      "displayName": "GenScript/ProBio",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "geocomply",
       "displayName": "GeoComply",
       "coverageState": "feed-observed",
@@ -1954,9 +2245,29 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "ginkgo-bioworks",
       "displayName": "Ginkgo Bioworks",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
+      "companyId": "gitlab",
+      "displayName": "GitLab",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
+      "companyId": "glean",
+      "displayName": "Glean",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "global-infrastructure",
@@ -1980,6 +2291,24 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "goal-honduras",
+      "displayName": "GOAL Honduras",
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
+      "companyId": "goat-group",
+      "displayName": "GOAT Group",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "google",
       "displayName": "Google",
       "coverageState": "feed-observed",
@@ -1989,9 +2318,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "gotion",
       "displayName": "Gotion",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 2,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "grab",
@@ -2022,6 +2353,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "groww",
+      "displayName": "Groww",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "gsa",
       "displayName": "GSA",
       "coverageState": "feed-observed",
@@ -2043,6 +2383,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "gusto",
+      "displayName": "Gusto, Inc.",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "h-and",
       "displayName": "H&CO",
       "coverageState": "feed-observed",
@@ -2052,9 +2401,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "haize-labs",
       "displayName": "Haize Labs",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "halo-industries",
@@ -2166,9 +2517,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "hone-health",
       "displayName": "Hone Health",
-      "coverageState": "feed-observed",
-      "activeListingCount": 2,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "hong-leong-bank",
@@ -2180,9 +2533,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "horizon-industries",
       "displayName": "Horizon Industries",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 1,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "howmet-aerospace",
@@ -2225,6 +2580,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 1,
       "directProviders": []
+    },
+    {
+      "companyId": "hunter-douglas-talent-programs",
+      "displayName": "Hunter Douglas - Talent Programs",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "huntsman",
@@ -2271,16 +2635,20 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "iherb",
       "displayName": "iHerb",
-      "coverageState": "feed-observed",
-      "activeListingCount": 3,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 4,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "imc",
       "displayName": "IMC",
-      "coverageState": "feed-observed",
-      "activeListingCount": 4,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 12,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "imc-trading",
@@ -2297,11 +2665,22 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "instacart",
+      "displayName": "Instacart",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "instead",
       "displayName": "Instead",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "institute-for-foundation-models",
@@ -2323,6 +2702,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 2,
       "directProviders": []
+    },
+    {
+      "companyId": "integrafec",
+      "displayName": "IntegraFEC",
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "integrity",
@@ -2360,6 +2748,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "intrinsic",
+      "displayName": "Intrinsic",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "intuitive",
       "displayName": "Intuitive",
       "coverageState": "feed-observed",
@@ -2372,6 +2769,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 1,
       "directProviders": []
+    },
+    {
+      "companyId": "ispot",
+      "displayName": "iSpot",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "ivy-tech-community-college",
@@ -2390,9 +2796,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "jane-street",
       "displayName": "Jane Street",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 32,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "jingdong",
@@ -2416,6 +2824,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "join-our-talent-community",
+      "displayName": "Join Our Talent Community",
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "jp-morgan-chase",
       "displayName": "JP Morgan Chase",
       "coverageState": "feed-observed",
@@ -2425,9 +2842,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "jump",
       "displayName": "Jump",
-      "coverageState": "feed-observed",
-      "activeListingCount": 46,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 70,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "jump-trading-group",
@@ -2460,9 +2879,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "kensington",
       "displayName": "Kensington",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 2,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "kepler-communications",
@@ -2563,6 +2984,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "krafton-montreal-studio",
+      "displayName": "KRAFTON Montréal Studio",
+      "coverageState": "direct-published",
+      "activeListingCount": 1,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "latent-defense",
       "displayName": "Latent Defense",
       "coverageState": "feed-observed",
@@ -2572,9 +3002,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "later",
       "displayName": "Later",
-      "coverageState": "feed-observed",
-      "activeListingCount": 8,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 11,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "lawrence-livermore-national-laboratory-llnl",
@@ -2626,6 +3058,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "liberate",
+      "displayName": "Liberate",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "lightguide",
       "displayName": "LightGuide, Inc.",
       "coverageState": "feed-observed",
@@ -2635,9 +3076,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "lila-sciences",
       "displayName": "Lila Sciences",
-      "coverageState": "feed-observed",
-      "activeListingCount": 11,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 17,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "limetax",
@@ -2652,6 +3095,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "candidate-only",
       "activeListingCount": 0,
       "directProviders": []
+    },
+    {
+      "companyId": "linkedin-job-wrapping",
+      "displayName": "LinkedIn Job Wrapping",
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "littelfuse",
@@ -2698,9 +3150,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "lucid-motors",
       "displayName": "Lucid Motors",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "lucidya",
@@ -2712,9 +3166,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "lvt",
       "displayName": "LVT",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 1,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "mach-industries",
@@ -2831,9 +3287,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "matx",
       "displayName": "MatX",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 1,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "maxima",
@@ -2852,9 +3310,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "medecins-sans-frontieres-doctors-without-borders-united-states",
       "displayName": "Medecins Sans Frontieres (Doctors Without Borders) - United States",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "medpace",
@@ -2948,6 +3408,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "mixpanel",
+      "displayName": "Mixpanel",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "mobius-renewables",
       "displayName": "Mobius Renewables",
       "coverageState": "feed-observed",
@@ -2964,23 +3433,38 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "moloco",
       "displayName": "Moloco",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "moment-energy",
       "displayName": "Moment Energy",
-      "coverageState": "feed-observed",
-      "activeListingCount": 2,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 5,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
+      "companyId": "momentus-space",
+      "displayName": "Momentus Space LLC",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "mongodb",
       "displayName": "MongoDB",
-      "coverageState": "candidate-only",
+      "coverageState": "direct-published",
       "activeListingCount": 0,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "monogram",
@@ -3160,16 +3644,20 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "neuralink",
       "displayName": "Neuralink",
-      "coverageState": "feed-observed",
-      "activeListingCount": 9,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 21,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "newsbreak",
       "displayName": "NewsBreak",
-      "coverageState": "feed-observed",
-      "activeListingCount": 2,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "nexaminds",
@@ -3212,6 +3700,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 3,
       "directProviders": []
+    },
+    {
+      "companyId": "nirmata",
+      "displayName": "Nirmata",
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "nissan",
@@ -3277,11 +3774,38 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "odeko",
+      "displayName": "Odeko",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "odin-dynamics",
       "displayName": "Odin Dynamics, Inc",
       "coverageState": "feed-observed",
       "activeListingCount": 2,
       "directProviders": []
+    },
+    {
+      "companyId": "offerup",
+      "displayName": "OfferUp",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
+      "companyId": "oklo",
+      "displayName": "Oklo",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "old-mission",
@@ -3307,9 +3831,20 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "on-energy",
       "displayName": "ON.energy",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
+      "companyId": "oneethos",
+      "displayName": "OneEthos",
+      "coverageState": "direct-published",
       "activeListingCount": 1,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "onsemi",
@@ -3342,9 +3877,38 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "optiver",
       "displayName": "Optiver",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 14,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
+      "companyId": "optiver-icml",
+      "displayName": "Optiver - ICML",
+      "coverageState": "direct-published",
+      "activeListingCount": 1,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
+      "companyId": "optiver-neurips",
+      "displayName": "Optiver - NeurIPS",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
+      "companyId": "optiver-private-jobs",
+      "displayName": "Optiver Private Jobs",
+      "coverageState": "direct-published",
+      "activeListingCount": 1,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "opusclip",
@@ -3370,9 +3934,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "orennia",
       "displayName": "Orennia",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 1,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "orion-health",
@@ -3415,6 +3981,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 5,
       "directProviders": []
+    },
+    {
+      "companyId": "pagerduty",
+      "displayName": "PagerDuty",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "palantir-technologies",
@@ -3484,9 +4059,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "pdt-partners",
       "displayName": "PDT Partners",
-      "coverageState": "feed-observed",
-      "activeListingCount": 4,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 6,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "pear-vc",
@@ -3526,9 +4103,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "per-scholas",
       "displayName": "Per Scholas",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "peraton",
@@ -3561,9 +4140,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "phamily",
       "displayName": "Phamily",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 1,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "philips",
@@ -3603,9 +4184,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "pinterest",
       "displayName": "Pinterest",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 3,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "plus",
@@ -3626,16 +4209,20 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "point-c",
       "displayName": "Point C",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "point72",
       "displayName": "Point72",
-      "coverageState": "feed-observed",
-      "activeListingCount": 6,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 16,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "pony-ai",
@@ -3738,9 +4325,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "quera-computing",
       "displayName": "QuEra Computing",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 4,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "radix-trading",
@@ -3748,6 +4337,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 2,
       "directProviders": []
+    },
+    {
+      "companyId": "radix-trading-university-job-board",
+      "displayName": "Radix Trading University Job Board",
+      "coverageState": "direct-published",
+      "activeListingCount": 1,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "rainmaker",
@@ -3813,6 +4411,22 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "reddit",
+      "displayName": "Reddit",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
+      "companyId": "redwood-materials",
+      "displayName": "Redwood Materials",
+      "coverageState": "feed-observed",
+      "activeListingCount": 1,
+      "directProviders": []
+    },
+    {
       "companyId": "reframe-systems",
       "displayName": "Reframe Systems",
       "coverageState": "feed-observed",
@@ -3836,9 +4450,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "rendezvous-robotics",
       "displayName": "Rendezvous Robotics",
-      "coverageState": "feed-observed",
-      "activeListingCount": 2,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 10,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "reonic",
@@ -3899,9 +4515,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "rise8",
       "displayName": "Rise8",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "rivian",
@@ -3927,9 +4545,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "roblox",
       "displayName": "Roblox",
-      "coverageState": "candidate-only",
+      "coverageState": "direct-published",
       "activeListingCount": 0,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "robotic-assistance-devices",
@@ -3948,9 +4568,20 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "rocket-lab",
       "displayName": "Rocket Lab",
-      "coverageState": "feed-observed",
-      "activeListingCount": 5,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 7,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
+      "companyId": "rocket-money",
+      "displayName": "Rocket Money",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "rockwell-automation",
@@ -3997,9 +4628,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "safari-ai",
       "displayName": "Safari AI",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "salesforce",
@@ -4011,9 +4644,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "samaya-ai",
       "displayName": "Samaya AI",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "samsung-ai-research-center",
@@ -4021,6 +4656,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 1,
       "directProviders": []
+    },
+    {
+      "companyId": "samsung-research-america-internship",
+      "displayName": "Samsung Research America Internship",
+      "coverageState": "direct-published",
+      "activeListingCount": 1,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "sandhills-global",
@@ -4067,16 +4711,20 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "scale-ai",
       "displayName": "Scale AI",
-      "coverageState": "feed-observed",
-      "activeListingCount": 3,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 5,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "schonfeld",
       "displayName": "Schonfeld",
-      "coverageState": "feed-observed",
-      "activeListingCount": 2,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 4,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "schweitzer-engineering-laboratories",
@@ -4088,9 +4736,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "scopely",
       "displayName": "Scopely",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "semtech",
@@ -4123,16 +4773,20 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "seven-research",
       "displayName": "Seven Research",
-      "coverageState": "feed-observed",
-      "activeListingCount": 8,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 12,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "sharkninja",
       "displayName": "SharkNinja",
-      "coverageState": "feed-observed",
-      "activeListingCount": 9,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 13,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "shein",
@@ -4154,6 +4808,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 2,
       "directProviders": []
+    },
+    {
+      "companyId": "shift-technology",
+      "displayName": "Shift Technology",
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "shopback",
@@ -4219,6 +4882,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "smartasset",
+      "displayName": "SmartAsset",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "smiths-detection-group",
       "displayName": "Smiths Detection Group",
       "coverageState": "feed-observed",
@@ -4263,9 +4935,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "spacex",
       "displayName": "SpaceX",
-      "coverageState": "feed-observed",
-      "activeListingCount": 3,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 5,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "spacial-ai",
@@ -4291,9 +4965,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "squarepoint-capital",
       "displayName": "Squarepoint Capital",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "sri-international",
@@ -4308,6 +4984,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 1,
       "directProviders": []
+    },
+    {
+      "companyId": "stackadapt-confidential",
+      "displayName": "StackAdapt - Confidential",
+      "coverageState": "direct-published",
+      "activeListingCount": 1,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "stantec",
@@ -4331,6 +5016,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "stevens-capital-management-lp",
+      "displayName": "Stevens Capital Management LP",
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "stevens-institute-of-technology",
       "displayName": "Stevens Institute of Technology",
       "coverageState": "feed-observed",
@@ -4347,16 +5041,20 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "stripe",
       "displayName": "Stripe",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "submittable",
       "displayName": "Submittable",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "sumup",
@@ -4513,6 +5211,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "tenstorrent-university-jobs",
+      "displayName": "Tenstorrent University Jobs",
+      "coverageState": "direct-published",
+      "activeListingCount": 21,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "terranova",
       "displayName": "Terranova",
       "coverageState": "feed-observed",
@@ -4592,9 +5299,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "the-trade-desk",
       "displayName": "The Trade Desk",
-      "coverageState": "feed-observed",
-      "activeListingCount": 2,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 4,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "the-wonderful",
@@ -4655,9 +5364,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "together-ai",
       "displayName": "Together AI",
-      "coverageState": "feed-observed",
-      "activeListingCount": 5,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 8,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "tomtom",
@@ -4669,9 +5380,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "torc-robotics",
       "displayName": "Torc Robotics",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 1,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "toshiba-commerce-solutions",
@@ -4686,6 +5399,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 4,
       "directProviders": []
+    },
+    {
+      "companyId": "toshiba-global-commerce-solutions-external",
+      "displayName": "Toshiba Global Commerce Solutions - External",
+      "coverageState": "direct-published",
+      "activeListingCount": 9,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "touchdown-labs",
@@ -4718,9 +5440,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "transmarket-group",
       "displayName": "TransMarket Group",
-      "coverageState": "feed-observed",
-      "activeListingCount": 3,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 5,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "transmarketgroup",
@@ -4746,9 +5470,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "tribalscale",
       "displayName": "TribalScale",
-      "coverageState": "feed-observed",
-      "activeListingCount": 2,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "trimble",
@@ -4774,9 +5500,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "true-anomaly",
       "displayName": "True Anomaly",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "truland-equipment",
@@ -4788,9 +5516,20 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "truveta",
       "displayName": "Truveta",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 4,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
+      "companyId": "twitch",
+      "displayName": "Twitch",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "two-sigma",
@@ -4802,9 +5541,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "two-six-technologies",
       "displayName": "Two Six Technologies",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 2,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "uber",
@@ -4870,18 +5611,31 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "varda-space-industries",
+      "displayName": "Varda Space Industries",
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "vast",
       "displayName": "VAST",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "veeam-software",
       "displayName": "Veeam Software",
-      "coverageState": "feed-observed",
+      "coverageState": "direct-published",
       "activeListingCount": 2,
-      "directProviders": []
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "veeda-ai",
@@ -4907,9 +5661,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "verkada",
       "displayName": "Verkada",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "vetsez",
@@ -4933,11 +5689,22 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "virtu-careers",
+      "displayName": "Virtu Careers",
+      "coverageState": "direct-published",
+      "activeListingCount": 2,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "virtu-financial",
       "displayName": "Virtu Financial",
-      "coverageState": "feed-observed",
-      "activeListingCount": 13,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 20,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "vital-lyfe",
@@ -4963,9 +5730,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "voloridge-investment-management",
       "displayName": "Voloridge Investment Management",
-      "coverageState": "feed-observed",
-      "activeListingCount": 1,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 3,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "walleye-capital",
@@ -4973,6 +5742,15 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "coverageState": "feed-observed",
       "activeListingCount": 10,
       "directProviders": []
+    },
+    {
+      "companyId": "walleye-capital-internships",
+      "displayName": "Walleye Capital Internships",
+      "coverageState": "direct-published",
+      "activeListingCount": 7,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "warner-bros",
@@ -5003,11 +5781,29 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "weave",
+      "displayName": "Weave",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "weaviate",
       "displayName": "Weaviate",
       "coverageState": "feed-observed",
       "activeListingCount": 1,
       "directProviders": []
+    },
+    {
+      "companyId": "webflow",
+      "displayName": "Webflow",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "wells-fargo",
@@ -5082,9 +5878,11 @@ export const companyCoverage: CompanyCoverageSnapshot = {
     {
       "companyId": "worldquant",
       "displayName": "WorldQuant",
-      "coverageState": "feed-observed",
-      "activeListingCount": 2,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 8,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "wsp",
@@ -5101,11 +5899,22 @@ export const companyCoverage: CompanyCoverageSnapshot = {
       "directProviders": []
     },
     {
+      "companyId": "xometry",
+      "displayName": "Xometry",
+      "coverageState": "direct-published",
+      "activeListingCount": 0,
+      "directProviders": [
+        "greenhouse"
+      ]
+    },
+    {
       "companyId": "xpeng",
       "displayName": "XPENG",
-      "coverageState": "feed-observed",
-      "activeListingCount": 2,
-      "directProviders": []
+      "coverageState": "direct-published",
+      "activeListingCount": 4,
+      "directProviders": [
+        "greenhouse"
+      ]
     },
     {
       "companyId": "xpeng-motors",
