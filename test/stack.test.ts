@@ -31,6 +31,27 @@ describe('CDK stack', () => {
     const app = new cdk.App(); const stack = new InternNotifsStack(app, 'Schedules', { githubRepository: 'owner/repo', emailAddress: 'me@example.com' });
     Template.fromStack(stack).hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: 'cron(0 9 * * ? *)', ScheduleExpressionTimezone: 'America/New_York', State: 'ENABLED', FlexibleTimeWindow: { Mode: 'OFF' } });
   });
+  it('alarms when a polled source stops producing trusted snapshots', () => {
+    const app = new cdk.App(); const stack = new InternNotifsStack(app, 'Alarms', { githubRepository: 'owner/repo', emailAddress: 'me@example.com' });
+    const template = Template.fromStack(stack);
+    for (const provider of ['github', 'lever']) {
+      template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+        Namespace: 'InternNotifs/Ingestion',
+        MetricName: 'StaleSourceCount',
+        Dimensions: [{ Name: 'provider', Value: provider }],
+        Threshold: 1,
+        DatapointsToAlarm: 6,
+        TreatMissingData: 'breaching',
+      });
+      template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+        Namespace: 'InternNotifs/Ingestion',
+        MetricName: 'SourceFetchFailure',
+        Dimensions: [{ Name: 'provider', Value: provider }],
+        Threshold: 3,
+      });
+    }
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 5);
+  });
   it('queues Greenhouse boards every ten minutes with bounded worker concurrency', () => {
     const app = new cdk.App(); const stack = new GreenhouseMonitoringStack(app, 'Greenhouse', { internshipsTableName: 'internships', usersTableName: 'users' }); const template = Template.fromStack(stack);
     template.resourceCountIs('AWS::SQS::Queue', 3);

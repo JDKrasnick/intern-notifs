@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as authorizers from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -82,6 +83,47 @@ export class InternNotifsStack extends cdk.Stack {
     notifier.grantInvoke(schedulerRole); deadLetterQueue.grantSendMessages(schedulerRole);
     const target = (command: 'poll' | 'digest'): scheduler.CfnSchedule.TargetProperty => ({ arn: notifier.functionArn, roleArn: schedulerRole.roleArn, input: JSON.stringify({ command }), deadLetterConfig: { arn: deadLetterQueue.queueArn }, retryPolicy: { maximumEventAgeInSeconds: 3600, maximumRetryAttempts: 2 } });
     new scheduler.CfnSchedule(this, 'PollSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(2,7,12,17,22,27,32,37,42,47,52,57 * * * ? *)', scheduleExpressionTimezone: 'UTC', state: 'ENABLED', target: target('poll') });
+    // The poll Lambda publishes these as embedded metrics, so a source that
+    // stops succeeding surfaces without anyone reading logs. Greenhouse boards
+    // are alarmed in their own stack alongside their queue.
+    for (const provider of ['github', 'lever'] as const) {
+      const suffix = provider === 'github' ? 'Github' : 'Lever';
+      new cloudwatch.Alarm(this, `StaleSource${suffix}Alarm`, {
+        metric: new cloudwatch.Metric({
+          namespace: 'InternNotifs/Ingestion',
+          metricName: 'StaleSourceCount',
+          dimensionsMap: { provider },
+          statistic: 'Maximum',
+          period: cdk.Duration.minutes(5),
+        }),
+        threshold: 1,
+        evaluationPeriods: 6,
+        datapointsToAlarm: 6,
+        treatMissingData: cloudwatch.TreatMissingData.BREACHING,
+        alarmDescription: `A ${provider} source has gone 30 minutes without a trusted snapshot.`,
+      });
+      new cloudwatch.Alarm(this, `SourceFetchFailure${suffix}Alarm`, {
+        metric: new cloudwatch.Metric({
+          namespace: 'InternNotifs/Ingestion',
+          metricName: 'SourceFetchFailure',
+          dimensionsMap: { provider },
+          statistic: 'Sum',
+          period: cdk.Duration.minutes(15),
+        }),
+        threshold: 3,
+        evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        alarmDescription: `A ${provider} source failed its bounded retries repeatedly within fifteen minutes.`,
+      });
+    }
+    new cloudwatch.Alarm(this, 'PollErrorsAlarm', {
+      metric: notifier.metricErrors({ period: cdk.Duration.minutes(15) }),
+      threshold: 2,
+      evaluationPeriods: 1,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      alarmDescription: 'The scheduled poll/digest Lambda returned repeated invocation errors.',
+    });
+
     new scheduler.CfnSchedule(this, 'MorningDigestSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(0 9 * * ? *)', scheduleExpressionTimezone: 'America/New_York', state: 'ENABLED', target: target('digest') });
     new scheduler.CfnSchedule(this, 'EveningDigestSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(0 17 * * ? *)', scheduleExpressionTimezone: 'America/New_York', state: 'ENABLED', target: target('digest') });
     new cdk.CfnOutput(this, 'InternshipsTableName', { value: internships.tableName });

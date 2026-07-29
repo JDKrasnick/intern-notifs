@@ -868,6 +868,28 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
       },
       "Type": "AWS::IAM::Policy",
     },
+    "PollErrorsAlarm519749E0": {
+      "Properties": {
+        "AlarmDescription": "The scheduled poll/digest Lambda returned repeated invocation errors.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "NotifierDFD80165",
+            },
+          },
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "Errors",
+        "Namespace": "AWS/Lambda",
+        "Period": 900,
+        "Statistic": "Sum",
+        "Threshold": 2,
+        "TreatMissingData": "notBreaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
     "PollSchedule": {
       "Properties": {
         "FlexibleTimeWindow": {
@@ -1737,6 +1759,88 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         },
       },
       "Type": "AWS::IAM::Role",
+    },
+    "SourceFetchFailureGithubAlarmF2FA3103": {
+      "Properties": {
+        "AlarmDescription": "A github source failed its bounded retries repeatedly within fifteen minutes.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "provider",
+            "Value": "github",
+          },
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "SourceFetchFailure",
+        "Namespace": "InternNotifs/Ingestion",
+        "Period": 900,
+        "Statistic": "Sum",
+        "Threshold": 3,
+        "TreatMissingData": "notBreaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+    "SourceFetchFailureLeverAlarmB1AF8D4D": {
+      "Properties": {
+        "AlarmDescription": "A lever source failed its bounded retries repeatedly within fifteen minutes.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "provider",
+            "Value": "lever",
+          },
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "SourceFetchFailure",
+        "Namespace": "InternNotifs/Ingestion",
+        "Period": 900,
+        "Statistic": "Sum",
+        "Threshold": 3,
+        "TreatMissingData": "notBreaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+    "StaleSourceGithubAlarmEB36D0E3": {
+      "Properties": {
+        "AlarmDescription": "A github source has gone 30 minutes without a trusted snapshot.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "DatapointsToAlarm": 6,
+        "Dimensions": [
+          {
+            "Name": "provider",
+            "Value": "github",
+          },
+        ],
+        "EvaluationPeriods": 6,
+        "MetricName": "StaleSourceCount",
+        "Namespace": "InternNotifs/Ingestion",
+        "Period": 300,
+        "Statistic": "Maximum",
+        "Threshold": 1,
+        "TreatMissingData": "breaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+    "StaleSourceLeverAlarm892C92CC": {
+      "Properties": {
+        "AlarmDescription": "A lever source has gone 30 minutes without a trusted snapshot.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "DatapointsToAlarm": 6,
+        "Dimensions": [
+          {
+            "Name": "provider",
+            "Value": "lever",
+          },
+        ],
+        "EvaluationPeriods": 6,
+        "MetricName": "StaleSourceCount",
+        "Namespace": "InternNotifs/Ingestion",
+        "Period": 300,
+        "Statistic": "Maximum",
+        "Threshold": 1,
+        "TreatMissingData": "breaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
     },
     "UserData6A2E227B": {
       "DeletionPolicy": "Retain",
