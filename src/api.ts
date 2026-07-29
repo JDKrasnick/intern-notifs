@@ -8,6 +8,7 @@ import type { ApplicantProfile, ApplicationRecord, ApplicationStatus, DeviceToke
 import { EmployerIntegrationRegistry } from './providers.js';
 import { assistanceAvailability } from './application-assistance.js';
 import { createApplicationSession, transitionApplicationSession, type ApplicationFieldDraft, type ApplicationSession, type ApplicationSessionEvent } from './application-automation.js';
+import { companyCoverage } from '../coverage/summary.js';
 
 type ApiEvent = { requestContext?: { authorizer?: { jwt?: { claims?: Record<string, string> } }; http?: { method?: string }; requestId?: string }; rawPath?: string; routeKey?: string; pathParameters?: Record<string, string>; queryStringParameters?: Record<string, string>; headers?: Record<string, string | undefined>; body?: string | null };
 type ApiResponse = { statusCode: number; headers: Record<string, string>; body: string };
@@ -205,6 +206,30 @@ export function createApiHandler(dependencies: ApiDependencies) {
     try {
       const method = event.requestContext?.http?.method ?? event.routeKey?.split(' ')[0] ?? 'GET'; const path = event.rawPath ?? event.routeKey?.split(' ')[1] ?? '/';
       if (method === 'OPTIONS') return reply(204, {});
+      if (method === 'GET' && path === '/coverage') {
+        const requestedLimit = Number(event.queryStringParameters?.limit ?? 50);
+        const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 100) : 50;
+        const requestedCursor = Number(event.queryStringParameters?.cursor ?? 0);
+        const cursor = Number.isFinite(requestedCursor) ? Math.max(Math.trunc(requestedCursor), 0) : 0;
+        const query = (event.queryStringParameters?.q ?? '').trim().toLowerCase();
+        const state = event.queryStringParameters?.state;
+        const allowedStates = ['direct-published', 'direct-shadow', 'feed-observed', 'candidate-only'];
+        if (state && !allowedStates.includes(state)) return reply(400, { message: 'state is not supported' });
+        const matching = companyCoverage.companies.filter((company) =>
+          (!query || company.displayName.toLowerCase().includes(query))
+          && (!state || company.coverageState === state),
+        );
+        const companies = matching.slice(cursor, cursor + limit);
+        const nextOffset = cursor + companies.length;
+        return reply(200, {
+          generatedAt: companyCoverage.generatedAt,
+          methodology: companyCoverage.methodology,
+          counts: companyCoverage.counts,
+          matchedCompanies: matching.length,
+          companies,
+          ...(nextOffset < matching.length ? { nextCursor: String(nextOffset) } : {}),
+        });
+      }
       if (method === 'GET' && path === '/jobs') {
         const requestedLimit = Number(event.queryStringParameters?.limit ?? 25);
         const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 50) : 25;

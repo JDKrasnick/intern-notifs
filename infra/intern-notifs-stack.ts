@@ -71,6 +71,7 @@ export class InternNotifsStack extends cdk.Stack {
     const jwtAuthorizer = new authorizers.HttpUserPoolAuthorizer('CognitoJwt', userPool, { userPoolClients: [userPoolClient] });
     api.addRoutes({ path: '/jobs', methods: [apigatewayv2.HttpMethod.GET], integration: apiIntegration });
     api.addRoutes({ path: '/jobs/{jobId}', methods: [apigatewayv2.HttpMethod.GET], integration: apiIntegration });
+    api.addRoutes({ path: '/coverage', methods: [apigatewayv2.HttpMethod.GET], integration: apiIntegration });
     api.addRoutes({ path: '/me', methods: [apigatewayv2.HttpMethod.GET, apigatewayv2.HttpMethod.PUT, apigatewayv2.HttpMethod.POST, apigatewayv2.HttpMethod.DELETE], integration: apiIntegration, authorizer: jwtAuthorizer });
     api.addRoutes({ path: '/me/{proxy+}', methods: [apigatewayv2.HttpMethod.ANY], integration: apiIntegration, authorizer: jwtAuthorizer });
     // HTTP API has native stage throttling; WAF associations only support API Gateway REST APIs.

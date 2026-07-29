@@ -130,9 +130,13 @@ export class LeverPostingsAdapter implements SourceAdapter {
   }
 }
 
-export const approvedLeverSources: SourceAdapter[] = [
-  new LeverPostingsAdapter({ id: 'lever-palantir', company: 'Palantir Technologies', site: 'palantir' }),
-  new LeverPostingsAdapter({ id: 'lever-plusai', company: 'PlusAI', site: 'plus-2' }),
-  new LeverPostingsAdapter({ id: 'lever-hermeus', company: 'Hermeus', site: 'hermeus' }),
-  new LeverPostingsAdapter({ id: 'lever-xsolla', company: 'Xsolla', site: 'xsolla' })
+export const approvedLeverSourceConfigs: LeverAdapterOptions[] = [
+  { id: 'lever-palantir', company: 'Palantir Technologies', site: 'palantir' },
+  { id: 'lever-plusai', company: 'PlusAI', site: 'plus-2' },
+  { id: 'lever-hermeus', company: 'Hermeus', site: 'hermeus' },
+  { id: 'lever-xsolla', company: 'Xsolla', site: 'xsolla' },
 ];
+
+export const approvedLeverSources: SourceAdapter[] = approvedLeverSourceConfigs.map(
+  (options) => new LeverPostingsAdapter(options),
+);

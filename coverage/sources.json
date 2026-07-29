@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "kind": "configured-feed",
+      "name": "InternNotifs production source adapters",
+      "evidence": "Each company is backed by one or more source IDs and current parsed technical-internship rows.",
+      "configuration": "../src/sources/index.ts"
+    },
+    {
+      "kind": "tech-company-seed",
+      "name": "InternNotifs company weights",
+      "evidence": "Maintained technology and quantitative-employer candidates; inclusion does not assert a current internship.",
+      "configuration": "../src/config/weights.ts"
+    },
+    {
+      "kind": "direct-registry",
+      "name": "Reviewed Lever sources",
+      "evidence": "Checked-in employer name and public Lever site identifier.",
+      "configuration": "../src/sources/lever.ts"
+    },
+    {
+      "kind": "direct-registry",
+      "name": "Reviewed Greenhouse sources",
+      "evidence": "Checked-in official careers URL, board identity, token, and review status.",
+      "configuration": "../src/sources/greenhouse-config.ts"
+    },
+    {
+      "kind": "future-universe",
+      "name": "Wikidata",
+      "url": "https://www.wikidata.org/",
+      "license": "CC0",
+      "status": "not-imported",
+      "notes": "Useful for expanding the candidate universe, but industry ontology and entity deduplication require a reviewed import."
+    }
+  ]
+}
