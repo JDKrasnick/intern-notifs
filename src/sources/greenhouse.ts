@@ -1,0 +1,313 @@
+import { createHash } from 'node:crypto';
+import { isTechnicalJob } from '../core/filters.js';
+import { parseCompensation } from '../core/normalize.js';
+import { earlyCareerRequirements, hasLifecycleTitleSignal, htmlToText, inferSeason, inferWorkMode } from '../core/early-career.js';
+import { greenhouseApplicationUrlRejection } from './quality.js';
+import { GREENHOUSE_BOARD_API_HOST, assertBoardToken, boardIdentityUrl, validateBoardToken, type ReviewedGreenhouseSource } from './greenhouse-config.js';
+import { SourceFetchError } from './source-error.js';
+import type { RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult } from '../types.js';
+
+/** Defensive model of the documented Job Board API `content=true` job shape. */
+export interface GreenhouseJob {
+  id?: number | string;
+  internal_job_id?: number | string | null;
+  title?: string;
+  location?: { name?: string } | null;
+  updated_at?: string;
+  absolute_url?: string;
+  content?: string;
+  departments?: Array<{ name?: string } | null>;
+  offices?: Array<{ name?: string } | null>;
+}
+
+export interface GreenhouseJobsResponse {
+  jobs?: GreenhouseJob[];
+  meta?: { total?: number };
+}
+
+export interface GreenhouseAdapterOptions {
+  source: ReviewedGreenhouseSource;
+  fetchImpl?: typeof fetch;
+  now?: () => Date;
+}
+
+/**
+ * Read-only evidence for a token found on an employer's official careers page.
+ * This is deliberately not a `ReviewedGreenhouseSource`: probing never writes
+ * the registry, schedules a source, or grants an application-host allowlist.
+ */
+export type GreenhouseCandidateProbeResult =
+  | {
+    state: 'ok';
+    boardToken: string;
+    boardName: string;
+    rawJobs: number;
+    prospectJobs: number;
+    candidateEligibleJobs: number;
+    malformedRows: number;
+    etagPresent: boolean;
+    initialHostSummary: Record<string, number>;
+    eligibleRoleSamples: Array<{ document: string; title: string }>;
+  }
+  | {
+    state: 'invalid-token' | 'identity-http-error' | 'identity-response-host-error' | 'identity-json-error' | 'jobs-http-error' | 'jobs-json-error' | 'transport-error';
+    boardToken: string;
+    status?: number;
+    inconclusive?: boolean;
+  };
+
+function boardBase(token: string): string {
+  return `https://${GREENHOUSE_BOARD_API_HOST}/v1/boards/${encodeURIComponent(assertBoardToken(token))}`;
+}
+
+export function greenhouseJobsUrl(token: string): string {
+  return `${boardBase(token)}/jobs?content=true`;
+}
+
+/**
+ * Owner-only candidate probe for a token already evidenced on an employer's
+ * official careers page. It is intentionally read-only and returns only safe
+ * counts, host summaries, and a few role titles for review.
+ */
+export async function probeGreenhouseCandidate(
+  boardToken: string,
+  fetchImpl: typeof fetch = fetch,
+  fetchedAt = new Date().toISOString(),
+): Promise<GreenhouseCandidateProbeResult> {
+  if (!validateBoardToken(boardToken)) return { state: 'invalid-token', boardToken };
+
+  let identityResponse: Response;
+  try {
+    identityResponse = await fetchImpl(boardIdentityUrl(boardToken), {
+      headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8_000),
+    });
+  } catch {
+    return { state: 'transport-error', boardToken, inconclusive: true };
+  }
+  if (!identityResponse.ok) return { state: 'identity-http-error', boardToken, status: identityResponse.status };
+  try {
+    if (new URL(identityResponse.url || boardIdentityUrl(boardToken)).hostname.toLowerCase() !== GREENHOUSE_BOARD_API_HOST) {
+      return { state: 'identity-response-host-error', boardToken };
+    }
+  } catch {
+    return { state: 'identity-response-host-error', boardToken };
+  }
+  let identity: unknown;
+  try { identity = await identityResponse.json(); } catch { return { state: 'identity-json-error', boardToken }; }
+  if (!identity || typeof identity !== 'object' || typeof (identity as { name?: unknown }).name !== 'string') {
+    return { state: 'identity-json-error', boardToken };
+  }
+  const boardName = (identity as { name: string }).name;
+
+  let jobsResponse: Response;
+  try {
+    jobsResponse = await fetchImpl(greenhouseJobsUrl(boardToken), {
+      headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15_000),
+    });
+  } catch {
+    return { state: 'transport-error', boardToken, inconclusive: true };
+  }
+  if (!jobsResponse.ok) return { state: 'jobs-http-error', boardToken, status: jobsResponse.status };
+  let payload: unknown;
+  try { payload = await jobsResponse.json(); } catch { return { state: 'jobs-json-error', boardToken }; }
+  if (!payload || typeof payload !== 'object' || !Array.isArray((payload as GreenhouseJobsResponse).jobs)) {
+    return { state: 'jobs-json-error', boardToken };
+  }
+
+  const jobs = (payload as GreenhouseJobsResponse).jobs ?? [];
+  const source: ReviewedGreenhouseSource = {
+    id: `greenhouse-${boardToken}`, employerId: boardToken, displayName: boardName, aliases: [boardName], boardToken,
+    careersUrl: `https://boards.greenhouse.io/${boardToken}`, expectedBoardNames: [boardName], admittedBoardName: boardName,
+    admittedAt: fetchedAt, allowedInitialHosts: ['boards.greenhouse.io'], allowedFinalHosts: ['job-boards.greenhouse.io'], status: 'shadow', sourceClass: 'greenhouse',
+  };
+  const initialHostSummary: Record<string, number> = {};
+  const eligibleRoleSamples: Array<{ document: string; title: string }> = [];
+  let malformedRows = 0;
+  let prospectJobs = 0;
+  let candidateEligibleJobs = 0;
+  for (let index = 0; index < jobs.length; index += 1) {
+    const job = jobs[index];
+    if (!isGreenhouseJobShape(job)) { malformedRows += 1; continue; }
+    if (job.absolute_url) {
+      try {
+        const host = new URL(job.absolute_url).hostname.toLowerCase();
+        initialHostSummary[host] = (initialHostSummary[host] ?? 0) + 1;
+      } catch { /* Invalid candidate URLs are represented by their absence from the host summary. */ }
+    }
+    if (job.internal_job_id === null || job.internal_job_id === undefined) prospectJobs += 1;
+    const mapped = mapGreenhouseJob(job, source, fetchedAt, index + 1);
+    if (!mapped) continue;
+    candidateEligibleJobs += 1;
+    if (eligibleRoleSamples.length < 3) eligibleRoleSamples.push({ document: mapped.document, title: mapped.title });
+  }
+  return {
+    state: 'ok', boardToken, boardName, rawJobs: jobs.length, prospectJobs, candidateEligibleJobs, malformedRows,
+    etagPresent: Boolean(jobsResponse.headers.get('etag')), initialHostSummary, eligibleRoleSamples,
+  };
+}
+
+function names(list: Array<{ name?: string } | null> | undefined): string {
+  return (list ?? []).map((item) => htmlToText(item?.name)).filter(Boolean).join(' ');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNamedList(value: unknown): boolean {
+  return value === undefined
+    || (Array.isArray(value) && value.every((item) => item === null || (isRecord(item) && (item.name === undefined || typeof item.name === 'string'))));
+}
+
+/**
+ * Validates one raw job row before mapping so schema drift (a null, non-object,
+ * or wrong-typed field, or an unparseable `updated_at`) surfaces as a
+ * source-scoped invalid-shape failure instead of a raw TypeError/RangeError.
+ */
+export function isGreenhouseJobShape(value: unknown): value is GreenhouseJob {
+  if (!isRecord(value)) return false;
+  if (value.id !== undefined && typeof value.id !== 'number' && typeof value.id !== 'string') return false;
+  if (value.internal_job_id !== undefined && value.internal_job_id !== null && typeof value.internal_job_id !== 'number' && typeof value.internal_job_id !== 'string') return false;
+  if (value.title !== undefined && typeof value.title !== 'string') return false;
+  if (value.updated_at !== undefined && (typeof value.updated_at !== 'string' || Number.isNaN(Date.parse(value.updated_at)))) return false;
+  if (value.absolute_url !== undefined && typeof value.absolute_url !== 'string') return false;
+  if (value.content !== undefined && typeof value.content !== 'string') return false;
+  if (value.location !== undefined && value.location !== null && !(isRecord(value.location) && (value.location.name === undefined || typeof value.location.name === 'string'))) return false;
+  return isNamedList(value.departments) && isNamedList(value.offices);
+}
+
+/**
+ * Sorted projection so a fallback content hash is stable across response
+ * ordering. It covers every published field — description, location,
+ * departments/offices, and prospect status — so a change that affects the
+ * catalog cannot leave the hash unchanged.
+ */
+function projection(jobs: GreenhouseJob[]): string {
+  return JSON.stringify(
+    jobs
+      .map((job) => ({
+        id: String(job.id ?? ''),
+        prospect: job.internal_job_id === null || job.internal_job_id === undefined,
+        updated_at: job.updated_at ?? '',
+        absolute_url: job.absolute_url ?? '',
+        title: job.title ?? '',
+        location: job.location?.name ?? '',
+        content: job.content ?? '',
+        departments: names(job.departments),
+        offices: names(job.offices),
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  );
+}
+
+/**
+ * Maps one Greenhouse posting to a canonical listing. The company is always the
+ * reviewed display name — never the response — and prospect posts
+ * (`internal_job_id: null`) are excluded. Departments and offices are used only
+ * as classification context, not stored on the listing.
+ */
+export function mapGreenhouseJob(
+  job: GreenhouseJob,
+  source: ReviewedGreenhouseSource,
+  fetchedAt = new Date().toISOString(),
+  row = 1,
+): RawListing | undefined {
+  if (job.internal_job_id === null || job.internal_job_id === undefined) return undefined;
+  const title = htmlToText(job.title);
+  const document = job.id === undefined || job.id === null ? '' : String(job.id);
+  if (!title || !document || !job.absolute_url) return undefined;
+  if (!hasLifecycleTitleSignal(title)) return undefined;
+
+  const content = htmlToText(job.content);
+  const location = htmlToText(job.location?.name ?? undefined) || 'Unspecified';
+  const workMode = inferWorkMode(`${location} ${content}`);
+  const classificationContext = `${title} ${names(job.departments)} ${names(job.offices)}`.replace(/\s+/g, ' ').trim();
+  const listing: RawListing = {
+    sourceId: source.id,
+    document,
+    sourceUrl: greenhouseJobsUrl(source.boardToken),
+    row,
+    company: source.displayName,
+    title,
+    location,
+    season: inferSeason(title, content),
+    applyUrl: job.absolute_url,
+    compensation: parseCompensation(content),
+    requirements: earlyCareerRequirements(content),
+    state: 'open',
+    ...(job.updated_at && !Number.isNaN(Date.parse(job.updated_at)) ? { postedAt: new Date(job.updated_at).toISOString() } : {}),
+    ...(workMode ? { workMode } : {}),
+    fetchedAt,
+  };
+  // Title supplies the lifecycle signal; the technical decision may also draw on
+  // department/office context, but prose alone never promotes a non-internship role.
+  return isTechnicalJob({ ...listing, title: classificationContext }) ? listing : undefined;
+}
+
+export class GreenhouseBoardAdapter implements SourceAdapter {
+  readonly id: string;
+  private readonly fetchImpl: typeof fetch;
+  private readonly now: () => Date;
+
+  constructor(private readonly options: GreenhouseAdapterOptions) {
+    this.id = options.source.id;
+    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.now = options.now ?? (() => new Date());
+  }
+
+  async fetch(previous?: SourceCheckpoint): Promise<SourceFetchResult> {
+    const url = greenhouseJobsUrl(this.options.source.boardToken);
+    const response = await this.fetchImpl(url, {
+      headers: { Accept: 'application/json', ...(previous?.etag ? { 'If-None-Match': previous.etag } : {}) },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (response.status === 304) {
+      return {
+        sourceId: this.id,
+        listings: [],
+        notModified: true,
+        checkpoint: { ...previous, sourceId: this.id, lastSuccessAt: this.now().toISOString(), successfulFetches: previous?.successfulFetches ?? 0 },
+      };
+    }
+    if (!response.ok) throw new SourceFetchError(`${this.id}: Greenhouse fetch failed (${response.status})`, 'http', response.status);
+    let payload: unknown;
+    try { payload = await response.json(); } catch { throw new SourceFetchError(`${this.id}: Greenhouse returned malformed JSON`, 'json'); }
+    if (!payload || typeof payload !== 'object' || !Array.isArray((payload as GreenhouseJobsResponse).jobs)) {
+      throw new SourceFetchError(`${this.id}: Greenhouse response shape was invalid`, 'json');
+    }
+    const jobs = (payload as GreenhouseJobsResponse).jobs ?? [];
+    const fetchedAt = this.now().toISOString();
+    const listings: RawListing[] = [];
+    const rejectedApplicationUrls: Array<{ row: number; url: string; reason: string }> = [];
+    let row = 0;
+    for (const job of jobs) {
+      if (!isGreenhouseJobShape(job)) throw new SourceFetchError(`${this.id}: Greenhouse response shape was invalid`, 'json');
+      const mapped = mapGreenhouseJob(job, this.options.source, fetchedAt, row + 1);
+      if (!mapped) continue;
+      row += 1;
+      const rejection = greenhouseApplicationUrlRejection(mapped.applyUrl, this.options.source.allowedInitialHosts);
+      if (rejection) rejectedApplicationUrls.push({ row, url: mapped.applyUrl, reason: rejection });
+      else listings.push({ ...mapped, row });
+    }
+    return {
+      sourceId: this.id,
+      rawRowCount: jobs.length,
+      listings,
+      ...(rejectedApplicationUrls.length ? { rejectedApplicationUrls } : {}),
+      notModified: false,
+      checkpoint: {
+        sourceId: this.id,
+        etag: response.headers.get('etag') ?? previous?.etag,
+        contentHash: createHash('sha256').update(projection(jobs)).digest('hex'),
+        lastSuccessAt: fetchedAt,
+        successfulFetches: (previous?.successfulFetches ?? 0) + 1,
+        lastRowCount: listings.length,
+      },
+    };
+  }
+}
+
+/** Adapters are constructed for focused checks only; source scheduling is opt-in. */
+export function greenhouseAdapters(sources: ReviewedGreenhouseSource[], fetchImpl?: typeof fetch): GreenhouseBoardAdapter[] {
+  return sources.map((source) => new GreenhouseBoardAdapter({ source, ...(fetchImpl ? { fetchImpl } : {}) }));
+}

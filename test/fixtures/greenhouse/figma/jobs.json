@@ -1,0 +1,79 @@
+{
+  "jobs": [
+    {
+      "id": 1001,
+      "internal_job_id": 1501,
+      "title": "Software Engineering Intern, Summer 2027",
+      "location": {
+        "name": "San Francisco, CA (Hybrid)"
+      },
+      "updated_at": "2026-07-27T00:00:00Z",
+      "absolute_url": "https://boards.greenhouse.io/figma/jobs/1001",
+      "content": "&lt;p&gt;Sanitized fixture. Applicants must be a U.S. citizen. Pays $48/hour.&lt;/p&gt;",
+      "departments": [
+        {
+          "name": "Engineering"
+        }
+      ],
+      "offices": [
+        {
+          "name": "Headquarters"
+        }
+      ]
+    },
+    {
+      "id": 1002,
+      "internal_job_id": 1502,
+      "title": "Marketing Intern",
+      "location": {
+        "name": "Remote"
+      },
+      "updated_at": "2026-07-26T00:00:00Z",
+      "absolute_url": "https://boards.greenhouse.io/figma/jobs/1002",
+      "content": "&lt;p&gt;Sanitized fixture. Supports brand campaigns.&lt;/p&gt;",
+      "departments": [
+        {
+          "name": "Marketing"
+        }
+      ],
+      "offices": []
+    },
+    {
+      "id": 1003,
+      "internal_job_id": 1503,
+      "title": "Senior Data Scientist",
+      "location": {
+        "name": "San Francisco, CA (Hybrid)"
+      },
+      "updated_at": "2026-07-25T00:00:00Z",
+      "absolute_url": "https://boards.greenhouse.io/figma/jobs/1003",
+      "content": "&lt;p&gt;Sanitized fixture. This is not an internship posting; ignore the word internship here.&lt;/p&gt;",
+      "departments": [
+        {
+          "name": "Data"
+        }
+      ],
+      "offices": []
+    },
+    {
+      "id": 1004,
+      "internal_job_id": null,
+      "title": "Machine Learning Intern (Prospect)",
+      "location": {
+        "name": "Remote"
+      },
+      "updated_at": "2026-07-24T00:00:00Z",
+      "absolute_url": "https://boards.greenhouse.io/figma/jobs/1004",
+      "content": "&lt;p&gt;Sanitized fixture. General prospect pool.&lt;/p&gt;",
+      "departments": [
+        {
+          "name": "Engineering"
+        }
+      ],
+      "offices": []
+    }
+  ],
+  "meta": {
+    "total": 4
+  }
+}

@@ -54,7 +54,8 @@ export async function sendNewJobNotifications(jobs: Internship[], users: UserSto
     await users.putReceipt(receipt);
     try {
       const ticket = await publisher.publish(device.token, nativePushMessage(job, preference.push));
-      const status = ticket.status === 'ok' ? 'pending' : 'error';
+      // A successful Expo response without a ticket cannot be reconciled; leave it retryable.
+      const status = ticket.status === 'ok' && ticket.id ? 'pending' : 'error';
       await users.putReceipt({ ...receipt, ticketId: ticket.id, status, updatedAt: now().toISOString() });
       if (status === 'pending') sent += 1;
       else { failed += 1; if (ticket.details?.error === 'DeviceNotRegistered') await users.putDevice({ ...device, active: false, updatedAt: now().toISOString() }); }

@@ -1,0 +1,20 @@
+name: Greenhouse live contract
+on:
+  schedule:
+    # Run separately from source-quality's 07:17 UTC schedule. This remains
+    # read-only and is also manually re-runnable for admission/promotion work.
+    - cron: '47 7 * * *'
+  workflow_dispatch:
+permissions: { contents: read }
+jobs:
+  live-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      # Read-only GET identity/schema/ETag/link-health contract for every reviewed
+      # board. No credentials, no POST. A network outage is reported as
+      # inconclusive and must be re-run before admission.
+      - run: npm run test:greenhouse:live
