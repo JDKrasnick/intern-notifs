@@ -73,4 +73,4 @@ Publication still requires scheduled shadow evidence and an explicit reviewed
 promotion.
 
 The full workflow and promotion criteria are defined in
-[`../../docs/greenhouse-registry-expansion-plan.md`](../../docs/greenhouse-registry-expansion-plan.md).
+[`../../docs/greenhouse/registry-expansion-plan.md`](../../docs/greenhouse/registry-expansion-plan.md).

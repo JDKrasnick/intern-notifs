@@ -1,15 +1,10 @@
 import type { SourceAdapter } from '../types.js';
 import { defaultSources as githubSources } from './github.js';
-import { reviewedGreenhouseSources } from './greenhouse-config.js';
-import { greenhouseAdapters } from './greenhouse.js';
 import { approvedLeverSources } from './lever.js';
 
 /**
- * Production publication adapters only. Greenhouse entries remain fail-closed
- * per board and use the poller's per-source quiet baseline on first fetch.
+ * Sources handled by the general poll Lambda. Greenhouse boards intentionally
+ * use their dedicated FIFO queue so 150+ boards cannot extend or fail this
+ * catalog-wide polling run.
  */
-export const defaultSources: SourceAdapter[] = [
-  ...githubSources,
-  ...approvedLeverSources,
-  ...greenhouseAdapters(reviewedGreenhouseSources.filter((source) => source.status === 'published')),
-];
+export const defaultSources: SourceAdapter[] = [...githubSources, ...approvedLeverSources];

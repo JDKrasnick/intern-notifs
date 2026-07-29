@@ -214,8 +214,8 @@ describe('validateApplicationUrl with a source policy', () => {
 });
 
 describe('greenhouse adapter registration', () => {
-  it('registers every published official board', () => {
+  it('keeps queued Greenhouse boards out of the general poll Lambda', () => {
     const greenhouse = defaultSources.filter((source) => source.id.startsWith('greenhouse-'));
-    expect(greenhouse).toHaveLength(166);
+    expect(greenhouse).toEqual([]);
   });
 });

@@ -134,7 +134,6 @@ async function main() {
   }
 
   for (const reviewedSource of reviewedGreenhouseSources) {
-    if (reviewedSource.status === 'published') continue;
     const [source] = greenhouseAdapters([reviewedSource]);
     const result = await source.fetch();
     sourceRows.push({
