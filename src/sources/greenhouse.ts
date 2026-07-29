@@ -300,7 +300,7 @@ export class GreenhouseBoardAdapter implements SourceAdapter, SourceConnector {
         outcome: 'unchanged',
         complete: true,
         postings: [],
-        rawCount: previous?.lastRowCount ?? 0,
+        rawCount: previous?.lastRawCount ?? previous?.lastRowCount ?? 0,
         contentHash: previous?.contentHash ?? '',
         listings: [],
         notModified: true,
@@ -340,6 +340,7 @@ export class GreenhouseBoardAdapter implements SourceAdapter, SourceConnector {
         lastSuccessAt: fetchedAt,
         successfulFetches: (previous?.successfulFetches ?? 0) + 1,
         lastRowCount: 0,
+        lastRawCount: jobs.length,
         activeExternalIds: postings.map((posting) => posting.externalId),
       },
     };

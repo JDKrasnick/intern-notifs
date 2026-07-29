@@ -42,6 +42,57 @@ function providerFor(sourceId: string): SourceHealth['provider'] {
   return sourceId ? 'github' : 'unknown';
 }
 
+function emitSuccessMetric(sourceId: string, provider: SourceHealth['provider'], outcome: 'changed' | 'unchanged', counts: ProcessedSnapshot['counts'], durationMs: number) {
+  console.log(JSON.stringify({
+    _aws: {
+      Timestamp: Date.now(),
+      CloudWatchMetrics: [{
+        Namespace: 'InternNotifs/Ingestion',
+        Dimensions: [['provider', 'outcome']],
+        Metrics: [
+          { Name: 'SourceFetchSuccess', Unit: 'Count' },
+          { Name: 'SourceFetchDurationMs', Unit: 'Milliseconds' },
+          { Name: 'RawListingCount', Unit: 'Count' },
+          { Name: 'EligibleListingCount', Unit: 'Count' },
+          { Name: 'ListingWithheld', Unit: 'Count' },
+        ],
+      }],
+    },
+    event: 'source_ingestion_completed',
+    sourceId,
+    provider,
+    outcome,
+    SourceFetchSuccess: 1,
+    SourceFetchDurationMs: durationMs,
+    RawListingCount: counts.raw,
+    EligibleListingCount: counts.eligible,
+    ListingWithheld: counts.withheld,
+    counts,
+  }));
+}
+
+function emitFailureMetric(sourceId: string, provider: SourceHealth['provider'], category: NonNullable<SourceHealth['diagnosticCategory']>, durationMs: number) {
+  console.error(JSON.stringify({
+    _aws: {
+      Timestamp: Date.now(),
+      CloudWatchMetrics: [{
+        Namespace: 'InternNotifs/Ingestion',
+        Dimensions: [['provider', 'category']],
+        Metrics: [
+          { Name: 'SourceFetchFailure', Unit: 'Count' },
+          { Name: 'SourceFetchDurationMs', Unit: 'Milliseconds' },
+        ],
+      }],
+    },
+    event: 'source_ingestion_failed',
+    sourceId,
+    provider,
+    category,
+    SourceFetchFailure: 1,
+    SourceFetchDurationMs: durationMs,
+  }));
+}
+
 function isSourceSnapshot(result: SourceFetchResult): result is SourceFetchResult & SourceSnapshot {
   return 'postings' in result && 'complete' in result && 'outcome' in result;
 }
@@ -204,9 +255,11 @@ export class IngestionRunner {
       const started = Date.now();
       const previous = await this.store.getCheckpoint(connector.id);
       const previousHealth = await this.store.getSourceHealth(connector.id);
+      let failureCategory: NonNullable<SourceHealth['diagnosticCategory']> = 'transport';
       try {
         const result = await fetchWithRetry(connector, previous);
         report.fetchedSources += 1;
+        failureCategory = 'quality';
         const qualityFailures = sourceQualityFailures(result, previous);
         if (qualityFailures.length) throw new SourceFetchError(qualityFailures.join('; '), 'empty');
         const batch = isSourceSnapshot(result) ? neutralBatch(result) : legacyBatch(result);
@@ -233,6 +286,7 @@ export class IngestionRunner {
           validatedAt: resolution.validatedAt,
           alertEligible: resolution.alertEligible,
         });
+        failureCategory = 'persistence';
         for (const job of plan.jobs) await this.store.putInternship(job);
         for (const occurrence of plan.occurrences) await this.store.putSourceOccurrence(occurrence);
         for (const event of plan.notifications) await this.store.putNotificationEvent(event);
@@ -254,9 +308,9 @@ export class IngestionRunner {
         });
         report.newJobs.push(...plan.newJobs);
         report.filteredJobs.push(...plan.filteredJobs);
-        console.log(JSON.stringify({ event: 'source_ingestion_completed', sourceId: connector.id, provider: providerFor(connector.id), outcome: batch.unchanged ? 'unchanged' : 'changed', counts: batch.processed.counts, durationMs: Date.now() - started }));
+        emitSuccessMetric(connector.id, providerFor(connector.id), batch.unchanged ? 'unchanged' : 'changed', batch.processed.counts, Date.now() - started);
       } catch (error) {
-        const category = error instanceof SourceFetchError ? error.category : 'transport';
+        const category = error instanceof SourceFetchError ? error.category : failureCategory;
         try {
           await this.store.putSourceHealth({
             sourceId: connector.id,
@@ -270,7 +324,7 @@ export class IngestionRunner {
           });
         } catch { /* The original source/persistence failure remains primary. */ }
         report.failures.push(error instanceof Error ? error.message : String(error));
-        console.error(JSON.stringify({ event: 'source_ingestion_failed', sourceId: connector.id, provider: providerFor(connector.id), category, durationMs: Date.now() - started }));
+        emitFailureMetric(connector.id, providerFor(connector.id), category, Date.now() - started);
       }
     }
     await this.validateUnverifiedOpenJobs(report);

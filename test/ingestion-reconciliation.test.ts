@@ -92,8 +92,8 @@ describe('snapshot reconciliation', () => {
     expect((await store.getCheckpoint('source-a'))?.lastRowCount).toBe(0);
 
     const retried = await new IngestionRunner([adapter], store).run();
-    expect(retried.newJobs).toHaveLength(0);
-    expect(store.notificationEvents.size).toBe(0);
+    expect(retried.newJobs).toHaveLength(1);
+    expect(store.notificationEvents.size).toBe(1);
     expect((await store.getCheckpoint('source-a'))?.lastRowCount).toBe(1);
   });
 });

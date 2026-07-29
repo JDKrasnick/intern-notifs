@@ -153,6 +153,8 @@ function normalizedProjection(postings: LeverPosting[]): string {
 }
 
 type TransitionalLeverResult = SourceSnapshot & SourceFetchResult;
+const LEVER_PAGE_SIZE = 100;
+const LEVER_MAX_PAGES = 50;
 
 export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
   readonly id: string;
@@ -167,32 +169,47 @@ export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
 
   async fetch(previous?: SourceCheckpoint): Promise<TransitionalLeverResult> {
     const sourceUrl = `https://api.lever.co/v0/postings/${this.options.site}?mode=json`;
-    const response = await this.fetchImpl(sourceUrl, {
-      headers: { Accept: 'application/json', ...(previous?.etag ? { 'If-None-Match': previous.etag } : {}) },
-    });
-    if (response.status === 304) {
-      return {
-        sourceId: this.id,
-        outcome: 'unchanged',
-        complete: true,
-        postings: [],
-        rawCount: previous?.lastRowCount ?? 0,
-        contentHash: previous?.contentHash ?? '',
-        listings: [],
-        notModified: true,
-        checkpoint: { ...previous, sourceId: this.id, lastSuccessAt: this.now().toISOString(), successfulFetches: previous?.successfulFetches ?? 0 },
-      };
+    const postings: LeverPosting[] = [];
+    let etag: string | undefined;
+    for (let page = 0; page < LEVER_MAX_PAGES; page += 1) {
+      const skip = page * LEVER_PAGE_SIZE;
+      const pageUrl = `${sourceUrl}&skip=${skip}&limit=${LEVER_PAGE_SIZE}`;
+      const response = await this.fetchImpl(pageUrl, {
+        headers: {
+          Accept: 'application/json',
+          ...(page === 0 && previous?.etag ? { 'If-None-Match': previous.etag } : {}),
+        },
+      });
+      if (page === 0 && response.status === 304) {
+        return {
+          sourceId: this.id,
+          outcome: 'unchanged',
+          complete: true,
+          postings: [],
+          rawCount: previous?.lastRawCount ?? previous?.lastRowCount ?? 0,
+          contentHash: previous?.contentHash ?? '',
+          listings: [],
+          notModified: true,
+          checkpoint: { ...previous, sourceId: this.id, lastSuccessAt: this.now().toISOString(), successfulFetches: previous?.successfulFetches ?? 0 },
+        };
+      }
+      if (!response.ok) throw new SourceFetchError(`${this.id}: Lever fetch failed (${response.status})`, 'http', response.status);
+      let payload: unknown;
+      try { payload = await response.json(); } catch { throw new SourceFetchError(`${this.id}: Lever returned malformed JSON`, 'json'); }
+      if (!Array.isArray(payload)) throw new SourceFetchError(`${this.id}: Lever response was not an array`, 'json');
+      if (page === 0) etag = response.headers.get('etag') ?? previous?.etag;
+      postings.push(...payload as LeverPosting[]);
+      if (payload.length < LEVER_PAGE_SIZE) break;
+      if (page === LEVER_MAX_PAGES - 1) {
+        throw new SourceFetchError(`${this.id}: Lever pagination exceeded ${LEVER_MAX_PAGES} pages`, 'json');
+      }
     }
-    if (!response.ok) throw new SourceFetchError(`${this.id}: Lever fetch failed (${response.status})`, 'http', response.status);
-    let postings: unknown;
-    try { postings = await response.json(); } catch { throw new SourceFetchError(`${this.id}: Lever returned malformed JSON`, 'json'); }
-    if (!Array.isArray(postings)) throw new SourceFetchError(`${this.id}: Lever response was not an array`, 'json');
     const fetchedAt = this.now().toISOString();
-    const sourced = postings.map((posting, index) => mapLeverSourcedPosting(posting as LeverPosting, this.options, fetchedAt, index + 1));
+    const sourced = postings.map((posting, index) => mapLeverSourcedPosting(posting, this.options, fetchedAt, index + 1));
     if (new Set(sourced.map((posting) => posting.externalId)).size !== sourced.length) {
       throw new SourceFetchError(`${this.id}: Lever returned duplicate posting IDs`, 'identity');
     }
-    const contentHash = createHash('sha256').update(normalizedProjection(postings as LeverPosting[])).digest('hex');
+    const contentHash = createHash('sha256').update(normalizedProjection(postings)).digest('hex');
     const neutral: SourceSnapshot = {
       sourceId: this.id,
       outcome: contentHash === previous?.contentHash ? 'unchanged' : 'changed',
@@ -202,11 +219,12 @@ export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
       contentHash,
       checkpoint: {
         sourceId: this.id,
-        etag: response.headers.get('etag') ?? previous?.etag,
+        etag,
         contentHash,
         lastSuccessAt: fetchedAt,
         successfulFetches: (previous?.successfulFetches ?? 0) + 1,
         lastRowCount: 0,
+        lastRawCount: postings.length,
         activeExternalIds: sourced.map((posting) => posting.externalId),
       },
     };
@@ -214,6 +232,7 @@ export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
     neutral.checkpoint.lastRowCount = processed.listings.length;
     return {
       ...neutral,
+      rawRowCount: postings.length,
       listings: processed.listings,
       notModified: neutral.outcome === 'unchanged',
     };

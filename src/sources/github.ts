@@ -72,7 +72,7 @@ export class GitHubMarkdownAdapter implements SourceAdapter, SourceConnector {
         outcome: 'unchanged',
         complete: true,
         postings: [],
-        rawCount: previous?.lastRowCount ?? 0,
+        rawCount: previous?.lastRawCount ?? previous?.lastRowCount ?? 0,
         contentHash: previous?.contentHash ?? '',
         listings: [],
         notModified: true,
@@ -105,6 +105,7 @@ export class GitHubMarkdownAdapter implements SourceAdapter, SourceConnector {
         lastSuccessAt: new Date().toISOString(),
         successfulFetches: (previous?.successfulFetches ?? 0) + 1,
         lastRowCount: 0,
+        lastRawCount: rawListings.length + rejectedApplicationUrls.length,
         activeExternalIds: postings.map((posting) => posting.externalId),
       },
     };
@@ -112,6 +113,7 @@ export class GitHubMarkdownAdapter implements SourceAdapter, SourceConnector {
     neutral.checkpoint.lastRowCount = processed.listings.length;
     return {
       ...neutral,
+      rawRowCount: neutral.rawCount,
       listings: processed.listings,
       ...(rejectedApplicationUrls.length ? { rejectedApplicationUrls } : {}),
       notModified: neutral.outcome === 'unchanged',

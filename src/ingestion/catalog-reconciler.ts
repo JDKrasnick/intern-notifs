@@ -151,7 +151,12 @@ export class CatalogReconciler {
       const existing = jobs.get(input.resolvedJobs.get(externalId)?.jobId ?? '') ?? input.resolvedJobs.get(externalId);
       const validatedAt = input.validatedAt?.get(externalId);
       const job = existing ? merge(existing, listing, externalId, input.now, validatedAt) : create(listing, externalId, input.now, validatedAt);
-      if (!existing) {
+      const retryingUncommittedCreate = Boolean(existing
+        && !input.priorOccurrences.some((prior) => prior.externalId === externalId)
+        && existing.sourceReferences.length === 1
+        && existing.sourceReferences[0]?.sourceId === input.sourceId
+        && existing.sourceReferences[0]?.externalId === externalId);
+      if (!existing || retryingUncommittedCreate) {
         if (input.baseline || !job.open || !job.technical || !matchesJobFilter(job, input.filter)
           || (input.alertEligible && !input.alertEligible.has(externalId))) {
           job.notification = { smsPending: false, digestPending: false };

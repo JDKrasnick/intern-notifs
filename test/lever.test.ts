@@ -45,6 +45,40 @@ describe('LeverPostingsAdapter', () => {
     expect(result.listings).toEqual([]);
     expect(calls[0]?.headers).toEqual({ Accept: 'application/json', 'If-None-Match': '"lever-etag"' });
   });
+  it('reads every bounded page and rejects duplicate posting IDs', async () => {
+    const urls: string[] = [];
+    const page = Array.from({ length: 100 }, (_, index) => ({
+      ...posting,
+      id: `job-${index}`,
+      hostedUrl: `https://jobs.lever.co/acme/job-${index}`,
+      applyUrl: `https://jobs.lever.co/acme/job-${index}/apply`,
+    }));
+    const adapter = new LeverPostingsAdapter({
+      ...options,
+      fetchImpl: async (url) => {
+        urls.push(String(url));
+        return new Response(JSON.stringify(urls.length === 1 ? page : [{
+          ...posting,
+          id: 'job-100',
+          hostedUrl: 'https://jobs.lever.co/acme/job-100',
+          applyUrl: 'https://jobs.lever.co/acme/job-100/apply',
+        }]), { status: 200 });
+      },
+    });
+    const result = await adapter.fetch();
+    expect(urls).toEqual([
+      'https://api.lever.co/v0/postings/acme?mode=json&skip=0&limit=100',
+      'https://api.lever.co/v0/postings/acme?mode=json&skip=100&limit=100',
+    ]);
+    expect(result.rawCount).toBe(101);
+    expect(result.postings).toHaveLength(101);
+
+    const duplicate = new LeverPostingsAdapter({
+      ...options,
+      fetchImpl: async () => new Response(JSON.stringify([posting, posting]), { status: 200 }),
+    });
+    await expect(duplicate.fetch()).rejects.toThrow('duplicate posting IDs');
+  });
   it('rejects malformed and error responses', async () => {
     const malformed = new LeverPostingsAdapter({ ...options, fetchImpl: async () => new Response('{', { status: 200 }) });
     await expect(malformed.fetch()).rejects.toThrow('malformed JSON');

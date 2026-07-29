@@ -102,6 +102,7 @@ export interface SourceCheckpoint {
   lastSuccessAt?: string;
   successfulFetches: number;
   lastRowCount?: number;
+  lastRawCount?: number;
   /** Stable posting IDs in the last trusted complete snapshot. */
   activeExternalIds?: string[];
 }
