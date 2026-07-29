@@ -1,24 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import { parseInternshipMarkdown } from '../src/core/markdown.js';
-import { mapGreenhouseJob } from '../src/sources/greenhouse.js';
-import { mapLeverPosting } from '../src/sources/lever.js';
+import { processPosting } from '../src/ingestion/processor.js';
+import { mapGreenhouseJob, mapGreenhouseSourcedPosting } from '../src/sources/greenhouse.js';
+import { mapLeverPosting, mapLeverSourcedPosting } from '../src/sources/lever.js';
 import { parseQuantInternshipMarkdown } from '../src/sources/quant.js';
 import { acmeSource, technicalInternship } from './fixtures/greenhouse.js';
 
 const fetchedAt = '2026-07-29T12:00:00.000Z';
 
+const leverPosting = {
+  id: 'lever-role-1',
+  text: 'Software Engineering Intern, Summer 2027',
+  applyUrl: 'https://jobs.lever.co/acme/lever-role-1/apply',
+  hostedUrl: 'https://jobs.lever.co/acme/lever-role-1',
+  descriptionPlain: 'Applicants must be a U.S. citizen. Pays $40-$50/hour.',
+  createdAt: 1_783_072_000_000,
+  categories: { location: 'New York, NY', commitment: 'Internship' },
+  workplaceType: 'hybrid',
+};
+const leverOptions = { id: 'lever-acme', company: 'Acme', site: 'acme' };
+
 describe('legacy ingestion characterization', () => {
   it('preserves the exact Lever listing boundary', () => {
-    expect(mapLeverPosting({
-      id: 'lever-role-1',
-      text: 'Software Engineering Intern, Summer 2027',
-      applyUrl: 'https://jobs.lever.co/acme/lever-role-1/apply',
-      hostedUrl: 'https://jobs.lever.co/acme/lever-role-1',
-      descriptionPlain: 'Applicants must be a U.S. citizen. Pays $40-$50/hour.',
-      createdAt: 1_783_072_000_000,
-      categories: { location: 'New York, NY', commitment: 'Internship' },
-      workplaceType: 'hybrid',
-    }, { id: 'lever-acme', company: 'Acme', site: 'acme' }, fetchedAt, 7)).toEqual({
+    expect(mapLeverPosting(leverPosting, leverOptions, fetchedAt, 7)).toEqual({
       sourceId: 'lever-acme',
       document: 'lever-role-1',
       sourceUrl: 'https://api.lever.co/v0/postings/acme?mode=json',
@@ -102,5 +106,29 @@ describe('legacy ingestion characterization', () => {
         requirements: { requiresUsCitizenship: false, advancedDegreeRequired: true }, state: 'open', fetchedAt,
       },
     ]);
+  });
+});
+
+describe('neutral boundary parity', () => {
+  /** The neutral boundary adds identity and the persisted classification decision. */
+  const additions = { externalId: expect.any(String) as unknown as string, technical: true };
+
+  it('produces the legacy Lever listing from the connector and shared processor', () => {
+    const legacy = mapLeverPosting(leverPosting, leverOptions, fetchedAt, 7)!;
+    const processed = processPosting(mapLeverSourcedPosting(leverPosting, leverOptions, fetchedAt, 7)).listing!;
+    // Joining absent Lever description fields left trailing whitespace in the
+    // legacy raw text; the parsed rate and every other field are identical.
+    expect(processed).toEqual({
+      ...legacy,
+      ...additions,
+      externalId: 'lever-role-1',
+      compensation: { ...legacy.compensation, raw: legacy.compensation.raw.trimEnd() },
+    });
+  });
+
+  it('produces the legacy Greenhouse listing from the connector and shared processor', () => {
+    const legacy = mapGreenhouseJob(technicalInternship, acmeSource, fetchedAt, 3)!;
+    const posting = mapGreenhouseSourcedPosting(technicalInternship, acmeSource, fetchedAt, 3)!;
+    expect(processPosting(posting).listing).toEqual({ ...legacy, ...additions, externalId: '5001' });
   });
 });

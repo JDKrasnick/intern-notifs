@@ -270,7 +270,7 @@ export function mapGreenhouseSourcedPosting(
     locations: [htmlToText(job.location?.name ?? undefined)].filter(Boolean),
     applyUrl: job.absolute_url,
     sourceState: job.internal_job_id === null || job.internal_job_id === undefined ? 'prospect' : 'open',
-    ...(job.updated_at ? { publishedAt: new Date(job.updated_at).toISOString() } : {}),
+    ...(job.updated_at && !Number.isNaN(Date.parse(job.updated_at)) ? { publishedAt: new Date(job.updated_at).toISOString() } : {}),
     classificationTags: [names(job.departments), names(job.offices)].filter(Boolean),
   };
 }
@@ -350,6 +350,7 @@ export class GreenhouseBoardAdapter implements SourceAdapter, SourceConnector {
     return {
       ...neutral,
       rawRowCount: jobs.length,
+      processed,
       listings,
       ...(rejectedApplicationUrls.length ? { rejectedApplicationUrls } : {}),
       notModified: neutral.outcome === 'unchanged',

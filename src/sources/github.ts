@@ -4,6 +4,7 @@ import { normalizeUrl } from '../core/normalize.js';
 import { processSnapshot } from '../ingestion/processor.js';
 import { applicationUrlRejection } from './quality.js';
 import { parseQuantInternshipMarkdown } from './quant.js';
+import { SourceFetchError } from './source-error.js';
 import type { RawListing, SourceAdapter, SourceCheckpoint, SourceConnector, SourceFetchResult, SourceSnapshot, SourcedPosting } from '../types.js';
 
 export interface GitHubDocument { path: string; branch: string; season: string; }
@@ -23,6 +24,9 @@ export function markdownListingToSourcedPosting(listing: RawListing): SourcedPos
     locations: [listing.location],
     applyUrl: listing.applyUrl,
     sourceState: listing.state,
+    // These documents are reviewed early-career lists, so a row keeps the
+    // lifecycle standing the list gives it even when its title omits "intern".
+    lifecycleAuthority: 'source',
     ...(listing.postedAt ? { publishedAt: listing.postedAt } : {}),
     seasonHint: listing.season,
     compensationText: listing.compensation.raw,
@@ -56,7 +60,7 @@ export class GitHubMarkdownAdapter implements SourceAdapter, SourceConnector {
         : undefined;
       const response = await this.fetchImpl(url, { headers: knownEtag ? { 'If-None-Match': knownEtag } : {} });
       if (response.status === 304) continue;
-      if (!response.ok) throw new Error(`${this.id}: ${document.path} fetch failed (${response.status})`);
+      if (!response.ok) throw new SourceFetchError(`${this.id}: ${document.path} fetch failed (${response.status})`, 'http', response.status);
       allUnchanged = false; etag = response.headers.get('etag') ?? etag;
       const documentEtag = response.headers.get('etag'); if (documentEtag) documentEtags[document.path] = documentEtag;
       const parsed = (this.options.parser ?? parseInternshipMarkdown)(await response.text(), { sourceId: this.id, document: document.path, sourceUrl: url, season: document.season });
@@ -85,9 +89,20 @@ export class GitHubMarkdownAdapter implements SourceAdapter, SourceConnector {
         },
       };
     }
-    const postings = rawListings.map(markdownListingToSourcedPosting);
-    if (new Set(postings.map((posting) => posting.externalId)).size !== postings.length) {
-      throw new Error(`${this.id}: duplicate Markdown posting identity`);
+    // Two rows of one document can share a normalized application URL, so they
+    // are one destination. Dropping the repeat keeps the snapshot complete
+    // instead of failing an otherwise healthy source; `rawCount` still counts it.
+    const postings: SourcedPosting[] = [];
+    const identities = new Set<string>();
+    let duplicateIdentities = 0;
+    for (const listing of rawListings) {
+      const posting = markdownListingToSourcedPosting(listing);
+      if (identities.has(posting.externalId)) { duplicateIdentities += 1; continue; }
+      identities.add(posting.externalId);
+      postings.push(posting);
+    }
+    if (duplicateIdentities) {
+      console.log(JSON.stringify({ event: 'markdown_duplicate_identity_dropped', sourceId: this.id, count: duplicateIdentities }));
     }
     const contentHash = createHash('sha256').update(postingProjection(postings)).digest('hex');
     const neutral: SourceSnapshot = {
@@ -114,6 +129,7 @@ export class GitHubMarkdownAdapter implements SourceAdapter, SourceConnector {
     return {
       ...neutral,
       rawRowCount: neutral.rawCount,
+      processed,
       listings: processed.listings,
       ...(rejectedApplicationUrls.length ? { rejectedApplicationUrls } : {}),
       notModified: neutral.outcome === 'unchanged',

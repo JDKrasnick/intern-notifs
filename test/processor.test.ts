@@ -32,6 +32,22 @@ describe('shared posting processor', () => {
     });
   });
 
+  it('keeps a reviewed early-career document as the lifecycle authority', () => {
+    const result = processSnapshot({
+      sourceId: 'markdown-list', outcome: 'changed', complete: true, rawCount: 2, contentHash: 'hash',
+      checkpoint: { sourceId: 'markdown-list', successfulFetches: 1 },
+      postings: [
+        posting({ externalId: 'new-grad', title: 'Software Engineer, New Grad', lifecycleAuthority: 'source', content: [] }),
+        posting({ externalId: 'recruiter', title: 'Campus Recruiter', lifecycleAuthority: 'source', content: [] }),
+      ],
+    });
+    expect(result.decisions).toEqual([
+      { externalId: 'new-grad', outcome: 'included', reason: 'source-policy' },
+      { externalId: 'recruiter', outcome: 'filtered', reason: 'nontechnical' },
+    ]);
+    expect(result.listings.map((listing) => listing.title)).toEqual(['Software Engineer, New Grad']);
+  });
+
   it('reports prospect, lifecycle, technical, invalid URL, and aggregator decisions', () => {
     const postings = [
       posting({ externalId: 'prospect', sourceState: 'prospect' }),

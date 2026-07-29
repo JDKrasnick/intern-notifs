@@ -147,6 +147,7 @@ export interface SourceOccurrenceState {
   occurrence: SourceOccurrence;
   present: boolean;
   consecutiveOmissions: number;
+  /** Snapshot that last changed this occurrence; confirmations reuse the checkpoint's active IDs. */
   snapshotHash: string;
   updatedAt: string;
 }
@@ -206,6 +207,12 @@ export interface SourcedPosting {
   applyUrl: string;
   hostedUrl?: string;
   sourceState: 'open' | 'closed' | 'prospect';
+  /**
+   * `title` requires an internship signal in the posting title. `source` marks a
+   * reviewed early-career-only document, where the source itself carries the
+   * lifecycle signal and the title only decides technical classification.
+   */
+  lifecycleAuthority?: 'title' | 'source';
   publishedAt?: string;
   seasonHint?: string;
   classificationTags?: string[];
@@ -298,6 +305,8 @@ export interface SourceFetchResult {
   listings: RawListing[];
   /** Rows withheld before publication because their application URL violates baseline policy. */
   rejectedApplicationUrls?: Array<{ row: number; url: string; reason: string }>;
+  /** Processing a migrated connector already performed, so the runner never repeats it. */
+  processed?: ProcessedSnapshot;
   checkpoint: SourceCheckpoint;
   notModified: boolean;
 }

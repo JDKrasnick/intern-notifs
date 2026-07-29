@@ -42,27 +42,38 @@ flowchart LR
 A `SourceConnector` returns a complete `SourceSnapshot`. Each
 `SourcedPosting.externalId` is stable within its source: ATS posting IDs for
 Lever and Greenhouse, and document path plus normalized application URL for
-Markdown. Row numbers remain diagnostics only.
+Markdown. Two Markdown rows that share one normalized application URL are one
+destination, so the repeat is dropped and still counted in `rawCount` rather
+than failing the snapshot. Row numbers remain diagnostics only.
 
-Connectors own transport, bounded retries, pagination, schema validation,
-source identity, completeness, stable provider IDs, and reviewed URL
-contracts. They do not decide whether a structurally valid posting is a
-technical early-career role.
+Connectors own transport, pagination, schema validation, source identity,
+completeness, stable provider IDs, and reviewed URL contracts. They classify
+failures so the runner can retry transport, `429`, and `5xx` and quarantine
+configuration, schema, identity, and URL-contract failures. They do not decide
+whether a structurally valid posting is a technical early-career role.
 
 The shared processor returns processed listings and an explicit decision for
 every posting. It owns text cleanup, generic URL safety, work-mode/location
 normalization, lifecycle and technical classification, season inference,
-compensation, and declared requirement extraction.
+compensation, and declared requirement extraction. `lifecycleAuthority` records
+where the internship signal comes from: ATS boards must name it in the title,
+while a reviewed early-career document carries it for every row it lists.
 
 The reconciler is pure. It calculates creates, updates, first omissions,
-second-omission closures, and deterministic notification events. A role remains
-open while any source occurrence is open. Failed, incomplete, malformed, or
-suspicious raw-zero snapshots never reach reconciliation.
+second-omission closures, and deterministic notification events. One snapshot
+that lists a role twice — across documents or behind different tracking links —
+merges into one role with one alert. A role remains open while any source
+occurrence is open. Failed, incomplete, malformed, or suspicious raw-zero
+snapshots never reach reconciliation.
 
 The store persists catalog records, occurrences, checkpoints, deterministic
-outbox records, and source health. Checkpoints advance only after all writes
-for a snapshot succeed. Store indexes use the already-processed catalog state
-and never re-run classification.
+outbox records, and source health. An occurrence is written only when its
+presence, omission streak, role, or payload changes; a confirmation costs no
+write because the checkpoint carries the active ID set. Recording an outbox
+event is the alert gate, so a retried snapshot re-derives the same event ID and
+stays quiet. Checkpoints advance only after all writes for a snapshot succeed.
+Store indexes use the already-processed catalog state and never re-run
+classification.
 
 ## Compatibility and rollout
 
@@ -74,9 +85,10 @@ them.
 
 The first trusted snapshot for a source is always quiet. Unchanged successful
 snapshots are healthy and can advance omission streaks because they confirm
-the same complete active snapshot. One omission marks an occurrence missing;
-the second consecutive complete success closes it. Updates never become new
-job alerts.
+the same complete active snapshot; they reconcile omissions only, so identical
+source content never rewrites the catalog. One omission marks an occurrence
+missing; the second consecutive complete success closes it. Updates never
+become new job alerts.
 
 ## Runtime and deferred scaling
 

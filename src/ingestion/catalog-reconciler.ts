@@ -52,6 +52,28 @@ function occurrence(listing: ProcessedListing, externalId: string): SourceOccurr
   };
 }
 
+/** Key order is normalized so a stored occurrence compares equal to a freshly built one. */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+/** A confirmed, unchanged occurrence needs no write; presence lives in the checkpoint. */
+function occurrenceChanged(prior: SourceOccurrenceState | undefined, next: SourceOccurrenceState): boolean {
+  return !prior
+    || prior.present !== next.present
+    || prior.consecutiveOmissions !== next.consecutiveOmissions
+    || prior.jobId !== next.jobId
+    || stableJson(prior.occurrence) !== stableJson(next.occurrence);
+}
+
 function genericLocation(value: string | undefined) {
   return !value || /^(unknown|unspecified|n\/?a|not (?:listed|specified)|tbd|see (?:description|job))$/i.test(value.trim());
 }
@@ -135,6 +157,11 @@ function closeOccurrence(job: Internship, state: SourceOccurrenceState, now: str
   return { ...job, sourceReferences, open: sourceReferences.some((reference) => reference.state === 'open'), lastSeenAt: now };
 }
 
+function safeNormalizeUrl(value: string): string {
+  try { return normalizeUrl(value); }
+  catch { return value; }
+}
+
 /** Pure calculation: this class performs no reads, writes, network calls, or logging. */
 export class CatalogReconciler {
   reconcile(input: ReconciliationInput): ReconciliationPlan {
@@ -144,18 +171,28 @@ export class CatalogReconciler {
     const newJobs: Internship[] = [];
     const filteredJobs: Internship[] = [];
     const includedIds = new Set<string>();
+    const priorById = new Map(input.priorOccurrences.map((prior) => [prior.externalId, prior]));
+    // One snapshot can list one role twice, across documents or with different
+    // tracking links. Resolution happens before any write, so the snapshot keeps
+    // its own URL/fingerprint index to merge duplicates and alert exactly once.
+    const byUrl = new Map<string, Internship>();
+    const byFingerprint = new Map<string, Internship>();
 
     for (const listing of input.listings) {
-      const externalId = listing.externalId ?? `${listing.document}:${normalizeUrl(listing.applyUrl)}`;
+      const externalId = listing.externalId ?? `${listing.document}:${safeNormalizeUrl(listing.applyUrl)}`;
       includedIds.add(externalId);
-      const existing = jobs.get(input.resolvedJobs.get(externalId)?.jobId ?? '') ?? input.resolvedJobs.get(externalId);
+      const listingUrl = safeNormalizeUrl(listing.applyUrl);
+      const listingFingerprint = fingerprint(listing.company, listing.title, listing.location, listing.season);
+      const stored = input.resolvedJobs.get(externalId);
+      const inSnapshot = (stored && jobs.get(stored.jobId)) ?? byUrl.get(listingUrl) ?? byFingerprint.get(listingFingerprint);
+      const existing = inSnapshot ?? stored;
       const validatedAt = input.validatedAt?.get(externalId);
       const job = existing ? merge(existing, listing, externalId, input.now, validatedAt) : create(listing, externalId, input.now, validatedAt);
-      const retryingUncommittedCreate = Boolean(existing
-        && !input.priorOccurrences.some((prior) => prior.externalId === externalId)
-        && existing.sourceReferences.length === 1
-        && existing.sourceReferences[0]?.sourceId === input.sourceId
-        && existing.sourceReferences[0]?.externalId === externalId);
+      const retryingUncommittedCreate = Boolean(stored && !inSnapshot
+        && !priorById.has(externalId)
+        && stored.sourceReferences.length === 1
+        && stored.sourceReferences[0]?.sourceId === input.sourceId
+        && stored.sourceReferences[0]?.externalId === externalId);
       if (!existing || retryingUncommittedCreate) {
         if (input.baseline || !job.open || !job.technical || !matchesJobFilter(job, input.filter)
           || (input.alertEligible && !input.alertEligible.has(externalId))) {
@@ -167,7 +204,11 @@ export class CatalogReconciler {
         }
       }
       jobs.set(job.jobId, job);
-      occurrences.push({
+      byUrl.set(job.normalizedUrl, job);
+      byUrl.set(listingUrl, job);
+      byFingerprint.set(job.fingerprint, job);
+      byFingerprint.set(listingFingerprint, job);
+      const next: SourceOccurrenceState = {
         sourceId: input.sourceId,
         externalId,
         jobId: job.jobId,
@@ -176,13 +217,15 @@ export class CatalogReconciler {
         consecutiveOmissions: 0,
         snapshotHash: input.snapshotHash,
         updatedAt: input.now,
-      });
+      };
+      if (occurrenceChanged(priorById.get(externalId), next)) occurrences.push(next);
     }
 
     for (const prior of input.priorOccurrences) {
       if (includedIds.has(prior.externalId)) continue;
       if (input.activeExternalIds.has(prior.externalId)) {
-        occurrences.push({ ...prior, present: true, consecutiveOmissions: 0, snapshotHash: input.snapshotHash, updatedAt: input.now });
+        const confirmed = { ...prior, present: true, consecutiveOmissions: 0, snapshotHash: input.snapshotHash, updatedAt: input.now };
+        if (occurrenceChanged(prior, confirmed)) occurrences.push(confirmed);
         continue;
       }
       const consecutiveOmissions = prior.consecutiveOmissions + 1;

@@ -3,6 +3,7 @@ import { assessApplicationPageForListing, canonicalApplicationUrl, type Applicat
 import { fingerprintCandidates, normalizeUrl } from './core/normalize.js';
 import { isTechnicalJob, type JobFilter } from './core/filters.js';
 import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
+import { evaluateSourceFreshness } from './ingestion/monitoring.js';
 import { processSnapshot } from './ingestion/processor.js';
 import { sourceQualityFailures } from './sources/quality.js';
 import { SourceFetchError } from './sources/source-error.js';
@@ -34,6 +35,26 @@ interface TrustedBatch {
   snapshotHash: string;
   activeExternalIds: Set<string>;
   unchanged: boolean;
+}
+
+const SOURCE_WORK_CONCURRENCY = 24;
+
+/**
+ * Bounded worker pool that always drains: the first error is rethrown only once
+ * every worker has settled, so a failed slice never leaves writes in flight.
+ */
+async function forEachBounded<T>(items: readonly T[], task: (item: T, index: number) => Promise<void>): Promise<void> {
+  let next = 0;
+  let failure: unknown;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      try { await task(items[index]!, index); }
+      catch (error) { failure ??= error; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(SOURCE_WORK_CONCURRENCY, items.length) }, worker));
+  if (failure !== undefined) throw failure;
 }
 
 function providerFor(sourceId: string): SourceHealth['provider'] {
@@ -69,6 +90,27 @@ function emitSuccessMetric(sourceId: string, provider: SourceHealth['provider'],
     ListingWithheld: counts.withheld,
     counts,
   }));
+}
+
+function emitFreshnessMetric(records: SourceHealth[], now: Date) {
+  const freshness = evaluateSourceFreshness(records, now);
+  const polled = new Set(records.map((record) => record.provider));
+  for (const [provider, staleCount] of Object.entries(freshness.byProvider).filter(([name]) => polled.has(name as SourceHealth['provider']))) {
+    console.log(JSON.stringify({
+      _aws: {
+        Timestamp: now.getTime(),
+        CloudWatchMetrics: [{
+          Namespace: 'InternNotifs/Ingestion',
+          Dimensions: [['provider']],
+          Metrics: [{ Name: 'StaleSourceCount', Unit: 'Count' }],
+        }],
+      },
+      event: 'source_freshness_evaluated',
+      provider,
+      StaleSourceCount: staleCount,
+      staleSourceIds: freshness.staleSourceIds.filter((sourceId) => providerFor(sourceId) === provider),
+    }));
+  }
 }
 
 function emitFailureMetric(sourceId: string, provider: SourceHealth['provider'], category: NonNullable<SourceHealth['diagnosticCategory']>, durationMs: number) {
@@ -131,7 +173,7 @@ function legacyBatch(result: SourceFetchResult): TrustedBatch {
 }
 
 function neutralBatch(result: SourceFetchResult & SourceSnapshot): TrustedBatch {
-  const processed = processSnapshot(result);
+  const processed = result.processed ?? processSnapshot(result);
   return {
     fetchResult: result,
     processed,
@@ -208,8 +250,11 @@ export class IngestionRunner {
     const resolved = new Map<string, Internship | undefined>();
     const validatedAt = new Map<string, string>();
     const alertEligible = new Set<string>();
-    const accepted: ProcessedListing[] = [];
-    for (const sourceListing of listings) {
+    // Slots keep the snapshot order stable so duplicate merging, alert order, and
+    // reported failures do not depend on which worker finished first.
+    const accepted = new Array<ProcessedListing | undefined>(listings.length);
+    const failures = new Array<string | undefined>(listings.length);
+    await forEachBounded(listings, async (sourceListing, slot) => {
       const canonicalUrl = canonicalApplicationUrl(sourceListing.applyUrl);
       const listing = {
         ...sourceListing,
@@ -239,17 +284,24 @@ export class IngestionRunner {
         validatingLink = false;
         if (confidence?.recommendation !== 'catalog-only' && confidence?.recommendation !== 'review') alertEligible.add(id);
         resolved.set(id, existing);
-        accepted.push(listing);
+        accepted[slot] = listing;
       } catch (error) {
         if (validatingLink && existing?.open) await this.quarantine(existing);
-        report.failures.push(`${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`);
+        failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
       }
-    }
-    return { accepted, resolved, validatedAt, alertEligible };
+    });
+    report.failures.push(...failures.filter((failure): failure is string => failure !== undefined));
+    return {
+      accepted: accepted.filter((listing): listing is ProcessedListing => listing !== undefined),
+      resolved,
+      validatedAt,
+      alertEligible,
+    };
   }
 
   async run(options: { seedOnly?: boolean } = {}): Promise<PollReport> {
     const report: PollReport = { fetchedSources: 0, unchangedSources: [], baselineSources: [], processedListings: 0, newJobs: [], filteredJobs: [], failures: [] };
+    const health: SourceHealth[] = [];
     for (const connector of this.connectors) {
       const attemptedAt = this.now().toISOString();
       const started = Date.now();
@@ -269,10 +321,16 @@ export class IngestionRunner {
         report.processedListings += batch.processed.listings.length;
         const now = this.now().toISOString();
         const priorOccurrences = await this.store.getSourceOccurrences(connector.id);
-        const resolution = await this.resolveListings(batch.processed.listings, report);
-        for (const prior of priorOccurrences) {
-          if (!resolution.resolved.has(prior.externalId)) resolution.resolved.set(prior.externalId, await this.store.getJob(prior.jobId));
-        }
+        // An unchanged snapshot repeats postings the checkpoint already trusts, so
+        // only omission progress is reconciled; re-resolving every row would cost a
+        // full catalog rewrite on every poll for byte-identical source content.
+        const resolution = await this.resolveListings(batch.unchanged ? [] : batch.processed.listings, report);
+        const closureCandidates = priorOccurrences.filter((prior) => !resolution.resolved.has(prior.externalId)
+          && !batch.activeExternalIds.has(prior.externalId)
+          && prior.consecutiveOmissions >= 1);
+        await forEachBounded(closureCandidates, async (prior) => {
+          resolution.resolved.set(prior.externalId, await this.store.getJob(prior.jobId));
+        });
         const plan = this.reconciler.reconcile({
           sourceId: connector.id,
           snapshotHash: batch.snapshotHash,
@@ -287,10 +345,15 @@ export class IngestionRunner {
           alertEligible: resolution.alertEligible,
         });
         failureCategory = 'persistence';
-        for (const job of plan.jobs) await this.store.putInternship(job);
-        for (const occurrence of plan.occurrences) await this.store.putSourceOccurrence(occurrence);
-        for (const event of plan.notifications) await this.store.putNotificationEvent(event);
-        await this.store.putSourceHealth({
+        await forEachBounded(plan.jobs, (job) => this.store.putInternship(job));
+        await forEachBounded(plan.occurrences, (occurrence) => this.store.putSourceOccurrence(occurrence));
+        // The outbox is the alert ledger: a retry that re-derives a create finds its
+        // deterministic event already recorded and stays quiet.
+        const alertedJobIds = new Set<string>();
+        await forEachBounded(plan.notifications, async (event) => {
+          if (await this.store.putNotificationEvent(event)) alertedJobIds.add(event.jobId);
+        });
+        const successHealth: SourceHealth = {
           sourceId: connector.id,
           provider: providerFor(connector.id),
           lastAttemptAt: attemptedAt,
@@ -300,33 +363,40 @@ export class IngestionRunner {
           snapshotHash: batch.snapshotHash,
           counts: batch.processed.counts,
           consecutiveFailures: 0,
-        });
+        };
+        await this.store.putSourceHealth(successHealth);
+        health.push(successHealth);
         await this.store.putCheckpoint({
           ...result.checkpoint,
           contentHash: batch.snapshotHash,
           activeExternalIds: [...batch.activeExternalIds],
         });
-        report.newJobs.push(...plan.newJobs);
+        for (const job of plan.newJobs) {
+          if (alertedJobIds.has(job.jobId)) report.newJobs.push(job);
+          else console.log(JSON.stringify({ event: 'new_job_alert_suppressed', sourceId: connector.id, jobId: job.jobId }));
+        }
         report.filteredJobs.push(...plan.filteredJobs);
         emitSuccessMetric(connector.id, providerFor(connector.id), batch.unchanged ? 'unchanged' : 'changed', batch.processed.counts, Date.now() - started);
       } catch (error) {
         const category = error instanceof SourceFetchError ? error.category : failureCategory;
-        try {
-          await this.store.putSourceHealth({
-            sourceId: connector.id,
-            provider: providerFor(connector.id),
-            lastAttemptAt: attemptedAt,
-            lastSuccessAt: previousHealth?.lastSuccessAt,
-            outcome: 'failed',
-            durationMs: Date.now() - started,
-            consecutiveFailures: (previousHealth?.consecutiveFailures ?? 0) + 1,
-            diagnosticCategory: category,
-          });
-        } catch { /* The original source/persistence failure remains primary. */ }
+        const failureHealth: SourceHealth = {
+          sourceId: connector.id,
+          provider: providerFor(connector.id),
+          lastAttemptAt: attemptedAt,
+          ...(previousHealth?.lastSuccessAt ? { lastSuccessAt: previousHealth.lastSuccessAt } : {}),
+          outcome: 'failed',
+          durationMs: Date.now() - started,
+          consecutiveFailures: (previousHealth?.consecutiveFailures ?? 0) + 1,
+          diagnosticCategory: category,
+        };
+        health.push(failureHealth);
+        try { await this.store.putSourceHealth(failureHealth); }
+        catch { /* The original source/persistence failure remains primary. */ }
         report.failures.push(error instanceof Error ? error.message : String(error));
         emitFailureMetric(connector.id, providerFor(connector.id), category, Date.now() - started);
       }
     }
+    emitFreshnessMetric(health, this.now());
     await this.validateUnverifiedOpenJobs(report);
     return report;
   }

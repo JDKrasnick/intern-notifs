@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { IngestionRunner } from '../src/poll.js';
+import { GitHubMarkdownAdapter } from '../src/sources/github.js';
 import { MemoryInternshipStore } from '../src/store.js';
-import type { ProcessedListing, SourceAdapter, SourceCheckpoint, SourceFetchResult, SourceOccurrenceState } from '../src/types.js';
+import type { Internship, ProcessedListing, SourceAdapter, SourceCheckpoint, SourceFetchResult, SourceOccurrenceState } from '../src/types.js';
 
 const listing = (sourceId: string, overrides: Partial<ProcessedListing> = {}): ProcessedListing => ({
   sourceId,
@@ -76,6 +77,67 @@ describe('snapshot reconciliation', () => {
     ]);
   });
 
+  it('closes a Markdown occurrence the connector stops listing', async () => {
+    const rows = [
+      '| Acme | Software Engineering Intern | Remote | [Apply](https://careers.example.test/acme) |',
+      '| Beta | Data Science Intern | NYC | [Apply](https://careers.example.test/beta) |',
+    ];
+    let body = () => `| Company | Position | Location | Posting |\n| --- | --- | --- | --- |\n${rows.join('\n')}`;
+    const adapter = new GitHubMarkdownAdapter({
+      id: 'markdown-fixture', owner: 'owner', repo: 'repo',
+      documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }],
+      fetchImpl: async () => new Response(body()),
+    });
+    const store = new MemoryInternshipStore();
+    await new IngestionRunner([adapter], store).run();
+    const dropped = [...store.jobs.values()].find((job) => job.company === 'Beta')!;
+
+    body = () => `| Company | Position | Location | Posting |\n| --- | --- | --- | --- |\n${rows[0]}`;
+    await new IngestionRunner([adapter], store).run();
+    expect((await store.getJob(dropped.jobId))?.open).toBe(true);
+
+    await new IngestionRunner([adapter], store).run();
+    expect((await store.getJob(dropped.jobId))?.open).toBe(false);
+    expect((await store.getJob([...store.jobs.values()].find((job) => job.company === 'Acme')!.jobId))?.open).toBe(true);
+  });
+
+  it('merges one role listed twice in a snapshot into a single alert and role', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putCheckpoint({ sourceId: 'source-a', successfulFetches: 1, lastRowCount: 2 });
+    const adapter = new MutableAdapter('source-a', [
+      listing('source-a', { externalId: 'README.md:role-1', document: 'README.md' }),
+      listing('source-a', { externalId: 'INTERN_INTL.md:role-1', document: 'INTERN_INTL.md' }),
+    ]);
+    const report = await new IngestionRunner([adapter], store).run();
+
+    expect(report.newJobs).toHaveLength(1);
+    expect(store.jobs.size).toBe(1);
+    expect(store.notificationEvents.size).toBe(1);
+    expect([...store.jobs.values()][0]?.sourceReferences.map((reference) => reference.document))
+      .toEqual(['README.md', 'INTERN_INTL.md']);
+  });
+
+  it('touches no catalog record for an unchanged snapshot that confirms the active occurrences', async () => {
+    let operations = 0;
+    class CountingStore extends MemoryInternshipStore {
+      override async putInternship(job: Internship) { operations += 1; return super.putInternship(job); }
+      override async putSourceOccurrence(value: SourceOccurrenceState) { operations += 1; return super.putSourceOccurrence(value); }
+      override async getJob(jobId: string) { operations += 1; return super.getJob(jobId); }
+      override async findByUrl(url: string) { operations += 1; return super.findByUrl(url); }
+    }
+    const store = new CountingStore();
+    const adapter = new MutableAdapter('source-a', [listing('source-a')]);
+    await new IngestionRunner([adapter], store).run();
+
+    operations = 0;
+    adapter.unchanged = true;
+    const report = await new IngestionRunner([adapter], store).run();
+
+    expect(report.unchangedSources).toEqual(['source-a']);
+    expect(operations).toBe(0);
+    expect((await store.getSourceOccurrences('source-a'))[0]).toMatchObject({ present: true, consecutiveOmissions: 0 });
+  });
+
   it('does not advance a checkpoint or duplicate an outbox event after a partial write failure', async () => {
     class FailingStore extends MemoryInternshipStore {
       fail = true;
@@ -95,5 +157,11 @@ describe('snapshot reconciliation', () => {
     expect(retried.newJobs).toHaveLength(1);
     expect(store.notificationEvents.size).toBe(1);
     expect((await store.getCheckpoint('source-a'))?.lastRowCount).toBe(1);
+
+    // A later retry re-derives the same create; the recorded outbox event keeps it quiet.
+    store.occurrences.clear();
+    const replayed = await new IngestionRunner([adapter], store).run();
+    expect(replayed.newJobs).toEqual([]);
+    expect(store.notificationEvents.size).toBe(1);
   });
 });

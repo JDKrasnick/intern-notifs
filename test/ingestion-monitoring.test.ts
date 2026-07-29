@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { evaluateSourceFreshness } from '../src/ingestion/monitoring.js';
 import { IngestionRunner } from '../src/poll.js';
+import { GitHubMarkdownAdapter } from '../src/sources/github.js';
 import { SourceFetchError } from '../src/sources/source-error.js';
 import { MemoryInternshipStore } from '../src/store.js';
 import type { SourceAdapter } from '../src/types.js';
@@ -31,6 +32,25 @@ describe('ingestion health and retry policy', () => {
       consecutiveFailures: 0,
       counts: { raw: 0, eligible: 0 },
     });
+  });
+
+  it('retries a Markdown document that answers with a server error', async () => {
+    const store = new MemoryInternshipStore();
+    let attempts = 0;
+    const adapter = new GitHubMarkdownAdapter({
+      id: 'markdown-fixture', owner: 'owner', repo: 'repo',
+      documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }],
+      fetchImpl: async () => {
+        attempts += 1;
+        if (attempts < 3) return new Response('rate limited', { status: 503 });
+        return new Response('| Company | Position | Location | Posting |\n| --- | --- | --- | --- |\n'
+          + '| Acme | Software Engineering Intern | Remote | [Apply](https://careers.example.test/acme) |');
+      },
+    });
+    const report = await new IngestionRunner([adapter], store).run();
+    expect(attempts).toBe(3);
+    expect(report.failures).toEqual([]);
+    expect(await store.getSourceHealth('markdown-fixture')).toMatchObject({ provider: 'github', outcome: 'changed', consecutiveFailures: 0 });
   });
 
   it('does not retry schema, identity, or configuration-class failures', async () => {

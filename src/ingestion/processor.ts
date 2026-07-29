@@ -46,7 +46,7 @@ export function processPosting(posting: SourcedPosting): { listing?: ProcessedLi
   }
   const title = htmlToText(posting.title);
   const content = contentText(posting);
-  if (!hasLifecycleTitleSignal(title)) {
+  if (posting.lifecycleAuthority !== 'source' && !hasLifecycleTitleSignal(title)) {
     return { decision: { externalId: posting.externalId, outcome: 'filtered', reason: 'not-early-career' } };
   }
   const company = htmlToText(posting.employer.name);

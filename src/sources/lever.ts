@@ -233,6 +233,7 @@ export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
     return {
       ...neutral,
       rawRowCount: postings.length,
+      processed,
       listings: processed.listings,
       notModified: neutral.outcome === 'unchanged',
     };

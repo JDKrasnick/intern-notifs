@@ -20,6 +20,26 @@ describe('GitHub source adapters', () => {
     const result = await adapter.fetch({ sourceId: 'fixture', successfulFetches: 1, documentEtags: { 'README.md': '"abc"' } });
     expect(result.notModified).toBe(true); expect(calls[0].headers).toEqual({ 'If-None-Match': '"abc"' });
   });
+  it('keeps a snapshot complete when two rows share one normalized application URL', async () => {
+    const adapter = new GitHubMarkdownAdapter({
+      id: 'fixture', owner: 'owner', repo: 'repo', documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }],
+      fetchImpl: async () => new Response('| Company | Position | Location | Posting |\n| --- | --- | --- | --- |\n'
+        + '| Acme | Software Engineering Intern | Remote | [Apply](https://careers.example.test/acme?utm_source=one) |\n'
+        + '| Acme | Data Science Intern | Remote | [Apply](https://careers.example.test/acme?utm_source=two) |'),
+    });
+    const result = await adapter.fetch();
+    expect(result.postings.map((posting) => posting.title)).toEqual(['Software Engineering Intern']);
+    expect(result.rawCount).toBe(2);
+  });
+  it('lets a reviewed list carry the lifecycle signal for a row whose title omits it', async () => {
+    const adapter = new GitHubMarkdownAdapter({
+      id: 'fixture', owner: 'owner', repo: 'repo', documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }],
+      fetchImpl: async () => new Response('| Company | Position | Location | Posting |\n| --- | --- | --- | --- |\n'
+        + '| Acme | Software Engineer, New Grad | Remote | [Apply](https://careers.example.test/acme) |'),
+    });
+    const result = await adapter.fetch();
+    expect(result.listings.map((listing) => listing.title)).toEqual(['Software Engineer, New Grad']);
+  });
   it('assigns the employer category while polling a GitHub Markdown source', async () => {
     const adapter = new GitHubMarkdownAdapter({
       id: 'fixture', owner: 'owner', repo: 'repo', documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }],

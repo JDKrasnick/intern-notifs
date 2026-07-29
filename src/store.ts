@@ -19,7 +19,8 @@ export interface InternshipStore {
   putSourceOccurrence(occurrence: SourceOccurrenceState): Promise<void>;
   getSourceHealth(sourceId: string): Promise<SourceHealth | undefined>;
   putSourceHealth(health: SourceHealth): Promise<void>;
-  putNotificationEvent(event: NotificationEvent): Promise<void>;
+  /** Resolves `true` only when this call recorded the event, so a retry cannot re-alert. */
+  putNotificationEvent(event: NotificationEvent): Promise<boolean>;
   pendingSms(): Promise<Internship[]>;
   pendingDigest(): Promise<Internship[]>;
   markSmsSent(jobIds: string, sentAt: string): Promise<void>;
@@ -44,7 +45,11 @@ export class MemoryInternshipStore implements InternshipStore {
   async putSourceOccurrence(occurrence: SourceOccurrenceState) { this.occurrences.set(`${occurrence.sourceId}#${occurrence.externalId}`, structuredClone(occurrence)); }
   async getSourceHealth(sourceId: string) { const value = this.health.get(sourceId); return value && structuredClone(value); }
   async putSourceHealth(health: SourceHealth) { this.health.set(health.sourceId, structuredClone(health)); }
-  async putNotificationEvent(event: NotificationEvent) { this.notificationEvents.set(event.eventId, structuredClone(event)); }
+  async putNotificationEvent(event: NotificationEvent) {
+    if (this.notificationEvents.has(event.eventId)) return false;
+    this.notificationEvents.set(event.eventId, structuredClone(event));
+    return true;
+  }
   async pendingSms() { return [...this.jobs.values()].filter((job) => job.notification.smsPending && job.open); }
   async pendingDigest() { return [...this.jobs.values()].filter((job) => job.notification.digestPending && job.open); }
   async markSmsSent(jobId: string, sentAt: string) { const job = this.jobs.get(jobId); if (job) { job.notification.smsPending = false; job.notification.smsSentAt = sentAt; } }
@@ -99,14 +104,18 @@ export class DynamoInternshipStore implements InternshipStore {
   async putSourceHealth(health: SourceHealth): Promise<void> {
     await this.client.send(new PutCommand({ TableName: this.tableName, Item: { pk: `SOURCE#${health.sourceId}`, sk: 'HEALTH', health } }));
   }
-  async putNotificationEvent(event: NotificationEvent): Promise<void> {
-    await this.client.send(new PutCommand({
-      TableName: this.tableName,
-      Item: { pk: `OUTBOX#${event.eventId}`, sk: 'EVENT', event },
-      ConditionExpression: 'attribute_not_exists(pk)',
-    })).catch((error: unknown) => {
+  async putNotificationEvent(event: NotificationEvent): Promise<boolean> {
+    try {
+      await this.client.send(new PutCommand({
+        TableName: this.tableName,
+        Item: { pk: `OUTBOX#${event.eventId}`, sk: 'EVENT', event },
+        ConditionExpression: 'attribute_not_exists(pk)',
+      }));
+      return true;
+    } catch (error) {
       if ((error as { name?: string }).name !== 'ConditionalCheckFailedException') throw error;
-    });
+      return false;
+    }
   }
   private async find(index: 'urlIndex' | 'fingerprintIndex', attribute: 'urlPk' | 'fingerprintPk', value: string) {
     const result = await this.client.send(new QueryCommand({ TableName: this.tableName, IndexName: index, KeyConditionExpression: '#key = :value', ExpressionAttributeNames: { '#key': attribute }, ExpressionAttributeValues: { ':value': value }, Limit: 1 }));
