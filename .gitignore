@@ -4,6 +4,7 @@ browser-companion/dist/
 cdk.out/
 coverage/
 .env
+mobile/.env.local
 .expo/
 .DS_Store
 # Local operational inventory; do not commit source research or credentials.
