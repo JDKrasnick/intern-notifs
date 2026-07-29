@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasLifecycleTitleSignal } from '../src/core/early-career.js';
+import { hasLifecycleTitleSignal, inferSeason } from '../src/core/early-career.js';
 import { occurrenceStatus } from '../src/ingestion/monitoring.js';
 import { backfilledExternalId } from '../src/migrate-source-occurrences.js';
 import { GitHubMarkdownAdapter } from '../src/sources/github.js';
@@ -29,10 +29,36 @@ describe('lifecycle title signal', () => {
     }
   });
 
+  it('accepts graduate and entry-level programmes alongside internships', () => {
+    for (const title of ['Software Engineer, New Grad', 'New Graduate Software Engineer', 'University Graduate - Backend',
+      'Graduate Programme 2027', 'Graduate Rotational Engineer', 'Early Career Software Engineer',
+      'Entry-Level Data Analyst', 'Working Student - Embedded Systems']) {
+      expect(hasLifecycleTitleSignal(title), title).toBe(true);
+    }
+  });
+
   it('still rejects titles that only look early-career', () => {
-    for (const title of ['Internal Auditor', 'International Sales Lead', 'Senior Software Engineer']) {
+    for (const title of ['Internal Auditor', 'International Sales Lead', 'Senior Software Engineer',
+      'Graduate Research Assistant', 'Campus Recruiter', 'Director of Graduate Admissions']) {
       expect(hasLifecycleTitleSignal(title), title).toBe(false);
     }
+  });
+});
+
+describe('season inference', () => {
+  const now = new Date('2026-07-29T00:00:00.000Z');
+
+  it('reads a named hiring season from the title or description', () => {
+    expect(inferSeason('Software Engineering Intern, Summer 2027', '', now)).toBe('summer-2027');
+    expect(inferSeason('Data Intern', 'Starts in the fall 2026 cohort.', now)).toBe('fall-2026');
+  });
+
+  it('accepts a bare year only inside the plausible hiring window', () => {
+    expect(inferSeason('2027 Software Engineering Internship', '', now)).toBe('2027');
+    // A founding year or copyright date must never become part of role identity.
+    expect(inferSeason('AI-First Engineering Intern', 'Founded in 2010, we build tools.', now)).toBe('ongoing');
+    expect(inferSeason('Engineering Intern', 'Copyright 2015-2019. Apply now.', now)).toBe('ongoing');
+    expect(inferSeason('Engineering Intern', 'Programme runs through 2031.', now)).toBe('ongoing');
   });
 });
 

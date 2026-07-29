@@ -18,11 +18,20 @@ export function htmlToText(value: string | undefined): string {
 }
 
 /**
- * Title-led lifecycle signal: an internship, co-op, or apprenticeship must be
- * named in the title. Boards post plurals ("AI Internships"), so the plural is
- * matched too; "internal" and "international" still fail the word boundary.
+ * Title-led lifecycle signal. The catalog covers early-career hiring, so a
+ * graduate or entry-level programme counts alongside an internship, co-op, or
+ * apprenticeship. Boards post plurals ("AI Internships"), so plurals match too;
+ * "internal" and "international" still fail the word boundary, and bare
+ * "graduate" is excluded because it far more often marks a degree requirement
+ * than a new-graduate role.
  */
-export const lifecycleTitlePattern = /\b(?:interns?(?:hips?)?|co[ -]?ops?|cooperative education|apprentices?(?:hips?)?)\b/i;
+export const lifecycleTitlePattern = new RegExp([
+  String.raw`\b(?:interns?(?:hips?)?|co[ -]?ops?|cooperative education|apprentices?(?:hips?)?)\b`,
+  String.raw`\bnew ?grad(?:uate)?s?\b`,
+  String.raw`\b(?:university|campus|college)[ -](?:graduate|hire|programme?|program)\b`,
+  String.raw`\bgraduate[ -](?:programme?|program|scheme|rotation(?:al)?|analyst|engineer\w*|developer|trainee|role|opportunit\w+)\b`,
+  String.raw`\b(?:early[ -]career|entry[ -]level|working student|placement (?:year|student|programme?)|year in industry)\b`,
+].join('|'), 'i');
 
 export function hasLifecycleTitleSignal(title: string): boolean {
   return lifecycleTitlePattern.test(title);
@@ -41,12 +50,21 @@ export function earlyCareerRequirements(content: string): JobRequirements {
   };
 }
 
-export function inferSeason(title: string, description: string): string {
+/**
+ * A bare year is only a hiring season when it is plausibly one: descriptions
+ * mention founding years and copyright dates, and a stray "2010" would otherwise
+ * become part of the role's identity.
+ */
+export function inferSeason(title: string, description: string, now = new Date()): string {
   const text = `${title} ${description}`;
   const season = text.match(/\b(summer|fall|spring|winter)\s*(?:intern(?:ship)?\s*)?(20\d{2})\b/i);
   if (season) return `${season[1].toLowerCase()}-${season[2]}`;
-  const year = text.match(/\b(20\d{2})\b/);
-  return year ? year[1] : 'ongoing';
+  const currentYear = now.getUTCFullYear();
+  for (const match of text.matchAll(/\b(20\d{2})\b/g)) {
+    const year = Number(match[1]);
+    if (year >= currentYear && year <= currentYear + 3) return match[1]!;
+  }
+  return 'ongoing';
 }
 
 export function inferWorkMode(value: string | undefined): RawListing['workMode'] | undefined {
