@@ -1,7 +1,7 @@
 import { AuthenticationDetails, CognitoUser, CognitoUserPool } from 'amazon-cognito-identity-js';
+import { publicConfig } from './public-config';
 
-const userPoolId = process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID;
-const clientId = process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID;
+const { cognitoUserPoolId: userPoolId, cognitoClientId: clientId } = publicConfig;
 function pool() { if (!userPoolId || !clientId) throw new Error('Cognito is not configured'); return new CognitoUserPool({ UserPoolId: userPoolId, ClientId: clientId }); }
 
 export function signIn(email: string, password: string): Promise<string> {

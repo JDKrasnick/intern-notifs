@@ -3,6 +3,13 @@ import * as cdk from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import { InternNotifsStack } from '../infra/intern-notifs-stack.js';
 
+function snapshotTemplate(template: Record<string, unknown>) {
+  // NodejsFunction assets are content-addressed bundled artifacts. Their S3
+  // keys vary with esbuild/CDK staging metadata, so snapshot the infrastructure
+  // contract without treating an equivalent bundle hash as a stack change.
+  return JSON.parse(JSON.stringify(template), (key, value) => key === 'S3Key' && typeof value === 'string' && value.endsWith('.zip') ? '<lambda-asset>.zip' : value);
+}
+
 describe('CDK stack', () => {
   it('has durable tables and main-branch OIDC trust', () => {
     const app = new cdk.App(); const stack = new InternNotifsStack(app, 'Test', { githubRepository: 'owner/repo', emailAddress: 'me@example.com' }); const template = Template.fromStack(stack);
@@ -12,7 +19,7 @@ describe('CDK stack', () => {
   });
   it('keeps an infrastructure snapshot', () => {
     const app = new cdk.App(); const stack = new InternNotifsStack(app, 'Snapshot', { githubRepository: 'owner/repo', emailAddress: 'me@example.com' });
-    expect(Template.fromStack(stack).toJSON()).toMatchSnapshot();
+    expect(snapshotTemplate(Template.fromStack(stack).toJSON())).toMatchSnapshot();
   });
   it('uses immutable IDs for GitHub repositories that opt into immutable OIDC subjects', () => {
     const app = new cdk.App(); const stack = new InternNotifsStack(app, 'Immutable', { githubRepository: 'owner/repo', githubOwnerId: '123', githubRepositoryId: '456', emailAddress: 'me@example.com' });

@@ -1,0 +1,27 @@
+name: Greenhouse
+on:
+  push:
+    paths: &greenhouse_paths
+      - 'src/sources/greenhouse*'
+      - 'src/sources/index.ts'
+      - 'src/sources/quality.ts'
+      - 'src/core/application-url.ts'
+      - 'src/cli.ts'
+      - 'test/fixtures/greenhouse/**'
+      - 'test/greenhouse*'
+      - 'scripts/greenhouse-manifest.ts'
+      - '.github/workflows/greenhouse.yml'
+  pull_request:
+    paths: *greenhouse_paths
+permissions: { contents: read }
+jobs:
+  admission-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run greenhouse:manifest
+      - run: npm run typecheck
+      - run: npx vitest run test/greenhouse-config.test.ts test/greenhouse.test.ts test/greenhouse-fixtures.test.ts test/greenhouse-manifest.test.ts test/greenhouse-live.test.ts test/greenhouse-headed.test.ts

@@ -26,9 +26,73 @@ describe('polling', () => {
     await new Poller([new Adapter('two', [listing('https://careers.example.net/a', 'two')])], store).poll();
     expect(store.jobs.size).toBe(1);
   });
+  it('persists TikTok source aliases as their canonical job URL', async () => {
+    const store = new MemoryInternshipStore();
+    await new Poller([new Adapter('one', [listing('https://lifeattiktok.com/position/7623166667125508357')])], store).poll();
+    const job = [...store.jobs.values()][0];
+    expect(job.applyUrl).toBe('https://lifeattiktok.com/search/7623166667125508357');
+    expect(job.sourceReferences[0].applyUrl).toBe(job.applyUrl);
+  });
   it('retains a checkpoint when an established adapter suddenly returns zero rows', async () => {
     const store = new MemoryInternshipStore(); const initial = new Adapter('one', [listing('https://jobs.example.com/a')]); await new Poller([initial], store).poll();
     const report = await new Poller([new Adapter('one', [])], store).poll();
     expect(report.failures[0]).toContain('suspicious zero-row'); expect((await store.getCheckpoint('one'))?.lastRowCount).toBe(1);
+  });
+  it('stores closed technical roles without queuing alerts', async () => {
+    const store = new MemoryInternshipStore();
+    const closed = { ...listing('https://jobs.example.com/closed'), state: 'closed' as const };
+    await new Poller([new Adapter('one', [closed])], store).poll();
+    expect((await store.listOpen?.(undefined, 25, 'closed'))?.jobs).toMatchObject([{ open: false }]);
+    expect(await store.pendingSms()).toEqual([]);
+  });
+  it('does not store or alert a role whose application link fails validation', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putCheckpoint({ sourceId: 'one', successfulFetches: 1, lastRowCount: 1 });
+    const report = await new Poller(
+      [new Adapter('one', [listing('https://jobs.example.com/b')])],
+      store,
+      undefined,
+      undefined,
+      async () => { throw new Error('Application link returned HTTP 404'); },
+    ).poll();
+    expect(report.failures).toEqual([expect.stringContaining('row 5: Application link returned HTTP 404')]);
+    expect(store.jobs.size).toBe(0);
+    expect(report.newJobs).toEqual([]);
+  });
+  it('keeps a generic career shell in the catalog without alerting', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putCheckpoint({ sourceId: 'one', successfulFetches: 1, lastRowCount: 1 });
+    const report = await new Poller(
+      [new Adapter('one', [listing('https://jobs.example.com/generic')])],
+      store,
+      undefined,
+      undefined,
+      async () => ({
+        url: 'https://jobs.example.com/generic',
+        evidence: { url: 'https://jobs.example.com/generic', title: 'Candidate Experience page', confidence: { score: 75, level: 'high' as const, recommendation: 'alert-eligible' as const, signals: ['destination reached'] } },
+      }),
+    ).poll();
+    expect(report.newJobs).toEqual([]);
+    expect(report.filteredJobs).toHaveLength(1);
+    expect([...store.jobs.values()][0]).toMatchObject({ notification: { smsPending: false, digestPending: false } });
+  });
+  it('quarantines a legacy open role when its source has not changed but its link fails validation', async () => {
+    const store = new MemoryInternshipStore();
+    const role = listing('https://jobs.example.com/b');
+    await store.putInternship({
+      jobId: 'legacy-role', company: role.company, title: role.title, location: role.location,
+      season: role.season, applyUrl: role.applyUrl, normalizedUrl: role.applyUrl, fingerprint: 'legacy-role',
+      compensation: role.compensation, sourceReferences: [role], open: true, firstSeenAt: role.fetchedAt,
+      lastSeenAt: role.fetchedAt, notification: { smsPending: true, digestPending: true },
+    });
+    const report = await new Poller(
+      [new Adapter('one', [])],
+      store,
+      undefined,
+      undefined,
+      async () => { throw new Error('Application link returned HTTP 403'); },
+    ).poll();
+    expect((await store.getJob('legacy-role'))).toMatchObject({ open: false, invalidApplicationUrl: role.applyUrl, notification: { smsPending: false, digestPending: false } });
+    expect(report.failures).toContain('catalog: legacy-role: Application link returned HTTP 403');
   });
 });

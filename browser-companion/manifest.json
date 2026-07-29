@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "InternNotifs Quick Fill",
+  "version": "0.1.0",
+  "description": "Fills reviewed contact fields on supported internship applications. It never submits an application.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://boards.greenhouse.io/*",
+    "https://*.boards.greenhouse.io/*",
+    "https://job-boards.greenhouse.io/*",
+    "https://*.job-boards.greenhouse.io/*",
+    "https://job-boards.eu.greenhouse.io/*",
+    "https://jobs.lever.co/*"
+  ],
+  "action": {
+    "default_title": "InternNotifs Quick Fill",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://boards.greenhouse.io/*",
+        "https://*.boards.greenhouse.io/*",
+        "https://job-boards.greenhouse.io/*",
+        "https://*.job-boards.greenhouse.io/*",
+        "https://job-boards.eu.greenhouse.io/*",
+        "https://jobs.lever.co/*"
+      ],
+      "js": ["dist/content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
