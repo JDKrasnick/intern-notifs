@@ -49,6 +49,7 @@ function occurrence(listing: ProcessedListing, externalId: string): SourceOccurr
     applyUrl: listing.applyUrl,
     compensation: listing.compensation,
     ...(listing.requirements ? { requirements: listing.requirements } : {}),
+    technical: listing.technical ?? true,
     state: listing.state,
   };
 }
@@ -79,6 +80,10 @@ function genericLocation(value: string | undefined) {
   return !value || /^(unknown|unspecified|n\/?a|not (?:listed|specified)|tbd|see (?:description|job))$/i.test(value.trim());
 }
 
+function anyOpenTechnicalOccurrence(references: SourceOccurrence[]): boolean {
+  return references.some((reference) => reference.state === 'open' && reference.technical !== false);
+}
+
 function merge(existing: Internship, listing: ProcessedListing, externalId: string, now: string, applicationUrlValidatedAt?: string): Internship {
   const reference = occurrence(listing, externalId);
   const match = existing.sourceReferences.findIndex((item) =>
@@ -106,7 +111,7 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
     requirements: listing.requirements ?? existing.requirements,
     employerCategory: employerCategory(company),
     sourceReferences,
-    technical: listing.technical ?? true,
+    technical: anyOpenTechnicalOccurrence(sourceReferences),
     open: keepQuarantined ? false : sourceReferences.some((item) => item.state === 'open'),
     lastSeenAt: now,
     ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}),
@@ -155,7 +160,13 @@ function closeOccurrence(job: Internship, state: SourceOccurrenceState, now: str
       && (reference.externalId ? reference.externalId === state.externalId : reference.document === state.occurrence.document && reference.row === state.occurrence.row)
       ? { ...reference, state: 'closed' as const }
       : reference);
-  return { ...job, sourceReferences, open: sourceReferences.some((reference) => reference.state === 'open'), lastSeenAt: now };
+  return {
+    ...job,
+    sourceReferences,
+    technical: anyOpenTechnicalOccurrence(sourceReferences),
+    open: sourceReferences.some((reference) => reference.state === 'open'),
+    lastSeenAt: now,
+  };
 }
 
 function safeNormalizeUrl(value: string): string {

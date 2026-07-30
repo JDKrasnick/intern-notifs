@@ -1,13 +1,14 @@
-import type { DynamoDBDocumentClient, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import type { DynamoDBDocumentClient, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it, vi } from 'vitest';
 import { createDynamoDocumentClient, DynamoInternshipStore, DynamoUserStore, MemoryUserStore } from '../src/store.js';
 import type { Internship } from '../src/types.js';
 
-const job = (title = 'Software Engineering Intern'): Internship => ({
+const job = (title = 'Software Engineering Intern', overrides: Partial<Internship> = {}): Internship => ({
   jobId: 'job-1', company: 'Acme', title, location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/job-1',
   normalizedUrl: 'https://careers.example.test/job-1', fingerprint: 'fingerprint-1', compensation: { raw: '$50/hr', maxHourlyUSD: 50 }, sourceReferences: [],
   technical: title !== 'Graduate Clinical Intern',
   open: true, firstSeenAt: '2026-07-19T00:00:00.000Z', lastSeenAt: '2026-07-19T00:00:00.000Z', notification: { smsPending: true, digestPending: true },
+  ...overrides,
 });
 const fakeClient = () => {
   const send = vi.fn().mockResolvedValue({});
@@ -42,7 +43,10 @@ describe('DynamoDB persistence contract', () => {
 
   it('queries the open-jobs index inside the launch interval', async () => {
     const { send, client } = fakeClient(); const store = new DynamoInternshipStore('jobs-table', client);
-    send.mockResolvedValueOnce({ Items: [{ job: job() }] });
+    send.mockResolvedValueOnce({ Items: [
+      { job: job() },
+      { job: job('Software Engineering Intern', { jobId: 'past', season: 'summer-2020' }) },
+    ] });
     expect(await store.listOpenSince('2026-07-18T00:00:00.000Z', '2026-07-19T00:00:00.000Z')).toMatchObject([{ jobId: 'job-1' }]);
     expect((send.mock.calls[0]?.[0] as QueryCommand).input).toMatchObject({
       TableName: 'jobs-table', IndexName: 'openJobsIndex',
@@ -54,6 +58,34 @@ describe('DynamoDB persistence contract', () => {
       },
       ScanIndexForward: false,
     });
+  });
+
+  it('atomically writes a notification-pending job with its outbox event', async () => {
+    const { send, client } = fakeClient(); const store = new DynamoInternshipStore('jobs-table', client);
+    await store.putInternshipWithNotificationEvent(job(), {
+      eventId: 'event-1',
+      sourceId: 'source-a',
+      externalId: 'role-1',
+      jobId: 'job-1',
+      kind: 'new-job',
+      createdAt: '2026-07-19T00:00:00.000Z',
+    });
+
+    expect((send.mock.calls[0]?.[0] as TransactWriteCommand).input.TransactItems).toEqual([
+      expect.objectContaining({
+        Put: expect.objectContaining({
+          TableName: 'jobs-table',
+          Item: expect.objectContaining({ pk: 'JOB#job-1', smsPk: 'PENDING#SMS', digestPk: 'PENDING#DIGEST' }),
+        }),
+      }),
+      expect.objectContaining({
+        Put: expect.objectContaining({
+          TableName: 'jobs-table',
+          Item: expect.objectContaining({ pk: 'OUTBOX#event-1', sk: 'EVENT' }),
+          ConditionExpression: 'attribute_not_exists(pk)',
+        }),
+      }),
+    ]);
   });
 
   it('deletes every user-owned item after returning the document list for object cleanup', async () => {

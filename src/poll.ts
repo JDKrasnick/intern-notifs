@@ -388,14 +388,35 @@ export class IngestionRunner {
           alertEligible: resolution.alertEligible,
         });
         failureCategory = 'persistence';
-        await forEachBounded(plan.jobs, (job) => this.store.putInternship(job));
-        await forEachBounded(plan.occurrences, (occurrence) => this.store.putSourceOccurrence(occurrence));
-        // The outbox is the alert ledger: a retry that re-derives a create finds its
-        // deterministic event already recorded and stays quiet.
+        const notificationByJobId = new Map(plan.notifications.map((event) => [event.jobId, event]));
+        await forEachBounded(
+          plan.jobs.filter((job) => !notificationByJobId.has(job.jobId)),
+          (job) => this.store.putInternship(job),
+        );
+        // A notification-pending job and its outbox event become visible
+        // atomically. Successful units are reported even if a later persistence
+        // step fails; their deterministic event keeps the retry quiet.
         const alertedJobIds = new Set<string>();
-        await forEachBounded(plan.notifications, async (event) => {
-          if (await this.store.putNotificationEvent(event)) alertedJobIds.add(event.jobId);
+        const notificationErrors = new Array<unknown>(plan.notifications.length);
+        const plannedJobs = new Map(plan.jobs.map((job) => [job.jobId, job]));
+        await forEachBounded(plan.notifications, async (event, index) => {
+          const job = plannedJobs.get(event.jobId);
+          if (!job) {
+            notificationErrors[index] = new Error(`Notification event ${event.eventId} has no catalog job`);
+            return;
+          }
+          try {
+            if (await this.store.putInternshipWithNotificationEvent(job, event)) alertedJobIds.add(event.jobId);
+          } catch (error) {
+            notificationErrors[index] = error;
+          }
         });
+        for (const job of plan.newJobs) {
+          if (alertedJobIds.has(job.jobId)) report.newJobs.push(job);
+        }
+        const notificationError = notificationErrors.find((error) => error !== undefined);
+        if (notificationError) throw notificationError;
+        await forEachBounded(plan.occurrences, (occurrence) => this.store.putSourceOccurrence(occurrence));
         const successHealth: SourceHealth = {
           sourceId: connector.id,
           provider: providerFor(connector.id),
@@ -415,8 +436,9 @@ export class IngestionRunner {
           activeExternalIds: [...batch.activeExternalIds],
         });
         for (const job of plan.newJobs) {
-          if (alertedJobIds.has(job.jobId)) report.newJobs.push(job);
-          else console.log(JSON.stringify({ event: 'new_job_alert_suppressed', sourceId: connector.id, jobId: job.jobId }));
+          if (!alertedJobIds.has(job.jobId)) {
+            console.log(JSON.stringify({ event: 'new_job_alert_suppressed', sourceId: connector.id, jobId: job.jobId }));
+          }
         }
         report.filteredJobs.push(...plan.filteredJobs);
         emitSuccessMetric(connector.id, providerFor(connector.id), batch.unchanged ? 'unchanged' : 'changed', batch.processed.counts, Date.now() - started);

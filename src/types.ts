@@ -170,6 +170,8 @@ export interface JobRequirements {
 
 export interface SourceOccurrence extends SourceReference {
   externalId?: string;
+  /** Source-local classification retained so job eligibility is independent of poll order. */
+  technical?: boolean;
   company: string;
   title: string;
   location: string;

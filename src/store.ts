@@ -1,5 +1,5 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { BatchGetCommand, DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { BatchGetCommand, DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { isPastSeason } from './core/early-career.js';
 import { employerCategory } from './core/employers.js';
 import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, NotificationEvent, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
@@ -37,8 +37,8 @@ export interface InternshipStore {
   getJob(jobId: string): Promise<Internship | undefined>;
   getSourceOccurrences(sourceId: string): Promise<SourceOccurrenceState[]>;
   putSourceOccurrence(occurrence: SourceOccurrenceState): Promise<void>;
-  /** Resolves `true` only when this call recorded the event, so a retry cannot re-alert. */
-  putNotificationEvent(event: NotificationEvent): Promise<boolean>;
+  /** Atomically exposes a notification-pending job and records its deterministic outbox event. */
+  putInternshipWithNotificationEvent(job: Internship, event: NotificationEvent): Promise<boolean>;
   pendingSms(): Promise<Internship[]>;
   pendingDigest(): Promise<Internship[]>;
   markSmsSent(jobIds: string, sentAt: string): Promise<void>;
@@ -67,8 +67,9 @@ export class MemoryInternshipStore implements InternshipStore {
   async putInternship(job: Internship) { this.jobs.set(job.jobId, structuredClone(job)); }
   async getSourceOccurrences(sourceId: string) { return [...this.occurrences.values()].filter((value) => value.sourceId === sourceId).map((value) => structuredClone(value)); }
   async putSourceOccurrence(occurrence: SourceOccurrenceState) { this.occurrences.set(`${occurrence.sourceId}#${occurrence.externalId}`, structuredClone(occurrence)); }
-  async putNotificationEvent(event: NotificationEvent) {
+  async putInternshipWithNotificationEvent(job: Internship, event: NotificationEvent) {
     if (this.notificationEvents.has(event.eventId)) return false;
+    this.jobs.set(job.jobId, structuredClone(job));
     this.notificationEvents.set(event.eventId, structuredClone(event));
     return true;
   }
@@ -92,6 +93,15 @@ export class MemoryInternshipStore implements InternshipStore {
 }
 
 type JobItem = { pk: string; sk: 'META'; urlPk: string; fingerprintPk: string; smsPk?: string; digestPk?: string; openPk?: string; openSk?: string; closedPk?: string; closedSk?: string; job: Internship };
+
+function internshipItem(job: Internship): JobItem {
+  const item: JobItem = { pk: `JOB#${job.jobId}`, sk: 'META', urlPk: `URL#${job.normalizedUrl}`, fingerprintPk: `FP#${job.fingerprint}`, job };
+  if (job.notification.smsPending) item.smsPk = 'PENDING#SMS';
+  if (job.notification.digestPending) item.digestPk = 'PENDING#DIGEST';
+  if (job.open && job.technical !== false) { item.openPk = 'OPEN'; item.openSk = `${job.firstSeenAt}#${job.jobId}`; }
+  if (!job.open && job.technical !== false) { item.closedPk = 'CLOSED'; item.closedSk = `${job.lastSeenAt}#${job.jobId}`; }
+  return item;
+}
 
 export class DynamoInternshipStore implements InternshipStore {
   private readonly client: DynamoDBDocumentClient;
@@ -128,17 +138,30 @@ export class DynamoInternshipStore implements InternshipStore {
     const result = await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: `SOURCE#${sourceId}`, sk: 'HEALTH' } }));
     return result.Item?.health as SourceHealth | undefined;
   }
-  async putNotificationEvent(event: NotificationEvent): Promise<boolean> {
+  async putInternshipWithNotificationEvent(job: Internship, event: NotificationEvent): Promise<boolean> {
     try {
-      await this.client.send(new PutCommand({
-        TableName: this.tableName,
-        Item: { pk: `OUTBOX#${event.eventId}`, sk: 'EVENT', event },
-        ConditionExpression: 'attribute_not_exists(pk)',
+      await this.client.send(new TransactWriteCommand({
+        TransactItems: [
+          { Put: { TableName: this.tableName, Item: internshipItem(job) } },
+          {
+            Put: {
+              TableName: this.tableName,
+              Item: { pk: `OUTBOX#${event.eventId}`, sk: 'EVENT', event },
+              ConditionExpression: 'attribute_not_exists(pk)',
+            },
+          },
+        ],
       }));
       return true;
     } catch (error) {
-      if ((error as { name?: string }).name !== 'ConditionalCheckFailedException') throw error;
-      return false;
+      if ((error as { name?: string }).name !== 'TransactionCanceledException') throw error;
+      const existing = await this.client.send(new GetCommand({
+        TableName: this.tableName,
+        Key: { pk: `OUTBOX#${event.eventId}`, sk: 'EVENT' },
+        ConsistentRead: true,
+      }));
+      if (existing.Item) return false;
+      throw error;
     }
   }
   async getSourceHealthMany(sourceIds: string[]): Promise<SourceHealth[]> {
@@ -163,12 +186,7 @@ export class DynamoInternshipStore implements InternshipStore {
   findByUrl(url: string) { return this.find('urlIndex', 'urlPk', `URL#${url}`); }
   findByFingerprint(fingerprint: string) { return this.find('fingerprintIndex', 'fingerprintPk', `FP#${fingerprint}`); }
   async putInternship(job: Internship): Promise<void> {
-    const item: JobItem = { pk: `JOB#${job.jobId}`, sk: 'META', urlPk: `URL#${job.normalizedUrl}`, fingerprintPk: `FP#${job.fingerprint}`, job };
-    if (job.notification.smsPending) item.smsPk = 'PENDING#SMS';
-    if (job.notification.digestPending) item.digestPk = 'PENDING#DIGEST';
-    if (job.open && job.technical !== false) { item.openPk = 'OPEN'; item.openSk = `${job.firstSeenAt}#${job.jobId}`; }
-    if (!job.open && job.technical !== false) { item.closedPk = 'CLOSED'; item.closedSk = `${job.lastSeenAt}#${job.jobId}`; }
-    await this.client.send(new PutCommand({ TableName: this.tableName, Item: item }));
+    await this.client.send(new PutCommand({ TableName: this.tableName, Item: internshipItem(job) }));
   }
   private async pending(index: 'pendingSmsIndex' | 'pendingDigestIndex', attribute: 'smsPk' | 'digestPk', value: string): Promise<Internship[]> {
     return (await this.queryAll({ TableName: this.tableName, IndexName: index, KeyConditionExpression: '#key = :value', ExpressionAttributeNames: { '#key': attribute }, ExpressionAttributeValues: { ':value': value } })).map((item) => item.job as Internship);
@@ -209,7 +227,10 @@ export class DynamoInternshipStore implements InternshipStore {
       },
       ScanIndexForward: false,
     });
-    return result.map((item) => withEmployerCategory(item.job as Internship));
+    return result
+      .map((item) => item.job as Internship)
+      .filter((job) => !isPastSeason(job.season))
+      .map(withEmployerCategory);
   }
   async listLeverAdmissions(): Promise<LeverAdmission[]> {
     return (await this.queryAll({

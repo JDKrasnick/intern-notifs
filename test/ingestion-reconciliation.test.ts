@@ -77,6 +77,22 @@ describe('snapshot reconciliation', () => {
     ]);
   });
 
+  it('keeps a role catalogued while any open source occurrence classifies it as technical', async () => {
+    const store = new MemoryInternshipStore();
+    const technical = new MutableAdapter('source-technical', [listing('source-technical', { technical: true })]);
+    const shelved = new MutableAdapter('source-shelved', [listing('source-shelved', { technical: false })]);
+
+    await new IngestionRunner([technical], store).run();
+    await new IngestionRunner([shelved], store).run();
+
+    expect([...store.jobs.values()][0]).toMatchObject({ technical: true, open: true });
+    expect((await store.listOpen()).jobs).toHaveLength(1);
+    expect([...store.jobs.values()][0]?.sourceReferences).toEqual([
+      expect.objectContaining({ sourceId: 'source-technical', technical: true }),
+      expect.objectContaining({ sourceId: 'source-shelved', technical: false }),
+    ]);
+  });
+
   it('closes a Markdown occurrence the connector stops listing', async () => {
     const rows = [
       '| Acme | Software Engineering Intern | Remote | [Apply](https://careers.example.test/acme) |',
@@ -151,10 +167,11 @@ describe('snapshot reconciliation', () => {
     const adapter = new MutableAdapter('source-a', [listing('source-a')]);
     const failed = await new IngestionRunner([adapter], store).run();
     expect(failed.failures).toEqual(['occurrence write failed']);
+    expect(failed.newJobs).toHaveLength(1);
     expect((await store.getCheckpoint('source-a'))?.lastRowCount).toBe(0);
 
     const retried = await new IngestionRunner([adapter], store).run();
-    expect(retried.newJobs).toHaveLength(1);
+    expect(retried.newJobs).toEqual([]);
     expect(store.notificationEvents.size).toBe(1);
     expect((await store.getCheckpoint('source-a'))?.lastRowCount).toBe(1);
 
@@ -162,6 +179,37 @@ describe('snapshot reconciliation', () => {
     store.occurrences.clear();
     const replayed = await new IngestionRunner([adapter], store).run();
     expect(replayed.newJobs).toEqual([]);
+    expect(store.notificationEvents.size).toBe(1);
+  });
+
+  it('retries an atomic job and outbox write without exposing pending delivery state first', async () => {
+    class FailingStore extends MemoryInternshipStore {
+      fail = true;
+      override async putInternshipWithNotificationEvent(
+        job: Internship,
+        event: Parameters<MemoryInternshipStore['putInternshipWithNotificationEvent']>[1],
+      ) {
+        if (this.fail) {
+          this.fail = false;
+          throw new Error('outbox transaction failed');
+        }
+        return super.putInternshipWithNotificationEvent(job, event);
+      }
+    }
+    const store = new FailingStore();
+    await store.putCheckpoint({ sourceId: 'source-a', successfulFetches: 1, lastRowCount: 0 });
+    const adapter = new MutableAdapter('source-a', [listing('source-a')]);
+
+    const failed = await new IngestionRunner([adapter], store).run();
+    expect(failed.failures).toEqual(['outbox transaction failed']);
+    expect(failed.newJobs).toEqual([]);
+    expect(store.jobs.size).toBe(0);
+    expect(store.notificationEvents.size).toBe(0);
+    expect(await store.pendingDigest()).toEqual([]);
+
+    const retried = await new IngestionRunner([adapter], store).run();
+    expect(retried.newJobs).toHaveLength(1);
+    expect(store.jobs.size).toBe(1);
     expect(store.notificationEvents.size).toBe(1);
   });
 });
