@@ -1,5 +1,6 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { isPastSeason } from './core/early-career.js';
 import { employerCategory } from './core/employers.js';
 import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, NotificationEvent, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
 import type { ApplicationSession } from './application-automation.js';
@@ -60,10 +61,10 @@ export class MemoryInternshipStore implements InternshipStore {
   async markSmsSent(jobId: string, sentAt: string) { const job = this.jobs.get(jobId); if (job) { job.notification.smsPending = false; job.notification.smsSentAt = sentAt; } }
   async markDigested(jobIds: string[], sentAt: string) { for (const jobId of jobIds) { const job = this.jobs.get(jobId); if (job) { job.notification.digestPending = false; job.notification.digestedAt = sentAt; } } }
   async getJob(jobId: string) { const job = this.jobs.get(jobId); return job && withEmployerCategory(job); }
-  async listOpen(cursor?: string, limit = 25, status: 'open' | 'closed' = 'open') { const jobs = [...this.jobs.values()].filter((job) => job.open === (status === 'open') && job.technical !== false).sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt)); const offset = cursor ? Number(cursor) : 0; const page = jobs.slice(offset, offset + limit).map(withEmployerCategory); return { jobs: page, cursor: offset + page.length < jobs.length ? String(offset + page.length) : undefined }; }
+  async listOpen(cursor?: string, limit = 25, status: 'open' | 'closed' = 'open') { const jobs = [...this.jobs.values()].filter((job) => job.open === (status === 'open') && job.technical !== false && !isPastSeason(job.season)).sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt)); const offset = cursor ? Number(cursor) : 0; const page = jobs.slice(offset, offset + limit).map(withEmployerCategory); return { jobs: page, cursor: offset + page.length < jobs.length ? String(offset + page.length) : undefined }; }
   async listOpenSince(after: string, before: string) {
     return [...this.jobs.values()]
-      .filter((job) => job.open && job.technical !== false && job.firstSeenAt > after && job.firstSeenAt <= before)
+      .filter((job) => job.open && job.technical !== false && !isPastSeason(job.season) && job.firstSeenAt > after && job.firstSeenAt <= before)
       .sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt))
       .map(withEmployerCategory);
   }
@@ -146,8 +147,20 @@ export class DynamoInternshipStore implements InternshipStore {
   async getJob(jobId: string): Promise<Internship | undefined> { const result = await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: `JOB#${jobId}`, sk: 'META' } })); return result.Item?.job ? withEmployerCategory(result.Item.job as Internship) : undefined; }
   async listOpen(cursor?: string, limit = 25, status: 'open' | 'closed' = 'open'): Promise<{ jobs: Internship[]; cursor?: string }> {
     const open = status === 'open';
-    const result = await this.client.send(new QueryCommand({ TableName: this.tableName, IndexName: open ? 'openJobsIndex' : 'closedJobsIndex', KeyConditionExpression: open ? 'openPk = :status' : 'closedPk = :status', ExpressionAttributeValues: { ':status': open ? 'OPEN' : 'CLOSED' }, ScanIndexForward: false, Limit: limit, ...(cursor ? { ExclusiveStartKey: JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) } : {}) }));
-    return { jobs: (result.Items ?? []).map((item) => withEmployerCategory(item.job as Internship)), ...(result.LastEvaluatedKey ? { cursor: Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString('base64url') } : {}) };
+    // Past cycles are hidden after the index read, so a page can come back
+    // short — which the feed already tolerates. Only an entirely empty page is
+    // re-read, because a client reads that as the end of the feed.
+    const jobs: Internship[] = [];
+    let startKey: Record<string, unknown> | undefined = cursor ? JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) : undefined;
+    do {
+      const result = await this.client.send(new QueryCommand({ TableName: this.tableName, IndexName: open ? 'openJobsIndex' : 'closedJobsIndex', KeyConditionExpression: open ? 'openPk = :status' : 'closedPk = :status', ExpressionAttributeValues: { ':status': open ? 'OPEN' : 'CLOSED' }, ScanIndexForward: false, Limit: limit, ...(startKey ? { ExclusiveStartKey: startKey } : {}) }));
+      for (const item of result.Items ?? []) {
+        const job = item.job as Internship;
+        if (!isPastSeason(job.season)) jobs.push(withEmployerCategory(job));
+      }
+      startKey = result.LastEvaluatedKey;
+    } while (startKey && jobs.length === 0);
+    return { jobs, ...(startKey ? { cursor: Buffer.from(JSON.stringify(startKey)).toString('base64url') } : {}) };
   }
   async listOpenSince(after: string, before: string): Promise<Internship[]> {
     const result = await this.queryAll({

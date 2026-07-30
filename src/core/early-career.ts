@@ -67,6 +67,26 @@ export function inferSeason(title: string, description: string, now = new Date()
   return 'ongoing';
 }
 
+/** Month a named hiring season begins, so a cycle can be recognised as underway. */
+const seasonStartMonth: Record<string, number> = { winter: 0, spring: 2, summer: 4, fall: 8 };
+
+/**
+ * A hiring cycle whose season has already begun is no longer something a student
+ * can apply to, so the feed stops showing it. Seasons without a month —
+ * "offseason-2026", a bare year, "ongoing" — only expire once their year has
+ * passed, because they can still be filled later in that year.
+ */
+export function isPastSeason(season: string, now = new Date()): boolean {
+  const currentYear = now.getUTCFullYear();
+  const named = /^(winter|spring|summer|fall)-(20\d{2})$/i.exec(season);
+  if (named) {
+    const year = Number(named[2]);
+    return year < currentYear || (year === currentYear && now.getUTCMonth() > seasonStartMonth[named[1]!.toLowerCase()]!);
+  }
+  const year = /^(?:offseason-)?(20\d{2})$/i.exec(season);
+  return year ? Number(year[1]) < currentYear : false;
+}
+
 export function inferWorkMode(value: string | undefined): RawListing['workMode'] | undefined {
   if (!value) return undefined;
   if (/remote/i.test(value)) return 'remote';
