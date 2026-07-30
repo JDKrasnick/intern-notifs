@@ -37,13 +37,66 @@ describe('LeverPostingsAdapter', () => {
     expect(leverRequirements('Applicants must be U.S. citizens. A Ph.D. is required.')).toEqual({ requiresUsCitizenship: true, advancedDegreeRequired: true });
     expect(leverRequirements('We welcome all citizenships; our founders have master\'s degrees.')).toEqual({ requiresUsCitizenship: false, advancedDegreeRequired: false });
   });
-  it('uses ETags and returns no-change without parsing', async () => {
+  it('uses ETags and returns no-change without parsing for a single-page board', async () => {
     const calls: RequestInit[] = [];
     const adapter = new LeverPostingsAdapter({ ...options, fetchImpl: async (_url, init) => { calls.push(init ?? {}); return new Response(null, { status: 304 }); } });
-    const result = await adapter.fetch({ sourceId: options.id, etag: '"lever-etag"', successfulFetches: 2, lastRowCount: 1 });
+    const result = await adapter.fetch({ sourceId: options.id, etag: '"lever-etag"', successfulFetches: 2, lastRowCount: 1, lastRawCount: 1 });
     expect(result.notModified).toBe(true);
     expect(result.listings).toEqual([]);
-    expect(calls[0]?.headers).toEqual({ 'If-None-Match': '"lever-etag"' });
+    expect(calls[0]?.headers).toEqual({ Accept: 'application/json', 'If-None-Match': '"lever-etag"' });
+  });
+  it('refetches every page of a multi-page board because one ETag cannot prove the rest unchanged', async () => {
+    const calls: RequestInit[] = [];
+    const page = Array.from({ length: 100 }, (_, index) => ({
+      ...posting,
+      id: `job-${index}`,
+      hostedUrl: `https://jobs.lever.co/acme/job-${index}`,
+      applyUrl: `https://jobs.lever.co/acme/job-${index}/apply`,
+    }));
+    const adapter = new LeverPostingsAdapter({
+      ...options,
+      fetchImpl: async (_url, init) => {
+        calls.push(init ?? {});
+        return new Response(JSON.stringify(calls.length === 1 ? page : []), { status: 200 });
+      },
+    });
+    const result = await adapter.fetch({ sourceId: options.id, etag: '"lever-etag"', successfulFetches: 2, lastRowCount: 4, lastRawCount: 120 });
+    expect(calls.map((call) => call.headers)).toEqual([{ Accept: 'application/json' }, { Accept: 'application/json' }]);
+    expect(result.postings).toHaveLength(100);
+  });
+  it('reads every bounded page and rejects duplicate posting IDs', async () => {
+    const urls: string[] = [];
+    const page = Array.from({ length: 100 }, (_, index) => ({
+      ...posting,
+      id: `job-${index}`,
+      hostedUrl: `https://jobs.lever.co/acme/job-${index}`,
+      applyUrl: `https://jobs.lever.co/acme/job-${index}/apply`,
+    }));
+    const adapter = new LeverPostingsAdapter({
+      ...options,
+      fetchImpl: async (url) => {
+        urls.push(String(url));
+        return new Response(JSON.stringify(urls.length === 1 ? page : [{
+          ...posting,
+          id: 'job-100',
+          hostedUrl: 'https://jobs.lever.co/acme/job-100',
+          applyUrl: 'https://jobs.lever.co/acme/job-100/apply',
+        }]), { status: 200 });
+      },
+    });
+    const result = await adapter.fetch();
+    expect(urls).toEqual([
+      'https://api.lever.co/v0/postings/acme?mode=json&skip=0&limit=100',
+      'https://api.lever.co/v0/postings/acme?mode=json&skip=100&limit=100',
+    ]);
+    expect(result.rawCount).toBe(101);
+    expect(result.postings).toHaveLength(101);
+
+    const duplicate = new LeverPostingsAdapter({
+      ...options,
+      fetchImpl: async () => new Response(JSON.stringify([posting, posting]), { status: 200 }),
+    });
+    await expect(duplicate.fetch()).rejects.toThrow('duplicate posting IDs');
   });
   it('rejects malformed and error responses', async () => {
     const malformed = new LeverPostingsAdapter({ ...options, fetchImpl: async () => new Response('{', { status: 200 }) });

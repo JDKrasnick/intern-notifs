@@ -1,0 +1,13 @@
+{
+  "site": "reply",
+  "displayName": "Reply",
+  "careersUrl": "https://www.reply.com/en/about/careers/",
+  "firstPartyEvidenceUrl": "https://www.reply.com/en/about/careers/",
+  "evidenceExcerpt": "",
+  "observedJobUrl": "https://jobs.lever.co/reply/0fb458db-7cb9-4bfd-b9b6-c1c681316061",
+  "initialHosts": ["jobs.lever.co"],
+  "region": "global",
+  "state": "api-live-unattributed",
+  "verifiedAt": "2026-07-30T00:00:00Z",
+  "notes": "API returns 39 postings with 2 eligible early career roles. Reply.com careers pages lack visible link to jobs.lever.co/reply."
+}

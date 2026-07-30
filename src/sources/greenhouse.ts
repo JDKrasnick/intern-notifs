@@ -5,7 +5,8 @@ import { earlyCareerRequirements, hasLifecycleTitleSignal, htmlToText, inferSeas
 import { greenhouseApplicationUrlRejection } from './quality.js';
 import { GREENHOUSE_BOARD_API_HOST, assertBoardToken, boardIdentityUrl, validateBoardToken, type ReviewedGreenhouseSource } from './greenhouse-config.js';
 import { SourceFetchError } from './source-error.js';
-import type { RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult } from '../types.js';
+import { processSnapshot } from '../ingestion/processor.js';
+import type { RawListing, SourceAdapter, SourceCheckpoint, SourceConnector, SourceFetchResult, SourceSnapshot, SourcedPosting } from '../types.js';
 
 /** Defensive model of the documented Job Board API `content=true` job shape. */
 export interface GreenhouseJob {
@@ -246,7 +247,37 @@ export function mapGreenhouseJob(
   return isTechnicalJob({ ...listing, title: classificationContext }) ? listing : undefined;
 }
 
-export class GreenhouseBoardAdapter implements SourceAdapter {
+export function mapGreenhouseSourcedPosting(
+  job: GreenhouseJob,
+  source: ReviewedGreenhouseSource,
+  fetchedAt = new Date().toISOString(),
+  row = 1,
+): SourcedPosting | undefined {
+  const externalId = job.id === undefined || job.id === null ? '' : String(job.id);
+  const title = htmlToText(job.title);
+  if (!externalId || !title || !job.absolute_url) return undefined;
+  const description = job.content ?? '';
+  return {
+    sourceId: source.id,
+    externalId,
+    document: externalId,
+    sourceUrl: greenhouseJobsUrl(source.boardToken),
+    row,
+    fetchedAt,
+    employer: { id: source.employerId, name: source.displayName, authority: 'reviewed-registry' },
+    title,
+    content: [{ kind: 'description', format: 'html', value: description }],
+    locations: [htmlToText(job.location?.name ?? undefined)].filter(Boolean),
+    applyUrl: job.absolute_url,
+    sourceState: job.internal_job_id === null || job.internal_job_id === undefined ? 'prospect' : 'open',
+    ...(job.updated_at && !Number.isNaN(Date.parse(job.updated_at)) ? { publishedAt: new Date(job.updated_at).toISOString() } : {}),
+    classificationTags: [names(job.departments), names(job.offices)].filter(Boolean),
+  };
+}
+
+type TransitionalGreenhouseResult = SourceSnapshot & SourceFetchResult;
+
+export class GreenhouseBoardAdapter implements SourceAdapter, SourceConnector {
   readonly id: string;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => Date;
@@ -257,7 +288,7 @@ export class GreenhouseBoardAdapter implements SourceAdapter {
     this.now = options.now ?? (() => new Date());
   }
 
-  async fetch(previous?: SourceCheckpoint): Promise<SourceFetchResult> {
+  async fetch(previous?: SourceCheckpoint): Promise<TransitionalGreenhouseResult> {
     const url = greenhouseJobsUrl(this.options.source.boardToken);
     const response = await this.fetchImpl(url, {
       headers: { Accept: 'application/json', ...(previous?.etag ? { 'If-None-Match': previous.etag } : {}) },
@@ -266,6 +297,11 @@ export class GreenhouseBoardAdapter implements SourceAdapter {
     if (response.status === 304) {
       return {
         sourceId: this.id,
+        outcome: 'unchanged',
+        complete: true,
+        postings: [],
+        rawCount: previous?.lastRawCount ?? previous?.lastRowCount ?? 0,
+        contentHash: previous?.contentHash ?? '',
         listings: [],
         notModified: true,
         checkpoint: { ...previous, sourceId: this.id, lastSuccessAt: this.now().toISOString(), successfulFetches: previous?.successfulFetches ?? 0 },
@@ -279,34 +315,47 @@ export class GreenhouseBoardAdapter implements SourceAdapter {
     }
     const jobs = (payload as GreenhouseJobsResponse).jobs ?? [];
     const fetchedAt = this.now().toISOString();
-    const listings: RawListing[] = [];
+    const postings: SourcedPosting[] = [];
     const rejectedApplicationUrls: Array<{ row: number; url: string; reason: string }> = [];
-    let row = 0;
-    for (const job of jobs) {
+    for (const [index, job] of jobs.entries()) {
       if (!isGreenhouseJobShape(job)) throw new SourceFetchError(`${this.id}: Greenhouse response shape was invalid`, 'json');
-      const mapped = mapGreenhouseJob(job, this.options.source, fetchedAt, row + 1);
-      if (!mapped) continue;
-      row += 1;
-      const rejection = greenhouseApplicationUrlRejection(mapped.applyUrl, this.options.source.allowedInitialHosts);
-      if (rejection) rejectedApplicationUrls.push({ row, url: mapped.applyUrl, reason: rejection });
-      else listings.push({ ...mapped, row });
+      const posting = mapGreenhouseSourcedPosting(job, this.options.source, fetchedAt, index + 1);
+      if (!posting) continue;
+      const rejection = greenhouseApplicationUrlRejection(posting.applyUrl, this.options.source.allowedInitialHosts);
+      if (rejection) rejectedApplicationUrls.push({ row: index + 1, url: posting.applyUrl, reason: rejection });
+      else postings.push(posting);
     }
-    return {
+    const contentHash = createHash('sha256').update(projection(jobs)).digest('hex');
+    const neutral: SourceSnapshot = {
       sourceId: this.id,
-      rawRowCount: jobs.length,
-      listings,
-      ...(rejectedApplicationUrls.length ? { rejectedApplicationUrls } : {}),
-      notModified: false,
+      outcome: contentHash === previous?.contentHash ? 'unchanged' : 'changed',
+      complete: true,
+      postings,
+      rawCount: jobs.length,
+      contentHash,
       checkpoint: {
         sourceId: this.id,
         etag: response.headers.get('etag') ?? previous?.etag,
-        contentHash: createHash('sha256').update(projection(jobs)).digest('hex'),
+        contentHash,
         lastSuccessAt: fetchedAt,
         successfulFetches: (previous?.successfulFetches ?? 0) + 1,
-        lastRowCount: listings.length,
+        lastRowCount: 0,
+        lastRawCount: jobs.length,
+        activeExternalIds: postings.map((posting) => posting.externalId),
         lastRawRowCount: jobs.length,
         lastWithheldRowCount: rejectedApplicationUrls.length,
       },
+    };
+    const processed = processSnapshot(neutral);
+    const listings = processed.listings.filter((listing) => listing.technical !== false);
+    neutral.checkpoint.lastRowCount = listings.length;
+    return {
+      ...neutral,
+      rawRowCount: jobs.length,
+      processed,
+      listings,
+      ...(rejectedApplicationUrls.length ? { rejectedApplicationUrls } : {}),
+      notModified: neutral.outcome === 'unchanged',
     };
   }
 }

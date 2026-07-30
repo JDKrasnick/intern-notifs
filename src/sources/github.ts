@@ -1,36 +1,140 @@
 import { createHash } from 'node:crypto';
 import { parseInternshipMarkdown, type MarkdownParseOptions } from '../core/markdown.js';
+import { normalizeUrl } from '../core/normalize.js';
+import { processSnapshot } from '../ingestion/processor.js';
 import { applicationUrlRejection } from './quality.js';
 import { parseQuantInternshipMarkdown } from './quant.js';
-import type { RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult } from '../types.js';
+import { SourceFetchError } from './source-error.js';
+import type { RawListing, SourceAdapter, SourceCheckpoint, SourceConnector, SourceFetchResult, SourceSnapshot, SourcedPosting } from '../types.js';
 
 export interface GitHubDocument { path: string; branch: string; season: string; }
 export interface GitHubAdapterOptions { id: string; owner: string; repo: string; documents: GitHubDocument[]; parser?: (markdown: string, options: MarkdownParseOptions) => RawListing[]; fetchImpl?: typeof fetch; }
 
-export class GitHubMarkdownAdapter implements SourceAdapter {
+export function markdownListingToSourcedPosting(listing: RawListing): SourcedPosting {
+  return {
+    sourceId: listing.sourceId,
+    externalId: `${listing.document}:${normalizeUrl(listing.applyUrl)}`,
+    document: listing.document,
+    sourceUrl: listing.sourceUrl,
+    row: listing.row,
+    fetchedAt: listing.fetchedAt,
+    employer: { name: listing.company, authority: 'source-row' },
+    title: listing.title,
+    content: [],
+    locations: [listing.location],
+    applyUrl: listing.applyUrl,
+    sourceState: listing.state,
+    // These documents are reviewed early-career lists, so a row keeps the
+    // lifecycle standing the list gives it even when its title omits "intern".
+    lifecycleAuthority: 'source',
+    ...(listing.postedAt ? { publishedAt: listing.postedAt } : {}),
+    seasonHint: listing.season,
+    compensationText: listing.compensation.raw,
+    declaredRequirements: listing.requirements,
+    declaredWorkMode: listing.workMode,
+  };
+}
+
+function postingProjection(postings: SourcedPosting[]): string {
+  return JSON.stringify(
+    [...postings].sort((a, b) => a.externalId.localeCompare(b.externalId)),
+    (key, value) => key === 'fetchedAt' || key === 'row' ? undefined : value,
+  );
+}
+
+type TransitionalMarkdownResult = SourceSnapshot & SourceFetchResult;
+
+export class GitHubMarkdownAdapter implements SourceAdapter, SourceConnector {
   readonly id: string;
   private readonly fetchImpl: typeof fetch;
   constructor(private readonly options: GitHubAdapterOptions) { this.id = options.id; this.fetchImpl = options.fetchImpl ?? fetch; }
 
-  async fetch(previous?: SourceCheckpoint): Promise<SourceFetchResult> {
-    const listings: RawListing[] = []; const rejectedApplicationUrls: Array<{ row: number; url: string; reason: string }> = []; const documentEtags = { ...previous?.documentEtags }; let etag: string | undefined; let allUnchanged = true;
+  async fetch(previous?: SourceCheckpoint): Promise<TransitionalMarkdownResult> {
+    const rawListings: RawListing[] = []; const rejectedApplicationUrls: Array<{ row: number; url: string; reason: string }> = []; const documentEtags = { ...previous?.documentEtags }; let etag: string | undefined; let allUnchanged = true;
     for (const document of this.options.documents) {
       const url = `https://raw.githubusercontent.com/${this.options.owner}/${this.options.repo}/${document.branch}/${document.path}`;
-      const knownEtag = previous?.documentEtags?.[document.path] ?? previous?.etag;
+      // A 304 supplies no body. Multi-document sources therefore fetch every
+      // document so a changed result is always a complete source snapshot.
+      const knownEtag = this.options.documents.length === 1
+        ? previous?.documentEtags?.[document.path] ?? previous?.etag
+        : undefined;
       const response = await this.fetchImpl(url, { headers: knownEtag ? { 'If-None-Match': knownEtag } : {} });
       if (response.status === 304) continue;
-      if (!response.ok) throw new Error(`${this.id}: ${document.path} fetch failed (${response.status})`);
+      if (!response.ok) throw new SourceFetchError(`${this.id}: ${document.path} fetch failed (${response.status})`, 'http', response.status);
       allUnchanged = false; etag = response.headers.get('etag') ?? etag;
       const documentEtag = response.headers.get('etag'); if (documentEtag) documentEtags[document.path] = documentEtag;
       const parsed = (this.options.parser ?? parseInternshipMarkdown)(await response.text(), { sourceId: this.id, document: document.path, sourceUrl: url, season: document.season });
       for (const listing of parsed) {
         const rejection = applicationUrlRejection(listing.applyUrl);
         if (rejection) rejectedApplicationUrls.push({ row: listing.row, url: listing.applyUrl, reason: rejection });
-        else listings.push(listing);
+        else rawListings.push(listing);
       }
     }
-    const contentHash = createHash('sha256').update(JSON.stringify(listings)).digest('hex');
-    return { sourceId: this.id, listings, ...(rejectedApplicationUrls.length ? { rejectedApplicationUrls } : {}), notModified: allUnchanged, checkpoint: { sourceId: this.id, etag: etag ?? previous?.etag, documentEtags, contentHash, lastSuccessAt: new Date().toISOString(), successfulFetches: (previous?.successfulFetches ?? 0) + (allUnchanged ? 0 : 1), lastRowCount: allUnchanged ? previous?.lastRowCount : listings.length } };
+    if (allUnchanged) {
+      return {
+        sourceId: this.id,
+        outcome: 'unchanged',
+        complete: true,
+        postings: [],
+        rawCount: previous?.lastRawCount ?? previous?.lastRowCount ?? 0,
+        contentHash: previous?.contentHash ?? '',
+        listings: [],
+        notModified: true,
+        checkpoint: {
+          ...previous,
+          sourceId: this.id,
+          documentEtags,
+          lastSuccessAt: new Date().toISOString(),
+          successfulFetches: previous?.successfulFetches ?? 0,
+        },
+      };
+    }
+    // Two rows of one document can share a normalized application URL, so they
+    // are one destination. Dropping the repeat keeps the snapshot complete
+    // instead of failing an otherwise healthy source; `rawCount` still counts it.
+    const postings: SourcedPosting[] = [];
+    const identities = new Set<string>();
+    let duplicateIdentities = 0;
+    for (const listing of rawListings) {
+      const posting = markdownListingToSourcedPosting(listing);
+      if (identities.has(posting.externalId)) { duplicateIdentities += 1; continue; }
+      identities.add(posting.externalId);
+      postings.push(posting);
+    }
+    if (duplicateIdentities) {
+      console.log(JSON.stringify({ event: 'markdown_duplicate_identity_dropped', sourceId: this.id, count: duplicateIdentities }));
+    }
+    const contentHash = createHash('sha256').update(postingProjection(postings)).digest('hex');
+    const neutral: SourceSnapshot = {
+      sourceId: this.id,
+      outcome: contentHash === previous?.contentHash ? 'unchanged' : 'changed',
+      complete: true,
+      postings,
+      rawCount: rawListings.length + rejectedApplicationUrls.length,
+      contentHash,
+      checkpoint: {
+        sourceId: this.id,
+        etag: etag ?? previous?.etag,
+        documentEtags,
+        contentHash,
+        lastSuccessAt: new Date().toISOString(),
+        successfulFetches: (previous?.successfulFetches ?? 0) + 1,
+        lastRowCount: 0,
+        lastRawCount: rawListings.length + rejectedApplicationUrls.length,
+        activeExternalIds: postings.map((posting) => posting.externalId),
+      },
+    };
+    const processed = processSnapshot(neutral);
+    const eligible = processed.listings.filter((listing) => listing.technical !== false);
+    neutral.checkpoint.lastRowCount = eligible.length;
+    return {
+      ...neutral,
+      rawRowCount: neutral.rawCount,
+      processed,
+      listings: eligible,
+      ...(rejectedApplicationUrls.length ? { rejectedApplicationUrls } : {}),
+      notModified: neutral.outcome === 'unchanged',
+    };
   }
 }
 

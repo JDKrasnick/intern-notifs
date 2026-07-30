@@ -1,0 +1,13 @@
+{
+  "site": "geocomply-2",
+  "displayName": "GeoComply",
+  "careersUrl": "https://www.geocomply.com/careers/",
+  "firstPartyEvidenceUrl": "https://www.geocomply.com/careers/",
+  "evidenceExcerpt": "",
+  "observedJobUrl": "https://jobs.lever.co/geocomply-2/7b5cf819-341e-4980-be14-97b8a205ec1f",
+  "initialHosts": ["jobs.lever.co"],
+  "region": "global",
+  "state": "api-live-unattributed",
+  "verifiedAt": "2026-07-30T00:00:00Z",
+  "notes": "Site operates with 11 postings and 5 eligible early career roles. GeoComply official careers page confirmed at geocomply.com/careers, but Lever link not found in first-party markup despite comprehensive search; likely embedded via dynamic JavaScript."
+}

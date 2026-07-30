@@ -1,9 +1,24 @@
-import { fingerprint, fingerprintCandidates, jobId, normalizeUrl } from './core/normalize.js';
-import { assessApplicationPageForListing, canonicalApplicationUrl, type ApplicationPageConfidence, type ApplicationUrlValidator } from './core/application-url.js';
-import { isTechnicalJob, matchesJobFilter, type JobFilter } from './core/filters.js';
-import { employerCategory } from './core/employers.js';
+import { createHash } from 'node:crypto';
+import { assessApplicationPageForListing, canonicalApplicationUrl, type ApplicationUrlValidator } from './core/application-url.js';
+import { boardReference, reachabilityFromFailure, reachabilityFromSignals, verifyApplication, type AttributionBasis, type Reachability } from './core/application-verification.js';
+import { fingerprintCandidates, normalizeUrl } from './core/normalize.js';
+import { isTechnicalJob, type JobFilter } from './core/filters.js';
+import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
+import { evaluateSourceFreshness } from './ingestion/monitoring.js';
+import { processSnapshot } from './ingestion/processor.js';
+import { reviewedBoardIndex } from './sources/index.js';
 import { sourceQualityFailures } from './sources/quality.js';
-import type { Internship, RawListing, SourceAdapter, SourceOccurrence } from './types.js';
+import { SourceFetchError } from './sources/source-error.js';
+import type {
+  Internship,
+  ProcessedListing,
+  ProcessedSnapshot,
+  SourceAdapter,
+  SourceCheckpoint,
+  SourceFetchResult,
+  SourceHealth,
+  SourceSnapshot,
+} from './types.js';
 import type { InternshipStore } from './store.js';
 
 export interface PollReport {
@@ -16,37 +31,199 @@ export interface PollReport {
   failures: string[];
 }
 
-function occurrence(listing: RawListing): SourceOccurrence {
-  return { sourceId: listing.sourceId, document: listing.document, sourceUrl: listing.sourceUrl, row: listing.row, postedAt: listing.postedAt, workMode: listing.workMode, company: listing.company, title: listing.title, location: listing.location, season: listing.season, applyUrl: listing.applyUrl, compensation: listing.compensation, ...(listing.requirements ? { requirements: listing.requirements } : {}), state: listing.state };
-}
-function genericLocation(value: string | undefined) {
-  return !value || /^(unknown|unspecified|n\/?a|not (?:listed|specified)|tbd|see (?:description|job))$/i.test(value.trim());
-}
-function merge(existing: Internship, listing: RawListing, now: string, applicationUrlValidatedAt?: string): Internship {
-  const reference = occurrence(listing);
-  const match = existing.sourceReferences.findIndex((item) => item.sourceId === reference.sourceId && item.document === reference.document && item.row === reference.row);
-  // Keep the first precise source value stable; secondary lists often flatten
-  // details such as “Remote (US)” into a less useful variant.
-  const location = genericLocation(existing.location) ? listing.location || existing.location : existing.location;
-  const company = existing.company || listing.company;
-  const sourceReferences = match >= 0 ? existing.sourceReferences.map((item, index) => index === match ? reference : item) : [...existing.sourceReferences, reference];
-  const listingNormalizedUrl = normalizeUrl(listing.applyUrl);
-  const keepQuarantined = existing.invalidApplicationUrl === listingNormalizedUrl;
-  const replaceStoredUrl = Boolean(applicationUrlValidatedAt && (!existing.applicationUrlValidatedAt || existing.normalizedUrl !== listingNormalizedUrl));
-  const base = { ...existing };
-  if (!keepQuarantined) delete base.invalidApplicationUrl;
-  return { ...base, company, title: existing.title || listing.title, location, applyUrl: replaceStoredUrl ? listing.applyUrl : existing.applyUrl || listing.applyUrl, normalizedUrl: replaceStoredUrl ? listingNormalizedUrl : existing.normalizedUrl, fingerprint: fingerprint(company, existing.title || listing.title, location, listing.season), compensation: listing.compensation.maxHourlyUSD ? listing.compensation : existing.compensation, requirements: listing.requirements ?? existing.requirements, employerCategory: employerCategory(company), sourceReferences, open: keepQuarantined ? false : sourceReferences.some((item) => item.state === 'open'), lastSeenAt: now, ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}) };
-}
-function newJob(listing: RawListing, now: string, applicationUrlValidatedAt?: string): Internship {
-  const normalizedUrl = normalizeUrl(listing.applyUrl); const key = fingerprint(listing.company, listing.title, listing.location, listing.season);
-  return { jobId: jobId(normalizedUrl, key), company: listing.company, title: listing.title, location: listing.location, season: listing.season, applyUrl: listing.applyUrl, normalizedUrl, ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}), fingerprint: key, compensation: listing.compensation, ...(listing.requirements ? { requirements: listing.requirements } : {}), employerCategory: employerCategory(listing.company), sourceReferences: [occurrence(listing)], open: listing.state === 'open', firstSeenAt: now, lastSeenAt: now, notification: { smsPending: true, digestPending: true } };
+interface TrustedBatch {
+  fetchResult: SourceFetchResult;
+  processed: ProcessedSnapshot;
+  snapshotHash: string;
+  activeExternalIds: Set<string>;
+  unchanged: boolean;
 }
 
-export class Poller {
-  constructor(private readonly adapters: SourceAdapter[], private readonly store: InternshipStore, private readonly now: () => Date = () => new Date(), private readonly filter?: JobFilter, private readonly validateApplicationUrl?: ApplicationUrlValidator) {}
-  private async quarantine(job: Internship) {
-    await this.store.putInternship({ ...job, open: false, invalidApplicationUrl: job.normalizedUrl, notification: { ...job.notification, smsPending: false, digestPending: false } });
+const SOURCE_WORK_CONCURRENCY = 24;
+
+/**
+ * Bounded worker pool that always drains: the first error is rethrown only once
+ * every worker has settled, so a failed slice never leaves writes in flight.
+ */
+async function forEachBounded<T>(items: readonly T[], task: (item: T, index: number) => Promise<void>): Promise<void> {
+  let next = 0;
+  let failure: unknown;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      try { await task(items[index]!, index); }
+      catch (error) { failure ??= error; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(SOURCE_WORK_CONCURRENCY, items.length) }, worker));
+  if (failure !== undefined) throw failure;
+}
+
+function providerFor(sourceId: string): SourceHealth['provider'] {
+  if (sourceId.startsWith('lever-')) return 'lever';
+  if (sourceId.includes('greenhouse-')) return 'greenhouse';
+  return sourceId ? 'github' : 'unknown';
+}
+
+function emitSuccessMetric(sourceId: string, provider: SourceHealth['provider'], outcome: 'changed' | 'unchanged', counts: ProcessedSnapshot['counts'], durationMs: number) {
+  console.log(JSON.stringify({
+    _aws: {
+      Timestamp: Date.now(),
+      CloudWatchMetrics: [{
+        Namespace: 'InternNotifs/Ingestion',
+        Dimensions: [['provider', 'outcome']],
+        Metrics: [
+          { Name: 'SourceFetchSuccess', Unit: 'Count' },
+          { Name: 'SourceFetchDurationMs', Unit: 'Milliseconds' },
+          { Name: 'RawListingCount', Unit: 'Count' },
+          { Name: 'EligibleListingCount', Unit: 'Count' },
+          { Name: 'ListingWithheld', Unit: 'Count' },
+        ],
+      }],
+    },
+    event: 'source_ingestion_completed',
+    sourceId,
+    provider,
+    outcome,
+    SourceFetchSuccess: 1,
+    SourceFetchDurationMs: durationMs,
+    RawListingCount: counts.raw,
+    EligibleListingCount: counts.eligible,
+    ListingWithheld: counts.withheld,
+    counts,
+  }));
+}
+
+function emitFreshnessMetric(records: SourceHealth[], now: Date) {
+  const freshness = evaluateSourceFreshness(records, now);
+  const polled = new Set(records.map((record) => record.provider));
+  for (const [provider, staleCount] of Object.entries(freshness.byProvider).filter(([name]) => polled.has(name as SourceHealth['provider']))) {
+    console.log(JSON.stringify({
+      _aws: {
+        Timestamp: now.getTime(),
+        CloudWatchMetrics: [{
+          Namespace: 'InternNotifs/Ingestion',
+          Dimensions: [['provider']],
+          Metrics: [{ Name: 'StaleSourceCount', Unit: 'Count' }],
+        }],
+      },
+      event: 'source_freshness_evaluated',
+      provider,
+      StaleSourceCount: staleCount,
+      staleSourceIds: freshness.staleSourceIds.filter((sourceId) => providerFor(sourceId) === provider),
+    }));
   }
+}
+
+function emitFailureMetric(sourceId: string, provider: SourceHealth['provider'], category: NonNullable<SourceHealth['diagnosticCategory']>, durationMs: number) {
+  console.error(JSON.stringify({
+    _aws: {
+      Timestamp: Date.now(),
+      CloudWatchMetrics: [{
+        Namespace: 'InternNotifs/Ingestion',
+        Dimensions: [['provider', 'category']],
+        Metrics: [
+          { Name: 'SourceFetchFailure', Unit: 'Count' },
+          { Name: 'SourceFetchDurationMs', Unit: 'Milliseconds' },
+        ],
+      }],
+    },
+    event: 'source_ingestion_failed',
+    sourceId,
+    provider,
+    category,
+    SourceFetchFailure: 1,
+    SourceFetchDurationMs: durationMs,
+  }));
+}
+
+function isSourceSnapshot(result: SourceFetchResult): result is SourceFetchResult & SourceSnapshot {
+  return 'postings' in result && 'complete' in result && 'outcome' in result;
+}
+
+function externalId(listing: ProcessedListing): string {
+  if (listing.externalId) return listing.externalId;
+  try { return `${listing.document}:${normalizeUrl(listing.applyUrl)}`; }
+  catch { return `${listing.document}:invalid:${listing.applyUrl}`; }
+}
+
+function legacyBatch(result: SourceFetchResult): TrustedBatch {
+  const listings = result.listings.map((listing) => ({
+    ...listing,
+    externalId: externalId(listing),
+    technical: listing.technical ?? isTechnicalJob(listing),
+  }));
+  const snapshotHash = result.checkpoint.contentHash
+    ?? createHash('sha256').update(JSON.stringify(listings, (key, value) => key === 'fetchedAt' ? undefined : value)).digest('hex');
+  return {
+    fetchResult: result,
+    processed: {
+      listings,
+      decisions: listings.map((listing) => ({ externalId: externalId(listing), outcome: 'included' as const, reason: 'source-policy' as const })),
+      counts: {
+        raw: result.rawRowCount ?? listings.length,
+        valid: listings.length,
+        eligible: listings.filter((listing) => listing.technical !== false).length,
+        shelved: listings.filter((listing) => listing.technical === false).length,
+        filtered: 0,
+        withheld: result.rejectedApplicationUrls?.length ?? 0,
+      },
+    },
+    snapshotHash,
+    activeExternalIds: new Set(result.checkpoint.activeExternalIds ?? listings.map(externalId)),
+    unchanged: result.notModified,
+  };
+}
+
+function neutralBatch(result: SourceFetchResult & SourceSnapshot): TrustedBatch {
+  const processed = result.processed ?? processSnapshot(result);
+  return {
+    fetchResult: result,
+    processed,
+    snapshotHash: result.contentHash,
+    activeExternalIds: new Set(result.checkpoint.activeExternalIds ?? result.postings.map((posting) => posting.externalId)),
+    unchanged: result.outcome === 'unchanged',
+  };
+}
+
+function retryable(error: unknown): boolean {
+  return error instanceof SourceFetchError ? error.retryable : error instanceof TypeError || (error as { name?: string })?.name === 'AbortError';
+}
+
+async function fetchWithRetry(adapter: SourceAdapter, checkpoint: SourceCheckpoint | undefined): Promise<SourceFetchResult> {
+  let finalError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await adapter.fetch(checkpoint);
+    } catch (error) {
+      finalError = error;
+      if (!retryable(error) || attempt === 3) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 25 * (2 ** (attempt - 1))));
+    }
+  }
+  throw finalError;
+}
+
+export class IngestionRunner {
+  private readonly reconciler = new CatalogReconciler();
+
+  constructor(
+    private readonly connectors: SourceAdapter[],
+    private readonly store: InternshipStore,
+    private readonly now: () => Date = () => new Date(),
+    private readonly filter?: JobFilter,
+    private readonly validateApplicationUrl?: ApplicationUrlValidator,
+  ) {}
+
+  private async quarantine(job: Internship) {
+    await this.store.putInternship({
+      ...job,
+      open: false,
+      invalidApplicationUrl: job.normalizedUrl,
+      notification: { ...job.notification, smsPending: false, digestPending: false },
+    });
+  }
+
   private async validateUnverifiedOpenJobs(report: PollReport) {
     if (!this.validateApplicationUrl || !this.store.listOpen) return;
     let cursor: string | undefined;
@@ -62,7 +239,9 @@ export class Poller {
           await this.validateApplicationUrl!(job.applyUrl);
           await this.store.putInternship({ ...job, applicationUrlValidatedAt: this.now().toISOString() });
         } catch (error) {
-          await this.quarantine(job);
+          // A refused read or a timeout says nothing about the posting; only a
+          // destination proven gone hides a role a source still lists.
+          if (reachabilityFromFailure(error) === 'gone') await this.quarantine(job);
           report.failures.push(`catalog: ${job.jobId}: ${error instanceof Error ? error.message : String(error)}`);
         }
       };
@@ -71,74 +250,226 @@ export class Poller {
       }));
     } while (cursor);
   }
-  async poll(options: { seedOnly?: boolean } = {}): Promise<PollReport> {
-    const report: PollReport = { fetchedSources: 0, unchangedSources: [], baselineSources: [], processedListings: 0, newJobs: [], filteredJobs: [], failures: [] };
-    for (const adapter of this.adapters) {
-      const previous = await this.store.getCheckpoint(adapter.id);
-      try {
-        const result = await adapter.fetch(previous); report.fetchedSources += 1;
-        if (result.notModified) {
-          report.unchangedSources.push(adapter.id);
-          await this.store.putCheckpoint(result.checkpoint);
-          continue;
-        }
-        const qualityFailures = sourceQualityFailures(result, previous);
-        if (qualityFailures.length) throw new Error(qualityFailures.join('; '));
-        const baseline = !previous || previous.successfulFetches === 0 || options.seedOnly;
-        if (baseline) report.baselineSources.push(adapter.id);
-        report.processedListings += result.listings.length;
-        const now = this.now().toISOString();
-        let nextListing = 0;
-        const processListing = async () => {
-          const listing = result.listings[nextListing++];
-          if (!listing) return;
-          const canonicalUrl = canonicalApplicationUrl(listing.applyUrl);
-          const canonicalListing = canonicalUrl === listing.applyUrl ? listing : { ...listing, applyUrl: canonicalUrl };
-          let applicationConfidence: ApplicationPageConfidence | undefined;
-          let existing: Internship | undefined;
-          let validatingLink = false;
-          try {
-            const normalizedUrl = normalizeUrl(canonicalListing.applyUrl);
-            existing = await this.store.findByUrl(normalizedUrl);
-            for (const candidate of fingerprintCandidates(canonicalListing.company, canonicalListing.title, canonicalListing.location, canonicalListing.season)) {
-              if (existing) break;
-              existing = await this.store.findByFingerprint(candidate);
-            }
-            // Runtime polling supplies a live verifier. Existing validated URLs
-            // are cached so recurring polls do not repeatedly probe the same
-            // employer endpoint.
-            const needsValidation = Boolean(this.validateApplicationUrl && existing?.invalidApplicationUrl !== normalizedUrl && (!existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
-            validatingLink = needsValidation;
-            if (needsValidation) {
-              const validation = await this.validateApplicationUrl!(canonicalListing.applyUrl);
-              if (typeof validation !== 'string') applicationConfidence = assessApplicationPageForListing(canonicalListing.title, validation.evidence);
-            }
-            const verifiedListing = canonicalListing;
-            const validatedAt = needsValidation && applicationConfidence?.level !== 'low' ? now : undefined;
-            validatingLink = false;
-            if (existing) await this.store.putInternship(merge(existing, verifiedListing, now, validatedAt));
-            else {
-              const created = newJob(verifiedListing, now, validatedAt);
-              if (baseline) created.notification = { smsPending: false, digestPending: false };
-              else if (created.open && isTechnicalJob(created) && matchesJobFilter(created, this.filter) && applicationConfidence?.recommendation !== 'catalog-only' && applicationConfidence?.recommendation !== 'review') report.newJobs.push(created);
-              else { created.notification = { smsPending: false, digestPending: false }; report.filteredJobs.push(created); }
-              await this.store.putInternship(created);
-            }
-          } catch (error) {
-            if (validatingLink && existing?.open) {
-              await this.quarantine(existing);
-            }
-            report.failures.push(`${adapter.id}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`);
-          }
-        };
-        const workers = Array.from({ length: Math.min(24, result.listings.length) }, async () => {
-          while (nextListing < result.listings.length) await processListing();
-        });
-        await Promise.all(workers);
-        await this.store.putCheckpoint(result.checkpoint);
-      } catch (error) { report.failures.push(error instanceof Error ? error.message : String(error)); }
+
+  private readonly boardIndex = reviewedBoardIndex();
+  private readonly boardActiveIds = new Map<string, Promise<Set<string>>>();
+
+  /**
+   * A posting served by a reviewed connector is attributed by its own URL
+   * contract. A posting merely referenced by a list is attributed when the board
+   * it points at is one this catalog polls and that board's checkpoint still
+   * lists it — evidence already held, so no employer request is made.
+   */
+  private async attribute(listing: ProcessedListing): Promise<AttributionBasis> {
+    if ([...this.boardIndex.values()].includes(listing.sourceId)) return 'provider-api';
+    const reference = boardReference(listing.applyUrl);
+    const sourceId = reference && this.boardIndex.get(`${reference.provider}:${reference.token}`);
+    if (!reference || !sourceId) return 'unattributed';
+    if (!this.boardActiveIds.has(sourceId)) {
+      this.boardActiveIds.set(sourceId, this.store.getCheckpoint(sourceId)
+        .then((checkpoint) => new Set(checkpoint?.activeExternalIds ?? []))
+        .catch(() => new Set<string>()));
     }
+    return (await this.boardActiveIds.get(sourceId)!).has(reference.postingId) ? 'reviewed-board' : 'unattributed';
+  }
+
+  private async resolveListings(listings: ProcessedListing[], report: PollReport) {
+    const resolved = new Map<string, Internship | undefined>();
+    const validatedAt = new Map<string, string>();
+    const alertEligible = new Set<string>();
+    // Slots keep the snapshot order stable so duplicate merging, alert order, and
+    // reported failures do not depend on which worker finished first.
+    const accepted = new Array<ProcessedListing | undefined>(listings.length);
+    const failures = new Array<string | undefined>(listings.length);
+    await forEachBounded(listings, async (sourceListing, slot) => {
+      const canonicalUrl = canonicalApplicationUrl(sourceListing.applyUrl);
+      const listing = {
+        ...sourceListing,
+        externalId: externalId(sourceListing),
+        applyUrl: canonicalUrl,
+        technical: sourceListing.technical ?? true,
+      };
+      const id = listing.externalId;
+      let existing: Internship | undefined;
+      let validatingLink = false;
+      try {
+        const normalizedUrl = normalizeUrl(listing.applyUrl);
+        existing = await this.store.findByUrl(normalizedUrl);
+        for (const candidate of fingerprintCandidates(listing.company, listing.title, listing.location, listing.season)) {
+          if (existing) break;
+          existing = await this.store.findByFingerprint(candidate);
+        }
+        const attribution = await this.attribute(listing);
+        let reachability: Reachability = 'implied';
+        let described: boolean | undefined;
+        // Attribution already proves the destination, and shelved roles never
+        // surface, so neither is worth an employer request.
+        const needsValidation = Boolean(this.validateApplicationUrl && listing.technical !== false
+          && attribution === 'unattributed'
+          && existing?.invalidApplicationUrl !== normalizedUrl
+          && (!existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
+        validatingLink = needsValidation;
+        if (needsValidation) {
+          const validation = await this.validateApplicationUrl!(listing.applyUrl);
+          if (typeof validation === 'string') reachability = 'live';
+          else {
+            const confidence = assessApplicationPageForListing(listing.title, validation.evidence);
+            reachability = reachabilityFromSignals(confidence.signals);
+            described = confidence.recommendation === 'alert-eligible';
+          }
+        }
+        validatingLink = false;
+        const verification = verifyApplication({ attribution, reachability, ...(described === undefined ? {} : { described }) });
+        if (attribution !== 'unattributed' || (needsValidation && verification.alertEligible)) {
+          validatedAt.set(id, this.now().toISOString());
+        }
+        if (verification.alertEligible) alertEligible.add(id);
+        resolved.set(id, existing);
+        accepted[slot] = listing;
+      } catch (error) {
+        // Only a destination proven gone hides a live role; a timeout or a
+        // refused read leaves it exactly as it was.
+        if (validatingLink && existing?.open && reachabilityFromFailure(error) === 'gone') await this.quarantine(existing);
+        failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    });
+    report.failures.push(...failures.filter((failure): failure is string => failure !== undefined));
+    return {
+      accepted: accepted.filter((listing): listing is ProcessedListing => listing !== undefined),
+      resolved,
+      validatedAt,
+      alertEligible,
+    };
+  }
+
+  async run(options: { seedOnly?: boolean } = {}): Promise<PollReport> {
+    const report: PollReport = { fetchedSources: 0, unchangedSources: [], baselineSources: [], processedListings: 0, newJobs: [], filteredJobs: [], failures: [] };
+    const health: SourceHealth[] = [];
+    for (const connector of this.connectors) {
+      const attemptedAt = this.now().toISOString();
+      const started = Date.now();
+      const previous = await this.store.getCheckpoint(connector.id);
+      const previousHealth = await this.store.getSourceHealth(connector.id);
+      let failureCategory: NonNullable<SourceHealth['diagnosticCategory']> = 'transport';
+      try {
+        const result = await fetchWithRetry(connector, previous);
+        report.fetchedSources += 1;
+        failureCategory = 'quality';
+        const qualityFailures = sourceQualityFailures(result, previous);
+        if (qualityFailures.length) throw new SourceFetchError(qualityFailures.join('; '), 'empty');
+        const batch = isSourceSnapshot(result) ? neutralBatch(result) : legacyBatch(result);
+        if (batch.unchanged) report.unchangedSources.push(connector.id);
+        const baseline = Boolean(!previous || previous.successfulFetches === 0 || options.seedOnly);
+        if (baseline) report.baselineSources.push(connector.id);
+        report.processedListings += batch.processed.counts.eligible;
+        const now = this.now().toISOString();
+        const priorOccurrences = await this.store.getSourceOccurrences(connector.id);
+        // An unchanged snapshot repeats postings the checkpoint already trusts, so
+        // only omission progress is reconciled; re-resolving every row would cost a
+        // full catalog rewrite on every poll for byte-identical source content.
+        const resolution = await this.resolveListings(batch.unchanged ? [] : batch.processed.listings, report);
+        const closureCandidates = priorOccurrences.filter((prior) => !resolution.resolved.has(prior.externalId)
+          && !batch.activeExternalIds.has(prior.externalId)
+          && prior.consecutiveOmissions >= 1);
+        await forEachBounded(closureCandidates, async (prior) => {
+          resolution.resolved.set(prior.externalId, await this.store.getJob(prior.jobId));
+        });
+        const plan = this.reconciler.reconcile({
+          sourceId: connector.id,
+          snapshotHash: batch.snapshotHash,
+          activeExternalIds: batch.activeExternalIds,
+          listings: resolution.accepted,
+          priorOccurrences,
+          resolvedJobs: resolution.resolved,
+          now,
+          baseline,
+          filter: this.filter,
+          validatedAt: resolution.validatedAt,
+          alertEligible: resolution.alertEligible,
+        });
+        failureCategory = 'persistence';
+        const notificationByJobId = new Map(plan.notifications.map((event) => [event.jobId, event]));
+        await forEachBounded(
+          plan.jobs.filter((job) => !notificationByJobId.has(job.jobId)),
+          (job) => this.store.putInternship(job),
+        );
+        // A notification-pending job and its outbox event become visible
+        // atomically. Successful units are reported even if a later persistence
+        // step fails; their deterministic event keeps the retry quiet.
+        const alertedJobIds = new Set<string>();
+        const notificationErrors = new Array<unknown>(plan.notifications.length);
+        const plannedJobs = new Map(plan.jobs.map((job) => [job.jobId, job]));
+        await forEachBounded(plan.notifications, async (event, index) => {
+          const job = plannedJobs.get(event.jobId);
+          if (!job) {
+            notificationErrors[index] = new Error(`Notification event ${event.eventId} has no catalog job`);
+            return;
+          }
+          try {
+            if (await this.store.putInternshipWithNotificationEvent(job, event)) alertedJobIds.add(event.jobId);
+          } catch (error) {
+            notificationErrors[index] = error;
+          }
+        });
+        for (const job of plan.newJobs) {
+          if (alertedJobIds.has(job.jobId)) report.newJobs.push(job);
+        }
+        const notificationError = notificationErrors.find((error) => error !== undefined);
+        if (notificationError) throw notificationError;
+        await forEachBounded(plan.occurrences, (occurrence) => this.store.putSourceOccurrence(occurrence));
+        const successHealth: SourceHealth = {
+          sourceId: connector.id,
+          provider: providerFor(connector.id),
+          lastAttemptAt: attemptedAt,
+          lastSuccessAt: now,
+          outcome: batch.unchanged ? 'unchanged' : 'changed',
+          durationMs: Date.now() - started,
+          snapshotHash: batch.snapshotHash,
+          counts: batch.processed.counts,
+          consecutiveFailures: 0,
+        };
+        await this.store.putSourceHealth(successHealth);
+        health.push(successHealth);
+        await this.store.putCheckpoint({
+          ...result.checkpoint,
+          contentHash: batch.snapshotHash,
+          activeExternalIds: [...batch.activeExternalIds],
+        });
+        for (const job of plan.newJobs) {
+          if (!alertedJobIds.has(job.jobId)) {
+            console.log(JSON.stringify({ event: 'new_job_alert_suppressed', sourceId: connector.id, jobId: job.jobId }));
+          }
+        }
+        report.filteredJobs.push(...plan.filteredJobs);
+        emitSuccessMetric(connector.id, providerFor(connector.id), batch.unchanged ? 'unchanged' : 'changed', batch.processed.counts, Date.now() - started);
+      } catch (error) {
+        const category = error instanceof SourceFetchError ? error.category : failureCategory;
+        const failureHealth: SourceHealth = {
+          sourceId: connector.id,
+          provider: providerFor(connector.id),
+          lastAttemptAt: attemptedAt,
+          ...(previousHealth?.lastSuccessAt ? { lastSuccessAt: previousHealth.lastSuccessAt } : {}),
+          outcome: 'failed',
+          durationMs: Date.now() - started,
+          consecutiveFailures: (previousHealth?.consecutiveFailures ?? 0) + 1,
+          diagnosticCategory: category,
+        };
+        health.push(failureHealth);
+        try { await this.store.putSourceHealth(failureHealth); }
+        catch { /* The original source/persistence failure remains primary. */ }
+        report.failures.push(error instanceof Error ? error.message : String(error));
+        emitFailureMetric(connector.id, providerFor(connector.id), category, Date.now() - started);
+      }
+    }
+    emitFreshnessMetric(health, this.now());
     await this.validateUnverifiedOpenJobs(report);
     return report;
+  }
+}
+
+/** @deprecated Compatibility facade; new code should construct `IngestionRunner`. */
+export class Poller extends IngestionRunner {
+  poll(options: { seedOnly?: boolean } = {}) {
+    return this.run(options);
   }
 }

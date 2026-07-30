@@ -18,7 +18,7 @@ export interface SourceQualityPolicy {
 
 export interface SourceQualityInput {
   policy: SourceQualityPolicy;
-  result: Pick<SourceFetchResult, 'sourceId' | 'listings' | 'notModified' | 'rejectedApplicationUrls'>;
+  result: Pick<SourceFetchResult, 'sourceId' | 'listings' | 'notModified' | 'rejectedApplicationUrls' | 'rawRowCount'>;
   previous?: SourceCheckpoint;
 }
 
@@ -122,7 +122,7 @@ function reportFor(input: SourceQualityInput): SourceQualityRowReport {
     rejectedUrls.push({ row: listing.row, url: listing.applyUrl, reason: failure.reason });
     if (!failure.roleLevel) policyFailures.push(`${policy.id}: row ${listing.row}: ${failure.reason}`);
   }
-  if (!result.notModified && !policy.dormant && (previous?.successfulFetches ?? 0) > 0 && (previous?.lastRowCount ?? 0) > 0 && result.listings.length === 0) {
+  if (!result.notModified && !policy.dormant && (previous?.successfulFetches ?? 0) > 0 && (previous?.lastRowCount ?? 0) > 0 && (result.rawRowCount ?? result.listings.length) === 0) {
     policyFailures.push(`${policy.id}: suspicious zero-row result after ${previous?.lastRowCount} rows; investigate parser/source drift`);
   }
   if (policy.sourceClass === 'curated' && result.listings.length > 0) {
@@ -174,7 +174,9 @@ export const sourceQualityPolicies: SourceQualityPolicy[] = [
   { id: 'lever-palantir', sourceClass: 'lever', leverSite: 'palantir' },
   { id: 'lever-plusai', sourceClass: 'lever', leverSite: 'plus-2' },
   { id: 'lever-hermeus', sourceClass: 'lever', leverSite: 'hermeus' },
-  { id: 'lever-xsolla', sourceClass: 'lever', leverSite: 'xsolla' }
+  { id: 'lever-xsolla', sourceClass: 'lever', leverSite: 'xsolla' },
+  { id: 'lever-acds', sourceClass: 'lever', leverSite: 'acds' },
+  { id: 'lever-shyftlabs', sourceClass: 'lever', leverSite: 'shyftlabs' }
 ];
 
 export function qualityPolicyFor(sourceId: string): SourceQualityPolicy {
@@ -191,7 +193,7 @@ export function sourceQualityFailures(result: SourceFetchResult, previous: Sourc
   // poller.  Applying the catalog-wide URL policy to those inputs here would
   // discard otherwise valid rows when a single listing is malformed.
   if (!configuredPolicy) {
-    return !result.notModified && (previous?.successfulFetches ?? 0) > 0 && (previous?.lastRowCount ?? 0) > 0 && result.listings.length === 0
+    return !result.notModified && (previous?.successfulFetches ?? 0) > 0 && (previous?.lastRowCount ?? 0) > 0 && (result.rawRowCount ?? result.listings.length) === 0
       ? [`${result.sourceId}: suspicious zero-row result after ${previous?.lastRowCount ?? 0} rows; investigate parser/source drift`]
       : [];
   }

@@ -1,0 +1,14 @@
+{
+  "site": "shyftlabs",
+  "displayName": "ShyftLabs",
+  "careersUrl": "https://shyftlabs.io/",
+  "firstPartyEvidenceUrl": "https://shyftlabs.io/",
+  "evidenceExcerpt": "<li class=\"mega-nav-item\"><a href=\"https://jobs.lever.co/shyftlabs\" class=\"menu-link\">careers</a></li>",
+  "observedJobUrl": "https://jobs.lever.co/shyftlabs/4f389ea7-9b98-4ed0-99c2-b25ea8cc2dcd/apply",
+  "initialHosts": [
+    "jobs.lever.co"
+  ],
+  "region": "global",
+  "state": "ownership-verified",
+  "verifiedAt": "2026-07-30T00:00:00Z"
+}

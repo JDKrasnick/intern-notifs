@@ -1,9 +1,20 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { BatchGetCommand, DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { isTechnicalJob } from './core/filters.js';
+import { BatchGetCommand, DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { isPastSeason } from './core/early-career.js';
 import { employerCategory } from './core/employers.js';
-import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, SourceCheckpoint, SourceHealth, UserDocument, UserPreferences } from './types.js';
+import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, NotificationEvent, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
 import type { ApplicationSession } from './application-automation.js';
+import type { ReviewedLeverSource } from './sources/lever-config.js';
+import type { LeverOwnershipEvidence } from './sources/lever-evidence.js';
+import type { LeverCandidateProbeResult } from './sources/lever-probe.js';
+
+export interface LeverAdmission {
+  source: ReviewedLeverSource;
+  evidence: LeverOwnershipEvidence;
+  probe: LeverCandidateProbeResult & { state: 'ok' };
+  acceptedAt: string;
+  acceptedBy: string;
+}
 
 function withEmployerCategory(job: Internship): Internship {
   return { ...structuredClone(job), employerCategory: job.employerCategory ?? employerCategory(job.company) };
@@ -23,12 +34,18 @@ export interface InternshipStore {
   findByUrl(url: string): Promise<Internship | undefined>;
   findByFingerprint(fingerprint: string): Promise<Internship | undefined>;
   putInternship(job: Internship): Promise<void>;
+  getJob(jobId: string): Promise<Internship | undefined>;
+  getSourceOccurrences(sourceId: string): Promise<SourceOccurrenceState[]>;
+  putSourceOccurrence(occurrence: SourceOccurrenceState): Promise<void>;
+  /** Atomically exposes a notification-pending job and records its deterministic outbox event. */
+  putInternshipWithNotificationEvent(job: Internship, event: NotificationEvent): Promise<boolean>;
   pendingSms(): Promise<Internship[]>;
   pendingDigest(): Promise<Internship[]>;
   markSmsSent(jobIds: string, sentAt: string): Promise<void>;
   markDigested(jobIds: string[], sentAt: string): Promise<void>;
-  getJob?(jobId: string): Promise<Internship | undefined>;
   listOpen?(cursor?: string, limit?: number, status?: 'open' | 'closed'): Promise<{ jobs: Internship[]; cursor?: string }>;
+  listLeverAdmissions?(): Promise<LeverAdmission[]>;
+  putLeverAdmission?(admission: LeverAdmission): Promise<void>;
   /** Open technical roles discovered strictly after `after` and no later than `before`. */
   listOpenSince(after: string, before: string): Promise<Internship[]>;
 }
@@ -36,7 +53,10 @@ export interface InternshipStore {
 export class MemoryInternshipStore implements InternshipStore {
   readonly jobs = new Map<string, Internship>();
   readonly checkpoints = new Map<string, SourceCheckpoint>();
+  readonly occurrences = new Map<string, SourceOccurrenceState>();
+  readonly notificationEvents = new Map<string, NotificationEvent>();
   readonly sourceHealth = new Map<string, SourceHealth>();
+  readonly leverAdmissions = new Map<string, LeverAdmission>();
   async getCheckpoint(sourceId: string) { return this.checkpoints.get(sourceId); }
   async putCheckpoint(checkpoint: SourceCheckpoint) { this.checkpoints.set(checkpoint.sourceId, checkpoint); }
   async getSourceHealth(sourceId: string) { return this.sourceHealth.get(sourceId); }
@@ -45,21 +65,43 @@ export class MemoryInternshipStore implements InternshipStore {
   async findByUrl(url: string) { return [...this.jobs.values()].find((job) => job.normalizedUrl === url); }
   async findByFingerprint(fingerprint: string) { return [...this.jobs.values()].find((job) => job.fingerprint === fingerprint); }
   async putInternship(job: Internship) { this.jobs.set(job.jobId, structuredClone(job)); }
+  async getSourceOccurrences(sourceId: string) { return [...this.occurrences.values()].filter((value) => value.sourceId === sourceId).map((value) => structuredClone(value)); }
+  async putSourceOccurrence(occurrence: SourceOccurrenceState) { this.occurrences.set(`${occurrence.sourceId}#${occurrence.externalId}`, structuredClone(occurrence)); }
+  async putInternshipWithNotificationEvent(job: Internship, event: NotificationEvent) {
+    if (this.notificationEvents.has(event.eventId)) return false;
+    this.jobs.set(job.jobId, structuredClone(job));
+    this.notificationEvents.set(event.eventId, structuredClone(event));
+    return true;
+  }
   async pendingSms() { return [...this.jobs.values()].filter((job) => job.notification.smsPending && job.open); }
   async pendingDigest() { return [...this.jobs.values()].filter((job) => job.notification.digestPending && job.open); }
   async markSmsSent(jobId: string, sentAt: string) { const job = this.jobs.get(jobId); if (job) { job.notification.smsPending = false; job.notification.smsSentAt = sentAt; } }
   async markDigested(jobIds: string[], sentAt: string) { for (const jobId of jobIds) { const job = this.jobs.get(jobId); if (job) { job.notification.digestPending = false; job.notification.digestedAt = sentAt; } } }
   async getJob(jobId: string) { const job = this.jobs.get(jobId); return job && withEmployerCategory(job); }
-  async listOpen(cursor?: string, limit = 25, status: 'open' | 'closed' = 'open') { const jobs = [...this.jobs.values()].filter((job) => job.open === (status === 'open') && isTechnicalJob(job)).sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt)); const offset = cursor ? Number(cursor) : 0; const page = jobs.slice(offset, offset + limit).map(withEmployerCategory); return { jobs: page, cursor: offset + page.length < jobs.length ? String(offset + page.length) : undefined }; }
+  async listOpen(cursor?: string, limit = 25, status: 'open' | 'closed' = 'open') { const jobs = [...this.jobs.values()].filter((job) => job.open === (status === 'open') && job.technical !== false && !isPastSeason(job.season)).sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt)); const offset = cursor ? Number(cursor) : 0; const page = jobs.slice(offset, offset + limit).map(withEmployerCategory); return { jobs: page, cursor: offset + page.length < jobs.length ? String(offset + page.length) : undefined }; }
   async listOpenSince(after: string, before: string) {
     return [...this.jobs.values()]
-      .filter((job) => job.open && isTechnicalJob(job) && job.firstSeenAt > after && job.firstSeenAt <= before)
+      .filter((job) => job.open && job.technical !== false && !isPastSeason(job.season) && job.firstSeenAt > after && job.firstSeenAt <= before)
       .sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt))
       .map(withEmployerCategory);
+  }
+  async listLeverAdmissions() { return [...this.leverAdmissions.values()].map((value) => structuredClone(value)); }
+  async putLeverAdmission(admission: LeverAdmission) {
+    if (this.leverAdmissions.has(admission.source.site)) throw new Error(`Lever site ${admission.source.site} is already admitted`);
+    this.leverAdmissions.set(admission.source.site, structuredClone(admission));
   }
 }
 
 type JobItem = { pk: string; sk: 'META'; urlPk: string; fingerprintPk: string; smsPk?: string; digestPk?: string; openPk?: string; openSk?: string; closedPk?: string; closedSk?: string; job: Internship };
+
+function internshipItem(job: Internship): JobItem {
+  const item: JobItem = { pk: `JOB#${job.jobId}`, sk: 'META', urlPk: `URL#${job.normalizedUrl}`, fingerprintPk: `FP#${job.fingerprint}`, job };
+  if (job.notification.smsPending) item.smsPk = 'PENDING#SMS';
+  if (job.notification.digestPending) item.digestPk = 'PENDING#DIGEST';
+  if (job.open && job.technical !== false) { item.openPk = 'OPEN'; item.openSk = `${job.firstSeenAt}#${job.jobId}`; }
+  if (!job.open && job.technical !== false) { item.closedPk = 'CLOSED'; item.closedSk = `${job.lastSeenAt}#${job.jobId}`; }
+  return item;
+}
 
 export class DynamoInternshipStore implements InternshipStore {
   private readonly client: DynamoDBDocumentClient;
@@ -79,9 +121,48 @@ export class DynamoInternshipStore implements InternshipStore {
   async putCheckpoint(checkpoint: SourceCheckpoint): Promise<void> {
     await this.client.send(new PutCommand({ TableName: this.tableName, Item: { pk: `SOURCE#${checkpoint.sourceId}`, sk: 'CHECKPOINT', checkpoint } }));
   }
+  async getSourceOccurrences(sourceId: string): Promise<SourceOccurrenceState[]> {
+    return (await this.queryAll({
+      TableName: this.tableName,
+      KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
+      ExpressionAttributeValues: { ':pk': `SOURCE#${sourceId}`, ':prefix': 'OCCURRENCE#' },
+    })).map((item) => item.occurrence as SourceOccurrenceState);
+  }
+  async putSourceOccurrence(occurrence: SourceOccurrenceState): Promise<void> {
+    await this.client.send(new PutCommand({
+      TableName: this.tableName,
+      Item: { pk: `SOURCE#${occurrence.sourceId}`, sk: `OCCURRENCE#${occurrence.externalId}`, occurrence },
+    }));
+  }
   async getSourceHealth(sourceId: string): Promise<SourceHealth | undefined> {
     const result = await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: `SOURCE#${sourceId}`, sk: 'HEALTH' } }));
     return result.Item?.health as SourceHealth | undefined;
+  }
+  async putInternshipWithNotificationEvent(job: Internship, event: NotificationEvent): Promise<boolean> {
+    try {
+      await this.client.send(new TransactWriteCommand({
+        TransactItems: [
+          { Put: { TableName: this.tableName, Item: internshipItem(job) } },
+          {
+            Put: {
+              TableName: this.tableName,
+              Item: { pk: `OUTBOX#${event.eventId}`, sk: 'EVENT', event },
+              ConditionExpression: 'attribute_not_exists(pk)',
+            },
+          },
+        ],
+      }));
+      return true;
+    } catch (error) {
+      if ((error as { name?: string }).name !== 'TransactionCanceledException') throw error;
+      const existing = await this.client.send(new GetCommand({
+        TableName: this.tableName,
+        Key: { pk: `OUTBOX#${event.eventId}`, sk: 'EVENT' },
+        ConsistentRead: true,
+      }));
+      if (existing.Item) return false;
+      throw error;
+    }
   }
   async getSourceHealthMany(sourceIds: string[]): Promise<SourceHealth[]> {
     const health: SourceHealth[] = [];
@@ -105,12 +186,7 @@ export class DynamoInternshipStore implements InternshipStore {
   findByUrl(url: string) { return this.find('urlIndex', 'urlPk', `URL#${url}`); }
   findByFingerprint(fingerprint: string) { return this.find('fingerprintIndex', 'fingerprintPk', `FP#${fingerprint}`); }
   async putInternship(job: Internship): Promise<void> {
-    const item: JobItem = { pk: `JOB#${job.jobId}`, sk: 'META', urlPk: `URL#${job.normalizedUrl}`, fingerprintPk: `FP#${job.fingerprint}`, job };
-    if (job.notification.smsPending) item.smsPk = 'PENDING#SMS';
-    if (job.notification.digestPending) item.digestPk = 'PENDING#DIGEST';
-    if (job.open && isTechnicalJob(job)) { item.openPk = 'OPEN'; item.openSk = `${job.firstSeenAt}#${job.jobId}`; }
-    if (!job.open && isTechnicalJob(job)) { item.closedPk = 'CLOSED'; item.closedSk = `${job.lastSeenAt}#${job.jobId}`; }
-    await this.client.send(new PutCommand({ TableName: this.tableName, Item: item }));
+    await this.client.send(new PutCommand({ TableName: this.tableName, Item: internshipItem(job) }));
   }
   private async pending(index: 'pendingSmsIndex' | 'pendingDigestIndex', attribute: 'smsPk' | 'digestPk', value: string): Promise<Internship[]> {
     return (await this.queryAll({ TableName: this.tableName, IndexName: index, KeyConditionExpression: '#key = :value', ExpressionAttributeNames: { '#key': attribute }, ExpressionAttributeValues: { ':value': value } })).map((item) => item.job as Internship);
@@ -122,8 +198,20 @@ export class DynamoInternshipStore implements InternshipStore {
   async getJob(jobId: string): Promise<Internship | undefined> { const result = await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: `JOB#${jobId}`, sk: 'META' } })); return result.Item?.job ? withEmployerCategory(result.Item.job as Internship) : undefined; }
   async listOpen(cursor?: string, limit = 25, status: 'open' | 'closed' = 'open'): Promise<{ jobs: Internship[]; cursor?: string }> {
     const open = status === 'open';
-    const result = await this.client.send(new QueryCommand({ TableName: this.tableName, IndexName: open ? 'openJobsIndex' : 'closedJobsIndex', KeyConditionExpression: open ? 'openPk = :status' : 'closedPk = :status', ExpressionAttributeValues: { ':status': open ? 'OPEN' : 'CLOSED' }, ScanIndexForward: false, Limit: limit, ...(cursor ? { ExclusiveStartKey: JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) } : {}) }));
-    return { jobs: (result.Items ?? []).map((item) => withEmployerCategory(item.job as Internship)), ...(result.LastEvaluatedKey ? { cursor: Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString('base64url') } : {}) };
+    // Past cycles are hidden after the index read, so a page can come back
+    // short — which the feed already tolerates. Only an entirely empty page is
+    // re-read, because a client reads that as the end of the feed.
+    const jobs: Internship[] = [];
+    let startKey: Record<string, unknown> | undefined = cursor ? JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) : undefined;
+    do {
+      const result = await this.client.send(new QueryCommand({ TableName: this.tableName, IndexName: open ? 'openJobsIndex' : 'closedJobsIndex', KeyConditionExpression: open ? 'openPk = :status' : 'closedPk = :status', ExpressionAttributeValues: { ':status': open ? 'OPEN' : 'CLOSED' }, ScanIndexForward: false, Limit: limit, ...(startKey ? { ExclusiveStartKey: startKey } : {}) }));
+      for (const item of result.Items ?? []) {
+        const job = item.job as Internship;
+        if (!isPastSeason(job.season)) jobs.push(withEmployerCategory(job));
+      }
+      startKey = result.LastEvaluatedKey;
+    } while (startKey && jobs.length === 0);
+    return { jobs, ...(startKey ? { cursor: Buffer.from(JSON.stringify(startKey)).toString('base64url') } : {}) };
   }
   async listOpenSince(after: string, before: string): Promise<Internship[]> {
     const result = await this.queryAll({
@@ -139,7 +227,31 @@ export class DynamoInternshipStore implements InternshipStore {
       },
       ScanIndexForward: false,
     });
-    return result.map((item) => withEmployerCategory(item.job as Internship));
+    return result
+      .map((item) => item.job as Internship)
+      .filter((job) => !isPastSeason(job.season))
+      .map(withEmployerCategory);
+  }
+  async listLeverAdmissions(): Promise<LeverAdmission[]> {
+    return (await this.queryAll({
+      TableName: this.tableName,
+      KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
+      ExpressionAttributeValues: { ':pk': 'REGISTRY#LEVER', ':prefix': 'SOURCE#' },
+    })).map((item) => item.admission as LeverAdmission);
+  }
+  async putLeverAdmission(admission: LeverAdmission): Promise<void> {
+    try {
+      await this.client.send(new PutCommand({
+        TableName: this.tableName,
+        Item: { pk: 'REGISTRY#LEVER', sk: `SOURCE#${admission.source.site}`, admission },
+        ConditionExpression: 'attribute_not_exists(pk)',
+      }));
+    } catch (error) {
+      if ((error as { name?: string }).name === 'ConditionalCheckFailedException') {
+        throw new Error(`Lever site ${admission.source.site} is already admitted`);
+      }
+      throw error;
+    }
   }
 }
 

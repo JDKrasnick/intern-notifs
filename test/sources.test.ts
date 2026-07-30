@@ -10,8 +10,8 @@ describe('GitHub source adapters', () => {
   it('ships each requested feed and document', () => {
     expect(defaultSources.map((source) => source.id)).toEqual(['vanshb03-summer-2027', 'simplify-summer-2026', 'zapply-2027', 'speedyapply-2027-swe', 'speedyapply-2027-ai', 'northwestern-fintech-2027-quant', 'canadian-tech-2027']);
   });
-  it('registers reviewed Lever boards but keeps queued Greenhouse work outside the general poll registry', () => {
-    expect(productionSources.map((source) => source.id)).toEqual(expect.arrayContaining(['lever-palantir', 'lever-plusai', 'lever-hermeus', 'lever-xsolla']));
+  it('keeps queued Greenhouse and Lever work outside the general poll registry', () => {
+    expect(productionSources.filter((source) => source.id.startsWith('lever-'))).toEqual([]);
     expect(productionSources.filter((source) => source.id.startsWith('greenhouse-'))).toEqual([]);
   });
   it('uses document-specific ETags and returns a no-change result', async () => {
@@ -19,6 +19,26 @@ describe('GitHub source adapters', () => {
     const adapter = new GitHubMarkdownAdapter({ id: 'fixture', owner: 'owner', repo: 'repo', documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }], fetchImpl: async (_url, init) => { calls.push(init ?? {}); return new Response(null, { status: 304 }); } });
     const result = await adapter.fetch({ sourceId: 'fixture', successfulFetches: 1, documentEtags: { 'README.md': '"abc"' } });
     expect(result.notModified).toBe(true); expect(calls[0].headers).toEqual({ 'If-None-Match': '"abc"' });
+  });
+  it('keeps a snapshot complete when two rows share one normalized application URL', async () => {
+    const adapter = new GitHubMarkdownAdapter({
+      id: 'fixture', owner: 'owner', repo: 'repo', documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }],
+      fetchImpl: async () => new Response('| Company | Position | Location | Posting |\n| --- | --- | --- | --- |\n'
+        + '| Acme | Software Engineering Intern | Remote | [Apply](https://careers.example.test/acme?utm_source=one) |\n'
+        + '| Acme | Data Science Intern | Remote | [Apply](https://careers.example.test/acme?utm_source=two) |'),
+    });
+    const result = await adapter.fetch();
+    expect(result.postings.map((posting) => posting.title)).toEqual(['Software Engineering Intern']);
+    expect(result.rawCount).toBe(2);
+  });
+  it('lets a reviewed list carry the lifecycle signal for a row whose title omits it', async () => {
+    const adapter = new GitHubMarkdownAdapter({
+      id: 'fixture', owner: 'owner', repo: 'repo', documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }],
+      fetchImpl: async () => new Response('| Company | Position | Location | Posting |\n| --- | --- | --- | --- |\n'
+        + '| Acme | Software Engineer, New Grad | Remote | [Apply](https://careers.example.test/acme) |'),
+    });
+    const result = await adapter.fetch();
+    expect(result.listings.map((listing) => listing.title)).toEqual(['Software Engineer, New Grad']);
   });
   it('assigns the employer category while polling a GitHub Markdown source', async () => {
     const adapter = new GitHubMarkdownAdapter({

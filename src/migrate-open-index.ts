@@ -1,5 +1,6 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { isTechnicalJob } from './core/filters.js';
 import { DynamoInternshipStore } from './store.js';
 import type { Internship } from './types.js';
 
@@ -13,7 +14,12 @@ async function main() {
     const page = await client.send(new ScanCommand({ TableName: tableName, ...(startKey ? { ExclusiveStartKey: startKey } : {}) }));
     for (const item of page.Items ?? []) {
       const job = item.job as Internship | undefined;
-      if (item.pk?.startsWith('JOB#') && job?.open) { await store.putInternship(job); migrated += 1; }
+      // Indexes read the persisted `technical` flag, so records written before it
+      // existed are classified once here instead of silently becoming visible.
+      if (item.pk?.startsWith('JOB#') && job?.open) {
+        await store.putInternship({ ...job, technical: job.technical ?? isTechnicalJob(job) });
+        migrated += 1;
+      }
     }
     startKey = page.LastEvaluatedKey;
   } while (startKey);
