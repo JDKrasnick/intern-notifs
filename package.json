@@ -32,10 +32,11 @@
     "cdk": "cdk --app 'npx tsx infra/app.ts'"
   },
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.883.0",
     "@aws-sdk/client-cognito-identity-provider": "^3.883.0",
-    "@aws-sdk/client-sesv2": "^3.883.0",
+    "@aws-sdk/client-dynamodb": "^3.883.0",
+    "@aws-sdk/client-cloudwatch": "^3.1090.0",
     "@aws-sdk/client-s3": "^3.883.0",
+    "@aws-sdk/client-sesv2": "^3.883.0",
     "@aws-sdk/client-sqs": "3.1090.0",
     "@aws-sdk/client-ssm": "^3.883.0",
     "@aws-sdk/lib-dynamodb": "^3.883.0",

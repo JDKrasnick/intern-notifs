@@ -342,6 +342,8 @@ export class GreenhouseBoardAdapter implements SourceAdapter, SourceConnector {
         lastRowCount: 0,
         lastRawCount: jobs.length,
         activeExternalIds: postings.map((posting) => posting.externalId),
+        lastRawRowCount: jobs.length,
+        lastWithheldRowCount: rejectedApplicationUrls.length,
       },
     };
     const processed = processSnapshot(neutral);

@@ -69,7 +69,7 @@ The deployment email and SSM runtime configuration are operational values; retri
 
 Deploy Greenhouse monitoring independently. The stack imports the retained
 tables from `InternNotifs` and owns only the Greenhouse scheduler, dispatcher,
-queues, worker, and alarms.
+queues, worker, alarms, and the source-health operations API.
 
 ```bash
 INTERNSHIPS_TABLE="$(aws cloudformation describe-stacks \
@@ -96,6 +96,19 @@ Review the diff before deploying. A Greenhouse-only diff must not replace or
 delete resources in `InternNotifs`. The architecture and operating limits are
 documented in
 [`greenhouse/architecture.md`](greenhouse/architecture.md).
+
+The stack also creates a retained operations secret and a rate-limited,
+server-to-server operations API. The private Sites dashboard stores that API
+key as `OPERATIONS_API_KEY`; it is never exposed to the browser. Each worker
+attempt records raw, eligible, and withheld row counts plus a redacted
+diagnostic and the 25 most recent runs. The dashboard lists every official
+source, including sources with no current jobs.
+
+Quarantine is deterministic and conservative: identity/schema failures and
+permanent 401/403/404 responses quarantine immediately; broad link, quality, or
+empty-response failures quarantine after two consecutive attempts. A clean
+attempt restores the source. Zero eligible internships, unrelated jobs, and
+single transient transport failures do not quarantine a source.
 
 ### Lever monitoring deployment
 

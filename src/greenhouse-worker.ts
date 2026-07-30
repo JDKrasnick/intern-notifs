@@ -6,6 +6,7 @@ import { GreenhouseBoardAdapter } from './sources/greenhouse.js';
 import { greenhouseQualityPolicy, verifySourceQuality } from './sources/quality.js';
 import { DynamoInternshipStore, DynamoUserStore, type InternshipStore, type UserStore } from './store.js';
 import type { GreenhouseWorkMessage } from './greenhouse-dispatch.js';
+import { failedSourceHealth, successfulSourceHealth } from './source-health.js';
 
 const SHADOW_CHECKPOINT_PREFIX = 'shadow-';
 const SHADOW_LINK_CONCURRENCY = 4;
@@ -35,6 +36,8 @@ export interface GreenhouseBoardResult {
   mode: 'shadow' | 'published';
   notModified: boolean;
   listings: number;
+  rawRows?: number;
+  withheldRows?: number;
   notifications: { sent: number; skipped: number; failed: number };
 }
 
@@ -101,12 +104,19 @@ export async function runGreenhouseBoard(
       mode,
       notModified: result.notModified,
       listings: result.notModified ? previous?.lastRowCount ?? 0 : result.listings.length,
+      rawRows: result.checkpoint.lastRawRowCount,
+      withheldRows: result.checkpoint.lastWithheldRowCount,
       notifications: { sent: 0, skipped: 0, failed: 0 },
     };
   }
 
   const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate).poll();
-  if (poll.failures.length) throw new Error(poll.failures.join('; '));
+  const sourceFailures = poll.failures.filter((failure) => failure.startsWith(`${source.id}:`));
+  const widespreadLinkFailure = poll.processedListings > 0 && sourceFailures.length / poll.processedListings > SHADOW_LINK_FAILURE_THRESHOLD;
+  if (sourceFailures.length && widespreadLinkFailure) {
+    throw new Error(`${sourceFailures.length}/${poll.processedListings} eligible Greenhouse application links failed validation`);
+  }
+  const checkpoint = await dependencies.store.getCheckpoint(source.id);
   const notifications = dependencies.userStore
     ? await sendNewJobNotifications(
       poll.newJobs.filter((job) => job.technical !== false),
@@ -119,6 +129,8 @@ export async function runGreenhouseBoard(
     mode,
     notModified: poll.unchangedSources.includes(adapter.id),
     listings: poll.processedListings,
+    rawRows: checkpoint?.lastRawRowCount,
+    withheldRows: (checkpoint?.lastWithheldRowCount ?? 0) + sourceFailures.length,
     notifications,
   };
 }
@@ -131,14 +143,41 @@ export async function processGreenhouseQueue(
   const blockedGroups = new Set<string>();
   for (const record of event.Records) {
     const groupId = record.attributes?.MessageGroupId;
+    const startedAt = new Date().toISOString();
     if (groupId && blockedGroups.has(groupId)) {
       batchItemFailures.push({ itemIdentifier: record.messageId });
       continue;
     }
     try {
-      const result = await runGreenhouseBoard(parseWorkMessage(record.body), dependencies);
+      const message = parseWorkMessage(record.body);
+      const previousHealth = await dependencies.store.getSourceHealth(message.sourceId);
+      const result = await runGreenhouseBoard(message, dependencies);
+      const completedAt = new Date().toISOString();
+      await dependencies.store.putSourceHealth(successfulSourceHealth({
+        sourceId: result.sourceId,
+        previous: previousHealth,
+        startedAt,
+        completedAt,
+        rawRows: result.rawRows,
+        eligibleRows: result.listings,
+        withheldRows: result.withheldRows,
+      }));
       console.log(JSON.stringify({ command: 'greenhouse-poll', ...result }));
     } catch (error) {
+      try {
+        const message = parseWorkMessage(record.body);
+        const previous = await dependencies.store.getSourceHealth(message.sourceId);
+        const completedAt = new Date().toISOString();
+        await dependencies.store.putSourceHealth(failedSourceHealth({
+          sourceId: message.sourceId,
+          previous,
+          startedAt,
+          completedAt,
+          error,
+        }));
+      } catch (healthError) {
+        console.error(JSON.stringify({ command: 'greenhouse-health', messageId: record.messageId, error: healthError instanceof Error ? healthError.message : String(healthError) }));
+      }
       console.error(JSON.stringify({
         command: 'greenhouse-poll',
         messageId: record.messageId,
