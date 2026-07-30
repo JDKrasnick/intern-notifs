@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { hasLifecycleTitleSignal, inferSeason } from '../src/core/early-career.js';
 import { occurrenceStatus } from '../src/ingestion/monitoring.js';
 import { backfilledExternalId } from '../src/migrate-source-occurrences.js';
+import { publishedLeverSources, reviewedLeverSources, type ReviewedLeverSource } from '../src/sources/lever-config.js';
 import { GitHubMarkdownAdapter } from '../src/sources/github.js';
 import { IngestionRunner } from '../src/poll.js';
 import { MemoryInternshipStore } from '../src/store.js';
@@ -111,5 +112,28 @@ describe('occurrence status', () => {
     });
     expect(status.confirmedSnapshotHash).toBeUndefined();
     expect(status.confirmedAt).toBeUndefined();
+  });
+});
+
+describe('reviewed Lever registry', () => {
+  it('records employer-controlled ownership evidence for every board', () => {
+    for (const source of reviewedLeverSources) {
+      expect(new URL(source.careersUrl).protocol, source.id).toBe('https:');
+      // The evidence page must be the employer's own, never Lever's or an aggregator's.
+      expect(new URL(source.careersUrl).hostname, source.id).not.toMatch(/lever\.co|simplify\.jobs/);
+      expect(Number.isNaN(Date.parse(source.admittedAt)), source.id).toBe(false);
+      expect(source.id, source.id).toBe(`lever-${source.id.replace(/^lever-/, '')}`);
+    }
+  });
+
+  it('polls published boards only, so promotion is one field', () => {
+    const shadow: ReviewedLeverSource = {
+      id: 'lever-candidate', company: 'Candidate', site: 'candidate',
+      careersUrl: 'https://candidate.example/careers', admittedAt: '2026-07-29',
+      status: 'shadow', region: 'global',
+    };
+    expect(publishedLeverSources([...reviewedLeverSources, shadow]).map((source) => source.id))
+      .toEqual(reviewedLeverSources.filter((source) => source.status === 'published').map((source) => source.id));
+    expect(publishedLeverSources([{ ...shadow, status: 'published' }])).toHaveLength(1);
   });
 });

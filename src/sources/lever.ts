@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { isTechnicalJob } from '../core/filters.js';
 import { parseCompensation } from '../core/normalize.js';
 import { processSnapshot } from '../ingestion/processor.js';
+import { publishedLeverSources } from './lever-config.js';
 import { SourceFetchError } from './source-error.js';
 import type { JobRequirements, RawListing, SourceAdapter, SourceCheckpoint, SourceConnector, SourceFetchResult, SourceSnapshot, SourcedPosting } from '../types.js';
 
@@ -246,13 +247,14 @@ export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
   }
 }
 
-export const approvedLeverSourceConfigs: LeverAdapterOptions[] = [
-  { id: 'lever-palantir', company: 'Palantir Technologies', site: 'palantir' },
-  { id: 'lever-plusai', company: 'PlusAI', site: 'plus-2' },
-  { id: 'lever-hermeus', company: 'Hermeus', site: 'hermeus' },
-  { id: 'lever-xsolla', company: 'Xsolla', site: 'xsolla' },
-];
+export const approvedLeverSourceConfigs: LeverAdapterOptions[] = publishedLeverSources()
+  .map(({ id, company, site }) => ({ id, company, site }));
 
+/**
+ * Only published boards poll. A shadow board is fetched and gated by the
+ * onboarding workflow, never by the catalog-wide poll, so promotion stays the
+ * single status change the onboarding plan describes.
+ */
 export const approvedLeverSources: SourceAdapter[] = approvedLeverSourceConfigs.map(
   (options) => new LeverPostingsAdapter(options),
 );
