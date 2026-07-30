@@ -57,6 +57,24 @@ Later passes may add harvesters — GitHub code search for `jobs.lever.co/`,
 careers-page crawling of the employer roster in `coverage/companies.json`,
 web archives — but the ledger above is enough to build and prove the workflow.
 
+The first real run of `npm run lever:ledger` (2026-07-30) found **32 unregistered
+sites across 52 eligible listings** out of 1,926 reviewed rows. `cirrus` and
+`tomtom` had dropped out entirely and now return 404 — the lists move, which is
+why the ledger is regenerated rather than transcribed.
+
+The first agent pass worked the top five and admitted two:
+
+| Site | State | Why |
+| --- | --- | --- |
+| `acds` | `ownership-verified` | apprenticely.org links the board; Apprenticely is the current name of the Arkansas Center for Data Sciences |
+| `shyftlabs` | `ownership-verified` | shyftlabs.io navigation links the board |
+| `geocomply-2` | `api-live-unattributed` | 11 postings, 5 eligible; no link on geocomply.com |
+| `getwingapp` | `api-live-unattributed` | 505 postings, correct branding; no link on wingassistant.com |
+| `reply` | `api-live-unattributed` | 39 postings; no link on reply.com |
+
+Three of five boards were live, healthy, and correctly refused. A pipeline that
+admitted on a 200 would have taken all five.
+
 ## Stage 1 — Assemble the ledger
 
 `scripts/discover-lever.ts` gains a mode that reads the current catalog and
@@ -163,10 +181,11 @@ discarded, its evidence URLs are kept, and the numbers come from the probe.
 ## Stage 4 — Shadow, then publish
 
 `ReviewedLeverSource` already carries `careersUrl`, `admittedAt`, `status`, and
-`region`, and `publishedLeverSources()` already keeps shadow boards out of the
-poll registry. What is missing is a runner that exercises shadow boards on a
-schedule the way the Greenhouse queue does. Until it exists, a shadow board is
-inert configuration.
+`region`. The dedicated Lever FIFO runner schedules every reviewed board:
+published boards write through the normal poller, while shadow boards use
+isolated `shadow-{sourceId}` checkpoints and never write jobs or notifications.
+Boards with eligible roles run every ten minutes; empty boards are deterministically
+staggered across six-hour checks.
 
 Shadow evaluation should observe, for at least one week:
 
@@ -202,14 +221,44 @@ is the key a re-verification pass reads.
 
 ## Delivery sequence
 
-1. **Ledger** — extend `discover-lever.ts` to emit candidates from catalog
-   evidence, with the 34 known sites as its first output.
-2. **Probe** — `probeLeverCandidate`, read-only, plus fixtures.
-3. **Agent pass** — work the ledger, emit evidence records, open the exception
-   queue.
-4. **Shadow runner** — schedule shadow boards and report on them without
-   publishing.
-5. **Re-verification** — nightly probe, 180-day agent recheck, demotion path.
+1. **Ledger** — `npm run lever:ledger` (`src/sources/lever-ledger.ts`,
+   `scripts/lever-ledger.ts`). Reads the reviewed Markdown sources and emits
+   `artifacts/lever-candidate-ledger.json`. Sites come out of observed
+   `jobs.lever.co` URLs only. **Built.**
+2. **Probe** — `npm run lever:probe -- <site>` (`src/sources/lever-probe.ts`).
+   Read-only, paginated, counts only, `attribution: 'unattributed'`. **Built.**
+3. **Agent pass** — `.claude/agents/lever-ownership-verifier.md` works one
+   candidate and writes `test/fixtures/lever/{site}/{evidence,probe}.json`.
+   `npm run lever:manifest` (`src/sources/lever-manifest.ts`) is the
+   deterministic arbiter: it validates the probe envelope and site, requires a
+   clean unattributed probe before admission, binds `admittedAt` to the
+   evidence's `verifiedAt`, and cross-checks the registry and quality policy.
+   `test/lever-ownership.test.ts` covers the gate. **Built.**
+4. **Shadow runner** — `src/lever-{dispatch,worker}.ts` and
+   `infra/lever-monitoring-stack.ts` schedule all reviewed boards through a FIFO
+   queue with per-board ordering, bounded retries and concurrency, isolated
+   shadow checkpoints, quiet published baselines, and queue/worker alarms.
+   **Built.**
+5. **Re-verification** — the 180-day `admittedAt` clock is enforced by the
+   manifest gate, and `npm run lever:reverify` refetches each verified board's
+   recorded evidence page. It reports `exact`, `link-only`, or `missing`:
+   `missing` means the employer stopped linking the board and the evidence is
+   gone; `link-only` means the recorded markup no longer matches the page, which
+   is usually an agent that paraphrased its own excerpt. **Built.** The nightly
+   cadence and the automatic demotion to shadow are **not built**; today the
+   command exits non-zero and a person acts.
 
-Steps 1–3 admit the backlog above. Step 4 is what makes admission safe at
-volume, and step 5 is what keeps it true.
+Steps 1–4 admit and observe the backlog safely at volume. Step 5 keeps ownership
+evidence current.
+
+### Commands
+
+| Command | Stage | Writes |
+| --- | --- | --- |
+| `npm run lever:ledger` | 1 | `artifacts/lever-candidate-ledger.json` |
+| `npm run lever:probe -- <site>` | 2 | stdout, optionally `--out <path>` |
+| `npm run lever:manifest` | 3, 5 | nothing; exits non-zero on violations |
+| `npm run lever:reverify` | 5 | nothing; network, exits non-zero on `missing` |
+| `npm run test:lever:live` | 5 | nothing; opt-in, network |
+
+None of them writes `src/sources/lever-config.ts`. Admission is a reviewed edit.

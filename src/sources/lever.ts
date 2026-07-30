@@ -154,8 +154,8 @@ function normalizedProjection(postings: LeverPosting[]): string {
 }
 
 type TransitionalLeverResult = SourceSnapshot & SourceFetchResult;
-const LEVER_PAGE_SIZE = 100;
-const LEVER_MAX_PAGES = 50;
+export const LEVER_PAGE_SIZE = 100;
+export const LEVER_MAX_PAGES = 50;
 
 export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
   readonly id: string;
@@ -250,11 +250,7 @@ export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
 export const approvedLeverSourceConfigs: LeverAdapterOptions[] = publishedLeverSources()
   .map(({ id, company, site }) => ({ id, company, site }));
 
-/**
- * Only published boards poll. A shadow board is fetched and gated by the
- * onboarding workflow, never by the catalog-wide poll, so promotion stays the
- * single status change the onboarding plan describes.
- */
+/** Compatibility export for local checks; production polling uses the Lever FIFO worker. */
 export const approvedLeverSources: SourceAdapter[] = approvedLeverSourceConfigs.map(
   (options) => new LeverPostingsAdapter(options),
 );

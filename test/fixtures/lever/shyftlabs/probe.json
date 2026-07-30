@@ -1,0 +1,28 @@
+{
+  "probedAt": "2026-07-30T04:06:09.120Z",
+  "attribution": "unattributed",
+  "results": [
+    {
+      "state": "ok",
+      "site": "shyftlabs",
+      "endpoint": "https://api.lever.co/v0/postings/shyftlabs?mode=json",
+      "region": "global",
+      "attribution": "unattributed",
+      "pagesRead": 1,
+      "rawPostings": 30,
+      "eligibleEarlyCareerRoles": 1,
+      "malformedRows": 0,
+      "urlContractViolations": 0,
+      "applicationHostSummary": {
+        "jobs.lever.co": 30
+      },
+      "etagPresent": true,
+      "eligibleRoleSamples": [
+        {
+          "postingId": "4f389ea7-9b98-4ed0-99c2-b25ea8cc2dcd",
+          "title": "AI Engineer Intern"
+        }
+      ]
+    }
+  ]
+}

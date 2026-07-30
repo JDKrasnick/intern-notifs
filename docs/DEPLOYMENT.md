@@ -14,7 +14,7 @@ InternNotifs is an Expo mobile app with a serverless AWS backend.
 | Personal data | Encrypted DynamoDB `UserData`; legacy `Applications` retained |
 | Résumés | Private, versioned, KMS-encrypted S3 objects with presigned uploads |
 | Ingestion and delivery | EventBridge Scheduler, FIFO SQS, bounded Lambda workers, Lambda notifier, Expo Push Service, SSM runtime config |
-| Infrastructure | AWS CDK in `infra/intern-notifs-stack.ts` and `infra/greenhouse-monitoring-stack.ts` |
+| Infrastructure | AWS CDK in `infra/intern-notifs-stack.ts` and provider monitoring stacks |
 | CI | GitHub Actions in `.github/workflows/ci.yml` |
 
 The catalog is public. Accounts, preferences, device tokens, profiles, documents, and application tracking are private to the Cognito subject.
@@ -25,6 +25,10 @@ checked every ten minutes; boards whose last successful snapshot had zero
 eligible roles are staggered across six-hour checks. See
 [`greenhouse/architecture.md`](greenhouse/architecture.md) for the complete
 shadow, promotion, retry, and alarm flow.
+
+Lever uses the same FIFO pattern in a separately deployable stack. Both shadow
+and published boards are scheduled; shadow checkpoints remain isolated and
+cannot publish jobs or notifications.
 
 ## Safe operational identifiers
 
@@ -92,6 +96,25 @@ Review the diff before deploying. A Greenhouse-only diff must not replace or
 delete resources in `InternNotifs`. The architecture and operating limits are
 documented in
 [`greenhouse/architecture.md`](greenhouse/architecture.md).
+
+### Lever monitoring deployment
+
+Reuse the table names resolved above, then deploy the independent Lever
+scheduler, dispatcher, queues, worker, and alarms:
+
+```bash
+npx cdk diff InternNotifsLever \
+  -c target=lever \
+  -c internshipsTableName="$INTERNSHIPS_TABLE" \
+  -c usersTableName="$USERS_TABLE"
+
+npx cdk deploy InternNotifsLever \
+  -c target=lever \
+  -c internshipsTableName="$INTERNSHIPS_TABLE" \
+  -c usersTableName="$USERS_TABLE"
+```
+
+A Lever-only diff must not replace or delete resources in `InternNotifs`.
 
 ## EAS environments
 

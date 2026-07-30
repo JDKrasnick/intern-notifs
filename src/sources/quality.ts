@@ -174,7 +174,9 @@ export const sourceQualityPolicies: SourceQualityPolicy[] = [
   { id: 'lever-palantir', sourceClass: 'lever', leverSite: 'palantir' },
   { id: 'lever-plusai', sourceClass: 'lever', leverSite: 'plus-2' },
   { id: 'lever-hermeus', sourceClass: 'lever', leverSite: 'hermeus' },
-  { id: 'lever-xsolla', sourceClass: 'lever', leverSite: 'xsolla' }
+  { id: 'lever-xsolla', sourceClass: 'lever', leverSite: 'xsolla' },
+  { id: 'lever-acds', sourceClass: 'lever', leverSite: 'acds' },
+  { id: 'lever-shyftlabs', sourceClass: 'lever', leverSite: 'shyftlabs' }
 ];
 
 export function qualityPolicyFor(sourceId: string): SourceQualityPolicy {

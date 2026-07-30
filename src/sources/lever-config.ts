@@ -35,6 +35,14 @@ export interface ReviewedLeverSource {
    * region is part of source identity rather than something inferred at runtime.
    */
   region: 'global';
+  /**
+   * How ownership was established. `agent-verified` boards ship a matching
+   * evidence record under `test/fixtures/lever/{site}/`, which
+   * `npm run lever:manifest` enforces. `legacy-review` boards were admitted by a
+   * person before that record existed; they remain subject to the re-verification
+   * clock, and re-verifying one converts it.
+   */
+  evidenceStatus: 'agent-verified' | 'legacy-review';
 }
 
 export const reviewedLeverSources: ReviewedLeverSource[] = [
@@ -46,6 +54,7 @@ export const reviewedLeverSources: ReviewedLeverSource[] = [
     admittedAt: '2026-07-19',
     status: 'published',
     region: 'global',
+    evidenceStatus: 'legacy-review',
   },
   {
     id: 'lever-plusai',
@@ -55,6 +64,7 @@ export const reviewedLeverSources: ReviewedLeverSource[] = [
     admittedAt: '2026-07-19',
     status: 'published',
     region: 'global',
+    evidenceStatus: 'legacy-review',
   },
   {
     id: 'lever-hermeus',
@@ -64,6 +74,7 @@ export const reviewedLeverSources: ReviewedLeverSource[] = [
     admittedAt: '2026-07-19',
     status: 'published',
     region: 'global',
+    evidenceStatus: 'legacy-review',
   },
   {
     id: 'lever-xsolla',
@@ -73,6 +84,27 @@ export const reviewedLeverSources: ReviewedLeverSource[] = [
     admittedAt: '2026-07-19',
     status: 'published',
     region: 'global',
+    evidenceStatus: 'legacy-review',
+  },
+  {
+    id: 'lever-acds',
+    company: 'Apprenticely',
+    site: 'acds',
+    careersUrl: 'https://apprenticely.org',
+    admittedAt: '2026-07-30T00:00:00Z',
+    status: 'shadow',
+    region: 'global',
+    evidenceStatus: 'agent-verified',
+  },
+  {
+    id: 'lever-shyftlabs',
+    company: 'ShyftLabs',
+    site: 'shyftlabs',
+    careersUrl: 'https://shyftlabs.io/',
+    admittedAt: '2026-07-30T00:00:00Z',
+    status: 'shadow',
+    region: 'global',
+    evidenceStatus: 'agent-verified',
   },
 ];
 

@@ -1,0 +1,36 @@
+{
+  "probedAt": "2026-07-30T04:06:16.414Z",
+  "attribution": "unattributed",
+  "results": [
+    {
+      "state": "ok",
+      "site": "getwingapp",
+      "endpoint": "https://api.lever.co/v0/postings/getwingapp?mode=json",
+      "region": "global",
+      "attribution": "unattributed",
+      "pagesRead": 6,
+      "rawPostings": 505,
+      "eligibleEarlyCareerRoles": 4,
+      "malformedRows": 0,
+      "urlContractViolations": 0,
+      "applicationHostSummary": {
+        "jobs.lever.co": 505
+      },
+      "etagPresent": true,
+      "eligibleRoleSamples": [
+        {
+          "postingId": "6280db51-b402-4c94-8b10-90875af8c0c3",
+          "title": "AI & Tech Internship Program (Software, Product, Ops, GTM)"
+        },
+        {
+          "postingId": "749ebeca-a4aa-4351-9634-edddfd485f1a",
+          "title": "AI & Tech Internship Program (Software, Product, Ops, GTM)"
+        },
+        {
+          "postingId": "7cca4ddf-6fbd-4789-bdbb-eb472eeaaf7c",
+          "title": "AI & Tech Internship Program (Software, Product, Ops, GTM)"
+        }
+      ]
+    }
+  ]
+}

@@ -19,6 +19,9 @@ mobile/.env.local
 SOURCES.md
 # Local employer catalog and internal tiering decisions.
 EMPLOYERS.json
+# Regenerated discovery artifacts. They publish nothing, so they are not evidence
+# and must not be mistaken for the reviewed registry.
+artifacts/
 # Locally installed Codex/Claude skills and hook configuration.
 .agents/
 .codex/

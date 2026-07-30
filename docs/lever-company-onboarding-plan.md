@@ -80,6 +80,10 @@ changes:
 Slug guesses based on company names or aliases are discovery hints only. They
 are not evidence of employer ownership.
 
+The safer queue is `npm run lever:ledger`, which reads sites out of application
+URLs the catalog already observed rather than guessing them from names. See
+[`lever-ownership-verification-plan.md`](lever-ownership-verification-plan.md).
+
 ### Review-queue output
 
 ```json
@@ -196,8 +200,9 @@ their absence of eligible roles is not itself an admission failure.
 ## Stage 5 — Publish
 
 Promotion changes only the reviewed source's status from `shadow` to
-`published`. The system registry then generates both the scheduled adapter and
-its quality policy.
+`published`. The FIFO runner already schedules both states; promotion switches
+the worker from isolated checkpoint-only observation to catalog writes and
+notifications. The first published fetch remains a quiet baseline.
 
 Before merge:
 

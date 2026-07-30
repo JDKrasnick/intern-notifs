@@ -1,0 +1,36 @@
+{
+  "probedAt": "2026-07-30T04:06:08.663Z",
+  "attribution": "unattributed",
+  "results": [
+    {
+      "state": "ok",
+      "site": "acds",
+      "endpoint": "https://api.lever.co/v0/postings/acds?mode=json",
+      "region": "global",
+      "attribution": "unattributed",
+      "pagesRead": 1,
+      "rawPostings": 19,
+      "eligibleEarlyCareerRoles": 3,
+      "malformedRows": 0,
+      "urlContractViolations": 0,
+      "applicationHostSummary": {
+        "jobs.lever.co": 19
+      },
+      "etagPresent": true,
+      "eligibleRoleSamples": [
+        {
+          "postingId": "41bee5e2-6477-428f-b359-34b4071d545f",
+          "title": "AI Operations Intern - Naukr AI"
+        },
+        {
+          "postingId": "01fdf41b-a835-4e00-8d01-0275677a8f08",
+          "title": "AI Operations Intern-Caddell Reynolds"
+        },
+        {
+          "postingId": "d0d04e55-9fbe-4c07-9710-f6550032b6bb",
+          "title": "Digital Marketer Intern-Align AI"
+        }
+      ]
+    }
+  ]
+}

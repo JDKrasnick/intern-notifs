@@ -1,0 +1,29 @@
+name: Lever
+on:
+  push:
+    paths: &lever_paths
+      - 'src/sources/lever*'
+      - 'src/lever-*'
+      - 'infra/lever-monitoring-stack.ts'
+      - 'infra/app.ts'
+      - 'docs/lever-*'
+      - 'src/sources/index.ts'
+      - 'src/sources/quality.ts'
+      - 'test/fixtures/lever/**'
+      - 'test/lever*'
+      - 'scripts/lever-*'
+      - '.github/workflows/lever.yml'
+  pull_request:
+    paths: *lever_paths
+permissions: { contents: read }
+jobs:
+  admission-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run lever:manifest
+      - run: npm run typecheck
+      - run: npx vitest run test/lever.test.ts test/lever-ownership.test.ts test/lever-queue.test.ts test/lever-headed.test.ts

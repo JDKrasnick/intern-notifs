@@ -130,7 +130,7 @@ describe('reviewed Lever registry', () => {
     const shadow: ReviewedLeverSource = {
       id: 'lever-candidate', company: 'Candidate', site: 'candidate',
       careersUrl: 'https://candidate.example/careers', admittedAt: '2026-07-29',
-      status: 'shadow', region: 'global',
+      status: 'shadow', region: 'global', evidenceStatus: 'legacy-review',
     };
     expect(publishedLeverSources([...reviewedLeverSources, shadow]).map((source) => source.id))
       .toEqual(reviewedLeverSources.filter((source) => source.status === 'published').map((source) => source.id));

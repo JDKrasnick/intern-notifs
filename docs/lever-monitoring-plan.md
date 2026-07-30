@@ -172,8 +172,8 @@ health records.
 
 ### Freshness
 
-While the source roster is small, keep published Lever boards on the existing
-five-minute poll:
+The dedicated FIFO runner checks active published and shadow Lever boards every
+ten minutes, with stable empty boards staggered across six-hour checks:
 
 - warning/review event after 15 minutes without a trusted success;
 - high-severity freshness incident at 30 minutes;

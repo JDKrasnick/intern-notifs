@@ -1,0 +1,15 @@
+{
+  "site": "acds",
+  "displayName": "Apprenticely",
+  "careersUrl": "https://apprenticely.org",
+  "firstPartyEvidenceUrl": "https://apprenticely.org",
+  "evidenceExcerpt": "<a class=\"elementor-button elementor-button-link elementor-size-sm\" href=\"https://jobs.lever.co/acds\">\n\t\t\t\t\t\t\t\t<span class=\"elementor-button-content-wrapper\">\n\t\t\t\t\t\t\t\t\t\t\t\t<span class=\"elementor-button-text\">Current Job Openings</span>",
+  "observedJobUrl": "https://jobs.lever.co/acds/41bee5e2-6477-428f-b359-34b4071d545f/apply",
+  "initialHosts": [
+    "jobs.lever.co"
+  ],
+  "region": "global",
+  "state": "ownership-verified",
+  "verifiedAt": "2026-07-30T00:00:00Z",
+  "notes": "Apprenticely is the current name of the Arkansas Center for Data Sciences, which the catalog rows still use; apprenticely.org/about confirms the rebrand, and the site string acds is the former initialism."
+}

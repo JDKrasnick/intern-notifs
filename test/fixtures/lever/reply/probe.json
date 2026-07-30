@@ -1,0 +1,32 @@
+{
+  "probedAt": "2026-07-30T04:06:12.180Z",
+  "attribution": "unattributed",
+  "results": [
+    {
+      "state": "ok",
+      "site": "reply",
+      "endpoint": "https://api.lever.co/v0/postings/reply?mode=json",
+      "region": "global",
+      "attribution": "unattributed",
+      "pagesRead": 1,
+      "rawPostings": 39,
+      "eligibleEarlyCareerRoles": 2,
+      "malformedRows": 0,
+      "urlContractViolations": 0,
+      "applicationHostSummary": {
+        "jobs.lever.co": 39
+      },
+      "etagPresent": true,
+      "eligibleRoleSamples": [
+        {
+          "postingId": "0fb458db-7cb9-4bfd-b9b6-c1c681316061",
+          "title": "Android Developer Intern"
+        },
+        {
+          "postingId": "191d1794-e52a-4573-a2d0-2952b76f9cd5",
+          "title": "iOS Developer Intern"
+        }
+      ]
+    }
+  ]
+}

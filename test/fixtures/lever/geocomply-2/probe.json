@@ -1,0 +1,36 @@
+{
+  "probedAt": "2026-07-30T04:06:04.851Z",
+  "attribution": "unattributed",
+  "results": [
+    {
+      "state": "ok",
+      "site": "geocomply-2",
+      "endpoint": "https://api.lever.co/v0/postings/geocomply-2?mode=json",
+      "region": "global",
+      "attribution": "unattributed",
+      "pagesRead": 1,
+      "rawPostings": 11,
+      "eligibleEarlyCareerRoles": 5,
+      "malformedRows": 0,
+      "urlContractViolations": 0,
+      "applicationHostSummary": {
+        "jobs.lever.co": 11
+      },
+      "etagPresent": true,
+      "eligibleRoleSamples": [
+        {
+          "postingId": "7b5cf819-341e-4980-be14-97b8a205ec1f",
+          "title": "Mobile Security Engineer Intern – Forensics"
+        },
+        {
+          "postingId": "4057ba13-28ca-440f-b4b4-ead0fdd93fd4",
+          "title": "Security Software Engineer Intern"
+        },
+        {
+          "postingId": "b98890bb-ce91-4535-830c-085fd915bfb0",
+          "title": "Software Engineer Intern (Backend)"
+        }
+      ]
+    }
+  ]
+}
