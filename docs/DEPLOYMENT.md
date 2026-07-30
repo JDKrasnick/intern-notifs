@@ -129,6 +129,20 @@ npx cdk deploy InternNotifsLever \
 
 A Lever-only diff must not replace or delete resources in `InternNotifs`.
 
+The Lever stack publishes its work and dead-letter queue URLs under
+`/intern-notifs/operations/lever/` in Parameter Store. The existing shared
+operations API reads those parameters, so `monitoring.jdkrasnick.com` shows
+Greenhouse and Lever sources together and can replay one source without a
+provider-specific console. Deploy `InternNotifsGreenhouse` after this change to
+grant the shared API access to the Lever queue parameters and action route.
+
+After both monitoring stacks are deployed, confirm:
+
+- the `InternNotifs-Lever` CloudWatch dashboard is present;
+- the active-source freshness alarm has data within one scheduler cycle;
+- the shared operations pane lists both provider fleets; and
+- pause, resume, and replay work for one shadow Lever source.
+
 ## EAS environments
 
 The production EAS environment must have these five plaintext/sensitive variables:

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { SourceFetchError } from './sources/source-error.js';
-import type { SourceFailureCategory, SourceHealth, SourceRun } from './types.js';
+import type { SourceFailureCategory, SourceHealth, SourceOutcome, SourceRun } from './types.js';
 
 const MAX_RECENT_RUNS = 25;
 const QUALITY_FAILURES_BEFORE_QUARANTINE = 2;
@@ -32,19 +32,70 @@ function withRun(previous: SourceHealth | undefined, run: SourceRun): SourceRun[
   return [run, ...(previous?.recentRuns ?? [])].slice(0, MAX_RECENT_RUNS);
 }
 
+function operationalFields(previous: SourceHealth | undefined) {
+  if (!previous) return {};
+  return {
+    ...(previous.employerId ? { employerId: previous.employerId } : {}),
+    ...(previous.provider ? { provider: previous.provider } : {}),
+    ...(previous.region ? { region: previous.region } : {}),
+    ...(previous.sourceStatus ? { sourceStatus: previous.sourceStatus } : {}),
+    ...(previous.pollTier ? { pollTier: previous.pollTier } : {}),
+    ...(previous.configVersion !== undefined ? { configVersion: previous.configVersion } : {}),
+    ...(previous.changedAt ? { changedAt: previous.changedAt } : {}),
+    ...(previous.changedBy ? { changedBy: previous.changedBy } : {}),
+  };
+}
+
+export function sourceFailureOutcome(error: unknown): SourceOutcome {
+  const category = sourceFailureCategory(error);
+  if (error instanceof SourceFetchError) {
+    if (error.status === 429) return 'rate_limited';
+    if (error.status === 404) return 'not_found';
+    if (error.status !== undefined && error.status >= 500) return 'temporary_provider_error';
+  }
+  if (category === 'transport' || category === 'http') return 'temporary_provider_error';
+  if (category === 'json') {
+    return /pagination/i.test(safeDiagnostic(error)) ? 'incomplete_pagination' : 'invalid_schema';
+  }
+  if (category === 'identity') return 'application_host_mismatch';
+  if (category === 'empty' || category === 'quality') return 'unexpected_raw_zero';
+  if (category === 'persistence') return 'catalog_write_failed';
+  return 'failed';
+}
+
+export function sourceBackoffUntil(error: unknown, failures: number, completedAt: string): string | undefined {
+  if (!(error instanceof SourceFetchError) || !error.retryable) return undefined;
+  const retryAfterMs = error.retryAfterMs;
+  const exponentialMs = Math.min(30 * 60_000, 60_000 * (2 ** Math.max(0, failures - 1)));
+  return new Date(Date.parse(completedAt) + Math.max(retryAfterMs ?? 0, exponentialMs)).toISOString();
+}
+
 export function successfulSourceHealth(input: {
   sourceId: string;
+  employerId?: string;
+  provider?: SourceHealth['provider'];
+  region?: SourceHealth['region'];
   previous?: SourceHealth;
   startedAt: string;
   completedAt: string;
+  runId?: string;
+  outcome?: Extract<SourceOutcome, 'changed' | 'unchanged' | 'success_changed' | 'success_unchanged_304' | 'success_unchanged_hash'>;
+  etag?: string;
+  contentHash?: string;
   rawRows?: number;
+  validRows?: number;
   eligibleRows?: number;
+  filteredRows?: number;
   withheldRows?: number;
 }): SourceHealth {
   const durationMs = Math.max(0, Date.parse(input.completedAt) - Date.parse(input.startedAt));
+  const outcome = input.outcome ?? 'success_changed';
   const run: SourceRun = {
-    runId: randomUUID(),
+    runId: input.runId ?? randomUUID(),
     sourceId: input.sourceId,
+    ...(input.provider ? { provider: input.provider } : {}),
+    ...(input.region ? { region: input.region } : {}),
+    outcome,
     state: 'succeeded',
     startedAt: input.startedAt,
     completedAt: input.completedAt,
@@ -55,33 +106,69 @@ export function successfulSourceHealth(input: {
   };
   return {
     sourceId: input.sourceId,
+    ...(input.employerId ? { employerId: input.employerId } : {}),
+    ...(input.provider ? { provider: input.provider } : {}),
+    ...(input.region ? { region: input.region } : {}),
     state: 'healthy',
+    ...operationalFields(input.previous),
+    sourceStatus: input.previous?.sourceStatus ?? 'active',
+    pollTier: input.previous?.pollTier ?? ((input.eligibleRows ?? 0) > 0 ? 'active' : 'quiet'),
+    configVersion: input.previous?.configVersion ?? 1,
     lastAttemptAt: input.completedAt,
     lastSuccessAt: input.completedAt,
+    ...(
+      outcome === 'success_changed' || outcome === 'changed'
+        ? { lastChangedAt: input.completedAt }
+        : input.previous?.lastChangedAt ? { lastChangedAt: input.previous.lastChangedAt } : {}
+    ),
+    freshnessMinutes: 0,
+    outcome,
+    lastOutcome: outcome,
     consecutiveFailures: 0,
+    ...(input.etag ? { etag: input.etag } : {}),
+    ...(input.contentHash ? { contentHash: input.contentHash, snapshotHash: input.contentHash } : {}),
     durationMs,
-    ...(input.rawRows !== undefined ? { rawRows: input.rawRows } : {}),
-    ...(input.eligibleRows !== undefined ? { eligibleRows: input.eligibleRows } : {}),
-    ...(input.withheldRows !== undefined ? { withheldRows: input.withheldRows } : {}),
+    ...(input.rawRows !== undefined ? { rawRows: input.rawRows, rawCount: input.rawRows } : {}),
+    ...(input.validRows !== undefined ? { validRows: input.validRows, validCount: input.validRows } : {}),
+    ...(input.eligibleRows !== undefined ? { eligibleRows: input.eligibleRows, eligibleCount: input.eligibleRows } : {}),
+    ...(input.filteredRows !== undefined ? { filteredRows: input.filteredRows, filteredCount: input.filteredRows } : {}),
+    ...(input.withheldRows !== undefined ? { withheldRows: input.withheldRows, withheldCount: input.withheldRows } : {}),
+    incidentState: 'resolved',
+    ...(input.previous?.incidentState && input.previous.incidentState !== 'resolved'
+      ? {
+          incidentSeverity: input.previous.incidentSeverity,
+          incidentOpenedAt: input.previous.incidentOpenedAt,
+          incidentUpdatedAt: input.completedAt,
+          incidentResolvedAt: input.completedAt,
+        }
+      : {}),
     recentRuns: withRun(input.previous, run),
   };
 }
 
 export function failedSourceHealth(input: {
   sourceId: string;
+  employerId?: string;
+  provider?: SourceHealth['provider'];
+  region?: SourceHealth['region'];
   previous?: SourceHealth;
   startedAt: string;
   completedAt: string;
+  runId?: string;
   error: unknown;
 }): SourceHealth {
   const category = sourceFailureCategory(input.error);
   const failures = (input.previous?.consecutiveFailures ?? 0) + 1;
   const quarantined = shouldQuarantine(category, input.error, failures);
   const diagnostic = safeDiagnostic(input.error);
+  const outcome = sourceFailureOutcome(input.error);
   const durationMs = Math.max(0, Date.parse(input.completedAt) - Date.parse(input.startedAt));
   const run: SourceRun = {
-    runId: randomUUID(),
+    runId: input.runId ?? randomUUID(),
     sourceId: input.sourceId,
+    ...(input.provider ? { provider: input.provider } : {}),
+    ...(input.region ? { region: input.region } : {}),
+    outcome,
     state: quarantined ? 'quarantined' : 'failed',
     startedAt: input.startedAt,
     completedAt: input.completedAt,
@@ -89,19 +176,49 @@ export function failedSourceHealth(input: {
     failureCategory: category,
     diagnostic,
   };
+  const incident = quarantined || failures >= 2;
+  const backoffUntil = sourceBackoffUntil(input.error, failures, input.completedAt);
   return {
     sourceId: input.sourceId,
+    ...(input.employerId ? { employerId: input.employerId } : {}),
+    ...(input.provider ? { provider: input.provider } : {}),
+    ...(input.region ? { region: input.region } : {}),
     state: quarantined ? 'quarantined' : 'degraded',
+    ...operationalFields(input.previous),
+    sourceStatus: input.previous?.sourceStatus ?? 'active',
+    pollTier: input.previous?.pollTier ?? 'active',
+    configVersion: input.previous?.configVersion ?? 1,
     lastAttemptAt: input.completedAt,
     ...(input.previous?.lastSuccessAt ? { lastSuccessAt: input.previous.lastSuccessAt } : {}),
+    ...(input.previous?.lastChangedAt ? { lastChangedAt: input.previous.lastChangedAt } : {}),
+    ...(input.previous?.lastSuccessAt
+      ? { freshnessMinutes: Math.max(0, (Date.parse(input.completedAt) - Date.parse(input.previous.lastSuccessAt)) / 60_000) }
+      : {}),
+    outcome,
+    lastOutcome: outcome,
     consecutiveFailures: failures,
     durationMs,
     failureCategory: category,
+    lastFailureCategory: category,
+    diagnosticCategory: category,
     diagnostic,
+    lastSafeDiagnostic: diagnostic,
+    ...(backoffUntil ? { backoffUntil } : {}),
+    incidentState: incident
+      ? input.previous?.incidentState === 'acknowledged' ? 'acknowledged' : 'open'
+      : input.previous?.incidentState ?? 'resolved',
+    ...(incident ? {
+      incidentSeverity: quarantined || failures >= 3 ? 'high' as const : 'warning' as const,
+      incidentOpenedAt: input.previous?.incidentOpenedAt ?? input.completedAt,
+      incidentUpdatedAt: input.completedAt,
+      ...(input.previous?.incidentAcknowledgedAt ? { incidentAcknowledgedAt: input.previous.incidentAcknowledgedAt } : {}),
+    } : {}),
     ...(quarantined ? { quarantinedAt: input.completedAt, quarantineReason: diagnostic } : {}),
-    ...(input.previous?.rawRows !== undefined ? { rawRows: input.previous.rawRows } : {}),
-    ...(input.previous?.eligibleRows !== undefined ? { eligibleRows: input.previous.eligibleRows } : {}),
-    ...(input.previous?.withheldRows !== undefined ? { withheldRows: input.previous.withheldRows } : {}),
+    ...(input.previous?.rawRows !== undefined ? { rawRows: input.previous.rawRows, rawCount: input.previous.rawRows } : {}),
+    ...(input.previous?.validRows !== undefined ? { validRows: input.previous.validRows, validCount: input.previous.validRows } : {}),
+    ...(input.previous?.eligibleRows !== undefined ? { eligibleRows: input.previous.eligibleRows, eligibleCount: input.previous.eligibleRows } : {}),
+    ...(input.previous?.filteredRows !== undefined ? { filteredRows: input.previous.filteredRows, filteredCount: input.previous.filteredRows } : {}),
+    ...(input.previous?.withheldRows !== undefined ? { withheldRows: input.previous.withheldRows, withheldCount: input.previous.withheldRows } : {}),
     recentRuns: withRun(input.previous, run),
   };
 }

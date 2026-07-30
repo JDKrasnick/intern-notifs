@@ -10,6 +10,7 @@ import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
 import type { Construct } from 'constructs';
 
 export interface GreenhouseMonitoringStackProps extends cdk.StackProps {
@@ -45,6 +46,14 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
       encryption: sqs.QueueEncryption.SQS_MANAGED,
       deadLetterQueue: { queue: deadLetterQueue, maxReceiveCount: 4 },
     });
+    new ssm.StringParameter(this, 'GreenhouseOperationsQueueParameter', {
+      parameterName: '/intern-notifs/operations/greenhouse/queue-url',
+      stringValue: queue.queueUrl,
+    });
+    new ssm.StringParameter(this, 'GreenhouseOperationsDeadLetterQueueParameter', {
+      parameterName: '/intern-notifs/operations/greenhouse/dead-letter-queue-url',
+      stringValue: deadLetterQueue.queueUrl,
+    });
     const dispatcher = new lambdaNodejs.NodejsFunction(this, 'GreenhouseDispatcher', {
       entry: 'src/greenhouse-dispatch.ts',
       handler: 'handler',
@@ -74,7 +83,7 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
     users.grantReadWriteData(worker);
 
     const operationsSecret = new secretsmanager.Secret(this, 'GreenhouseOperationsSecret', {
-      description: 'Server-to-server credential for the private Greenhouse operations dashboard.',
+      description: 'Server-to-server credential for the shared source operations dashboard.',
       generateSecretString: { excludePunctuation: true, passwordLength: 48 },
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
@@ -88,6 +97,7 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
         INTERNSHIPS_TABLE: internships.tableName,
         GREENHOUSE_QUEUE_URL: queue.queueUrl,
         GREENHOUSE_DEAD_LETTER_QUEUE_URL: deadLetterQueue.queueUrl,
+        OPERATIONS_PROVIDER_PARAMETER_PREFIX: '/intern-notifs/operations',
         OPERATIONS_SHARED_SECRET: operationsSecret.secretValue.unsafeUnwrap(),
       },
       bundling: { externalModules: [] },
@@ -97,8 +107,20 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
       resources: [internships.tableArn, `${internships.tableArn}/index/*`],
     }));
     operationsHandler.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['sqs:GetQueueAttributes'],
-      resources: [queue.queueArn, deadLetterQueue.queueArn],
+      actions: ['sqs:GetQueueAttributes', 'sqs:SendMessage'],
+      resources: [
+        queue.queueArn,
+        deadLetterQueue.queueArn,
+        cdk.Stack.of(this).formatArn({ service: 'sqs', resource: 'InternNotifsLever-*' }),
+      ],
+    }));
+    operationsHandler.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ssm:GetParametersByPath'],
+      resources: [cdk.Stack.of(this).formatArn({
+        service: 'ssm',
+        resource: 'parameter',
+        resourceName: 'intern-notifs/operations/*',
+      })],
     }));
     operationsHandler.addToRolePolicy(new iam.PolicyStatement({ actions: ['cloudwatch:DescribeAlarms'], resources: ['*'] }));
     const operationsApi = new apigatewayv2.HttpApi(this, 'GreenhouseOperationsHttpApi');
@@ -107,6 +129,7 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
     const operationsIntegration = new apigatewayIntegrations.HttpLambdaIntegration('GreenhouseOperationsIntegration', operationsHandler);
     operationsApi.addRoutes({ path: '/operations/sources', methods: [apigatewayv2.HttpMethod.GET], integration: operationsIntegration });
     operationsApi.addRoutes({ path: '/operations/sources/{sourceId}', methods: [apigatewayv2.HttpMethod.GET], integration: operationsIntegration });
+    operationsApi.addRoutes({ path: '/operations/sources/{sourceId}/actions', methods: [apigatewayv2.HttpMethod.POST], integration: operationsIntegration });
     operationsApi.addRoutes({ path: '/operations/lever/candidates', methods: [apigatewayv2.HttpMethod.GET], integration: operationsIntegration });
     operationsApi.addRoutes({ path: '/operations/lever/candidates/{site}/verify', methods: [apigatewayv2.HttpMethod.POST], integration: operationsIntegration });
     operationsApi.addRoutes({ path: '/operations/lever/candidates/{site}/accept', methods: [apigatewayv2.HttpMethod.POST], integration: operationsIntegration });

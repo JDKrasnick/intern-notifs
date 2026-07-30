@@ -2349,6 +2349,7 @@ exports[`CDK stack > queues Greenhouse boards every ten minutes with bounded wor
               "Ref": "GreenhouseWorkQueue8AB07ACC",
             },
             "INTERNSHIPS_TABLE": "internships",
+            "OPERATIONS_PROVIDER_PARAMETER_PREFIX": "/intern-notifs/operations",
             "OPERATIONS_SHARED_SECRET": {
               "Fn::Join": [
                 "",
@@ -2432,7 +2433,10 @@ exports[`CDK stack > queues Greenhouse boards every ten minutes with bounded wor
               ],
             },
             {
-              "Action": "sqs:GetQueueAttributes",
+              "Action": [
+                "sqs:GetQueueAttributes",
+                "sqs:SendMessage",
+              ],
               "Effect": "Allow",
               "Resource": [
                 {
@@ -2447,7 +2451,51 @@ exports[`CDK stack > queues Greenhouse boards every ten minutes with bounded wor
                     "Arn",
                   ],
                 },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":sqs:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":InternNotifsLever-*",
+                    ],
+                  ],
+                },
               ],
+            },
+            {
+              "Action": "ssm:GetParametersByPath",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":ssm:",
+                    {
+                      "Ref": "AWS::Region",
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId",
+                    },
+                    ":parameter/intern-notifs/operations/*",
+                  ],
+                ],
+              },
             },
             {
               "Action": "cloudwatch:DescribeAlarms",
@@ -2496,6 +2544,16 @@ exports[`CDK stack > queues Greenhouse boards every ten minutes with bounded wor
         ],
       },
       "Type": "AWS::IAM::Role",
+    },
+    "GreenhouseOperationsDeadLetterQueueParameter174E6B06": {
+      "Properties": {
+        "Name": "/intern-notifs/operations/greenhouse/dead-letter-queue-url",
+        "Type": "String",
+        "Value": {
+          "Ref": "GreenhouseDeadLetterQueue2671BFDC",
+        },
+      },
+      "Type": "AWS::SSM::Parameter",
     },
     "GreenhouseOperationsHttpApiDefaultStage9BB4CF65": {
       "Properties": {
@@ -2824,10 +2882,78 @@ exports[`CDK stack > queues Greenhouse boards every ten minutes with bounded wor
       },
       "Type": "AWS::Lambda::Permission",
     },
+    "GreenhouseOperationsHttpApiPOSToperationssourcessourceIdactionsAA20F0EB": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "GreenhouseOperationsHttpApiFBEDCDF7",
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /operations/sources/{sourceId}/actions",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "GreenhouseOperationsHttpApiGEToperationssourcesGreenhouseOperationsIntegration3947B151",
+              },
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::ApiGatewayV2::Route",
+    },
+    "GreenhouseOperationsHttpApiPOSToperationssourcessourceIdactionsGreenhouseOperationsIntegrationPermission06BC8090": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "GreenhouseOperationsApiB91A2305",
+            "Arn",
+          ],
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition",
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region",
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId",
+              },
+              ":",
+              {
+                "Ref": "GreenhouseOperationsHttpApiFBEDCDF7",
+              },
+              "/*/*/operations/sources/{sourceId}/actions",
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::Lambda::Permission",
+    },
+    "GreenhouseOperationsQueueParameter628A095D": {
+      "Properties": {
+        "Name": "/intern-notifs/operations/greenhouse/queue-url",
+        "Type": "String",
+        "Value": {
+          "Ref": "GreenhouseWorkQueue8AB07ACC",
+        },
+      },
+      "Type": "AWS::SSM::Parameter",
+    },
     "GreenhouseOperationsSecret7C93AC51": {
       "DeletionPolicy": "Retain",
       "Properties": {
-        "Description": "Server-to-server credential for the private Greenhouse operations dashboard.",
+        "Description": "Server-to-server credential for the shared source operations dashboard.",
         "GenerateSecretString": {
           "ExcludePunctuation": true,
           "PasswordLength": 48,
@@ -3530,6 +3656,10 @@ exports[`CDK stack > queues Lever boards every ten minutes with bounded worker c
                 "dynamodb:GetItem",
                 "dynamodb:Scan",
                 "dynamodb:ConditionCheckItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
                 "dynamodb:DescribeTable",
               ],
               "Effect": "Allow",
@@ -3636,6 +3766,93 @@ exports[`CDK stack > queues Lever boards every ten minutes with bounded worker c
         ],
       },
       "Type": "AWS::IAM::Policy",
+    },
+    "LeverFreshnessAlarmB4A7BE9A": {
+      "Properties": {
+        "AlarmDescription": "At least one active Lever source has no trusted snapshot within thirty minutes.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "provider",
+            "Value": "lever",
+          },
+          {
+            "Name": "region",
+            "Value": "global",
+          },
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "SourceFreshnessMinutes",
+        "Namespace": "InternNotifs/Ingestion",
+        "Period": 600,
+        "Statistic": "Maximum",
+        "Threshold": 30,
+        "TreatMissingData": "breaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+    "LeverMonitoringDashboardA7FFFB3E": {
+      "Properties": {
+        "DashboardBody": {
+          "Fn::Join": [
+            "",
+            [
+              "{"widgets":[{"type":"metric","width":6,"height":6,"x":0,"y":0,"properties":{"view":"timeSeries","title":"Trusted snapshot freshness","region":"",
+              {
+                "Ref": "AWS::Region",
+              },
+              "","metrics":[["InternNotifs/Ingestion","SourceFreshnessMinutes","provider","lever","region","global",{"period":600,"stat":"Maximum"}]],"yAxis":{"left":{"min":0,"label":"minutes"}}}},{"type":"metric","width":6,"height":6,"x":0,"y":6,"properties":{"view":"timeSeries","title":"Lever queue and dead letters","region":"",
+              {
+                "Ref": "AWS::Region",
+              },
+              "","metrics":[["AWS/SQS","ApproximateNumberOfMessagesVisible","QueueName","",
+              {
+                "Fn::GetAtt": [
+                  "LeverWorkQueueB2643059",
+                  "QueueName",
+                ],
+              },
+              "",{"stat":"Maximum"}],["AWS/SQS","ApproximateAgeOfOldestMessage","QueueName","",
+              {
+                "Fn::GetAtt": [
+                  "LeverWorkQueueB2643059",
+                  "QueueName",
+                ],
+              },
+              "",{"stat":"Maximum"}],["AWS/SQS","ApproximateNumberOfMessagesVisible","QueueName","",
+              {
+                "Fn::GetAtt": [
+                  "LeverDeadLetterQueue2422A9B9",
+                  "QueueName",
+                ],
+              },
+              "",{"stat":"Maximum","yAxis":"right"}]],"yAxis":{}}}]}",
+            ],
+          ],
+        },
+        "DashboardName": "InternNotifs-Lever",
+      },
+      "Type": "AWS::CloudWatch::Dashboard",
+    },
+    "LeverOperationsDeadLetterQueueParameter6DABC8B7": {
+      "Properties": {
+        "Name": "/intern-notifs/operations/lever/dead-letter-queue-url",
+        "Type": "String",
+        "Value": {
+          "Ref": "LeverDeadLetterQueue2422A9B9",
+        },
+      },
+      "Type": "AWS::SSM::Parameter",
+    },
+    "LeverOperationsQueueParameter9ECC9A3C": {
+      "Properties": {
+        "Name": "/intern-notifs/operations/lever/queue-url",
+        "Type": "String",
+        "Value": {
+          "Ref": "LeverWorkQueueB2643059",
+        },
+      },
+      "Type": "AWS::SSM::Parameter",
     },
     "LeverPollSchedule": {
       "Properties": {

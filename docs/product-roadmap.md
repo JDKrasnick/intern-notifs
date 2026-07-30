@@ -50,6 +50,7 @@
 - [x] Implement Lever source adapter, ETag checkpoints, technical-role mapping, and deterministic fixtures for Palantir, PlusAI, Hermeus, and Xsolla.
 - [x] Add the SQS-backed Lever shadow/published runner with ten-minute active polling, adaptive inactive polling, bounded concurrency, isolated retries, alarms, and quiet promotion.
 - [x] Standardize Greenhouse, Lever, general Markdown, and Quant Markdown behind neutral complete snapshots, shared processing, stable source occurrences, two-success closure reconciliation, deterministic outbox IDs, and durable source health.
+- [x] Complete Lever monitoring with shadow and published health, regional metrics, freshness incidents, bounded backoff, shared operator controls, dashboards, and recovery runbooks.
 - [ ] Add job freshness/source labels and notification deep links to the mobile product.
 - [ ] Add user-facing settings, account deletion, and data export surface.
 - [x] Add source-quality reports, drift gates, nightly live probing, source-candidate review artifacts, and Firecrawl discovery-only workflow.

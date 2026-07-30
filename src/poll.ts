@@ -9,6 +9,7 @@ import { processSnapshot } from './ingestion/processor.js';
 import { reviewedBoardIndex } from './sources/index.js';
 import { sourceQualityFailures } from './sources/quality.js';
 import { SourceFetchError } from './sources/source-error.js';
+import { failedSourceHealth, sourceFailureOutcome, successfulSourceHealth } from './source-health.js';
 import type {
   Internship,
   ProcessedListing,
@@ -65,13 +66,25 @@ function providerFor(sourceId: string): SourceHealth['provider'] {
   return sourceId ? 'github' : 'unknown';
 }
 
-function emitSuccessMetric(sourceId: string, provider: SourceHealth['provider'], outcome: 'changed' | 'unchanged', counts: ProcessedSnapshot['counts'], durationMs: number) {
+function regionFor(provider: SourceHealth['provider']): NonNullable<SourceHealth['region']> {
+  return provider === 'lever' ? 'global' : 'unknown';
+}
+
+function emitSuccessMetric(
+  sourceId: string,
+  provider: SourceHealth['provider'],
+  outcome: 'success_changed' | 'success_unchanged_304' | 'success_unchanged_hash',
+  counts: ProcessedSnapshot['counts'],
+  durationMs: number,
+  runId?: string,
+) {
+  const region = regionFor(provider);
   console.log(JSON.stringify({
     _aws: {
       Timestamp: Date.now(),
       CloudWatchMetrics: [{
         Namespace: 'InternNotifs/Ingestion',
-        Dimensions: [['provider', 'outcome']],
+        Dimensions: [['provider', 'region', 'outcome']],
         Metrics: [
           { Name: 'SourceFetchSuccess', Unit: 'Count' },
           { Name: 'SourceFetchDurationMs', Unit: 'Milliseconds' },
@@ -81,9 +94,11 @@ function emitSuccessMetric(sourceId: string, provider: SourceHealth['provider'],
         ],
       }],
     },
-    event: 'source_ingestion_completed',
+    event: 'source_fetch_completed',
+    runId,
     sourceId,
     provider,
+    region,
     outcome,
     SourceFetchSuccess: 1,
     SourceFetchDurationMs: durationMs,
@@ -115,25 +130,39 @@ function emitFreshnessMetric(records: SourceHealth[], now: Date) {
   }
 }
 
-function emitFailureMetric(sourceId: string, provider: SourceHealth['provider'], category: NonNullable<SourceHealth['diagnosticCategory']>, durationMs: number) {
+function emitFailureMetric(
+  sourceId: string,
+  provider: SourceHealth['provider'],
+  category: NonNullable<SourceHealth['diagnosticCategory']>,
+  durationMs: number,
+  outcome: string,
+  runId?: string,
+) {
+  const region = regionFor(provider);
+  const rejected = ['json', 'identity', 'link', 'empty', 'quality'].includes(category) ? 1 : 0;
   console.error(JSON.stringify({
     _aws: {
       Timestamp: Date.now(),
       CloudWatchMetrics: [{
         Namespace: 'InternNotifs/Ingestion',
-        Dimensions: [['provider', 'category']],
+        Dimensions: [['provider', 'region', 'category']],
         Metrics: [
           { Name: 'SourceFetchFailure', Unit: 'Count' },
           { Name: 'SourceFetchDurationMs', Unit: 'Milliseconds' },
+          { Name: 'SnapshotRejected', Unit: 'Count' },
         ],
       }],
     },
-    event: 'source_ingestion_failed',
+    event: 'source_fetch_failed',
+    runId,
     sourceId,
     provider,
+    region,
     category,
+    outcome,
     SourceFetchFailure: 1,
     SourceFetchDurationMs: durationMs,
+    SnapshotRejected: rejected,
   }));
 }
 
@@ -342,7 +371,7 @@ export class IngestionRunner {
     };
   }
 
-  async run(options: { seedOnly?: boolean } = {}): Promise<PollReport> {
+  async run(options: { seedOnly?: boolean; runId?: string } = {}): Promise<PollReport> {
     const report: PollReport = { fetchedSources: 0, unchangedSources: [], baselineSources: [], processedListings: 0, newJobs: [], filteredJobs: [], failures: [] };
     const health: SourceHealth[] = [];
     for (const connector of this.connectors) {
@@ -417,16 +446,37 @@ export class IngestionRunner {
         const notificationError = notificationErrors.find((error) => error !== undefined);
         if (notificationError) throw notificationError;
         await forEachBounded(plan.occurrences, (occurrence) => this.store.putSourceOccurrence(occurrence));
+        const provider = providerFor(connector.id);
+        const unchanged304 = result.unchangedReason === 'not_modified';
+        const metricCounts: ProcessedSnapshot['counts'] = unchanged304 ? {
+          raw: previous?.lastRawCount ?? previous?.lastRawRowCount ?? previousHealth?.rawRows ?? batch.processed.counts.raw,
+          valid: previousHealth?.validRows ?? batch.processed.counts.valid,
+          eligible: previous?.lastRowCount ?? previousHealth?.eligibleRows ?? batch.processed.counts.eligible,
+          shelved: previousHealth?.counts?.shelved ?? batch.processed.counts.shelved,
+          filtered: previousHealth?.filteredRows ?? batch.processed.counts.filtered,
+          withheld: previous?.lastWithheldRowCount ?? previousHealth?.withheldRows ?? batch.processed.counts.withheld,
+        } : batch.processed.counts;
         const successHealth: SourceHealth = {
-          sourceId: connector.id,
-          provider: providerFor(connector.id),
-          lastAttemptAt: attemptedAt,
-          lastSuccessAt: now,
-          outcome: batch.unchanged ? 'unchanged' : 'changed',
-          durationMs: Date.now() - started,
-          snapshotHash: batch.snapshotHash,
-          counts: batch.processed.counts,
-          consecutiveFailures: 0,
+          ...successfulSourceHealth({
+            sourceId: connector.id,
+            provider,
+            region: regionFor(provider),
+            previous: previousHealth,
+            startedAt: attemptedAt,
+            completedAt: now,
+            runId: options.runId,
+            outcome: batch.unchanged
+              ? (result.unchangedReason === 'not_modified' ? 'success_unchanged_304' : 'success_unchanged_hash')
+              : 'success_changed',
+            etag: result.checkpoint.etag,
+            contentHash: batch.snapshotHash,
+            rawRows: metricCounts.raw,
+            validRows: metricCounts.valid,
+            eligibleRows: metricCounts.eligible,
+            filteredRows: metricCounts.filtered,
+            withheldRows: metricCounts.withheld,
+          }),
+          counts: metricCounts,
         };
         await this.store.putSourceHealth(successHealth);
         health.push(successHealth);
@@ -441,24 +491,44 @@ export class IngestionRunner {
           }
         }
         report.filteredJobs.push(...plan.filteredJobs);
-        emitSuccessMetric(connector.id, providerFor(connector.id), batch.unchanged ? 'unchanged' : 'changed', batch.processed.counts, Date.now() - started);
+        emitSuccessMetric(
+          connector.id,
+          providerFor(connector.id),
+          batch.unchanged
+            ? result.unchangedReason === 'not_modified' ? 'success_unchanged_304' : 'success_unchanged_hash'
+            : 'success_changed',
+          metricCounts,
+          Date.now() - started,
+          options.runId,
+        );
       } catch (error) {
         const category = error instanceof SourceFetchError ? error.category : failureCategory;
+        const provider = providerFor(connector.id);
         const failureHealth: SourceHealth = {
-          sourceId: connector.id,
-          provider: providerFor(connector.id),
-          lastAttemptAt: attemptedAt,
-          ...(previousHealth?.lastSuccessAt ? { lastSuccessAt: previousHealth.lastSuccessAt } : {}),
-          outcome: 'failed',
-          durationMs: Date.now() - started,
-          consecutiveFailures: (previousHealth?.consecutiveFailures ?? 0) + 1,
+          ...failedSourceHealth({
+            sourceId: connector.id,
+            provider,
+            region: regionFor(provider),
+            previous: previousHealth,
+            startedAt: attemptedAt,
+            completedAt: this.now().toISOString(),
+            runId: options.runId,
+            error,
+          }),
           diagnosticCategory: category,
         };
         health.push(failureHealth);
         try { await this.store.putSourceHealth(failureHealth); }
         catch { /* The original source/persistence failure remains primary. */ }
         report.failures.push(error instanceof Error ? error.message : String(error));
-        emitFailureMetric(connector.id, providerFor(connector.id), category, Date.now() - started);
+        emitFailureMetric(
+          connector.id,
+          providerFor(connector.id),
+          category,
+          Date.now() - started,
+          sourceFailureOutcome(error),
+          options.runId,
+        );
       }
     }
     emitFreshnessMetric(health, this.now());
@@ -469,7 +539,7 @@ export class IngestionRunner {
 
 /** @deprecated Compatibility facade; new code should construct `IngestionRunner`. */
 export class Poller extends IngestionRunner {
-  poll(options: { seedOnly?: boolean } = {}) {
+  poll(options: { seedOnly?: boolean; runId?: string } = {}) {
     return this.run(options);
   }
 }

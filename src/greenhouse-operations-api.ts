@@ -1,7 +1,9 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { CloudWatchClient, DescribeAlarmsCommand } from '@aws-sdk/client-cloudwatch';
-import { GetQueueAttributesCommand, SQSClient } from '@aws-sdk/client-sqs';
+import { GetQueueAttributesCommand, SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
+import { GetParametersByPathCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { reviewedGreenhouseSources } from './sources/greenhouse-config.js';
+import { reviewedLeverSources, type ReviewedLeverSource } from './sources/lever-config.js';
 import { DynamoInternshipStore, type InternshipStore } from './store.js';
 import { acceptLeverAdmission, listLeverCandidates, verifyLeverAdmission, type LeverAdmissionInput } from './lever-admission.js';
 import type { SourceCheckpoint, SourceHealth, SourceHealthState } from './types.js';
@@ -26,6 +28,11 @@ const responseHeaders = {
 const reply = (statusCode: number, body: unknown) => ({ statusCode, headers: responseHeaders, body: JSON.stringify(body) });
 const healthWindowMs = 30 * 60_000;
 const inactiveHealthWindowMs = 7 * 60 * 60_000;
+type Provider = 'greenhouse' | 'lever';
+type OperationsSource =
+  | (typeof reviewedGreenhouseSources[number] & { provider: 'greenhouse' })
+  | (ReviewedLeverSource & { provider: 'lever' });
+type FleetConfiguration = Record<Provider, { queueUrl: string; deadLetterQueueUrl: string } | undefined>;
 
 function header(event: ApiEvent, name: string): string | undefined {
   const match = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === name.toLowerCase());
@@ -50,7 +57,7 @@ function stateFor(health: SourceHealth | undefined, checkpoint: SourceCheckpoint
 }
 
 function publicSource(
-  source: typeof reviewedGreenhouseSources[number],
+  source: OperationsSource,
   health: SourceHealth | undefined,
   checkpoint: SourceCheckpoint | undefined,
   timestamp: number,
@@ -62,11 +69,12 @@ function publicSource(
   return {
     source: {
       sourceId: source.id,
-      provider: 'greenhouse',
-      displayName: source.displayName,
+      provider: source.provider,
+      region: source.provider === 'lever' ? source.region : 'unknown',
+      displayName: source.provider === 'lever' ? source.company : source.displayName,
       careersUrl: source.careersUrl,
       mode: source.status,
-      boardToken: source.boardToken,
+      boardToken: source.provider === 'lever' ? source.site : source.boardToken,
       evidenceStatus: source.evidenceStatus,
     },
     state,
@@ -76,7 +84,13 @@ function publicSource(
     quarantineReason: health?.quarantineReason,
     diagnostic: health?.diagnostic,
     failureCategory: health?.failureCategory,
+    outcome: health?.outcome,
     consecutiveFailures: health?.consecutiveFailures ?? 0,
+    sourceStatus: health?.sourceStatus ?? 'active',
+    pollTier: health?.pollTier ?? ((checkpoint?.lastRowCount ?? 0) > 0 ? 'active' : 'quiet'),
+    backoffUntil: health?.backoffUntil,
+    incidentState: health?.incidentState,
+    incidentSeverity: health?.incidentSeverity,
     rawRows: health?.rawRows ?? checkpoint?.lastRawRowCount,
     eligibleRows: health?.eligibleRows ?? checkpoint?.lastRowCount,
     withheldRows: health?.withheldRows ?? checkpoint?.lastWithheldRowCount ?? 0,
@@ -85,20 +99,28 @@ function publicSource(
   };
 }
 
-async function fleetStatus(queueUrl: string, deadLetterQueueUrl: string, sqs: SQSClient, cloudwatch: CloudWatchClient) {
+async function fleetStatus(
+  provider: Provider,
+  configuration: NonNullable<FleetConfiguration[Provider]>,
+  sqs: SQSClient,
+  cloudwatch: CloudWatchClient,
+) {
   const [queue, deadLetter, alarms] = await Promise.all([
     sqs.send(new GetQueueAttributesCommand({
-      QueueUrl: queueUrl,
+      QueueUrl: configuration.queueUrl,
       AttributeNames: ['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible'],
     })),
     sqs.send(new GetQueueAttributesCommand({
-      QueueUrl: deadLetterQueueUrl,
+      QueueUrl: configuration.deadLetterQueueUrl,
       AttributeNames: ['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible'],
     })),
-    cloudwatch.send(new DescribeAlarmsCommand({ AlarmNamePrefix: 'InternNotifsGreenhouse-' })),
+    cloudwatch.send(new DescribeAlarmsCommand({
+      AlarmNamePrefix: provider === 'greenhouse' ? 'InternNotifsGreenhouse-' : 'InternNotifsLever-',
+    })),
   ]);
   const number = (value: string | undefined) => Number(value ?? 0);
   return {
+    provider,
     queue: {
       waiting: number(queue.Attributes?.ApproximateNumberOfMessages),
       processing: number(queue.Attributes?.ApproximateNumberOfMessagesNotVisible),
@@ -113,15 +135,50 @@ async function fleetStatus(queueUrl: string, deadLetterQueueUrl: string, sqs: SQ
   };
 }
 
-export function createGreenhouseOperationsHandler(dependencies: {
+async function providerFleets(
+  configured: FleetConfiguration,
+  ssm: SSMClient,
+  parameterPrefix?: string,
+): Promise<FleetConfiguration> {
+  if (!parameterPrefix || (configured.greenhouse && configured.lever)) return configured;
+  const response = await ssm.send(new GetParametersByPathCommand({
+    Path: parameterPrefix,
+    Recursive: true,
+    WithDecryption: false,
+  }));
+  const values = new Map((response.Parameters ?? []).flatMap((parameter) => (
+    parameter.Name && parameter.Value ? [[parameter.Name, parameter.Value] as const] : []
+  )));
+  const fromParameters = (provider: Provider) => {
+    const queueUrl = values.get(`${parameterPrefix}/${provider}/queue-url`);
+    const deadLetterQueueUrl = values.get(`${parameterPrefix}/${provider}/dead-letter-queue-url`);
+    return queueUrl && deadLetterQueueUrl ? { queueUrl, deadLetterQueueUrl } : undefined;
+  };
+  return {
+    greenhouse: configured.greenhouse ?? fromParameters('greenhouse'),
+    lever: configured.lever ?? fromParameters('lever'),
+  };
+}
+
+export interface SourceOperationsDependencies {
   store: InternshipStore;
-  queueUrl: string;
-  deadLetterQueueUrl: string;
   sharedSecret: string;
+  fleets?: FleetConfiguration;
+  queueUrl?: string;
+  deadLetterQueueUrl?: string;
+  parameterPrefix?: string;
   sqs?: SQSClient;
   cloudwatch?: CloudWatchClient;
+  ssm?: SSMClient;
   now?: () => Date;
-}) {
+}
+
+function parseBody(event: ApiEvent): Record<string, unknown> {
+  const body = event.isBase64Encoded ? Buffer.from(event.body ?? '', 'base64').toString('utf8') : event.body ?? '';
+  return JSON.parse(body) as Record<string, unknown>;
+}
+
+export function createSourceOperationsHandler(dependencies: SourceOperationsDependencies) {
   return async (event: ApiEvent) => {
     const method = event.requestContext?.http?.method ?? event.routeKey?.split(' ')[0] ?? 'GET';
     if (method === 'OPTIONS') return reply(204, {});
@@ -129,12 +186,10 @@ export function createGreenhouseOperationsHandler(dependencies: {
 
     const timestamp = (dependencies.now ?? (() => new Date()))().getTime();
     const path = (event.rawPath ?? event.routeKey?.split(' ')[1] ?? '/').replace(/^\/internal(?=\/)/, '');
+    const dynamicAdmissions = await (dependencies.store.listLeverAdmissions?.() ?? Promise.resolve([]));
     if (path === '/operations/lever/candidates' && method === 'GET') {
-      const [candidates, admissions] = await Promise.all([
-        listLeverCandidates(dependencies.store, new Date(timestamp)),
-        dependencies.store.listLeverAdmissions?.() ?? [],
-      ]);
-      return reply(200, { generatedAt: new Date(timestamp).toISOString(), candidates, admissions });
+      const candidates = await listLeverCandidates(dependencies.store, new Date(timestamp));
+      return reply(200, { generatedAt: new Date(timestamp).toISOString(), candidates, admissions: dynamicAdmissions });
     }
     const leverAction = path.match(/^\/operations\/lever\/candidates\/([^/]+)\/(verify|accept)$/);
     if (leverAction && method === 'POST') {
@@ -159,29 +214,144 @@ export function createGreenhouseOperationsHandler(dependencies: {
         });
       }
     }
-    if (method !== 'GET') return reply(405, { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed.' });
-
-    const ids = reviewedGreenhouseSources.map((source) => source.id);
+    const leverById = new Map<string, ReviewedLeverSource>();
+    for (const source of reviewedLeverSources) leverById.set(source.id, source);
+    for (const admission of dynamicAdmissions) leverById.set(admission.source.id, admission.source);
+    const sources: OperationsSource[] = [
+      ...reviewedGreenhouseSources.map((source) => ({ ...source, provider: 'greenhouse' as const })),
+      ...[...leverById.values()].map((source) => ({ ...source, provider: 'lever' as const })),
+    ];
+    const ids = sources.map((source) => source.id);
     const [healthRecords, checkpoints] = await Promise.all([
       dependencies.store.getSourceHealthMany(ids),
-      Promise.all(ids.map((sourceId) => dependencies.store.getCheckpoint(sourceId))),
+      Promise.all(sources.map((source) => dependencies.store.getCheckpoint(
+        source.provider === 'lever' && source.status === 'shadow' ? `shadow-${source.id}` : source.id,
+      ))),
     ]);
     const health = new Map(healthRecords.map((record) => [record.sourceId, record]));
-    const rows = reviewedGreenhouseSources.map((source, index) => publicSource(source, health.get(source.id), checkpoints[index], timestamp));
+    const rows = sources.map((source, index) => publicSource(source, health.get(source.id), checkpoints[index], timestamp));
+
+    const actionMatch = path.match(/^\/operations\/sources\/([^/]+)\/actions$/);
+    if (actionMatch && method === 'POST') {
+      const sourceId = decodeURIComponent(actionMatch[1]);
+      const source = sources.find((candidate) => candidate.id === sourceId);
+      if (!source) return reply(404, { code: 'SOURCE_NOT_FOUND', message: 'Source not found.' });
+      let input: Record<string, unknown>;
+      try { input = parseBody(event); }
+      catch { return reply(400, { code: 'INVALID_REQUEST', message: 'Request body must be valid JSON.' }); }
+      const action = input.action;
+      const allowed = ['pause', 'resume', 'replay', 'acknowledge', 'resolve', 'set-tier'];
+      if (typeof action !== 'string' || !allowed.includes(action)) {
+        return reply(400, { code: 'INVALID_ACTION', message: 'Action must be pause, resume, replay, acknowledge, resolve, or set-tier.' });
+      }
+      const actor = header(event, 'x-operations-actor')?.trim() || 'operations-owner';
+      const changedAt = new Date(timestamp).toISOString();
+      const previous = health.get(sourceId);
+      const base: SourceHealth = previous ?? {
+        sourceId,
+        provider: source.provider,
+        region: source.provider === 'lever' ? source.region : 'unknown',
+        state: 'never-succeeded',
+        lastAttemptAt: changedAt,
+        consecutiveFailures: 0,
+        durationMs: 0,
+      };
+      let updated = {
+        ...base,
+        configVersion: (base.configVersion ?? 0) + 1,
+        changedAt,
+        changedBy: actor,
+      };
+      if (action === 'pause') updated = { ...updated, sourceStatus: 'paused' };
+      if (action === 'resume') {
+        const { backoffUntil: _backoffUntil, ...withoutBackoff } = updated;
+        updated = { ...withoutBackoff, sourceStatus: 'active' };
+      }
+      if (action === 'set-tier') {
+        if (input.pollTier !== 'active' && input.pollTier !== 'quiet') {
+          return reply(400, { code: 'INVALID_POLL_TIER', message: 'pollTier must be active or quiet.' });
+        }
+        updated = { ...updated, pollTier: input.pollTier };
+      }
+      if (action === 'acknowledge') {
+        if (!base.incidentState || base.incidentState === 'resolved') {
+          return reply(409, { code: 'NO_OPEN_INCIDENT', message: 'This source has no open incident to acknowledge.' });
+        }
+        updated = { ...updated, incidentState: 'acknowledged', incidentAcknowledgedAt: changedAt, incidentUpdatedAt: changedAt };
+      }
+      if (action === 'resolve') {
+        updated = { ...updated, incidentState: 'resolved', incidentResolvedAt: changedAt, incidentUpdatedAt: changedAt };
+      }
+      if (action === 'replay') {
+        const configuredFleets = await providerFleets(
+          dependencies.fleets ?? {
+            greenhouse: dependencies.queueUrl && dependencies.deadLetterQueueUrl
+              ? { queueUrl: dependencies.queueUrl, deadLetterQueueUrl: dependencies.deadLetterQueueUrl }
+              : undefined,
+            lever: undefined,
+          },
+          dependencies.ssm ?? new SSMClient({}),
+          dependencies.parameterPrefix,
+        );
+        const fleet = configuredFleets[source.provider];
+        if (!fleet) return reply(503, { code: 'PROVIDER_QUEUE_UNAVAILABLE', message: `${source.provider} replay is not configured.` });
+        const runId = `operator-${randomUUID()}`;
+        await (dependencies.sqs ?? new SQSClient({})).send(new SendMessageCommand({
+          QueueUrl: fleet.queueUrl,
+          MessageBody: JSON.stringify({ version: 1, sourceId, scheduledAt: changedAt, ...(source.provider === 'lever' ? { runId } : {}) }),
+          MessageGroupId: sourceId,
+          MessageDeduplicationId: runId,
+        }));
+        console.log(JSON.stringify({ event: 'source_replay_requested', sourceId, provider: source.provider, runId, actor }));
+        return reply(202, { sourceId, action, runId, queuedAt: changedAt });
+      }
+      await dependencies.store.putSourceHealth(updated);
+      console.log(JSON.stringify({
+        event: action === 'pause' || action === 'resume' || action === 'set-tier'
+          ? 'source_setting_changed'
+          : 'source_incident_state_changed',
+        sourceId,
+        provider: source.provider,
+        action,
+        actor,
+        configVersion: updated.configVersion,
+      }));
+      return reply(200, { sourceId, action, health: updated });
+    }
+    if (method !== 'GET') return reply(405, { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed.' });
 
     if (path === '/operations/sources') {
-      const fleet = await fleetStatus(
-        dependencies.queueUrl,
-        dependencies.deadLetterQueueUrl,
-        dependencies.sqs ?? new SQSClient({}),
-        dependencies.cloudwatch ?? new CloudWatchClient({}),
+      const configuredFleets = await providerFleets(
+        dependencies.fleets ?? {
+          greenhouse: dependencies.queueUrl && dependencies.deadLetterQueueUrl
+            ? { queueUrl: dependencies.queueUrl, deadLetterQueueUrl: dependencies.deadLetterQueueUrl }
+            : undefined,
+          lever: undefined,
+        },
+        dependencies.ssm ?? new SSMClient({}),
+        dependencies.parameterPrefix,
       );
+      const fleetRows = (await Promise.all(
+        (Object.entries(configuredFleets) as Array<[Provider, FleetConfiguration[Provider]]>)
+          .flatMap(([provider, configuration]) => configuration
+            ? [fleetStatus(provider, configuration, dependencies.sqs ?? new SQSClient({}), dependencies.cloudwatch ?? new CloudWatchClient({}))]
+            : []),
+      ));
+      const fleet = {
+        queue: fleetRows.reduce((total, row) => ({
+          waiting: total.waiting + row.queue.waiting,
+          processing: total.processing + row.queue.processing,
+          deadLettered: total.deadLettered + row.queue.deadLettered,
+        }), { waiting: 0, processing: 0, deadLettered: 0 }),
+        alarms: fleetRows.flatMap((row) => row.alarms),
+      };
       const order: Record<SourceHealthState, number> = { quarantined: 0, degraded: 1, 'never-succeeded': 2, healthy: 3 };
       return reply(200, {
         generatedAt: new Date(timestamp).toISOString(),
         sources: rows,
         reliabilityRanking: [...rows].sort((a, b) => order[a.state] - order[b.state] || b.consecutiveFailures - a.consecutiveFailures || a.source.displayName.localeCompare(b.source.displayName)),
         fleet,
+        fleets: fleetRows,
       });
     }
     const match = path.match(/^\/operations\/sources\/([^/]+)$/);
@@ -199,19 +369,24 @@ export function createGreenhouseOperationsHandler(dependencies: {
   };
 }
 
+/** Backward-compatible name retained for existing imports and the stable stack. */
+export const createGreenhouseOperationsHandler = createSourceOperationsHandler;
+
 const tableName = process.env.INTERNSHIPS_TABLE;
 const queueUrl = process.env.GREENHOUSE_QUEUE_URL;
 const deadLetterQueueUrl = process.env.GREENHOUSE_DEAD_LETTER_QUEUE_URL;
 const sharedSecret = process.env.OPERATIONS_SHARED_SECRET;
+const parameterPrefix = process.env.OPERATIONS_PROVIDER_PARAMETER_PREFIX;
 
 export const handler = async (event: ApiEvent) => {
-  if (!tableName || !queueUrl || !deadLetterQueueUrl || !sharedSecret) {
+  if (!tableName || !sharedSecret || ((!queueUrl || !deadLetterQueueUrl) && !parameterPrefix)) {
     return reply(500, { code: 'OPERATIONS_NOT_CONFIGURED', message: 'Source operations data is not configured.' });
   }
-  return createGreenhouseOperationsHandler({
+  return createSourceOperationsHandler({
     store: new DynamoInternshipStore(tableName),
     queueUrl,
     deadLetterQueueUrl,
+    parameterPrefix,
     sharedSecret,
   })(event);
 };

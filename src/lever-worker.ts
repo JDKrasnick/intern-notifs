@@ -4,7 +4,10 @@ import { Poller } from './poll.js';
 import { reviewedLeverSources, type ReviewedLeverSource } from './sources/lever-config.js';
 import { LeverPostingsAdapter } from './sources/lever.js';
 import { qualityPolicyFor, verifySourceQuality } from './sources/quality.js';
+import { SourceFetchError } from './sources/source-error.js';
+import { failedSourceHealth, safeDiagnostic, successfulSourceHealth } from './source-health.js';
 import { DynamoInternshipStore, DynamoUserStore, type InternshipStore, type UserStore } from './store.js';
+import type { SourceCheckpoint, SourceFetchResult } from './types.js';
 import type { LeverWorkMessage } from './lever-dispatch.js';
 
 const SHADOW_CHECKPOINT_PREFIX = 'shadow-';
@@ -28,6 +31,7 @@ export interface LeverBoardDependencies {
   sources?: ReviewedLeverSource[];
   fetchImpl?: typeof fetch;
   linkValidator?: ApplicationUrlValidator;
+  sleep?: (milliseconds: number) => Promise<void>;
 }
 
 export interface LeverBoardResult {
@@ -45,6 +49,61 @@ function parseWorkMessage(body: string): LeverWorkMessage {
   }
   if (!Number.isFinite(Date.parse(parsed.scheduledAt))) throw new Error('Invalid Lever work message timestamp');
   return parsed as LeverWorkMessage;
+}
+
+async function fetchShadowWithRetry(
+  adapter: LeverPostingsAdapter,
+  checkpoint: SourceCheckpoint | undefined,
+  sleep: (milliseconds: number) => Promise<void>,
+): Promise<SourceFetchResult> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await adapter.fetch(checkpoint);
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof SourceFetchError) || !error.retryable || attempt === 2) throw error;
+      const delay = Math.max(error.retryAfterMs ?? 0, 250 * (2 ** attempt));
+      console.log(JSON.stringify({
+        event: 'source_fetch_retry_scheduled',
+        provider: 'lever',
+        sourceId: adapter.id,
+        attempt: attempt + 2,
+        delayMs: delay,
+      }));
+      await sleep(delay);
+    }
+  }
+  throw lastError;
+}
+
+function emitShadowSuccess(sourceId: string, outcome: string, durationMs: number, raw: number, eligible: number, withheld: number) {
+  console.log(JSON.stringify({
+    _aws: {
+      Timestamp: Date.now(),
+      CloudWatchMetrics: [{
+        Namespace: 'InternNotifs/Ingestion',
+        Dimensions: [['provider', 'region', 'outcome']],
+        Metrics: [
+          { Name: 'SourceFetchSuccess', Unit: 'Count' },
+          { Name: 'SourceFetchDurationMs', Unit: 'Milliseconds' },
+          { Name: 'RawListingCount', Unit: 'Count' },
+          { Name: 'EligibleListingCount', Unit: 'Count' },
+          { Name: 'ListingWithheld', Unit: 'Count' },
+        ],
+      }],
+    },
+    event: 'source_fetch_completed',
+    sourceId,
+    provider: 'lever',
+    region: 'global',
+    outcome,
+    SourceFetchSuccess: 1,
+    SourceFetchDurationMs: durationMs,
+    RawListingCount: raw,
+    EligibleListingCount: eligible,
+    ListingWithheld: withheld,
+  }));
 }
 
 function validatorFor(fetchImpl?: typeof fetch): ApplicationUrlValidator {
@@ -95,28 +154,125 @@ export async function runLeverBoard(
   const validate = dependencies.linkValidator ?? validatorFor(dependencies.fetchImpl);
 
   if (mode === 'shadow') {
+    const startedAt = new Date().toISOString();
+    const started = Date.now();
     const previous = await dependencies.store.getCheckpoint(checkpointId);
-    const result = await adapter.fetch(previous);
-    if (!result.notModified) {
-      const policy = reviewedLeverSources.some(({ id }) => id === source.id)
-        ? qualityPolicyFor(source.id)
-        : { id: source.id, sourceClass: 'lever' as const, leverSite: source.site };
-      const quality = verifySourceQuality([{ policy, result, previous }]);
-      if (quality.failures.length) throw new Error(quality.failures.join('; '));
-      await validateShadowLinks(result.listings, validate);
+    const previousHealth = await dependencies.store.getSourceHealth(source.id);
+    try {
+      const result = await fetchShadowWithRetry(
+        adapter,
+        previous,
+        dependencies.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))),
+      );
+      if (!result.notModified) {
+        const policy = reviewedLeverSources.some(({ id }) => id === source.id)
+          ? qualityPolicyFor(source.id)
+          : { id: source.id, sourceClass: 'lever' as const, leverSite: source.site };
+        const quality = verifySourceQuality([{ policy, result, previous }]);
+        if (quality.failures.length) throw new SourceFetchError(quality.failures.join('; '), 'quality');
+        await validateShadowLinks(result.listings, validate);
+      }
+      await dependencies.store.putCheckpoint({ ...result.checkpoint, sourceId: checkpointId });
+      const completedAt = new Date().toISOString();
+      const counts = result.processed?.counts;
+      const unchanged304 = result.unchangedReason === 'not_modified';
+      const health = successfulSourceHealth({
+        sourceId: source.id,
+        employerId: source.id.replace(/^lever-/, ''),
+        provider: 'lever',
+        region: source.region,
+        previous: previousHealth,
+        startedAt,
+        completedAt,
+        runId: message.runId,
+        outcome: !result.notModified
+          ? 'success_changed'
+          : result.unchangedReason === 'not_modified' ? 'success_unchanged_304' : 'success_unchanged_hash',
+        etag: result.checkpoint.etag,
+        contentHash: result.checkpoint.contentHash,
+        rawRows: unchanged304 ? previous?.lastRawCount ?? previousHealth?.rawRows : counts?.raw ?? result.rawRowCount,
+        validRows: unchanged304 ? previousHealth?.validRows : counts?.valid,
+        eligibleRows: unchanged304 ? previous?.lastRowCount ?? previousHealth?.eligibleRows : counts?.eligible ?? result.listings.length,
+        filteredRows: unchanged304 ? previousHealth?.filteredRows : counts?.filtered,
+        withheldRows: unchanged304 ? previous?.lastWithheldRowCount ?? previousHealth?.withheldRows : counts?.withheld ?? result.rejectedApplicationUrls?.length,
+      });
+      await dependencies.store.putSourceHealth(health);
+      emitShadowSuccess(
+        source.id,
+        health.outcome ?? 'success_changed',
+        Date.now() - started,
+        health.rawRows ?? 0,
+        health.eligibleRows ?? 0,
+        health.withheldRows ?? 0,
+      );
+      return {
+        sourceId: source.id,
+        mode,
+        notModified: result.notModified,
+        listings: result.notModified ? previous?.lastRowCount ?? 0 : result.listings.length,
+        notifications: { sent: 0, skipped: 0, failed: 0 },
+      };
+    } catch (error) {
+      const completedAt = new Date().toISOString();
+      const failureHealth = failedSourceHealth({
+        sourceId: source.id,
+        employerId: source.id.replace(/^lever-/, ''),
+        provider: 'lever',
+        region: source.region,
+        previous: previousHealth,
+        startedAt,
+        completedAt,
+        runId: message.runId,
+        error,
+      });
+      try {
+        await dependencies.store.putSourceHealth(failureHealth);
+      } catch {
+        // Preserve the original provider or validation failure as the SQS result.
+      }
+      const snapshotRejected = ['json', 'identity', 'link', 'empty', 'quality'].includes(failureHealth.failureCategory ?? '') ? 1 : 0;
+      console.error(JSON.stringify({
+        _aws: {
+          Timestamp: Date.now(),
+          CloudWatchMetrics: [{
+            Namespace: 'InternNotifs/Ingestion',
+            Dimensions: [['provider', 'region', 'category']],
+            Metrics: [
+              { Name: 'SourceFetchFailure', Unit: 'Count' },
+              { Name: 'SourceFetchDurationMs', Unit: 'Milliseconds' },
+              { Name: 'SnapshotRejected', Unit: 'Count' },
+            ],
+          }],
+        },
+        event: 'source_fetch_failed',
+        runId: message.runId,
+        sourceId: source.id,
+        provider: 'lever',
+        region: source.region,
+        category: failureHealth.failureCategory,
+        outcome: failureHealth.outcome,
+        diagnostic: failureHealth.diagnostic,
+        backoffUntil: failureHealth.backoffUntil,
+        catalogPreserved: true,
+        SourceFetchFailure: 1,
+        SourceFetchDurationMs: failureHealth.durationMs,
+        SnapshotRejected: snapshotRejected,
+      }));
+      throw error;
     }
-    await dependencies.store.putCheckpoint({ ...result.checkpoint, sourceId: checkpointId });
-    return {
-      sourceId: source.id,
-      mode,
-      notModified: result.notModified,
-      listings: result.notModified ? previous?.lastRowCount ?? 0 : result.listings.length,
-      notifications: { sent: 0, skipped: 0, failed: 0 },
-    };
   }
 
-  const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate).poll();
+  const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate).poll({ runId: message.runId });
   if (poll.failures.length) throw new Error(poll.failures.join('; '));
+  const publishedHealth = await dependencies.store.getSourceHealth(source.id);
+  if (publishedHealth) {
+    await dependencies.store.putSourceHealth({
+      ...publishedHealth,
+      employerId: source.id.replace(/^lever-/, ''),
+      provider: 'lever',
+      region: source.region,
+    });
+  }
   const notifications = dependencies.userStore
     ? await sendNewJobNotifications(
       poll.newJobs.filter((job) => job.technical !== false),
@@ -136,6 +292,7 @@ export async function runLeverBoard(
 export async function processLeverQueue(
   event: QueueEvent,
   dependencies: LeverBoardDependencies,
+  context?: { awsRequestId?: string },
 ): Promise<{ batchItemFailures: Array<{ itemIdentifier: string }> }> {
   const batchItemFailures: Array<{ itemIdentifier: string }> = [];
   const blockedGroups = new Set<string>();
@@ -146,13 +303,22 @@ export async function processLeverQueue(
       continue;
     }
     try {
-      const result = await runLeverBoard(parseWorkMessage(record.body), dependencies);
-      console.log(JSON.stringify({ command: 'lever-poll', ...result }));
+      const parsed = parseWorkMessage(record.body);
+      const result = await runLeverBoard(
+        parsed.runId ? parsed : { ...parsed, runId: context?.awsRequestId },
+        dependencies,
+      );
+      console.log(JSON.stringify({
+        event: 'source_poll_completed',
+        command: 'lever-poll',
+        runId: parsed.runId ?? context?.awsRequestId,
+        ...result,
+      }));
     } catch (error) {
       console.error(JSON.stringify({
         command: 'lever-poll',
         messageId: record.messageId,
-        error: error instanceof Error ? error.message : String(error),
+        error: safeDiagnostic(error),
       }));
       batchItemFailures.push({ itemIdentifier: record.messageId });
       if (groupId) blockedGroups.add(groupId);
@@ -161,12 +327,15 @@ export async function processLeverQueue(
   return { batchItemFailures };
 }
 
-export async function handler(event: QueueEvent): Promise<{ batchItemFailures: Array<{ itemIdentifier: string }> }> {
+export async function handler(
+  event: QueueEvent,
+  context?: { awsRequestId?: string },
+): Promise<{ batchItemFailures: Array<{ itemIdentifier: string }> }> {
   const tableName = process.env.INTERNSHIPS_TABLE;
   const usersTable = process.env.USERS_TABLE;
   if (!tableName || !usersTable) throw new Error('INTERNSHIPS_TABLE and USERS_TABLE are required');
   return processLeverQueue(event, {
     store: new DynamoInternshipStore(tableName),
     userStore: new DynamoUserStore(usersTable),
-  });
+  }, context);
 }

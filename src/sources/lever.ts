@@ -153,6 +153,15 @@ function normalizedProjection(postings: LeverPosting[]): string {
   return JSON.stringify([...postings].sort((a, b) => String(a.id ?? '').localeCompare(String(b.id ?? ''))));
 }
 
+function retryAfterMs(response: Response, now: Date): number | undefined {
+  const value = response.headers.get('retry-after')?.trim();
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp - now.getTime()) : undefined;
+}
+
 type TransitionalLeverResult = SourceSnapshot & SourceFetchResult;
 export const LEVER_PAGE_SIZE = 100;
 export const LEVER_MAX_PAGES = 50;
@@ -196,10 +205,18 @@ export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
           contentHash: previous?.contentHash ?? '',
           listings: [],
           notModified: true,
+          unchangedReason: 'not_modified',
           checkpoint: { ...previous, sourceId: this.id, lastSuccessAt: this.now().toISOString(), successfulFetches: previous?.successfulFetches ?? 0 },
         };
       }
-      if (!response.ok) throw new SourceFetchError(`${this.id}: Lever fetch failed (${response.status})`, 'http', response.status);
+      if (!response.ok) {
+        throw new SourceFetchError(
+          `${this.id}: Lever fetch failed (${response.status})`,
+          'http',
+          response.status,
+          response.status === 429 ? retryAfterMs(response, this.now()) : undefined,
+        );
+      }
       let payload: unknown;
       try { payload = await response.json(); } catch { throw new SourceFetchError(`${this.id}: Lever returned malformed JSON`, 'json'); }
       if (!Array.isArray(payload)) throw new SourceFetchError(`${this.id}: Lever response was not an array`, 'json');
@@ -243,6 +260,7 @@ export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
       processed,
       listings: eligible,
       notModified: neutral.outcome === 'unchanged',
+      ...(neutral.outcome === 'unchanged' ? { unchangedReason: 'content_hash' as const } : {}),
     };
   }
 }

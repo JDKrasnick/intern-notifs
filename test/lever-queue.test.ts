@@ -60,6 +60,54 @@ describe('Lever queue dispatch', () => {
     expect(windows.filter((now) => isLeverSourceDue(shadowSource, checkpoint, now))).toHaveLength(1);
     expect(isLeverSourceDue(shadowSource, { ...checkpoint, lastRowCount: 1 }, windows[0])).toBe(true);
   });
+
+  it('honors durable pause controls and opens a freshness incident after a stale board resumes', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putCheckpoint({
+      sourceId: `shadow-${shadowSource.id}`,
+      successfulFetches: 1,
+      lastRowCount: 1,
+      lastSuccessAt: '2026-07-30T11:00:00.000Z',
+    });
+    await store.putSourceHealth({
+      sourceId: shadowSource.id,
+      provider: 'lever',
+      region: 'global',
+      state: 'healthy',
+      sourceStatus: 'paused',
+      lastAttemptAt: '2026-07-30T11:00:00.000Z',
+      lastSuccessAt: '2026-07-30T11:00:00.000Z',
+      consecutiveFailures: 0,
+      durationMs: 25,
+    });
+    const commands: SendMessageBatchCommand[] = [];
+    expect(await dispatchLeverBoards({
+      queueUrl: 'https://sqs.us-east-1.amazonaws.com/123/lever.fifo',
+      sources: [shadowSource],
+      checkpointReader: store,
+      now: () => new Date(scheduledAt),
+      client: { async send(command) { commands.push(command); return {}; } },
+    })).toEqual({ queued: 0 });
+    expect(commands).toHaveLength(0);
+    expect((await store.getSourceHealth(shadowSource.id))?.incidentState).toBeUndefined();
+
+    await store.putSourceHealth({
+      ...(await store.getSourceHealth(shadowSource.id))!,
+      sourceStatus: 'active',
+    });
+    expect(await dispatchLeverBoards({
+      queueUrl: 'https://sqs.us-east-1.amazonaws.com/123/lever.fifo',
+      sources: [shadowSource],
+      checkpointReader: store,
+      now: () => new Date(scheduledAt),
+      client: { async send(command) { commands.push(command); return {}; } },
+    })).toEqual({ queued: 1 });
+    expect(await store.getSourceHealth(shadowSource.id)).toMatchObject({
+      incidentState: 'open',
+      incidentSeverity: 'high',
+      sourceStatus: 'active',
+    });
+  });
 });
 
 describe('Lever queue worker', () => {
@@ -80,6 +128,35 @@ describe('Lever queue worker', () => {
       lastRowCount: 1,
     });
     expect(await store.getCheckpoint(shadowSource.id)).toBeUndefined();
+    expect(await store.getSourceHealth(shadowSource.id)).toMatchObject({
+      provider: 'lever',
+      region: 'global',
+      outcome: 'success_changed',
+      rawRows: 1,
+      eligibleRows: 1,
+      consecutiveFailures: 0,
+    });
+  });
+
+  it('treats a 304 as healthy without erasing the last trusted counts', async () => {
+    const store = new MemoryInternshipStore();
+    let attempts = 0;
+    const dependencies = {
+      store,
+      sources: [shadowSource],
+      fetchImpl: async () => attempts++ === 0 ? response() : new Response(null, { status: 304 }),
+      linkValidator: async (url: string) => url,
+    };
+    await runLeverBoard(message(), dependencies);
+    await runLeverBoard(message(), dependencies);
+
+    expect(await store.getSourceHealth(shadowSource.id)).toMatchObject({
+      outcome: 'success_unchanged_304',
+      rawRows: 1,
+      eligibleRows: 1,
+      pollTier: 'active',
+      consecutiveFailures: 0,
+    });
   });
 
   it('quietly baselines a published board and makes only later roles notification-eligible', async () => {
