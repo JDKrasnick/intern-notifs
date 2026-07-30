@@ -112,7 +112,10 @@ export function parseInternshipMarkdown(markdown: string, options: MarkdownParse
       let company = values[companyAt] ?? '';
       if (/^↳|^\u21b3/.test(company)) company = inheritedCompany;
       else if (company) inheritedCompany = company;
-      const title = values[titleAt] ?? ''; const applyUrl = links(row.cells[applyAt] ?? '')[0] ?? links(row.cells.join(' '))[0];
+      // The role cell sometimes carries the application link, but the row as a
+      // whole must never be searched: a company cell linking to an aggregator
+      // profile or an employer homepage is not an application URL.
+      const title = values[titleAt] ?? ''; const applyUrl = links(row.cells[applyAt] ?? '')[0] ?? links(row.cells[titleAt] ?? '')[0];
       if (!company || !title || !applyUrl) continue;
       parsed.push({
         sourceId: options.sourceId, document: options.document, sourceUrl: options.sourceUrl, row: row.row,
