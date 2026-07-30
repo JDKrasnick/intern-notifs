@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { employerCategory } from '../core/employers.js';
 import { isTechnicalJob, matchesJobFilter, type JobFilter } from '../core/filters.js';
 import { fingerprint, jobId, normalizeUrl } from '../core/normalize.js';
+import { sameRole } from '../core/role-title.js';
 import type {
   Internship,
   NotificationEvent,
@@ -177,6 +178,12 @@ export class CatalogReconciler {
     // its own URL/fingerprint index to merge duplicates and alert exactly once.
     const byUrl = new Map<string, Internship>();
     const byFingerprint = new Map<string, Internship>();
+    // Exact keys miss a role whose title one source truncated, so a per-employer
+    // bucket gets a similarity pass — but only for a title that was actually
+    // reconstructed. Applying it to whole titles would merge "SWE Intern,
+    // Backend" into "SWE Intern", and losing a real role is worse than keeping a
+    // duplicate.
+    const byEmployer = new Map<string, Internship[]>();
 
     for (const listing of input.listings) {
       const externalId = listing.externalId ?? `${listing.document}:${safeNormalizeUrl(listing.applyUrl)}`;
@@ -184,7 +191,11 @@ export class CatalogReconciler {
       const listingUrl = safeNormalizeUrl(listing.applyUrl);
       const listingFingerprint = fingerprint(listing.company, listing.title, listing.location, listing.season);
       const stored = input.resolvedJobs.get(externalId);
-      const inSnapshot = (stored && jobs.get(stored.jobId)) ?? byUrl.get(listingUrl) ?? byFingerprint.get(listingFingerprint);
+      const employerKey = listing.company.toLowerCase();
+      const inSnapshot = (stored && jobs.get(stored.jobId)) ?? byUrl.get(listingUrl) ?? byFingerprint.get(listingFingerprint)
+        ?? (listing.titleRepaired
+          ? (byEmployer.get(employerKey) ?? []).find((candidate) => candidate.season === listing.season && sameRole(candidate, listing))
+          : undefined);
       const existing = inSnapshot ?? stored;
       const validatedAt = input.validatedAt?.get(externalId);
       const job = existing ? merge(existing, listing, externalId, input.now, validatedAt) : create(listing, externalId, input.now, validatedAt);
@@ -208,6 +219,9 @@ export class CatalogReconciler {
       byUrl.set(listingUrl, job);
       byFingerprint.set(job.fingerprint, job);
       byFingerprint.set(listingFingerprint, job);
+      if (!(byEmployer.get(employerKey) ?? []).includes(job)) {
+        byEmployer.set(employerKey, [...(byEmployer.get(employerKey) ?? []), job]);
+      }
       const next: SourceOccurrenceState = {
         sourceId: input.sourceId,
         externalId,

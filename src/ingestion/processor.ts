@@ -1,6 +1,7 @@
 import { earlyCareerRequirements, hasLifecycleTitleSignal, htmlToText, inferSeason, inferWorkMode } from '../core/early-career.js';
 import { assessTechnicalRole } from '../core/filters.js';
 import { parseCompensation } from '../core/normalize.js';
+import { isTruncatedTitle, repairTitle } from '../core/role-title.js';
 import { applicationUrlRejection } from '../sources/quality.js';
 import type {
   JobRequirements,
@@ -40,11 +41,15 @@ function withheldReason(url: string): PostingDecision['reason'] | undefined {
   return rejection.includes('aggregator') ? 'aggregator-destination' : 'invalid-application-url';
 }
 
-export function processPosting(posting: SourcedPosting): { listing?: ProcessedListing; decision: PostingDecision } {
+export function processPosting(
+  posting: SourcedPosting,
+  employerTitles: readonly string[] = [],
+): { listing?: ProcessedListing; decision: PostingDecision } {
   if (posting.sourceState === 'prospect') {
     return { decision: { externalId: posting.externalId, outcome: 'filtered', reason: 'prospect' } };
   }
-  const title = htmlToText(posting.title);
+  const sourceTitle = htmlToText(posting.title);
+  const title = repairTitle(sourceTitle, employerTitles);
   const content = contentText(posting);
   if (posting.lifecycleAuthority !== 'source' && !hasLifecycleTitleSignal(title)) {
     return { decision: { externalId: posting.externalId, outcome: 'filtered', reason: 'not-early-career' } };
@@ -79,6 +84,7 @@ export function processPosting(posting: SourcedPosting): { listing?: ProcessedLi
     ...(workMode ? { workMode } : {}),
     fetchedAt: posting.fetchedAt,
     technical: assessment.technical,
+    ...(title === sourceTitle ? {} : { titleRepaired: true }),
   };
   // A non-technical early-career role is still worth keeping: it is persisted,
   // stays out of every catalog index and alert, and remains available if the
@@ -91,8 +97,16 @@ export function processPosting(posting: SourcedPosting): { listing?: ProcessedLi
 export function processSnapshot(snapshot: SourceSnapshot): ProcessedSnapshot {
   const listings: ProcessedListing[] = [];
   const decisions: PostingDecision[] = [];
+  // A source that truncates one row usually publishes the same role whole
+  // elsewhere, so whole titles for an employer repair that employer's cut ones.
+  const employerTitles = new Map<string, string[]>();
   for (const posting of snapshot.postings) {
-    const result = processPosting(posting);
+    if (isTruncatedTitle(posting.title)) continue;
+    const key = htmlToText(posting.employer.name).toLowerCase();
+    employerTitles.set(key, [...(employerTitles.get(key) ?? []), htmlToText(posting.title)]);
+  }
+  for (const posting of snapshot.postings) {
+    const result = processPosting(posting, employerTitles.get(htmlToText(posting.employer.name).toLowerCase()) ?? []);
     decisions.push(result.decision);
     if (result.listing) listings.push(result.listing);
   }

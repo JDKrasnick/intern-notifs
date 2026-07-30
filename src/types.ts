@@ -190,6 +190,8 @@ export interface ProcessedListing extends SourceOccurrence {
   fetchedAt: string;
   /** Classification is decided before persistence and never recomputed by the store. */
   technical?: boolean;
+  /** The source truncated this title and it was reconstructed, so it may be approximate. */
+  titleRepaired?: boolean;
 }
 
 /** @deprecated Use `ProcessedListing`; retained only while callers migrate. */
