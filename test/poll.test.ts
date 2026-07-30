@@ -94,8 +94,7 @@ describe('polling', () => {
     expect(report.filteredJobs).toHaveLength(1);
     expect([...store.jobs.values()][0]).toMatchObject({ notification: { smsPending: false, digestPending: false } });
   });
-  it('quarantines a legacy open role when its source has not changed but its link fails validation', async () => {
-    const store = new MemoryInternshipStore();
+  const legacyOpenRole = async (store: MemoryInternshipStore) => {
     const role = listing('https://jobs.example.com/b');
     await store.putInternship({
       jobId: 'legacy-role', company: role.company, title: role.title, location: role.location,
@@ -103,14 +102,32 @@ describe('polling', () => {
       compensation: role.compensation, sourceReferences: [role], open: true, firstSeenAt: role.fetchedAt,
       lastSeenAt: role.fetchedAt, notification: { smsPending: true, digestPending: true },
     });
+    return role;
+  };
+
+  it('quarantines a legacy open role when its source has not changed but its link is gone', async () => {
+    const store = new MemoryInternshipStore();
+    const role = await legacyOpenRole(store);
     const report = await new Poller(
-      [new Adapter('one', [])],
-      store,
-      undefined,
-      undefined,
-      async () => { throw new Error('Application link returned HTTP 403'); },
+      [new Adapter('one', [])], store, undefined, undefined,
+      async () => { throw new Error('Application link returned HTTP 410'); },
     ).poll();
     expect((await store.getJob('legacy-role'))).toMatchObject({ open: false, invalidApplicationUrl: role.applyUrl, notification: { smsPending: false, digestPending: false } });
+    expect(report.failures).toContain('catalog: legacy-role: Application link returned HTTP 410');
+  });
+
+  it('leaves a legacy open role alone when the employer only refuses to be read', async () => {
+    const store = new MemoryInternshipStore();
+    await legacyOpenRole(store);
+    // Tesla and Citadel answer automated clients with 403. That proves nothing
+    // about the posting, so hiding the role would lose a real job.
+    const report = await new Poller(
+      [new Adapter('one', [])], store, undefined, undefined,
+      async () => { throw new Error('Application link returned HTTP 403'); },
+    ).poll();
+    const preserved = await store.getJob('legacy-role');
+    expect(preserved?.open).toBe(true);
+    expect(preserved?.invalidApplicationUrl).toBeUndefined();
     expect(report.failures).toContain('catalog: legacy-role: Application link returned HTTP 403');
   });
 });

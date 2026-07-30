@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
-import { assessApplicationPageForListing, canonicalApplicationUrl, type ApplicationPageConfidence, type ApplicationUrlValidator } from './core/application-url.js';
+import { assessApplicationPageForListing, canonicalApplicationUrl, type ApplicationUrlValidator } from './core/application-url.js';
+import { boardReference, reachabilityFromFailure, reachabilityFromSignals, verifyApplication, type AttributionBasis, type Reachability } from './core/application-verification.js';
 import { fingerprintCandidates, normalizeUrl } from './core/normalize.js';
 import { isTechnicalJob, type JobFilter } from './core/filters.js';
 import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
 import { evaluateSourceFreshness } from './ingestion/monitoring.js';
 import { processSnapshot } from './ingestion/processor.js';
+import { reviewedBoardIndex } from './sources/index.js';
 import { sourceQualityFailures } from './sources/quality.js';
 import { SourceFetchError } from './sources/source-error.js';
 import type {
@@ -237,7 +239,9 @@ export class IngestionRunner {
           await this.validateApplicationUrl!(job.applyUrl);
           await this.store.putInternship({ ...job, applicationUrlValidatedAt: this.now().toISOString() });
         } catch (error) {
-          await this.quarantine(job);
+          // A refused read or a timeout says nothing about the posting; only a
+          // destination proven gone hides a role a source still lists.
+          if (reachabilityFromFailure(error) === 'gone') await this.quarantine(job);
           report.failures.push(`catalog: ${job.jobId}: ${error instanceof Error ? error.message : String(error)}`);
         }
       };
@@ -245,6 +249,28 @@ export class IngestionRunner {
         while (nextJob < jobs.length) await validateJob();
       }));
     } while (cursor);
+  }
+
+  private readonly boardIndex = reviewedBoardIndex();
+  private readonly boardActiveIds = new Map<string, Promise<Set<string>>>();
+
+  /**
+   * A posting served by a reviewed connector is attributed by its own URL
+   * contract. A posting merely referenced by a list is attributed when the board
+   * it points at is one this catalog polls and that board's checkpoint still
+   * lists it — evidence already held, so no employer request is made.
+   */
+  private async attribute(listing: ProcessedListing): Promise<AttributionBasis> {
+    if ([...this.boardIndex.values()].includes(listing.sourceId)) return 'provider-api';
+    const reference = boardReference(listing.applyUrl);
+    const sourceId = reference && this.boardIndex.get(`${reference.provider}:${reference.token}`);
+    if (!reference || !sourceId) return 'unattributed';
+    if (!this.boardActiveIds.has(sourceId)) {
+      this.boardActiveIds.set(sourceId, this.store.getCheckpoint(sourceId)
+        .then((checkpoint) => new Set(checkpoint?.activeExternalIds ?? []))
+        .catch(() => new Set<string>()));
+    }
+    return (await this.boardActiveIds.get(sourceId)!).has(reference.postingId) ? 'reviewed-board' : 'unattributed';
   }
 
   private async resolveListings(listings: ProcessedListing[], report: PollReport) {
@@ -273,24 +299,37 @@ export class IngestionRunner {
           if (existing) break;
           existing = await this.store.findByFingerprint(candidate);
         }
-        let confidence: ApplicationPageConfidence | undefined;
-        // Shelved roles never surface or alert, so they are not worth an
-        // employer request.
+        const attribution = await this.attribute(listing);
+        let reachability: Reachability = 'implied';
+        let described: boolean | undefined;
+        // Attribution already proves the destination, and shelved roles never
+        // surface, so neither is worth an employer request.
         const needsValidation = Boolean(this.validateApplicationUrl && listing.technical !== false
+          && attribution === 'unattributed'
           && existing?.invalidApplicationUrl !== normalizedUrl
           && (!existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
         validatingLink = needsValidation;
         if (needsValidation) {
           const validation = await this.validateApplicationUrl!(listing.applyUrl);
-          if (typeof validation !== 'string') confidence = assessApplicationPageForListing(listing.title, validation.evidence);
+          if (typeof validation === 'string') reachability = 'live';
+          else {
+            const confidence = assessApplicationPageForListing(listing.title, validation.evidence);
+            reachability = reachabilityFromSignals(confidence.signals);
+            described = confidence.recommendation === 'alert-eligible';
+          }
         }
-        if (needsValidation && confidence?.level !== 'low') validatedAt.set(id, this.now().toISOString());
         validatingLink = false;
-        if (confidence?.recommendation !== 'catalog-only' && confidence?.recommendation !== 'review') alertEligible.add(id);
+        const verification = verifyApplication({ attribution, reachability, ...(described === undefined ? {} : { described }) });
+        if (attribution !== 'unattributed' || (needsValidation && verification.alertEligible)) {
+          validatedAt.set(id, this.now().toISOString());
+        }
+        if (verification.alertEligible) alertEligible.add(id);
         resolved.set(id, existing);
         accepted[slot] = listing;
       } catch (error) {
-        if (validatingLink && existing?.open) await this.quarantine(existing);
+        // Only a destination proven gone hides a live role; a timeout or a
+        // refused read leaves it exactly as it was.
+        if (validatingLink && existing?.open && reachabilityFromFailure(error) === 'gone') await this.quarantine(existing);
         failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
       }
     });
