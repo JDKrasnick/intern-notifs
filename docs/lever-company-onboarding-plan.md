@@ -11,7 +11,9 @@ a global company directory and does not automatically promote discovery
 results.
 
 The shared reader boundary is defined in `ingestion-architecture.md`. Ongoing source
-health is defined in `lever-monitoring-plan.md`.
+health is defined in `lever-monitoring-plan.md`. How candidates reach this
+pipeline, and how ownership is established at volume, is defined in
+[`lever-ownership-verification-plan.md`](lever-ownership-verification-plan.md).
 
 ## Research facts
 
