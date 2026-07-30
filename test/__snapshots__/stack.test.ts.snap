@@ -2384,28 +2384,52 @@ exports[`CDK stack > queues Greenhouse boards every ten minutes with bounded wor
               "Action": [
                 "dynamodb:BatchGetItem",
                 "dynamodb:GetItem",
+                "dynamodb:Query",
+                "dynamodb:PutItem",
               ],
               "Effect": "Allow",
-              "Resource": {
-                "Fn::Join": [
-                  "",
-                  [
-                    "arn:",
-                    {
-                      "Ref": "AWS::Partition",
-                    },
-                    ":dynamodb:",
-                    {
-                      "Ref": "AWS::Region",
-                    },
-                    ":",
-                    {
-                      "Ref": "AWS::AccountId",
-                    },
-                    ":table/internships",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/internships",
+                    ],
                   ],
-                ],
-              },
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/internships/index/*",
+                    ],
+                  ],
+                },
+              ],
             },
             {
               "Action": "sqs:GetQueueAttributes",
@@ -2493,6 +2517,64 @@ exports[`CDK stack > queues Greenhouse boards every ten minutes with bounded wor
         "ProtocolType": "HTTP",
       },
       "Type": "AWS::ApiGatewayV2::Api",
+    },
+    "GreenhouseOperationsHttpApiGEToperationslevercandidatesE274964E": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "GreenhouseOperationsHttpApiFBEDCDF7",
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "GET /operations/lever/candidates",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "GreenhouseOperationsHttpApiGEToperationssourcesGreenhouseOperationsIntegration3947B151",
+              },
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::ApiGatewayV2::Route",
+    },
+    "GreenhouseOperationsHttpApiGEToperationslevercandidatesGreenhouseOperationsIntegrationPermissionAD02B783": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "GreenhouseOperationsApiB91A2305",
+            "Arn",
+          ],
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition",
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region",
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId",
+              },
+              ":",
+              {
+                "Ref": "GreenhouseOperationsHttpApiFBEDCDF7",
+              },
+              "/*/*/operations/lever/candidates",
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::Lambda::Permission",
     },
     "GreenhouseOperationsHttpApiGEToperationssources21C2CB63": {
       "Properties": {
@@ -2620,6 +2702,122 @@ exports[`CDK stack > queues Greenhouse boards every ten minutes with bounded wor
                 "Ref": "GreenhouseOperationsHttpApiFBEDCDF7",
               },
               "/*/*/operations/sources/{sourceId}",
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::Lambda::Permission",
+    },
+    "GreenhouseOperationsHttpApiPOSToperationslevercandidatessiteaccept1A125395": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "GreenhouseOperationsHttpApiFBEDCDF7",
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /operations/lever/candidates/{site}/accept",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "GreenhouseOperationsHttpApiGEToperationssourcesGreenhouseOperationsIntegration3947B151",
+              },
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::ApiGatewayV2::Route",
+    },
+    "GreenhouseOperationsHttpApiPOSToperationslevercandidatessiteacceptGreenhouseOperationsIntegrationPermission946665B8": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "GreenhouseOperationsApiB91A2305",
+            "Arn",
+          ],
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition",
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region",
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId",
+              },
+              ":",
+              {
+                "Ref": "GreenhouseOperationsHttpApiFBEDCDF7",
+              },
+              "/*/*/operations/lever/candidates/{site}/accept",
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::Lambda::Permission",
+    },
+    "GreenhouseOperationsHttpApiPOSToperationslevercandidatessiteverifyE5236E77": {
+      "Properties": {
+        "ApiId": {
+          "Ref": "GreenhouseOperationsHttpApiFBEDCDF7",
+        },
+        "AuthorizationType": "NONE",
+        "RouteKey": "POST /operations/lever/candidates/{site}/verify",
+        "Target": {
+          "Fn::Join": [
+            "",
+            [
+              "integrations/",
+              {
+                "Ref": "GreenhouseOperationsHttpApiGEToperationssourcesGreenhouseOperationsIntegration3947B151",
+              },
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::ApiGatewayV2::Route",
+    },
+    "GreenhouseOperationsHttpApiPOSToperationslevercandidatessiteverifyGreenhouseOperationsIntegrationPermissionD56F92B2": {
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "GreenhouseOperationsApiB91A2305",
+            "Arn",
+          ],
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition",
+              },
+              ":execute-api:",
+              {
+                "Ref": "AWS::Region",
+              },
+              ":",
+              {
+                "Ref": "AWS::AccountId",
+              },
+              ":",
+              {
+                "Ref": "GreenhouseOperationsHttpApiFBEDCDF7",
+              },
+              "/*/*/operations/lever/candidates/{site}/verify",
             ],
           ],
         },

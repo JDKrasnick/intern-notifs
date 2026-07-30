@@ -3,6 +3,7 @@ import { CloudWatchClient, DescribeAlarmsCommand } from '@aws-sdk/client-cloudwa
 import { GetQueueAttributesCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { reviewedGreenhouseSources } from './sources/greenhouse-config.js';
 import { DynamoInternshipStore, type InternshipStore } from './store.js';
+import { acceptLeverAdmission, listLeverCandidates, verifyLeverAdmission, type LeverAdmissionInput } from './lever-admission.js';
 import type { SourceCheckpoint, SourceHealth, SourceHealthState } from './types.js';
 
 type ApiEvent = {
@@ -12,13 +13,15 @@ type ApiEvent = {
   routeKey?: string;
   pathParameters?: Record<string, string>;
   queryStringParameters?: Record<string, string>;
+  body?: string;
+  isBase64Encoded?: boolean;
 };
 
 const responseHeaders = {
   'Content-Type': 'application/json',
   'Cache-Control': 'no-store',
   'Access-Control-Allow-Headers': 'Content-Type,X-Operations-Key',
-  'Access-Control-Allow-Methods': 'GET,OPTIONS',
+  'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
 };
 const reply = (statusCode: number, body: unknown) => ({ statusCode, headers: responseHeaders, body: JSON.stringify(body) });
 const healthWindowMs = 30 * 60_000;
@@ -111,7 +114,7 @@ async function fleetStatus(queueUrl: string, deadLetterQueueUrl: string, sqs: SQ
 }
 
 export function createGreenhouseOperationsHandler(dependencies: {
-  store: Pick<InternshipStore, 'getCheckpoint' | 'getSourceHealthMany'>;
+  store: InternshipStore;
   queueUrl: string;
   deadLetterQueueUrl: string;
   sharedSecret: string;
@@ -123,10 +126,41 @@ export function createGreenhouseOperationsHandler(dependencies: {
     const method = event.requestContext?.http?.method ?? event.routeKey?.split(' ')[0] ?? 'GET';
     if (method === 'OPTIONS') return reply(204, {});
     if (!authorized(event, dependencies.sharedSecret)) return reply(401, { code: 'AUTHENTICATION_REQUIRED', message: 'Operations credentials were rejected.' });
-    if (method !== 'GET') return reply(405, { code: 'METHOD_NOT_ALLOWED', message: 'The operations API is read-only.' });
 
     const timestamp = (dependencies.now ?? (() => new Date()))().getTime();
     const path = (event.rawPath ?? event.routeKey?.split(' ')[1] ?? '/').replace(/^\/internal(?=\/)/, '');
+    if (path === '/operations/lever/candidates' && method === 'GET') {
+      const [candidates, admissions] = await Promise.all([
+        listLeverCandidates(dependencies.store, new Date(timestamp)),
+        dependencies.store.listLeverAdmissions?.() ?? [],
+      ]);
+      return reply(200, { generatedAt: new Date(timestamp).toISOString(), candidates, admissions });
+    }
+    const leverAction = path.match(/^\/operations\/lever\/candidates\/([^/]+)\/(verify|accept)$/);
+    if (leverAction && method === 'POST') {
+      let input: LeverAdmissionInput;
+      try {
+        const body = event.isBase64Encoded ? Buffer.from(event.body ?? '', 'base64').toString('utf8') : event.body ?? '';
+        input = JSON.parse(body) as LeverAdmissionInput;
+      } catch {
+        return reply(400, { code: 'INVALID_REQUEST', message: 'Request body must be valid JSON.' });
+      }
+      const site = decodeURIComponent(leverAction[1]);
+      try {
+        if (leverAction[2] === 'verify') {
+          return reply(200, await verifyLeverAdmission(dependencies.store, site, input, { now: dependencies.now }));
+        }
+        const actor = header(event, 'x-operations-actor')?.trim() || 'operations-owner';
+        return reply(201, await acceptLeverAdmission(dependencies.store, site, input, actor, { now: dependencies.now }));
+      } catch (error) {
+        return reply(422, {
+          code: leverAction[2] === 'verify' ? 'VERIFICATION_FAILED' : 'ADMISSION_FAILED',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    if (method !== 'GET') return reply(405, { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed.' });
+
     const ids = reviewedGreenhouseSources.map((source) => source.id);
     const [healthRecords, checkpoints] = await Promise.all([
       dependencies.store.getSourceHealthMany(ids),

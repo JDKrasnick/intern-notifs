@@ -1,6 +1,6 @@
 import { SendMessageBatchCommand, SQSClient, type SendMessageBatchRequestEntry } from '@aws-sdk/client-sqs';
 import { reviewedLeverSources, type ReviewedLeverSource } from './sources/lever-config.js';
-import { DynamoInternshipStore } from './store.js';
+import { DynamoInternshipStore, type LeverAdmission } from './store.js';
 import type { SourceCheckpoint } from './types.js';
 
 export const LEVER_DISPATCH_BATCH_SIZE = 10;
@@ -19,6 +19,7 @@ interface LeverQueueClient {
 
 interface CheckpointReader {
   getCheckpoint(sourceId: string): Promise<SourceCheckpoint | undefined>;
+  listLeverAdmissions?(): Promise<LeverAdmission[]>;
 }
 
 export interface LeverDispatchDependencies {
@@ -85,7 +86,10 @@ async function dueSources(
 export async function dispatchLeverBoards(dependencies: LeverDispatchDependencies): Promise<{ queued: number }> {
   const client = dependencies.client ?? new SQSClient({});
   const now = (dependencies.now ?? (() => new Date()))();
-  const sources = dependencies.sources ?? reviewedLeverSources;
+  const dynamic = dependencies.sources || !dependencies.checkpointReader?.listLeverAdmissions
+    ? []
+    : (await dependencies.checkpointReader.listLeverAdmissions()).map(({ source }) => source);
+  const sources = dependencies.sources ?? [...reviewedLeverSources, ...dynamic];
   const messages = leverWorkMessages(await dueSources(sources, dependencies.checkpointReader, now), now);
   const window = Math.floor(now.getTime() / LEVER_POLL_INTERVAL_MS);
   let queued = 0;

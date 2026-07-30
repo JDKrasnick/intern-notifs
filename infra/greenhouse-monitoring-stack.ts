@@ -93,8 +93,8 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
       bundling: { externalModules: [] },
     });
     operationsHandler.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['dynamodb:BatchGetItem', 'dynamodb:GetItem'],
-      resources: [internships.tableArn],
+      actions: ['dynamodb:BatchGetItem', 'dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem'],
+      resources: [internships.tableArn, `${internships.tableArn}/index/*`],
     }));
     operationsHandler.addToRolePolicy(new iam.PolicyStatement({
       actions: ['sqs:GetQueueAttributes'],
@@ -107,6 +107,9 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
     const operationsIntegration = new apigatewayIntegrations.HttpLambdaIntegration('GreenhouseOperationsIntegration', operationsHandler);
     operationsApi.addRoutes({ path: '/operations/sources', methods: [apigatewayv2.HttpMethod.GET], integration: operationsIntegration });
     operationsApi.addRoutes({ path: '/operations/sources/{sourceId}', methods: [apigatewayv2.HttpMethod.GET], integration: operationsIntegration });
+    operationsApi.addRoutes({ path: '/operations/lever/candidates', methods: [apigatewayv2.HttpMethod.GET], integration: operationsIntegration });
+    operationsApi.addRoutes({ path: '/operations/lever/candidates/{site}/verify', methods: [apigatewayv2.HttpMethod.POST], integration: operationsIntegration });
+    operationsApi.addRoutes({ path: '/operations/lever/candidates/{site}/accept', methods: [apigatewayv2.HttpMethod.POST], integration: operationsIntegration });
 
     const schedulerDeadLetterQueue = new sqs.Queue(this, 'GreenhouseSchedulerDeadLetterQueue', {
       retentionPeriod: cdk.Duration.days(14),

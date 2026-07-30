@@ -4,6 +4,17 @@ import { isPastSeason } from './core/early-career.js';
 import { employerCategory } from './core/employers.js';
 import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, NotificationEvent, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
 import type { ApplicationSession } from './application-automation.js';
+import type { ReviewedLeverSource } from './sources/lever-config.js';
+import type { LeverOwnershipEvidence } from './sources/lever-evidence.js';
+import type { LeverCandidateProbeResult } from './sources/lever-probe.js';
+
+export interface LeverAdmission {
+  source: ReviewedLeverSource;
+  evidence: LeverOwnershipEvidence;
+  probe: LeverCandidateProbeResult & { state: 'ok' };
+  acceptedAt: string;
+  acceptedBy: string;
+}
 
 function withEmployerCategory(job: Internship): Internship {
   return { ...structuredClone(job), employerCategory: job.employerCategory ?? employerCategory(job.company) };
@@ -33,6 +44,8 @@ export interface InternshipStore {
   markSmsSent(jobIds: string, sentAt: string): Promise<void>;
   markDigested(jobIds: string[], sentAt: string): Promise<void>;
   listOpen?(cursor?: string, limit?: number, status?: 'open' | 'closed'): Promise<{ jobs: Internship[]; cursor?: string }>;
+  listLeverAdmissions?(): Promise<LeverAdmission[]>;
+  putLeverAdmission?(admission: LeverAdmission): Promise<void>;
   /** Open technical roles discovered strictly after `after` and no later than `before`. */
   listOpenSince(after: string, before: string): Promise<Internship[]>;
 }
@@ -43,6 +56,7 @@ export class MemoryInternshipStore implements InternshipStore {
   readonly occurrences = new Map<string, SourceOccurrenceState>();
   readonly notificationEvents = new Map<string, NotificationEvent>();
   readonly sourceHealth = new Map<string, SourceHealth>();
+  readonly leverAdmissions = new Map<string, LeverAdmission>();
   async getCheckpoint(sourceId: string) { return this.checkpoints.get(sourceId); }
   async putCheckpoint(checkpoint: SourceCheckpoint) { this.checkpoints.set(checkpoint.sourceId, checkpoint); }
   async getSourceHealth(sourceId: string) { return this.sourceHealth.get(sourceId); }
@@ -69,6 +83,11 @@ export class MemoryInternshipStore implements InternshipStore {
       .filter((job) => job.open && job.technical !== false && !isPastSeason(job.season) && job.firstSeenAt > after && job.firstSeenAt <= before)
       .sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt))
       .map(withEmployerCategory);
+  }
+  async listLeverAdmissions() { return [...this.leverAdmissions.values()].map((value) => structuredClone(value)); }
+  async putLeverAdmission(admission: LeverAdmission) {
+    if (this.leverAdmissions.has(admission.source.site)) throw new Error(`Lever site ${admission.source.site} is already admitted`);
+    this.leverAdmissions.set(admission.source.site, structuredClone(admission));
   }
 }
 
@@ -191,6 +210,27 @@ export class DynamoInternshipStore implements InternshipStore {
       ScanIndexForward: false,
     });
     return result.map((item) => withEmployerCategory(item.job as Internship));
+  }
+  async listLeverAdmissions(): Promise<LeverAdmission[]> {
+    return (await this.queryAll({
+      TableName: this.tableName,
+      KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
+      ExpressionAttributeValues: { ':pk': 'REGISTRY#LEVER', ':prefix': 'SOURCE#' },
+    })).map((item) => item.admission as LeverAdmission);
+  }
+  async putLeverAdmission(admission: LeverAdmission): Promise<void> {
+    try {
+      await this.client.send(new PutCommand({
+        TableName: this.tableName,
+        Item: { pk: 'REGISTRY#LEVER', sk: `SOURCE#${admission.source.site}`, admission },
+        ConditionExpression: 'attribute_not_exists(pk)',
+      }));
+    } catch (error) {
+      if ((error as { name?: string }).name === 'ConditionalCheckFailedException') {
+        throw new Error(`Lever site ${admission.source.site} is already admitted`);
+      }
+      throw error;
+    }
   }
 }
 

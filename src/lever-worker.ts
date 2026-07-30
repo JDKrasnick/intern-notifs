@@ -78,7 +78,10 @@ export async function runLeverBoard(
   message: LeverWorkMessage,
   dependencies: LeverBoardDependencies,
 ): Promise<LeverBoardResult> {
-  const registry = dependencies.sources ?? reviewedLeverSources;
+  const dynamic = dependencies.sources || !dependencies.store.listLeverAdmissions
+    ? []
+    : (await dependencies.store.listLeverAdmissions()).map(({ source }) => source);
+  const registry = dependencies.sources ?? [...reviewedLeverSources, ...dynamic];
   const source = registry.find((candidate) => candidate.id === message.sourceId);
   if (!source) throw new Error(`Unknown reviewed Lever source ${JSON.stringify(message.sourceId)}`);
   const mode = source.status;
@@ -95,7 +98,10 @@ export async function runLeverBoard(
     const previous = await dependencies.store.getCheckpoint(checkpointId);
     const result = await adapter.fetch(previous);
     if (!result.notModified) {
-      const quality = verifySourceQuality([{ policy: qualityPolicyFor(source.id), result, previous }]);
+      const policy = reviewedLeverSources.some(({ id }) => id === source.id)
+        ? qualityPolicyFor(source.id)
+        : { id: source.id, sourceClass: 'lever' as const, leverSite: source.site };
+      const quality = verifySourceQuality([{ policy, result, previous }]);
       if (quality.failures.length) throw new Error(quality.failures.join('; '));
       await validateShadowLinks(result.listings, validate);
     }
