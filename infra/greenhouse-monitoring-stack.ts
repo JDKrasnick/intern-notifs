@@ -117,11 +117,18 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
     }));
     operationsHandler.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ssm:GetParametersByPath'],
-      resources: [cdk.Stack.of(this).formatArn({
-        service: 'ssm',
-        resource: 'parameter',
-        resourceName: 'intern-notifs/operations/*',
-      })],
+      resources: [
+        cdk.Stack.of(this).formatArn({
+          service: 'ssm',
+          resource: 'parameter',
+          resourceName: 'intern-notifs/operations',
+        }),
+        cdk.Stack.of(this).formatArn({
+          service: 'ssm',
+          resource: 'parameter',
+          resourceName: 'intern-notifs/operations/*',
+        }),
+      ],
     }));
     operationsHandler.addToRolePolicy(new iam.PolicyStatement({ actions: ['cloudwatch:DescribeAlarms'], resources: ['*'] }));
     const operationsApi = new apigatewayv2.HttpApi(this, 'GreenhouseOperationsHttpApi');
