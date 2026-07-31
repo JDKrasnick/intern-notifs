@@ -26,7 +26,7 @@ Greenhouse and Lever:
 - review fleet health and recent failed extractions;
 - confirm both provider dead-letter queues are empty or understood;
 - exercise pause, resume, and replay on one shadow source from each provider;
-- verify alarm delivery; and
+- verify the combined reminder email; and
 - confirm the latest nightly live contract.
 
 A combined reminder is sent every Monday at 9:00 AM America/New_York while any

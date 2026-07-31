@@ -31,9 +31,9 @@ export const monitoringChecklistItems: ReadonlyArray<{
     description: 'Pause, resume, and replay one Lever shadow source and confirm a trusted snapshot.',
   },
   {
-    id: 'verify-alarm-delivery',
-    label: 'Verify alarm delivery',
-    description: 'Confirm a monitoring alarm reaches the expected notification path and can be resolved.',
+    id: 'verify-reminder-delivery',
+    label: 'Verify reminder delivery',
+    description: 'Confirm the combined Monday digest reaches the expected inbox and links to this pane.',
   },
   {
     id: 'confirm-nightly-contract',

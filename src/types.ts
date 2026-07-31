@@ -203,7 +203,7 @@ export type MonitoringChecklistItemId =
   | 'confirm-dead-letter-queues'
   | 'exercise-greenhouse-recovery'
   | 'exercise-lever-recovery'
-  | 'verify-alarm-delivery'
+  | 'verify-reminder-delivery'
   | 'confirm-nightly-contract';
 
 export interface MonitoringChecklistCompletion {
