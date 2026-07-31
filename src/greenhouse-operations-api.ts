@@ -264,7 +264,8 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
       };
       if (action === 'pause') updated = { ...updated, sourceStatus: 'paused' };
       if (action === 'resume') {
-        const { backoffUntil: _backoffUntil, ...withoutBackoff } = updated;
+        const withoutBackoff = { ...updated };
+        delete withoutBackoff.backoffUntil;
         updated = { ...withoutBackoff, sourceStatus: 'active' };
       }
       if (action === 'set-tier') {
