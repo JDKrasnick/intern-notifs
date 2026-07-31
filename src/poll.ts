@@ -41,6 +41,7 @@ interface TrustedBatch {
 }
 
 const SOURCE_WORK_CONCURRENCY = 24;
+const MAX_IN_PROCESS_RETRY_DELAY_MS = 60_000;
 
 /**
  * Bounded worker pool that always drains: the first error is rethrown only once
@@ -227,7 +228,12 @@ async function fetchWithRetry(adapter: SourceAdapter, checkpoint: SourceCheckpoi
     } catch (error) {
       finalError = error;
       if (!retryable(error) || attempt === 3) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 25 * (2 ** (attempt - 1))));
+      const exponentialDelay = 25 * (2 ** (attempt - 1));
+      const retryAfterMs = error instanceof SourceFetchError ? error.retryAfterMs : undefined;
+      // Let the durable source-health backoff handle longer provider windows;
+      // never keep a queue worker asleep past its bounded retry budget.
+      if (retryAfterMs !== undefined && retryAfterMs > MAX_IN_PROCESS_RETRY_DELAY_MS) throw error;
+      await new Promise((resolve) => setTimeout(resolve, Math.max(exponentialDelay, retryAfterMs ?? 0)));
     }
   }
   throw finalError;

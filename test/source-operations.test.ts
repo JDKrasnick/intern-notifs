@@ -70,6 +70,7 @@ describe('shared source operations', () => {
     expect(replay.input).toMatchObject({
       QueueUrl: 'https://sqs.test/lever.fifo',
       MessageGroupId: source.id,
+      MessageBody: expect.stringContaining('"force":true'),
     });
   });
 });

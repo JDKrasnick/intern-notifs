@@ -11,6 +11,8 @@ export interface GreenhouseWorkMessage {
   version: 1;
   sourceId: string;
   scheduledAt: string;
+  /** An operator replay may deliberately bypass a pause or provider backoff. */
+  force?: boolean;
 }
 
 interface GreenhouseQueueClient {

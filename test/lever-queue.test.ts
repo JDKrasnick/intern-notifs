@@ -138,6 +138,49 @@ describe('Lever queue worker', () => {
     });
   });
 
+  it('does not fetch paused work unless it is an explicit operator replay', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putSourceHealth({
+      sourceId: shadowSource.id,
+      state: 'healthy',
+      sourceStatus: 'paused',
+      lastAttemptAt: scheduledAt,
+      consecutiveFailures: 0,
+      durationMs: 0,
+    });
+    let fetches = 0;
+    const dependencies = {
+      store,
+      sources: [shadowSource],
+      fetchImpl: async () => { fetches += 1; return response(); },
+      linkValidator: async (url: string) => url,
+    };
+
+    await expect(runLeverBoard(message(), dependencies)).resolves.toMatchObject({ skipped: 'paused' });
+    expect(fetches).toBe(0);
+    await expect(runLeverBoard({ ...message(), force: true }, dependencies)).resolves.toMatchObject({ listings: 1 });
+    expect(fetches).toBe(1);
+  });
+
+  it('does not immediately retry a published source when Lever supplies a long Retry-After', async () => {
+    const published: ReviewedLeverSource = { ...shadowSource, status: 'published' };
+    const store = new MemoryInternshipStore();
+    let fetches = 0;
+
+    await expect(runLeverBoard({ ...message(published.id) }, {
+      store,
+      sources: [published],
+      fetchImpl: async () => {
+        fetches += 1;
+        return new Response(null, { status: 429, headers: { 'Retry-After': '120' } });
+      },
+      linkValidator: async (url: string) => url,
+    })).rejects.toThrow('Lever fetch failed (429)');
+
+    expect(fetches).toBe(1);
+    expect(await store.getSourceHealth(published.id)).toMatchObject({ outcome: 'rate_limited', backoffUntil: expect.any(String) });
+  });
+
   it('treats a 304 as healthy without erasing the last trusted counts', async () => {
     const store = new MemoryInternshipStore();
     let attempts = 0;

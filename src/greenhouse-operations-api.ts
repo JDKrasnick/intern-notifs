@@ -299,7 +299,7 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         const runId = `operator-${randomUUID()}`;
         await (dependencies.sqs ?? new SQSClient({})).send(new SendMessageCommand({
           QueueUrl: fleet.queueUrl,
-          MessageBody: JSON.stringify({ version: 1, sourceId, scheduledAt: changedAt, ...(source.provider === 'lever' ? { runId } : {}) }),
+          MessageBody: JSON.stringify({ version: 1, sourceId, scheduledAt: changedAt, force: true, ...(source.provider === 'lever' ? { runId } : {}) }),
           MessageGroupId: sourceId,
           MessageDeduplicationId: runId,
         }));

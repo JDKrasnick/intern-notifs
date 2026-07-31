@@ -13,6 +13,8 @@ export interface LeverWorkMessage {
   sourceId: string;
   scheduledAt: string;
   runId?: string;
+  /** An operator replay may deliberately bypass a pause or provider backoff. */
+  force?: boolean;
 }
 
 interface LeverQueueClient {

@@ -4,6 +4,7 @@ import type { SourceFailureCategory, SourceHealth, SourceOutcome, SourceRun } fr
 
 const MAX_RECENT_RUNS = 25;
 const QUALITY_FAILURES_BEFORE_QUARANTINE = 2;
+const MAX_PROVIDER_BACKOFF_MS = 30 * 60_000;
 
 export function safeDiagnostic(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -67,7 +68,7 @@ export function sourceBackoffUntil(error: unknown, failures: number, completedAt
   if (!(error instanceof SourceFetchError) || !error.retryable) return undefined;
   const retryAfterMs = error.retryAfterMs;
   const exponentialMs = Math.min(30 * 60_000, 60_000 * (2 ** Math.max(0, failures - 1)));
-  return new Date(Date.parse(completedAt) + Math.max(retryAfterMs ?? 0, exponentialMs)).toISOString();
+  return new Date(Date.parse(completedAt) + Math.min(MAX_PROVIDER_BACKOFF_MS, Math.max(retryAfterMs ?? 0, exponentialMs))).toISOString();
 }
 
 export function successfulSourceHealth(input: {

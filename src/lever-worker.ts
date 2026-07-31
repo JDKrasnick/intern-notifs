@@ -37,6 +37,7 @@ export interface LeverBoardDependencies {
 export interface LeverBoardResult {
   sourceId: string;
   mode: 'shadow' | 'published';
+  skipped?: 'paused' | 'backoff';
   notModified: boolean;
   listings: number;
   notifications: { sent: number; skipped: number; failed: number };
@@ -144,6 +145,13 @@ export async function runLeverBoard(
   const source = registry.find((candidate) => candidate.id === message.sourceId);
   if (!source) throw new Error(`Unknown reviewed Lever source ${JSON.stringify(message.sourceId)}`);
   const mode = source.status;
+  const sourceHealth = await dependencies.store.getSourceHealth(source.id);
+  if (!message.force && sourceHealth?.sourceStatus === 'paused') {
+    return { sourceId: source.id, mode, skipped: 'paused', notModified: true, listings: 0, notifications: { sent: 0, skipped: 0, failed: 0 } };
+  }
+  if (!message.force && sourceHealth?.backoffUntil && Date.parse(sourceHealth.backoffUntil) > Date.now()) {
+    return { sourceId: source.id, mode, skipped: 'backoff', notModified: true, listings: 0, notifications: { sent: 0, skipped: 0, failed: 0 } };
+  }
   const checkpointId = mode === 'shadow' ? `${SHADOW_CHECKPOINT_PREFIX}${source.id}` : source.id;
   const adapter = new LeverPostingsAdapter({
     id: source.id,
@@ -157,7 +165,7 @@ export async function runLeverBoard(
     const startedAt = new Date().toISOString();
     const started = Date.now();
     const previous = await dependencies.store.getCheckpoint(checkpointId);
-    const previousHealth = await dependencies.store.getSourceHealth(source.id);
+    const previousHealth = sourceHealth;
     try {
       const result = await fetchShadowWithRetry(
         adapter,

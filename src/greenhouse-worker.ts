@@ -34,6 +34,7 @@ export interface GreenhouseBoardDependencies {
 export interface GreenhouseBoardResult {
   sourceId: string;
   mode: 'shadow' | 'published';
+  skipped?: 'paused' | 'backoff';
   notModified: boolean;
   listings: number;
   rawRows?: number;
@@ -82,6 +83,13 @@ export async function runGreenhouseBoard(
   const source = registry.find((candidate) => candidate.id === message.sourceId);
   if (!source) throw new Error(`Unknown reviewed Greenhouse source ${JSON.stringify(message.sourceId)}`);
   const mode = source.status;
+  const sourceHealth = await dependencies.store.getSourceHealth(source.id);
+  if (!message.force && sourceHealth?.sourceStatus === 'paused') {
+    return { sourceId: source.id, mode, skipped: 'paused', notModified: true, listings: 0, notifications: { sent: 0, skipped: 0, failed: 0 } };
+  }
+  if (!message.force && sourceHealth?.backoffUntil && Date.parse(sourceHealth.backoffUntil) > Date.now()) {
+    return { sourceId: source.id, mode, skipped: 'backoff', notModified: true, listings: 0, notifications: { sent: 0, skipped: 0, failed: 0 } };
+  }
   const checkpointId = mode === 'shadow' ? `${SHADOW_CHECKPOINT_PREFIX}${source.id}` : source.id;
   const adapter = new GreenhouseBoardAdapter({
     source,
@@ -152,6 +160,10 @@ export async function processGreenhouseQueue(
       const message = parseWorkMessage(record.body);
       const previousHealth = await dependencies.store.getSourceHealth(message.sourceId);
       const result = await runGreenhouseBoard(message, dependencies);
+      if (result.skipped) {
+        console.log(JSON.stringify({ event: 'source_poll_skipped', command: 'greenhouse-poll', sourceId: result.sourceId, reason: result.skipped }));
+        continue;
+      }
       const completedAt = new Date().toISOString();
       await dependencies.store.putSourceHealth(successfulSourceHealth({
         sourceId: result.sourceId,
