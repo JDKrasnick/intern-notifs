@@ -197,6 +197,28 @@ export interface SourceRun {
   diagnostic?: string;
 }
 
+export type MonitoringChecklistItemId =
+  | 'review-fleet-health'
+  | 'inspect-failed-extractions'
+  | 'confirm-dead-letter-queues'
+  | 'exercise-greenhouse-recovery'
+  | 'exercise-lever-recovery'
+  | 'verify-reminder-delivery'
+  | 'confirm-nightly-contract';
+
+export interface MonitoringChecklistCompletion {
+  completedAt: string;
+  completedBy: string;
+}
+
+export interface MonitoringChecklist {
+  period: string;
+  completions: Partial<Record<MonitoringChecklistItemId, MonitoringChecklistCompletion>>;
+  updatedAt?: string;
+  updatedBy?: string;
+  version: number;
+}
+
 export interface SourceReference {
   sourceId: string;
   document: string;
@@ -271,6 +293,8 @@ export interface ProcessedListing extends SourceOccurrence {
   technical?: boolean;
   /** The source truncated this title and it was reconstructed, so it may be approximate. */
   titleRepaired?: boolean;
+  /** Whether the season came from this posting or a list-wide default. */
+  seasonSource?: 'posting' | 'source-default';
 }
 
 /** @deprecated Use `ProcessedListing`; retained only while callers migrate. */
@@ -306,6 +330,7 @@ export interface SourcedPosting {
   lifecycleAuthority?: 'title' | 'source';
   publishedAt?: string;
   seasonHint?: string;
+  seasonHintAuthority?: 'posting' | 'source-default';
   classificationTags?: string[];
   declaredWorkMode?: string;
   compensationText?: string;
@@ -365,6 +390,8 @@ export interface Internship {
   normalizedUrl: string;
   /** Present only after the official destination has resolved successfully. */
   applicationUrlValidatedAt?: string;
+  /** Version of employer-page metadata extraction applied to this role. */
+  applicationPageMetadataVersion?: number;
   /** A confirmed broken URL remains hidden until a source supplies a different destination. */
   invalidApplicationUrl?: string;
   fingerprint: string;

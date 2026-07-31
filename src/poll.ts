@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { assessApplicationPageForListing, canonicalApplicationUrl, type ApplicationUrlValidator } from './core/application-url.js';
 import { boardReference, reachabilityFromFailure, reachabilityFromSignals, verifyApplication, type AttributionBasis, type Reachability } from './core/application-verification.js';
+import { inferSeason } from './core/early-career.js';
 import { fingerprintCandidates, normalizeUrl } from './core/normalize.js';
 import { isTechnicalJob, type JobFilter } from './core/filters.js';
 import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
@@ -21,6 +22,8 @@ import type {
   SourceSnapshot,
 } from './types.js';
 import type { InternshipStore } from './store.js';
+
+const applicationPageMetadataVersion = 1;
 
 export interface PollReport {
   fetchedSources: number;
@@ -311,6 +314,7 @@ export class IngestionRunner {
   private async resolveListings(listings: ProcessedListing[], report: PollReport) {
     const resolved = new Map<string, Internship | undefined>();
     const validatedAt = new Map<string, string>();
+    const metadataValidated = new Map<string, number>();
     const alertEligible = new Set<string>();
     // Slots keep the snapshot order stable so duplicate merging, alert order, and
     // reported failures do not depend on which worker finished first.
@@ -318,7 +322,7 @@ export class IngestionRunner {
     const failures = new Array<string | undefined>(listings.length);
     await forEachBounded(listings, async (sourceListing, slot) => {
       const canonicalUrl = canonicalApplicationUrl(sourceListing.applyUrl);
-      const listing = {
+      let listing = {
         ...sourceListing,
         externalId: externalId(sourceListing),
         applyUrl: canonicalUrl,
@@ -335,14 +339,20 @@ export class IngestionRunner {
           existing = await this.store.findByFingerprint(candidate);
         }
         const attribution = await this.attribute(listing);
+        if (listing.seasonSource === 'source-default'
+          && existing?.applicationPageMetadataVersion === applicationPageMetadataVersion) {
+          listing = { ...listing, season: existing.season, seasonSource: 'posting' };
+        }
         let reachability: Reachability = 'implied';
         let described: boolean | undefined;
         // Attribution already proves the destination, and shelved roles never
         // surface, so neither is worth an employer request.
+        const needsMetadataValidation = listing.seasonSource === 'source-default'
+          && existing?.applicationPageMetadataVersion !== applicationPageMetadataVersion;
         const needsValidation = Boolean(this.validateApplicationUrl && listing.technical !== false
           && attribution === 'unattributed'
           && existing?.invalidApplicationUrl !== normalizedUrl
-          && (!existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
+          && (needsMetadataValidation || !existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
         validatingLink = needsValidation;
         if (needsValidation) {
           const validation = await this.validateApplicationUrl!(listing.applyUrl);
@@ -351,6 +361,15 @@ export class IngestionRunner {
             const confidence = assessApplicationPageForListing(listing.title, validation.evidence);
             reachability = reachabilityFromSignals(confidence.signals);
             described = confidence.recommendation === 'alert-eligible';
+            const titleSeason = inferSeason(listing.title, '', this.now());
+            const pageSeason = inferSeason(
+              validation.evidence.title ?? '',
+              [validation.evidence.description, validation.evidence.contentExcerpt].filter(Boolean).join(' '),
+              this.now(),
+            );
+            const verifiedSeason = titleSeason !== 'ongoing' ? titleSeason : pageSeason;
+            if (verifiedSeason !== 'ongoing') listing = { ...listing, season: verifiedSeason, seasonSource: 'posting' };
+            metadataValidated.set(id, applicationPageMetadataVersion);
           }
         }
         validatingLink = false;
@@ -373,6 +392,7 @@ export class IngestionRunner {
       accepted: accepted.filter((listing): listing is ProcessedListing => listing !== undefined),
       resolved,
       validatedAt,
+      metadataValidated,
       alertEligible,
     };
   }
@@ -420,6 +440,7 @@ export class IngestionRunner {
           baseline,
           filter: this.filter,
           validatedAt: resolution.validatedAt,
+          metadataValidated: resolution.metadataValidated,
           alertEligible: resolution.alertEligible,
         });
         failureCategory = 'persistence';

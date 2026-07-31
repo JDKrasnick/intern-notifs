@@ -46,6 +46,21 @@ describe('shared posting processor', () => {
     ])).toEqual(['hybrid', 'remote', 'remote', undefined]);
   });
 
+  it('takes an explicit title season over a conflicting source-wide default', () => {
+    const result = processSnapshot({
+      sourceId: 'markdown-list', outcome: 'changed', complete: true, rawCount: 1, contentHash: 'hash',
+      checkpoint: { sourceId: 'markdown-list', successfulFetches: 1 },
+      postings: [posting({
+        title: 'Software Engineering Intern, Summer 2026',
+        seasonHint: 'summer-2027',
+        seasonHintAuthority: 'source-default',
+      })],
+    });
+
+    expect(result.listings[0]).toMatchObject({ season: 'summer-2026' });
+    expect(result.listings[0]?.seasonSource).toBeUndefined();
+  });
+
   it('keeps a reviewed early-career document as the lifecycle authority', () => {
     const result = processSnapshot({
       sourceId: 'markdown-list', outcome: 'changed', complete: true, rawCount: 2, contentHash: 'hash',

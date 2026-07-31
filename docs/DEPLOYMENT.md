@@ -84,12 +84,14 @@ USERS_TABLE="$(aws cloudformation describe-stacks \
 npx cdk diff InternNotifsGreenhouse \
   -c target=greenhouse \
   -c internshipsTableName="$INTERNSHIPS_TABLE" \
-  -c usersTableName="$USERS_TABLE"
+  -c usersTableName="$USERS_TABLE" \
+  -c emailAddress=DEPLOYMENT_EMAIL
 
 npx cdk deploy InternNotifsGreenhouse \
   -c target=greenhouse \
   -c internshipsTableName="$INTERNSHIPS_TABLE" \
-  -c usersTableName="$USERS_TABLE"
+  -c usersTableName="$USERS_TABLE" \
+  -c emailAddress=DEPLOYMENT_EMAIL
 ```
 
 Review the diff before deploying. A Greenhouse-only diff must not replace or
@@ -103,6 +105,13 @@ key as `OPERATIONS_API_KEY`; it is never exposed to the browser. Each worker
 attempt records raw, eligible, and withheld row counts plus a redacted
 diagnostic and the 25 most recent runs. The dashboard lists every official
 source, including sources with no current jobs.
+
+The stack sends one combined Greenhouse and Lever monitoring reminder at
+9:00 AM America/New_York every Monday. The email uses the existing verified
+deployment address and includes current dead-letter depth, failed extractions,
+stale or quarantined sources, active alarms, and queue depth. It is suppressed
+after the shared monthly checklist is complete and resumes automatically in the
+next calendar month.
 
 Quarantine is deterministic and conservative: identity/schema failures and
 permanent 401/403/404 responses quarantine immediately; broad link, quality, or
@@ -141,7 +150,9 @@ After both monitoring stacks are deployed, confirm:
 - the `InternNotifs-Lever` CloudWatch dashboard is present;
 - the active-source freshness alarm has data within one scheduler cycle;
 - the shared operations pane lists both provider fleets; and
-- pause, resume, and replay work for one shadow Lever source.
+- pause, resume, and replay work for one shadow source from each provider;
+- the monthly monitoring checklist persists after a refresh; and
+- a test invocation of the monitoring reminder reaches the deployment address.
 
 ## EAS environments
 

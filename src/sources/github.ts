@@ -29,6 +29,7 @@ export function markdownListingToSourcedPosting(listing: RawListing): SourcedPos
     lifecycleAuthority: 'source',
     ...(listing.postedAt ? { publishedAt: listing.postedAt } : {}),
     seasonHint: listing.season,
+    seasonHintAuthority: 'source-default',
     compensationText: listing.compensation.raw,
     declaredRequirements: listing.requirements,
     declaredWorkMode: listing.workMode,

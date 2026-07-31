@@ -48,6 +48,28 @@ describe('shared source operations', () => {
     expect(new Set(body.sources.map((row: { source: { provider: string } }) => row.source.provider)))
       .toEqual(new Set(['greenhouse', 'lever']));
     expect(body.fleets.map((fleet: { provider: string }) => fleet.provider).sort()).toEqual(['greenhouse', 'lever']);
+    expect(body.productionMetrics).toMatchObject({
+      deadLetterMessages: 0,
+      failedExtractions24h: 0,
+      activeAlarms: 0,
+    });
+    expect(body.checklist).toMatchObject({ period: '2026-07', completed: 0, total: 7, complete: false });
+  });
+
+  it('tracks monthly monitoring checks for both provider fleets', async () => {
+    const store = new MemoryInternshipStore();
+    const setup = dependencies(store);
+    const handler = createSourceOperationsHandler(setup.value);
+
+    const completed = await handler(event('/operations/checklist/exercise-greenhouse-recovery', 'POST', { completed: true }));
+    expect(completed.statusCode).toBe(200);
+    expect(JSON.parse(completed.body)).toMatchObject({ completed: 1, total: 7, complete: false });
+
+    const overview = await handler(event('/operations/sources'));
+    expect(JSON.parse(overview.body).checklist.items).toContainEqual(expect.objectContaining({
+      id: 'exercise-greenhouse-recovery',
+      completion: expect.objectContaining({ completedBy: 'test-operator' }),
+    }));
   });
 
   it('pauses and replays a Lever source without changing reviewed configuration', async () => {

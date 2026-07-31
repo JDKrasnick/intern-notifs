@@ -2,7 +2,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { BatchGetCommand, DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { isPastSeason } from './core/early-career.js';
 import { employerCategory } from './core/employers.js';
-import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, NotificationEvent, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
+import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
 import type { ApplicationSession } from './application-automation.js';
 import type { ReviewedLeverSource } from './sources/lever-config.js';
 import type { LeverOwnershipEvidence } from './sources/lever-evidence.js';
@@ -31,6 +31,8 @@ export interface InternshipStore {
   getSourceHealth(sourceId: string): Promise<SourceHealth | undefined>;
   getSourceHealthMany(sourceIds: string[]): Promise<SourceHealth[]>;
   putSourceHealth(health: SourceHealth): Promise<void>;
+  getMonitoringChecklist(period: string): Promise<MonitoringChecklist | undefined>;
+  putMonitoringChecklist(checklist: MonitoringChecklist): Promise<void>;
   findByUrl(url: string): Promise<Internship | undefined>;
   findByFingerprint(fingerprint: string): Promise<Internship | undefined>;
   putInternship(job: Internship): Promise<void>;
@@ -56,12 +58,15 @@ export class MemoryInternshipStore implements InternshipStore {
   readonly occurrences = new Map<string, SourceOccurrenceState>();
   readonly notificationEvents = new Map<string, NotificationEvent>();
   readonly sourceHealth = new Map<string, SourceHealth>();
+  readonly monitoringChecklists = new Map<string, MonitoringChecklist>();
   readonly leverAdmissions = new Map<string, LeverAdmission>();
   async getCheckpoint(sourceId: string) { return this.checkpoints.get(sourceId); }
   async putCheckpoint(checkpoint: SourceCheckpoint) { this.checkpoints.set(checkpoint.sourceId, checkpoint); }
   async getSourceHealth(sourceId: string) { return this.sourceHealth.get(sourceId); }
   async getSourceHealthMany(sourceIds: string[]) { return sourceIds.map((id) => this.sourceHealth.get(id)).filter((value): value is SourceHealth => Boolean(value)); }
   async putSourceHealth(health: SourceHealth) { this.sourceHealth.set(health.sourceId, structuredClone(health)); }
+  async getMonitoringChecklist(period: string) { return structuredClone(this.monitoringChecklists.get(period)); }
+  async putMonitoringChecklist(checklist: MonitoringChecklist) { this.monitoringChecklists.set(checklist.period, structuredClone(checklist)); }
   async findByUrl(url: string) { return [...this.jobs.values()].find((job) => job.normalizedUrl === url); }
   async findByFingerprint(fingerprint: string) { return [...this.jobs.values()].find((job) => job.fingerprint === fingerprint); }
   async putInternship(job: Internship) { this.jobs.set(job.jobId, structuredClone(job)); }
@@ -178,6 +183,19 @@ export class DynamoInternshipStore implements InternshipStore {
   }
   async putSourceHealth(health: SourceHealth): Promise<void> {
     await this.client.send(new PutCommand({ TableName: this.tableName, Item: { pk: `SOURCE#${health.sourceId}`, sk: 'HEALTH', health } }));
+  }
+  async getMonitoringChecklist(period: string): Promise<MonitoringChecklist | undefined> {
+    const result = await this.client.send(new GetCommand({
+      TableName: this.tableName,
+      Key: { pk: 'OPERATIONS#MONITORING', sk: `CHECKLIST#${period}` },
+    }));
+    return result.Item?.checklist as MonitoringChecklist | undefined;
+  }
+  async putMonitoringChecklist(checklist: MonitoringChecklist): Promise<void> {
+    await this.client.send(new PutCommand({
+      TableName: this.tableName,
+      Item: { pk: 'OPERATIONS#MONITORING', sk: `CHECKLIST#${checklist.period}`, checklist },
+    }));
   }
   private async find(index: 'urlIndex' | 'fingerprintIndex', attribute: 'urlPk' | 'fingerprintPk', value: string) {
     const result = await this.client.send(new QueryCommand({ TableName: this.tableName, IndexName: index, KeyConditionExpression: '#key = :value', ExpressionAttributeNames: { '#key': attribute }, ExpressionAttributeValues: { ':value': value }, Limit: 1 }));

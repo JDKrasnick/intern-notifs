@@ -56,7 +56,8 @@ export function processPosting(
   }
   const company = htmlToText(posting.employer.name);
   const location = posting.locations.map(htmlToText).filter(Boolean).join(' / ') || 'Unspecified';
-  const season = posting.seasonHint ?? inferSeason(title, content);
+  const titleSeason = inferSeason(title, '');
+  const season = titleSeason !== 'ongoing' ? titleSeason : posting.seasonHint ?? inferSeason('', content);
   const classificationTitle = [title, ...(posting.classificationTags ?? []).map(htmlToText)].filter(Boolean).join(' ');
   const assessment = assessTechnicalRole({ company, title: classificationTitle, location, season }, content);
   const urlReason = withheldReason(posting.applyUrl);
@@ -76,6 +77,9 @@ export function processPosting(
     title,
     location,
     season,
+    ...(titleSeason === 'ongoing' && posting.seasonHintAuthority === 'source-default'
+      ? { seasonSource: 'source-default' as const }
+      : {}),
     applyUrl: posting.applyUrl,
     compensation: parseCompensation(posting.compensationText ?? content),
     requirements: requirements(posting, content),

@@ -22,6 +22,7 @@ export interface ReconciliationInput {
   baseline: boolean;
   filter?: JobFilter;
   validatedAt?: Map<string, string>;
+  metadataValidated?: Map<string, number>;
   alertEligible?: Set<string>;
 }
 
@@ -84,7 +85,7 @@ function anyOpenTechnicalOccurrence(references: SourceOccurrence[]): boolean {
   return references.some((reference) => reference.state === 'open' && reference.technical !== false);
 }
 
-function merge(existing: Internship, listing: ProcessedListing, externalId: string, now: string, applicationUrlValidatedAt?: string): Internship {
+function merge(existing: Internship, listing: ProcessedListing, externalId: string, now: string, applicationUrlValidatedAt?: string, metadataVersion?: number): Internship {
   const reference = occurrence(listing, externalId);
   const match = existing.sourceReferences.findIndex((item) =>
     item.sourceId === reference.sourceId
@@ -104,6 +105,7 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
     company,
     title: existing.title || listing.title,
     location,
+    season: listing.season,
     applyUrl: replaceStoredUrl ? listing.applyUrl : existing.applyUrl || listing.applyUrl,
     normalizedUrl: replaceStoredUrl ? listingNormalizedUrl : existing.normalizedUrl,
     fingerprint: fingerprint(company, existing.title || listing.title, location, listing.season),
@@ -115,10 +117,11 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
     open: keepQuarantined ? false : sourceReferences.some((item) => item.state === 'open'),
     lastSeenAt: now,
     ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}),
+    ...(metadataVersion ? { applicationPageMetadataVersion: metadataVersion } : {}),
   };
 }
 
-function create(listing: ProcessedListing, externalId: string, now: string, applicationUrlValidatedAt?: string): Internship {
+function create(listing: ProcessedListing, externalId: string, now: string, applicationUrlValidatedAt?: string, metadataVersion?: number): Internship {
   const normalizedUrl = normalizeUrl(listing.applyUrl);
   const key = fingerprint(listing.company, listing.title, listing.location, listing.season);
   return {
@@ -130,6 +133,7 @@ function create(listing: ProcessedListing, externalId: string, now: string, appl
     applyUrl: listing.applyUrl,
     normalizedUrl,
     ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}),
+    ...(metadataVersion ? { applicationPageMetadataVersion: metadataVersion } : {}),
     fingerprint: key,
     compensation: listing.compensation,
     ...(listing.requirements ? { requirements: listing.requirements } : {}),
@@ -209,7 +213,10 @@ export class CatalogReconciler {
           : undefined);
       const existing = inSnapshot ?? stored;
       const validatedAt = input.validatedAt?.get(externalId);
-      const job = existing ? merge(existing, listing, externalId, input.now, validatedAt) : create(listing, externalId, input.now, validatedAt);
+      const metadataVersion = input.metadataValidated?.get(externalId);
+      const job = existing
+        ? merge(existing, listing, externalId, input.now, validatedAt, metadataVersion)
+        : create(listing, externalId, input.now, validatedAt, metadataVersion);
       const retryingUncommittedCreate = Boolean(stored && !inSnapshot
         && !priorById.has(externalId)
         && stored.sourceReferences.length === 1
