@@ -22,6 +22,8 @@ describe('source health', () => {
       lastSuccessAt: '2026-07-29T12:00:01.000Z',
       consecutiveFailures: 1,
       failureCategory: 'transport',
+      outcome: 'temporary_provider_error',
+      backoffUntil: '2026-07-29T12:11:02.000Z',
     });
   });
 

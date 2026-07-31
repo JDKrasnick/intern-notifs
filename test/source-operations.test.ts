@@ -1,0 +1,76 @@
+import type { CloudWatchClient } from '@aws-sdk/client-cloudwatch';
+import { SendMessageCommand, type SQSClient } from '@aws-sdk/client-sqs';
+import { describe, expect, it } from 'vitest';
+import { createSourceOperationsHandler } from '../src/greenhouse-operations-api.js';
+import { reviewedLeverSources } from '../src/sources/lever-config.js';
+import { MemoryInternshipStore } from '../src/store.js';
+
+const secret = 'fixture-secret';
+const event = (path: string, method = 'GET', body?: unknown) => ({
+  rawPath: path,
+  requestContext: { http: { method } },
+  headers: { 'x-operations-key': secret, 'x-operations-actor': 'test-operator' },
+  ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+});
+
+function dependencies(store: MemoryInternshipStore) {
+  const commands: unknown[] = [];
+  return {
+    commands,
+    value: {
+      store,
+      sharedSecret: secret,
+      fleets: {
+        greenhouse: { queueUrl: 'https://sqs.test/greenhouse.fifo', deadLetterQueueUrl: 'https://sqs.test/greenhouse-dlq.fifo' },
+        lever: { queueUrl: 'https://sqs.test/lever.fifo', deadLetterQueueUrl: 'https://sqs.test/lever-dlq.fifo' },
+      },
+      sqs: {
+        async send(command: unknown) {
+          commands.push(command);
+          if (command instanceof SendMessageCommand) return {};
+          return { Attributes: { ApproximateNumberOfMessages: '0', ApproximateNumberOfMessagesNotVisible: '0' } };
+        },
+      } as unknown as SQSClient,
+      cloudwatch: { async send() { return { MetricAlarms: [] }; } } as unknown as CloudWatchClient,
+      now: () => new Date('2026-07-30T20:00:00.000Z'),
+    },
+  };
+}
+
+describe('shared source operations', () => {
+  it('returns Greenhouse and Lever sources through one fleet view', async () => {
+    const store = new MemoryInternshipStore();
+    const setup = dependencies(store);
+    const response = await createSourceOperationsHandler(setup.value)(event('/operations/sources'));
+    const body = JSON.parse(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(new Set(body.sources.map((row: { source: { provider: string } }) => row.source.provider)))
+      .toEqual(new Set(['greenhouse', 'lever']));
+    expect(body.fleets.map((fleet: { provider: string }) => fleet.provider).sort()).toEqual(['greenhouse', 'lever']);
+  });
+
+  it('pauses and replays a Lever source without changing reviewed configuration', async () => {
+    const store = new MemoryInternshipStore();
+    const setup = dependencies(store);
+    const source = reviewedLeverSources[0]!;
+    const handler = createSourceOperationsHandler(setup.value);
+
+    const paused = await handler(event(`/operations/sources/${source.id}/actions`, 'POST', { action: 'pause' }));
+    expect(paused.statusCode).toBe(200);
+    expect(await store.getSourceHealth(source.id)).toMatchObject({
+      sourceStatus: 'paused',
+      changedBy: 'test-operator',
+      configVersion: 1,
+    });
+
+    const replayed = await handler(event(`/operations/sources/${source.id}/actions`, 'POST', { action: 'replay' }));
+    expect(replayed.statusCode).toBe(202);
+    const replay = setup.commands.find((command) => command instanceof SendMessageCommand) as SendMessageCommand;
+    expect(replay.input).toMatchObject({
+      QueueUrl: 'https://sqs.test/lever.fifo',
+      MessageGroupId: source.id,
+      MessageBody: expect.stringContaining('"force":true'),
+    });
+  });
+});

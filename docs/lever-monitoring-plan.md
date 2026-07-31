@@ -1,5 +1,20 @@
 # Lever ingestion monitoring plan
 
+## Implementation status
+
+Implemented on 2026-07-30:
+
+- durable health for published and shadow Lever sources, including trusted
+  outcomes, safe diagnostics, counts, backoff, and incident state;
+- structured run-correlated events and low-cardinality regional metrics;
+- bounded retry, provider backoff, active-source freshness evaluation, and a
+  thirty-minute CloudWatch alarm;
+- a Lever CloudWatch dashboard plus the shared private source-operations pane;
+- pause, resume, replay, cadence, acknowledge, and resolve controls;
+- deterministic fixtures and the existing nightly live contract; and
+- the recovery procedures in
+  [`lever-monitoring-runbook.md`](lever-monitoring-runbook.md).
+
 ## Goal
 
 Detect stale, incomplete, unsafe, or failing Lever sources quickly while

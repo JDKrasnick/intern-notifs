@@ -1,7 +1,7 @@
 import { SendMessageBatchCommand, SQSClient, type SendMessageBatchRequestEntry } from '@aws-sdk/client-sqs';
 import { reviewedGreenhouseSources, type ReviewedGreenhouseSource } from './sources/greenhouse-config.js';
 import { DynamoInternshipStore } from './store.js';
-import type { SourceCheckpoint } from './types.js';
+import type { SourceCheckpoint, SourceHealth } from './types.js';
 
 export const GREENHOUSE_DISPATCH_BATCH_SIZE = 10;
 export const GREENHOUSE_POLL_INTERVAL_MS = 10 * 60 * 1000;
@@ -11,6 +11,8 @@ export interface GreenhouseWorkMessage {
   version: 1;
   sourceId: string;
   scheduledAt: string;
+  /** An operator replay may deliberately bypass a pause or provider backoff. */
+  force?: boolean;
 }
 
 interface GreenhouseQueueClient {
@@ -19,6 +21,7 @@ interface GreenhouseQueueClient {
 
 interface CheckpointReader {
   getCheckpoint(sourceId: string): Promise<SourceCheckpoint | undefined>;
+  getSourceHealth?(sourceId: string): Promise<SourceHealth | undefined>;
 }
 
 export interface GreenhouseDispatchDependencies {
@@ -56,8 +59,11 @@ export function isGreenhouseSourceDue(
   source: ReviewedGreenhouseSource,
   checkpoint: SourceCheckpoint | undefined,
   now: Date,
+  health?: SourceHealth,
 ): boolean {
-  if (!checkpoint || (checkpoint.lastRowCount ?? 0) > 0) return true;
+  if (health?.sourceStatus === 'paused') return false;
+  if (health?.backoffUntil && Date.parse(health.backoffUntil) > now.getTime()) return false;
+  if (health?.pollTier !== 'quiet' && (!checkpoint || (checkpoint.lastRowCount ?? 0) > 0)) return true;
   const buckets = GREENHOUSE_INACTIVE_POLL_INTERVAL_MS / GREENHOUSE_POLL_INTERVAL_MS;
   const currentWindow = Math.floor(now.getTime() / GREENHOUSE_POLL_INTERVAL_MS);
   return currentWindow % buckets === stableBoardBucket(source.id, buckets);
@@ -70,16 +76,22 @@ async function dueSources(
 ): Promise<ReviewedGreenhouseSource[]> {
   if (!checkpointReader) return sources;
   const checkpoints = new Map<string, SourceCheckpoint | undefined>();
+  const health = new Map<string, SourceHealth | undefined>();
   let next = 0;
   const worker = async () => {
     while (next < sources.length) {
       const source = sources[next++];
       const checkpointId = source.status === 'shadow' ? `shadow-${source.id}` : source.id;
-      checkpoints.set(source.id, await checkpointReader.getCheckpoint(checkpointId));
+      const [checkpoint, sourceHealth] = await Promise.all([
+        checkpointReader.getCheckpoint(checkpointId),
+        checkpointReader.getSourceHealth?.(source.id),
+      ]);
+      checkpoints.set(source.id, checkpoint);
+      health.set(source.id, sourceHealth);
     }
   };
   await Promise.all(Array.from({ length: Math.min(24, sources.length) }, worker));
-  return sources.filter((source) => isGreenhouseSourceDue(source, checkpoints.get(source.id), now));
+  return sources.filter((source) => isGreenhouseSourceDue(source, checkpoints.get(source.id), now, health.get(source.id)));
 }
 
 export async function dispatchGreenhouseBoards(dependencies: GreenhouseDispatchDependencies): Promise<{ queued: number }> {

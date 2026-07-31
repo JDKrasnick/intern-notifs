@@ -9,6 +9,7 @@ export class SourceFetchError extends Error {
     message: string,
     readonly category: SourceFailureCategory,
     readonly status?: number,
+    readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = 'SourceFetchError';

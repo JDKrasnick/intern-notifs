@@ -60,6 +60,54 @@ describe('Lever queue dispatch', () => {
     expect(windows.filter((now) => isLeverSourceDue(shadowSource, checkpoint, now))).toHaveLength(1);
     expect(isLeverSourceDue(shadowSource, { ...checkpoint, lastRowCount: 1 }, windows[0])).toBe(true);
   });
+
+  it('honors durable pause controls and opens a freshness incident after a stale board resumes', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putCheckpoint({
+      sourceId: `shadow-${shadowSource.id}`,
+      successfulFetches: 1,
+      lastRowCount: 1,
+      lastSuccessAt: '2026-07-30T11:00:00.000Z',
+    });
+    await store.putSourceHealth({
+      sourceId: shadowSource.id,
+      provider: 'lever',
+      region: 'global',
+      state: 'healthy',
+      sourceStatus: 'paused',
+      lastAttemptAt: '2026-07-30T11:00:00.000Z',
+      lastSuccessAt: '2026-07-30T11:00:00.000Z',
+      consecutiveFailures: 0,
+      durationMs: 25,
+    });
+    const commands: SendMessageBatchCommand[] = [];
+    expect(await dispatchLeverBoards({
+      queueUrl: 'https://sqs.us-east-1.amazonaws.com/123/lever.fifo',
+      sources: [shadowSource],
+      checkpointReader: store,
+      now: () => new Date(scheduledAt),
+      client: { async send(command) { commands.push(command); return {}; } },
+    })).toEqual({ queued: 0 });
+    expect(commands).toHaveLength(0);
+    expect((await store.getSourceHealth(shadowSource.id))?.incidentState).toBeUndefined();
+
+    await store.putSourceHealth({
+      ...(await store.getSourceHealth(shadowSource.id))!,
+      sourceStatus: 'active',
+    });
+    expect(await dispatchLeverBoards({
+      queueUrl: 'https://sqs.us-east-1.amazonaws.com/123/lever.fifo',
+      sources: [shadowSource],
+      checkpointReader: store,
+      now: () => new Date(scheduledAt),
+      client: { async send(command) { commands.push(command); return {}; } },
+    })).toEqual({ queued: 1 });
+    expect(await store.getSourceHealth(shadowSource.id)).toMatchObject({
+      incidentState: 'open',
+      incidentSeverity: 'high',
+      sourceStatus: 'active',
+    });
+  });
 });
 
 describe('Lever queue worker', () => {
@@ -80,6 +128,78 @@ describe('Lever queue worker', () => {
       lastRowCount: 1,
     });
     expect(await store.getCheckpoint(shadowSource.id)).toBeUndefined();
+    expect(await store.getSourceHealth(shadowSource.id)).toMatchObject({
+      provider: 'lever',
+      region: 'global',
+      outcome: 'success_changed',
+      rawRows: 1,
+      eligibleRows: 1,
+      consecutiveFailures: 0,
+    });
+  });
+
+  it('does not fetch paused work unless it is an explicit operator replay', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putSourceHealth({
+      sourceId: shadowSource.id,
+      state: 'healthy',
+      sourceStatus: 'paused',
+      lastAttemptAt: scheduledAt,
+      consecutiveFailures: 0,
+      durationMs: 0,
+    });
+    let fetches = 0;
+    const dependencies = {
+      store,
+      sources: [shadowSource],
+      fetchImpl: async () => { fetches += 1; return response(); },
+      linkValidator: async (url: string) => url,
+    };
+
+    await expect(runLeverBoard(message(), dependencies)).resolves.toMatchObject({ skipped: 'paused' });
+    expect(fetches).toBe(0);
+    await expect(runLeverBoard({ ...message(), force: true }, dependencies)).resolves.toMatchObject({ listings: 1 });
+    expect(fetches).toBe(1);
+  });
+
+  it('does not immediately retry a published source when Lever supplies a long Retry-After', async () => {
+    const published: ReviewedLeverSource = { ...shadowSource, status: 'published' };
+    const store = new MemoryInternshipStore();
+    let fetches = 0;
+
+    await expect(runLeverBoard({ ...message(published.id) }, {
+      store,
+      sources: [published],
+      fetchImpl: async () => {
+        fetches += 1;
+        return new Response(null, { status: 429, headers: { 'Retry-After': '120' } });
+      },
+      linkValidator: async (url: string) => url,
+    })).rejects.toThrow('Lever fetch failed (429)');
+
+    expect(fetches).toBe(1);
+    expect(await store.getSourceHealth(published.id)).toMatchObject({ outcome: 'rate_limited', backoffUntil: expect.any(String) });
+  });
+
+  it('treats a 304 as healthy without erasing the last trusted counts', async () => {
+    const store = new MemoryInternshipStore();
+    let attempts = 0;
+    const dependencies = {
+      store,
+      sources: [shadowSource],
+      fetchImpl: async () => attempts++ === 0 ? response() : new Response(null, { status: 304 }),
+      linkValidator: async (url: string) => url,
+    };
+    await runLeverBoard(message(), dependencies);
+    await runLeverBoard(message(), dependencies);
+
+    expect(await store.getSourceHealth(shadowSource.id)).toMatchObject({
+      outcome: 'success_unchanged_304',
+      rawRows: 1,
+      eligibleRows: 1,
+      pollTier: 'active',
+      consecutiveFailures: 0,
+    });
   });
 
   it('quietly baselines a published board and makes only later roles notification-eligible', async () => {

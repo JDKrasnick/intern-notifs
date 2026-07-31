@@ -28,7 +28,7 @@ describe('ingestion health and retry policy', () => {
     expect(attempts).toBe(3);
     expect(report.failures).toEqual([]);
     expect(await store.getSourceHealth('lever-acme')).toMatchObject({
-      outcome: 'changed',
+      outcome: 'success_changed',
       consecutiveFailures: 0,
       counts: { raw: 0, eligible: 0 },
     });
@@ -50,7 +50,7 @@ describe('ingestion health and retry policy', () => {
     const report = await new IngestionRunner([adapter], store).run();
     expect(attempts).toBe(3);
     expect(report.failures).toEqual([]);
-    expect(await store.getSourceHealth('markdown-fixture')).toMatchObject({ provider: 'github', outcome: 'changed', consecutiveFailures: 0 });
+    expect(await store.getSourceHealth('markdown-fixture')).toMatchObject({ provider: 'github', outcome: 'success_changed', consecutiveFailures: 0 });
   });
 
   it('does not retry schema, identity, or configuration-class failures', async () => {
@@ -67,7 +67,7 @@ describe('ingestion health and retry policy', () => {
     expect(attempts).toBe(1);
     expect(report.failures).toEqual(['invalid source identity']);
     expect(await store.getSourceHealth('lever-acme')).toMatchObject({
-      outcome: 'failed',
+      outcome: 'application_host_mismatch',
       consecutiveFailures: 1,
       diagnosticCategory: 'identity',
     });

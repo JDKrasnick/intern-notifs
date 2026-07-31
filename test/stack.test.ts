@@ -75,7 +75,8 @@ describe('CDK stack', () => {
       ScalingConfig: { MaximumConcurrency: 4 },
     });
     template.hasResourceProperties('AWS::Lambda::Function', { Timeout: 120 });
-    template.resourceCountIs('AWS::CloudWatch::Alarm', 3);
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
+    template.resourceCountIs('AWS::CloudWatch::Dashboard', 1);
     expect(snapshotTemplate(template.toJSON())).toMatchSnapshot();
   });
 });

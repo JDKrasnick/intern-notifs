@@ -82,6 +82,30 @@ describe('Greenhouse queue worker', () => {
     expect(await store.getCheckpoint(acmeSource.id)).toBeUndefined();
   });
 
+  it('does not fetch paused work unless it is an explicit operator replay', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putSourceHealth({
+      sourceId: acmeSource.id,
+      state: 'healthy',
+      sourceStatus: 'paused',
+      lastAttemptAt: scheduledAt,
+      consecutiveFailures: 0,
+      durationMs: 0,
+    });
+    let fetches = 0;
+    const dependencies = {
+      store,
+      sources: [acmeSource],
+      fetchImpl: async () => { fetches += 1; return response(); },
+      linkValidator: async (url: string) => url,
+    };
+
+    await expect(runGreenhouseBoard(message(), dependencies)).resolves.toMatchObject({ skipped: 'paused' });
+    expect(fetches).toBe(0);
+    await expect(runGreenhouseBoard({ ...message(), force: true }, dependencies)).resolves.toMatchObject({ listings: 1 });
+    expect(fetches).toBeGreaterThan(0);
+  });
+
   it('quietly baselines a published board and makes only later roles notification-eligible', async () => {
     const published: ReviewedGreenhouseSource = { ...acmeSource, status: 'published' };
     const store = new MemoryInternshipStore();

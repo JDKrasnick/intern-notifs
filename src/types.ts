@@ -110,24 +110,71 @@ export interface SourceCheckpoint {
 }
 
 export type SourceHealthState = 'healthy' | 'degraded' | 'quarantined' | 'never-succeeded';
+export type SourceIncidentState = 'open' | 'acknowledged' | 'resolved';
+export type SourcePollTier = 'active' | 'quiet';
+export type SourceOperationalStatus = 'active' | 'paused';
+export type SourceOutcome =
+  | 'changed'
+  | 'unchanged'
+  | 'failed'
+  | 'success_changed'
+  | 'success_unchanged_304'
+  | 'success_unchanged_hash'
+  | 'temporary_provider_error'
+  | 'rate_limited'
+  | 'invalid_configuration'
+  | 'not_found'
+  | 'invalid_schema'
+  | 'incomplete_pagination'
+  | 'unexpected_raw_zero'
+  | 'application_host_mismatch'
+  | 'catalog_write_failed';
 
 export interface SourceHealth {
   sourceId: string;
+  employerId?: string;
   provider?: 'github' | 'lever' | 'greenhouse' | 'unknown';
+  region?: 'global' | 'eu' | 'unknown';
   state?: SourceHealthState;
+  sourceStatus?: SourceOperationalStatus;
+  pollTier?: SourcePollTier;
   lastAttemptAt: string;
   lastSuccessAt?: string;
-  outcome?: 'changed' | 'unchanged' | 'failed';
+  lastChangedAt?: string;
+  freshnessMinutes?: number;
+  outcome?: SourceOutcome;
+  lastOutcome?: SourceOutcome;
   consecutiveFailures: number;
+  etag?: string;
+  contentHash?: string;
   snapshotHash?: string;
   counts?: ProcessedSnapshot['counts'];
   rawRows?: number;
+  rawCount?: number;
+  validRows?: number;
+  validCount?: number;
   eligibleRows?: number;
+  eligibleCount?: number;
+  filteredRows?: number;
+  filteredCount?: number;
   withheldRows?: number;
+  withheldCount?: number;
   durationMs: number;
   failureCategory?: SourceFailureCategory;
+  lastFailureCategory?: SourceFailureCategory;
   diagnosticCategory?: SourceFailureCategory | 'persistence' | 'quality';
   diagnostic?: string;
+  lastSafeDiagnostic?: string;
+  backoffUntil?: string;
+  incidentState?: SourceIncidentState;
+  incidentSeverity?: 'warning' | 'high';
+  incidentOpenedAt?: string;
+  incidentUpdatedAt?: string;
+  incidentAcknowledgedAt?: string;
+  incidentResolvedAt?: string;
+  configVersion?: number;
+  changedAt?: string;
+  changedBy?: string;
   quarantinedAt?: string;
   quarantineReason?: string;
   recentRuns?: SourceRun[];
@@ -136,6 +183,9 @@ export interface SourceHealth {
 export interface SourceRun {
   runId: string;
   sourceId: string;
+  provider?: SourceHealth['provider'];
+  region?: SourceHealth['region'];
+  outcome?: SourceOutcome;
   state: 'succeeded' | 'failed' | 'quarantined';
   startedAt: string;
   completedAt: string;
@@ -352,4 +402,5 @@ export interface SourceFetchResult {
   processed?: ProcessedSnapshot;
   checkpoint: SourceCheckpoint;
   notModified: boolean;
+  unchangedReason?: 'not_modified' | 'content_hash';
 }
