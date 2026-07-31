@@ -133,6 +133,17 @@ describe('snapshot reconciliation', () => {
       .toEqual(['README.md', 'INTERN_INTL.md']);
   });
 
+  it('updates the stored season when a source correction arrives', async () => {
+    const store = new MemoryInternshipStore();
+    const adapter = new MutableAdapter('source-a', [listing('source-a')]);
+    await new IngestionRunner([adapter], store).run();
+
+    adapter.rows = [listing('source-a', { season: 'summer-2026' })];
+    await new IngestionRunner([adapter], store).run();
+
+    expect([...store.jobs.values()][0]).toMatchObject({ season: 'summer-2026' });
+  });
+
   it('touches no catalog record for an unchanged snapshot that confirms the active occurrences', async () => {
     let operations = 0;
     class CountingStore extends MemoryInternshipStore {

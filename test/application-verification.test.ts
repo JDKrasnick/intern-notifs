@@ -116,6 +116,63 @@ describe('verification in the poll', () => {
     expect(fetched).toEqual(['https://job-boards.greenhouse.io/unknown-board/jobs/1']);
   });
 
+  it('replaces a list-wide season with season evidence from the employer page', async () => {
+    const store = new MemoryInternshipStore();
+    await seeded(store);
+    const rows = [listing({ season: 'summer-2027', seasonSource: 'source-default' })];
+    await new IngestionRunner([adapter(rows)], store, () => new Date('2026-07-29T12:00:00.000Z')).run();
+
+    await new IngestionRunner(
+      [adapter(rows)], store, () => new Date('2026-07-29T13:00:00.000Z'), undefined,
+      async (url: string) => ({
+        url,
+        evidence: {
+          url,
+          title: 'Machine Learning Engineer Intern - 2026 Start',
+          contentExcerpt: 'Able to work for 12 weeks during Summer 2026.',
+          confidence: { score: 100, level: 'high', recommendation: 'alert-eligible', signals: ['destination reached'] },
+        },
+      }),
+    ).run();
+
+    expect([...store.jobs.values()][0]).toMatchObject({
+      season: 'summer-2026',
+      applicationPageMetadataVersion: 1,
+    });
+
+    const refetched: string[] = [];
+    await new IngestionRunner(
+      [adapter(rows)], store, () => new Date('2026-07-29T14:00:00.000Z'), undefined,
+      async (url: string) => { refetched.push(url); return url; },
+    ).run();
+    expect(refetched).toEqual([]);
+    expect([...store.jobs.values()][0]?.season).toBe('summer-2026');
+  });
+
+  it('does not let employer-page enrichment override a season in the listing title', async () => {
+    const store = new MemoryInternshipStore();
+    await seeded(store);
+    const rows = [listing({
+      title: 'Software Engineering Intern, Summer 2026',
+      season: 'summer-2026',
+      seasonSource: 'source-default',
+    })];
+
+    await new IngestionRunner(
+      [adapter(rows)], store, () => new Date('2026-07-29T13:00:00.000Z'), undefined,
+      async (url: string) => ({
+        url,
+        evidence: {
+          url,
+          title: 'Software Engineering Intern, Summer 2027',
+          confidence: { score: 100, level: 'high', recommendation: 'alert-eligible', signals: ['destination reached'] },
+        },
+      }),
+    ).run();
+
+    expect([...store.jobs.values()][0]?.season).toBe('summer-2026');
+  });
+
   it('keeps an open role visible when its destination merely times out', async () => {
     const store = new MemoryInternshipStore();
     await seeded(store);

@@ -293,6 +293,8 @@ export interface ProcessedListing extends SourceOccurrence {
   technical?: boolean;
   /** The source truncated this title and it was reconstructed, so it may be approximate. */
   titleRepaired?: boolean;
+  /** Whether the season came from this posting or a list-wide default. */
+  seasonSource?: 'posting' | 'source-default';
 }
 
 /** @deprecated Use `ProcessedListing`; retained only while callers migrate. */
@@ -328,6 +330,7 @@ export interface SourcedPosting {
   lifecycleAuthority?: 'title' | 'source';
   publishedAt?: string;
   seasonHint?: string;
+  seasonHintAuthority?: 'posting' | 'source-default';
   classificationTags?: string[];
   declaredWorkMode?: string;
   compensationText?: string;
@@ -387,6 +390,8 @@ export interface Internship {
   normalizedUrl: string;
   /** Present only after the official destination has resolved successfully. */
   applicationUrlValidatedAt?: string;
+  /** Version of employer-page metadata extraction applied to this role. */
+  applicationPageMetadataVersion?: number;
   /** A confirmed broken URL remains hidden until a source supplies a different destination. */
   invalidApplicationUrl?: string;
   fingerprint: string;
