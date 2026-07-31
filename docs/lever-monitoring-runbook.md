@@ -18,6 +18,23 @@ Each Lever source exposes these safe controls:
 Pause, cadence, and incident changes are versioned in the source health record.
 Promotion between shadow and published remains a reviewed configuration change.
 
+## Monthly monitoring review
+
+The shared pane starts a fresh checklist each calendar month for both
+Greenhouse and Lever:
+
+- review fleet health and recent failed extractions;
+- confirm both provider dead-letter queues are empty or understood;
+- exercise pause, resume, and replay on one shadow source from each provider;
+- verify alarm delivery; and
+- confirm the latest nightly live contract.
+
+A combined reminder is sent every Monday at 9:00 AM America/New_York while any
+item remains incomplete. It includes current dead-letter messages, failed
+extractions from the previous 24 hours, stale and quarantined sources, active
+alarms, and queue depth. Completing every item suppresses email for the rest of
+the month; the next month resets automatically.
+
 ## First response
 
 1. Confirm whether the problem is one source, one Lever region, or the whole

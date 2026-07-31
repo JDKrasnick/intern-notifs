@@ -16,6 +16,7 @@ import type { Construct } from 'constructs';
 export interface GreenhouseMonitoringStackProps extends cdk.StackProps {
   internshipsTableName: string;
   usersTableName: string;
+  emailAddress: string;
 }
 
 /**
@@ -130,6 +131,7 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
     operationsApi.addRoutes({ path: '/operations/sources', methods: [apigatewayv2.HttpMethod.GET], integration: operationsIntegration });
     operationsApi.addRoutes({ path: '/operations/sources/{sourceId}', methods: [apigatewayv2.HttpMethod.GET], integration: operationsIntegration });
     operationsApi.addRoutes({ path: '/operations/sources/{sourceId}/actions', methods: [apigatewayv2.HttpMethod.POST], integration: operationsIntegration });
+    operationsApi.addRoutes({ path: '/operations/checklist/{itemId}', methods: [apigatewayv2.HttpMethod.POST], integration: operationsIntegration });
     operationsApi.addRoutes({ path: '/operations/lever/candidates', methods: [apigatewayv2.HttpMethod.GET], integration: operationsIntegration });
     operationsApi.addRoutes({ path: '/operations/lever/candidates/{site}/verify', methods: [apigatewayv2.HttpMethod.POST], integration: operationsIntegration });
     operationsApi.addRoutes({ path: '/operations/lever/candidates/{site}/accept', methods: [apigatewayv2.HttpMethod.POST], integration: operationsIntegration });
@@ -141,7 +143,30 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
     const schedulerRole = new iam.Role(this, 'GreenhouseSchedulerInvokeRole', {
       assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com'),
     });
+    const reminder = new lambdaNodejs.NodejsFunction(this, 'MonitoringReminder', {
+      entry: 'src/monitoring-reminder.ts',
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256,
+      environment: {
+        OPERATIONS_API_URL: operationsApi.apiEndpoint,
+        OPERATIONS_API_KEY: operationsSecret.secretValue.unsafeUnwrap(),
+        MONITORING_EMAIL_ADDRESS: props.emailAddress,
+        MONITORING_DASHBOARD_URL: 'https://monitoring.jdkrasnick.com',
+      },
+      bundling: { externalModules: [] },
+    });
+    reminder.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ses:SendEmail'],
+      resources: [cdk.Stack.of(this).formatArn({
+        service: 'ses',
+        resource: 'identity',
+        resourceName: props.emailAddress,
+      })],
+    }));
     dispatcher.grantInvoke(schedulerRole);
+    reminder.grantInvoke(schedulerRole);
     schedulerDeadLetterQueue.grantSendMessages(schedulerRole);
     new scheduler.CfnSchedule(this, 'GreenhousePollSchedule', {
       flexibleTimeWindow: { mode: 'OFF' },
@@ -152,6 +177,19 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
         arn: dispatcher.functionArn,
         roleArn: schedulerRole.roleArn,
         input: JSON.stringify({ command: 'greenhouse-dispatch' }),
+        deadLetterConfig: { arn: schedulerDeadLetterQueue.queueArn },
+        retryPolicy: { maximumEventAgeInSeconds: 3600, maximumRetryAttempts: 2 },
+      },
+    });
+    new scheduler.CfnSchedule(this, 'MonitoringReminderSchedule', {
+      flexibleTimeWindow: { mode: 'OFF' },
+      scheduleExpression: 'cron(0 9 ? * MON *)',
+      scheduleExpressionTimezone: 'America/New_York',
+      state: 'ENABLED',
+      target: {
+        arn: reminder.functionArn,
+        roleArn: schedulerRole.roleArn,
+        input: JSON.stringify({ command: 'monitoring-reminder' }),
         deadLetterConfig: { arn: schedulerDeadLetterQueue.queueArn },
         retryPolicy: { maximumEventAgeInSeconds: 3600, maximumRetryAttempts: 2 },
       },
@@ -181,5 +219,6 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'GreenhouseDispatcherFunctionName', { value: dispatcher.functionName });
     new cdk.CfnOutput(this, 'GreenhouseOperationsApiUrl', { value: operationsApi.apiEndpoint });
     new cdk.CfnOutput(this, 'GreenhouseOperationsSecretArn', { value: operationsSecret.secretArn });
+    new cdk.CfnOutput(this, 'MonitoringReminderFunctionName', { value: reminder.functionName });
   }
 }

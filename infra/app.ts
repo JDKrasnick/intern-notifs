@@ -12,7 +12,11 @@ if (deploymentTarget === 'greenhouse' || deploymentTarget === 'lever') {
   const usersTableName = app.node.tryGetContext('usersTableName');
   if (!internshipsTableName || !usersTableName) throw new Error(`Set -c internshipsTableName=... and -c usersTableName=... for the ${deploymentTarget} monitoring stack.`);
   const props = { env: { region }, internshipsTableName, usersTableName };
-  if (deploymentTarget === 'greenhouse') new GreenhouseMonitoringStack(app, 'InternNotifsGreenhouse', props);
+  if (deploymentTarget === 'greenhouse') {
+    const emailAddress = app.node.tryGetContext('emailAddress') || process.env.SES_EMAIL;
+    if (!emailAddress) throw new Error('Set -c emailAddress=you@example.com or SES_EMAIL for the greenhouse monitoring reminder.');
+    new GreenhouseMonitoringStack(app, 'InternNotifsGreenhouse', { ...props, emailAddress });
+  }
   else new LeverMonitoringStack(app, 'InternNotifsLever', props);
 } else {
   const githubRepository = app.node.tryGetContext('githubRepository') || process.env.GITHUB_REPOSITORY;

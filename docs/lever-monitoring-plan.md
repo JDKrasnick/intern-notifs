@@ -11,6 +11,8 @@ Implemented on 2026-07-30:
   thirty-minute CloudWatch alarm;
 - a Lever CloudWatch dashboard plus the shared private source-operations pane;
 - pause, resume, replay, cadence, acknowledge, and resolve controls;
+- one shared monthly Greenhouse/Lever checklist and a Monday email containing
+  current production health until that checklist is complete;
 - deterministic fixtures and the existing nightly live contract; and
 - the recovery procedures in
   [`lever-monitoring-runbook.md`](lever-monitoring-runbook.md).
@@ -25,17 +27,17 @@ This plan assumes the complete-snapshot boundary described in
 `ingestion-architecture.md`, and the shadow/promotion workflow described in
 `lever-company-onboarding-plan.md`.
 
-## Current operational gap
+## Original operational gap
 
-EventBridge Scheduler invokes the poll Lambda about every five minutes. The
+Before the dedicated provider runners, EventBridge Scheduler invoked the poll Lambda about every five minutes. The
 poller catches an individual adapter failure, appends a string to its report,
 and continues. This protects other sources, but the Lambda invocation can still
 finish successfully.
 
-The existing Scheduler DLQ therefore detects failed invocation delivery, not a
+The Scheduler DLQ therefore detected failed invocation delivery, not a
 Lever board that repeatedly timed out, returned malformed JSON, or produced a
-rejected snapshot. Checkpoints record successful-fetch data but there is no
-durable source-health or incident record.
+rejected snapshot. Checkpoints recorded successful-fetch data without a durable
+source-health or incident record.
 
 The project target is for 95% of listed open roles to have been checked within
 30 minutes. Monitoring must measure successful trusted snapshots, not merely

@@ -197,6 +197,28 @@ export interface SourceRun {
   diagnostic?: string;
 }
 
+export type MonitoringChecklistItemId =
+  | 'review-fleet-health'
+  | 'inspect-failed-extractions'
+  | 'confirm-dead-letter-queues'
+  | 'exercise-greenhouse-recovery'
+  | 'exercise-lever-recovery'
+  | 'verify-alarm-delivery'
+  | 'confirm-nightly-contract';
+
+export interface MonitoringChecklistCompletion {
+  completedAt: string;
+  completedBy: string;
+}
+
+export interface MonitoringChecklist {
+  period: string;
+  completions: Partial<Record<MonitoringChecklistItemId, MonitoringChecklistCompletion>>;
+  updatedAt?: string;
+  updatedBy?: string;
+  version: number;
+}
+
 export interface SourceReference {
   sourceId: string;
   document: string;

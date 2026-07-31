@@ -6,7 +6,8 @@ import { reviewedGreenhouseSources } from './sources/greenhouse-config.js';
 import { reviewedLeverSources, type ReviewedLeverSource } from './sources/lever-config.js';
 import { DynamoInternshipStore, type InternshipStore } from './store.js';
 import { acceptLeverAdmission, listLeverCandidates, verifyLeverAdmission, type LeverAdmissionInput } from './lever-admission.js';
-import type { SourceCheckpoint, SourceHealth, SourceHealthState } from './types.js';
+import { monitoringChecklistItems, monitoringPeriod, publicMonitoringChecklist } from './monitoring-checklist.js';
+import type { MonitoringChecklist, MonitoringChecklistItemId, SourceCheckpoint, SourceHealth, SourceHealthState } from './types.js';
 
 type ApiEvent = {
   headers?: Record<string, string | undefined>;
@@ -222,14 +223,57 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
       ...[...leverById.values()].map((source) => ({ ...source, provider: 'lever' as const })),
     ];
     const ids = sources.map((source) => source.id);
-    const [healthRecords, checkpoints] = await Promise.all([
+    const checklistPeriod = monitoringPeriod(new Date(timestamp));
+    const [healthRecords, checkpoints, storedChecklist] = await Promise.all([
       dependencies.store.getSourceHealthMany(ids),
       Promise.all(sources.map((source) => dependencies.store.getCheckpoint(
         source.provider === 'lever' && source.status === 'shadow' ? `shadow-${source.id}` : source.id,
       ))),
+      dependencies.store.getMonitoringChecklist(checklistPeriod),
     ]);
     const health = new Map(healthRecords.map((record) => [record.sourceId, record]));
     const rows = sources.map((source, index) => publicSource(source, health.get(source.id), checkpoints[index], timestamp));
+
+    const checklistMatch = path.match(/^\/operations\/checklist\/([^/]+)$/);
+    if (checklistMatch && method === 'POST') {
+      const itemId = decodeURIComponent(checklistMatch[1]) as MonitoringChecklistItemId;
+      if (!monitoringChecklistItems.some((item) => item.id === itemId)) {
+        return reply(404, { code: 'CHECKLIST_ITEM_NOT_FOUND', message: 'Checklist item not found.' });
+      }
+      let input: Record<string, unknown>;
+      try { input = parseBody(event); }
+      catch { return reply(400, { code: 'INVALID_REQUEST', message: 'Request body must be valid JSON.' }); }
+      if (typeof input.completed !== 'boolean') {
+        return reply(400, { code: 'INVALID_REQUEST', message: 'completed must be a boolean.' });
+      }
+      const actor = header(event, 'x-operations-actor')?.trim() || 'operations-owner';
+      const changedAt = new Date(timestamp).toISOString();
+      const checklist: MonitoringChecklist = storedChecklist ?? {
+        period: checklistPeriod,
+        completions: {},
+        version: 0,
+      };
+      const completions = { ...checklist.completions };
+      if (input.completed) completions[itemId] = { completedAt: changedAt, completedBy: actor };
+      else delete completions[itemId];
+      const updated: MonitoringChecklist = {
+        ...checklist,
+        completions,
+        updatedAt: changedAt,
+        updatedBy: actor,
+        version: checklist.version + 1,
+      };
+      await dependencies.store.putMonitoringChecklist(updated);
+      console.log(JSON.stringify({
+        event: 'monitoring_checklist_changed',
+        period: checklistPeriod,
+        itemId,
+        completed: input.completed,
+        actor,
+        version: updated.version,
+      }));
+      return reply(200, publicMonitoringChecklist(updated, checklistPeriod));
+    }
 
     const actionMatch = path.match(/^\/operations\/sources\/([^/]+)\/actions$/);
     if (actionMatch && method === 'POST') {
@@ -346,6 +390,19 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         }), { waiting: 0, processing: 0, deadLettered: 0 }),
         alarms: fleetRows.flatMap((row) => row.alarms),
       };
+      const cutoff = timestamp - 24 * 60 * 60_000;
+      const failedExtractions24h = healthRecords.reduce((total, record) => total + (record.recentRuns ?? [])
+        .filter((run) => run.state !== 'succeeded' && Date.parse(run.completedAt) >= cutoff).length, 0);
+      const productionMetrics = {
+        deadLetterMessages: fleet.queue.deadLettered,
+        failedExtractions24h,
+        staleSources: rows.filter((row) => row.state === 'degraded' || row.state === 'never-succeeded').length,
+        quarantinedSources: rows.filter((row) => row.state === 'quarantined').length,
+        pausedSources: rows.filter((row) => row.sourceStatus === 'paused').length,
+        activeAlarms: fleet.alarms.filter((alarm) => alarm.state === 'ALARM').length,
+        queuedMessages: fleet.queue.waiting,
+        processingMessages: fleet.queue.processing,
+      };
       const order: Record<SourceHealthState, number> = { quarantined: 0, degraded: 1, 'never-succeeded': 2, healthy: 3 };
       return reply(200, {
         generatedAt: new Date(timestamp).toISOString(),
@@ -353,6 +410,8 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         reliabilityRanking: [...rows].sort((a, b) => order[a.state] - order[b.state] || b.consecutiveFailures - a.consecutiveFailures || a.source.displayName.localeCompare(b.source.displayName)),
         fleet,
         fleets: fleetRows,
+        productionMetrics,
+        checklist: publicMonitoringChecklist(storedChecklist, checklistPeriod),
       });
     }
     const match = path.match(/^\/operations\/sources\/([^/]+)$/);
