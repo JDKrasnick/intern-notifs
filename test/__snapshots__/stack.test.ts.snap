@@ -31,6 +31,11 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         "Ref": "NotifierDFD80165",
       },
     },
+    "OperationsUserPoolClientId": {
+      "Value": {
+        "Ref": "UsersOperationsClient8DC766FB",
+      },
+    },
     "PublicApiUrl": {
       "Value": {
         "Fn::GetAtt": [
@@ -2015,6 +2020,37 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         "ExplicitAuthFlows": [
           "ALLOW_USER_PASSWORD_AUTH",
           "ALLOW_USER_SRP_AUTH",
+          "ALLOW_REFRESH_TOKEN_AUTH",
+        ],
+        "PreventUserExistenceErrors": "ENABLED",
+        "SupportedIdentityProviders": [
+          "COGNITO",
+        ],
+        "UserPoolId": {
+          "Ref": "Users0A0EEA89",
+        },
+      },
+      "Type": "AWS::Cognito::UserPoolClient",
+    },
+    "UsersOperationsClient8DC766FB": {
+      "Properties": {
+        "AllowedOAuthFlows": [
+          "implicit",
+          "code",
+        ],
+        "AllowedOAuthFlowsUserPoolClient": true,
+        "AllowedOAuthScopes": [
+          "profile",
+          "phone",
+          "email",
+          "openid",
+          "aws.cognito.signin.user.admin",
+        ],
+        "CallbackURLs": [
+          "https://example.com",
+        ],
+        "ExplicitAuthFlows": [
+          "ALLOW_USER_PASSWORD_AUTH",
           "ALLOW_REFRESH_TOKEN_AUTH",
         ],
         "PreventUserExistenceErrors": "ENABLED",

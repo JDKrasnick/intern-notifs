@@ -16,6 +16,11 @@ describe('CDK stack', () => {
   it('has durable tables and main-branch OIDC trust', () => {
     const app = new cdk.App(); const stack = new InternNotifsStack(app, 'Test', { githubRepository: 'owner/repo', emailAddress: 'me@example.com' }); const template = Template.fromStack(stack);
     template.resourceCountIs('AWS::DynamoDB::Table', 3);
+    template.resourceCountIs('AWS::Cognito::UserPoolClient', 2);
+    template.hasResourceProperties('AWS::Cognito::UserPoolClient', {
+      ExplicitAuthFlows: ['ALLOW_USER_PASSWORD_AUTH', 'ALLOW_REFRESH_TOKEN_AUTH'],
+      PreventUserExistenceErrors: 'ENABLED',
+    });
     template.resourceCountIs('AWS::Scheduler::Schedule', 3);
     template.resourceCountIs('AWS::SQS::Queue', 1);
     template.hasResourceProperties('AWS::IAM::Role', { AssumeRolePolicyDocument: { Statement: [{ Condition: { StringEquals: { 'token.actions.githubusercontent.com:sub': 'repo:owner/repo:ref:refs/heads/main' } } }] } });

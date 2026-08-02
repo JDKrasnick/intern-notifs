@@ -41,6 +41,7 @@ cannot publish jobs or notifications.
 - Public API: `https://5dx7gpfa7d.execute-api.us-east-1.amazonaws.com`
 - Cognito User Pool: `us-east-1_mHbG28HiZ`
 - Cognito mobile client: `4vuo4dqidns1fn30q3mhfabopb`
+- Cognito operations client: the `OperationsUserPoolClientId` output from `InternNotifs`
 - Runtime configuration parameter: `/intern-notifs/runtime-config`
 
 These are not credentials. Do not record Apple private keys, API keys, Expo tokens, password values, or personal Apple Account emails here.
@@ -105,6 +106,12 @@ key as `OPERATIONS_API_KEY`; it is never exposed to the browser. Each worker
 attempt records raw, eligible, and withheld row counts plus a redacted
 diagnostic and the 25 most recent runs. The dashboard lists every official
 source, including sources with no current jobs.
+
+Operator sign-in uses the dedicated `OperationsUserPoolClientId` owned by the
+durable `InternNotifs` stack. Configure the Sites dashboard's
+`OPERATIONS_CLIENT_ID` from that output. Do not reuse the mobile client or move
+the operations client into a provider monitoring stack; either change can break
+dashboard sign-in during an otherwise unrelated monitoring deployment.
 
 The stack sends one combined Greenhouse and Lever monitoring reminder at
 9:00 AM America/New_York every Monday. The email uses the existing verified
