@@ -40,6 +40,10 @@ export class InternNotifsStack extends cdk.Stack {
     const documents = new s3.Bucket(this, 'ApplicantDocuments', { encryption: s3.BucketEncryption.KMS_MANAGED, blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL, enforceSSL: true, versioned: true, removalPolicy: cdk.RemovalPolicy.RETAIN, autoDeleteObjects: false, cors: [{ allowedMethods: [s3.HttpMethods.PUT], allowedOrigins: ['*'], allowedHeaders: ['Content-Type'] }] });
     const userPool = new cognito.UserPool(this, 'Users', { selfSignUpEnabled: true, signInAliases: { email: true }, autoVerify: { email: true }, standardAttributes: { email: { required: true, mutable: true } }, passwordPolicy: { minLength: 12, requireDigits: true, requireLowercase: true, requireUppercase: true, requireSymbols: false }, accountRecovery: cognito.AccountRecovery.EMAIL_ONLY, removalPolicy: cdk.RemovalPolicy.RETAIN });
     const userPoolClient = userPool.addClient('MobileClient', { authFlows: { userSrp: true, userPassword: true }, preventUserExistenceErrors: true });
+    // The private monitoring site authenticates the operator directly with
+    // USER_PASSWORD_AUTH. Keep this client in the durable application stack so
+    // moving monitoring resources between provider stacks cannot delete it.
+    const operationsUserPoolClient = userPool.addClient('OperationsClient', { authFlows: { userPassword: true }, preventUserExistenceErrors: true });
     const identity = new ses.EmailIdentity(this, 'NotifierIdentity', { identity: ses.Identity.email(props.emailAddress) });
     const provider = props.existingOidcProviderArn ? iam.OpenIdConnectProvider.fromOpenIdConnectProviderArn(this, 'ImportedGithubOidc', props.existingOidcProviderArn) : new iam.OpenIdConnectProvider(this, 'GithubOidc', { url: 'https://token.actions.githubusercontent.com', clientIds: ['sts.amazonaws.com'] });
     const [owner, repository] = props.githubRepository.split('/');
@@ -132,6 +136,7 @@ export class InternNotifsStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'DocumentsBucketName', { value: documents.bucketName });
     new cdk.CfnOutput(this, 'UserPoolId', { value: userPool.userPoolId });
     new cdk.CfnOutput(this, 'UserPoolClientId', { value: userPoolClient.userPoolClientId });
+    new cdk.CfnOutput(this, 'OperationsUserPoolClientId', { value: operationsUserPoolClient.userPoolClientId });
     new cdk.CfnOutput(this, 'PublicApiUrl', { value: api.apiEndpoint });
     new cdk.CfnOutput(this, 'GitHubActionsRoleArn', { value: role.roleArn });
     new cdk.CfnOutput(this, 'Region', { value: this.region });
