@@ -2,6 +2,7 @@ import type { CloudWatchClient } from '@aws-sdk/client-cloudwatch';
 import { SendMessageCommand, type SQSClient } from '@aws-sdk/client-sqs';
 import { describe, expect, it } from 'vitest';
 import { createSourceOperationsHandler } from '../src/greenhouse-operations-api.js';
+import { reviewedGreenhouseSources } from '../src/sources/greenhouse-config.js';
 import { reviewedLeverSources } from '../src/sources/lever-config.js';
 import { MemoryInternshipStore } from '../src/store.js';
 
@@ -56,6 +57,36 @@ describe('shared source operations', () => {
     expect(body.checklist).toMatchObject({ period: '2026-07', completed: 0, total: 7, complete: false });
   });
 
+  it('uses the quiet cadence when classifying source freshness', async () => {
+    const store = new MemoryInternshipStore();
+    const source = reviewedGreenhouseSources.find((candidate) => candidate.status === 'published')!;
+    await store.putCheckpoint({
+      sourceId: source.id,
+      successfulFetches: 1,
+      lastRowCount: 1,
+      lastSuccessAt: '2026-07-30T16:00:00.000Z',
+    });
+    await store.putSourceHealth({
+      sourceId: source.id,
+      provider: 'greenhouse',
+      region: 'unknown',
+      state: 'healthy',
+      sourceStatus: 'active',
+      pollTier: 'quiet',
+      pollTierMode: 'automatic',
+      lastAttemptAt: '2026-07-30T16:00:00.000Z',
+      lastSuccessAt: '2026-07-30T16:00:00.000Z',
+      eligibleRows: 0,
+      consecutiveFailures: 0,
+      durationMs: 1,
+    });
+
+    const response = await createSourceOperationsHandler(dependencies(store).value)(event('/operations/sources'));
+    const row = JSON.parse(response.body).sources.find(({ source: candidate }: { source: { sourceId: string } }) => candidate.sourceId === source.id);
+
+    expect(row).toMatchObject({ state: 'healthy', pollTier: 'quiet', eligibleRows: 0 });
+  });
+
   it('tracks monthly monitoring checks for both provider fleets', async () => {
     const store = new MemoryInternshipStore();
     const setup = dependencies(store);
@@ -94,5 +125,20 @@ describe('shared source operations', () => {
       MessageGroupId: source.id,
       MessageBody: expect.stringContaining('"force":true'),
     });
+  });
+
+  it('records set-tier actions as operator overrides', async () => {
+    const store = new MemoryInternshipStore();
+    const setup = dependencies(store);
+    const source = reviewedLeverSources[0]!;
+
+    const response = await createSourceOperationsHandler(setup.value)(event(
+      `/operations/sources/${source.id}/actions`,
+      'POST',
+      { action: 'set-tier', pollTier: 'quiet' },
+    ));
+
+    expect(response.statusCode).toBe(200);
+    expect(await store.getSourceHealth(source.id)).toMatchObject({ pollTier: 'quiet', pollTierMode: 'operator' });
   });
 });

@@ -138,6 +138,7 @@ export interface SourceHealth {
   state?: SourceHealthState;
   sourceStatus?: SourceOperationalStatus;
   pollTier?: SourcePollTier;
+  pollTierMode?: 'automatic' | 'operator';
   lastAttemptAt: string;
   lastSuccessAt?: string;
   lastChangedAt?: string;

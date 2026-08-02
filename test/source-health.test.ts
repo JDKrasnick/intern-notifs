@@ -75,4 +75,41 @@ describe('source health', () => {
     });
     expect(recovered).toMatchObject({ state: 'healthy', consecutiveFailures: 0, rawRows: 4, eligibleRows: 1 });
   });
+
+  it('promotes an automatically quiet source when eligible roles appear', () => {
+    const quiet = successfulSourceHealth({
+      sourceId: 'greenhouse-acme',
+      startedAt: '2026-07-29T12:00:00.000Z',
+      completedAt: '2026-07-29T12:00:01.000Z',
+      eligibleRows: 0,
+    });
+    const promoted = successfulSourceHealth({
+      sourceId: 'greenhouse-acme',
+      previous: quiet,
+      startedAt: '2026-07-29T18:00:00.000Z',
+      completedAt: '2026-07-29T18:00:01.000Z',
+      eligibleRows: 2,
+    });
+
+    expect(quiet).toMatchObject({ pollTier: 'quiet', pollTierMode: 'automatic' });
+    expect(promoted).toMatchObject({ pollTier: 'active', pollTierMode: 'automatic' });
+  });
+
+  it('preserves an operator cadence override when source volume changes', () => {
+    const previous = successfulSourceHealth({
+      sourceId: 'greenhouse-acme',
+      startedAt: '2026-07-29T12:00:00.000Z',
+      completedAt: '2026-07-29T12:00:01.000Z',
+      eligibleRows: 0,
+    });
+    const updated = successfulSourceHealth({
+      sourceId: 'greenhouse-acme',
+      previous: { ...previous, pollTier: 'quiet', pollTierMode: 'operator' },
+      startedAt: '2026-07-29T18:00:00.000Z',
+      completedAt: '2026-07-29T18:00:01.000Z',
+      eligibleRows: 2,
+    });
+
+    expect(updated).toMatchObject({ pollTier: 'quiet', pollTierMode: 'operator' });
+  });
 });
