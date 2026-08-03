@@ -41,6 +41,7 @@ function operationalFields(previous: SourceHealth | undefined) {
     ...(previous.region ? { region: previous.region } : {}),
     ...(previous.sourceStatus ? { sourceStatus: previous.sourceStatus } : {}),
     ...(previous.pollTier ? { pollTier: previous.pollTier } : {}),
+    ...(previous.pollTierMode ? { pollTierMode: previous.pollTierMode } : {}),
     ...(previous.configVersion !== undefined ? { configVersion: previous.configVersion } : {}),
     ...(previous.changedAt ? { changedAt: previous.changedAt } : {}),
     ...(previous.changedBy ? { changedBy: previous.changedBy } : {}),
@@ -91,6 +92,8 @@ export function successfulSourceHealth(input: {
 }): SourceHealth {
   const durationMs = Math.max(0, Date.parse(input.completedAt) - Date.parse(input.startedAt));
   const outcome = input.outcome ?? 'success_changed';
+  const automaticPollTier = (input.eligibleRows ?? 0) > 0 ? 'active' : 'quiet';
+  const pollTierMode = input.previous?.pollTierMode ?? 'automatic';
   const run: SourceRun = {
     runId: input.runId ?? randomUUID(),
     sourceId: input.sourceId,
@@ -113,7 +116,8 @@ export function successfulSourceHealth(input: {
     state: 'healthy',
     ...operationalFields(input.previous),
     sourceStatus: input.previous?.sourceStatus ?? 'active',
-    pollTier: input.previous?.pollTier ?? ((input.eligibleRows ?? 0) > 0 ? 'active' : 'quiet'),
+    pollTier: pollTierMode === 'operator' ? input.previous?.pollTier ?? automaticPollTier : automaticPollTier,
+    pollTierMode,
     configVersion: input.previous?.configVersion ?? 1,
     lastAttemptAt: input.completedAt,
     lastSuccessAt: input.completedAt,

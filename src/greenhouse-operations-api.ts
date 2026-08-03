@@ -52,7 +52,9 @@ function stateFor(health: SourceHealth | undefined, checkpoint: SourceCheckpoint
   if (health?.state === 'quarantined') return 'quarantined';
   const lastSuccessAt = health?.lastSuccessAt ?? checkpoint?.lastSuccessAt;
   if (!lastSuccessAt) return health?.state ?? 'never-succeeded';
-  const allowedAge = (checkpoint?.lastRowCount ?? health?.eligibleRows ?? 0) > 0 ? healthWindowMs : inactiveHealthWindowMs;
+  const allowedAge = health?.pollTier === 'quiet'
+    ? inactiveHealthWindowMs
+    : (checkpoint?.lastRowCount ?? health?.eligibleRows ?? 0) > 0 ? healthWindowMs : inactiveHealthWindowMs;
   if (timestamp - Date.parse(lastSuccessAt) > allowedAge || health?.state === 'degraded') return 'degraded';
   return 'healthy';
 }
@@ -316,7 +318,7 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         if (input.pollTier !== 'active' && input.pollTier !== 'quiet') {
           return reply(400, { code: 'INVALID_POLL_TIER', message: 'pollTier must be active or quiet.' });
         }
-        updated = { ...updated, pollTier: input.pollTier };
+        updated = { ...updated, pollTier: input.pollTier, pollTierMode: 'operator' };
       }
       if (action === 'acknowledge') {
         if (!base.incidentState || base.incidentState === 'resolved') {
