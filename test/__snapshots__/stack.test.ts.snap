@@ -873,6 +873,28 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
       },
       "Type": "AWS::IAM::Policy",
     },
+    "PollDurationAlarm98AEB447": {
+      "Properties": {
+        "AlarmDescription": "The scheduled poll/digest Lambda exceeded three minutes and is approaching its four-minute timeout.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "NotifierDFD80165",
+            },
+          },
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "Duration",
+        "Namespace": "AWS/Lambda",
+        "Period": 300,
+        "Statistic": "Maximum",
+        "Threshold": 180000,
+        "TreatMissingData": "notBreaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
     "PollErrorsAlarm519749E0": {
       "Properties": {
         "AlarmDescription": "The scheduled poll/digest Lambda returned repeated invocation errors.",

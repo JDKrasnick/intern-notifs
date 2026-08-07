@@ -113,10 +113,12 @@ durable `InternNotifs` stack. Configure the Sites dashboard's
 the operations client into a provider monitoring stack; either change can break
 dashboard sign-in during an otherwise unrelated monitoring deployment.
 
-The stack sends one combined Greenhouse and Lever monitoring reminder at
+The stack sends one combined Greenhouse, Lever, and main-pipeline monitoring reminder at
 9:00 AM America/New_York every Monday. The email uses the existing verified
 deployment address and includes current dead-letter depth, failed extractions,
-stale or quarantined sources, active alarms, and queue depth. It is suppressed
+stale or quarantined sources, all application alarms, legacy notification
+backlog, and queue depth. The shared dashboard includes the same main-pipeline
+alarms, including a warning when a poll exceeds three minutes. It is suppressed
 after the shared monthly checklist is complete and resumes automatically in the
 next calendar month.
 
