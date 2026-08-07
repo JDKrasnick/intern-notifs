@@ -127,6 +127,13 @@ export class InternNotifsStack extends cdk.Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       alarmDescription: 'The scheduled poll/digest Lambda returned repeated invocation errors.',
     });
+    new cloudwatch.Alarm(this, 'PollDurationAlarm', {
+      metric: notifier.metricDuration({ period: cdk.Duration.minutes(5), statistic: 'Maximum' }),
+      threshold: 180_000,
+      evaluationPeriods: 1,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      alarmDescription: 'The scheduled poll/digest Lambda exceeded three minutes and is approaching its four-minute timeout.',
+    });
 
     new scheduler.CfnSchedule(this, 'MorningDigestSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(0 9 * * ? *)', scheduleExpressionTimezone: 'America/New_York', state: 'ENABLED', target: target('digest') });
     new scheduler.CfnSchedule(this, 'EveningDigestSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(0 17 * * ? *)', scheduleExpressionTimezone: 'America/New_York', state: 'ENABLED', target: target('digest') });

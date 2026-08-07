@@ -56,7 +56,14 @@ describe('CDK stack', () => {
         Threshold: 3,
       });
     }
-    template.resourceCountIs('AWS::CloudWatch::Alarm', 5);
+    template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      MetricName: 'Duration',
+      Statistic: 'Maximum',
+      Threshold: 180000,
+      EvaluationPeriods: 1,
+      TreatMissingData: 'notBreaching',
+    });
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 6);
   });
   it('queues Greenhouse boards every ten minutes with bounded worker concurrency', () => {
     const app = new cdk.App(); const stack = new GreenhouseMonitoringStack(app, 'Greenhouse', { internshipsTableName: 'internships', usersTableName: 'users', emailAddress: 'me@example.com' }); const template = Template.fromStack(stack);

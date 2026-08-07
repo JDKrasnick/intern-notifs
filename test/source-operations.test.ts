@@ -1,4 +1,4 @@
-import type { CloudWatchClient } from '@aws-sdk/client-cloudwatch';
+import { DescribeAlarmsCommand, type CloudWatchClient } from '@aws-sdk/client-cloudwatch';
 import { SendMessageCommand, type SQSClient } from '@aws-sdk/client-sqs';
 import { describe, expect, it } from 'vitest';
 import { createSourceOperationsHandler } from '../src/greenhouse-operations-api.js';
@@ -32,7 +32,12 @@ function dependencies(store: MemoryInternshipStore) {
           return { Attributes: { ApproximateNumberOfMessages: '0', ApproximateNumberOfMessagesNotVisible: '0' } };
         },
       } as unknown as SQSClient,
-      cloudwatch: { async send() { return { MetricAlarms: [] }; } } as unknown as CloudWatchClient,
+      cloudwatch: { async send(command: unknown) {
+        if (command instanceof DescribeAlarmsCommand && command.input.AlarmNamePrefix === 'InternNotifs-') {
+          return { MetricAlarms: [{ AlarmName: 'InternNotifs-PollDuration', StateValue: 'ALARM', AlarmDescription: 'Poll duration is near timeout.' }] };
+        }
+        return { MetricAlarms: [] };
+      } } as unknown as CloudWatchClient,
       now: () => new Date('2026-07-30T20:00:00.000Z'),
     },
   };
@@ -52,8 +57,10 @@ describe('shared source operations', () => {
     expect(body.productionMetrics).toMatchObject({
       deadLetterMessages: 0,
       failedExtractions24h: 0,
-      activeAlarms: 0,
+      activeAlarms: 1,
+      legacyPendingNotifications: 0,
     });
+    expect(body.fleet.alarms).toContainEqual(expect.objectContaining({ name: 'InternNotifs-PollDuration', state: 'ALARM' }));
     expect(body.checklist).toMatchObject({ period: '2026-07', completed: 0, total: 7, complete: false });
   });
 

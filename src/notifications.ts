@@ -10,12 +10,15 @@ export const rankInternships = (jobs: Internship[]) => [...jobs].sort((a, b) => 
 export interface PushMessage { title: string; body: string; click?: string; tags?: string[]; }
 export interface PushPublisher { publish(message: PushMessage): Promise<void>; }
 
+const PUSH_REQUEST_TIMEOUT_MS = 5_000;
+export const MAX_LEGACY_PUSH_JOBS_PER_RUN = 10;
+
 export interface ExpoPushTicket { id?: string; status: 'ok' | 'error'; details?: { error?: string }; message?: string; }
 /** Minimal Expo Push Service client: Expo handles APNs/FCM credential delivery. */
 export class ExpoPushPublisher {
   constructor(private readonly endpoint = 'https://exp.host/--/api/v2/push/send', private readonly fetcher: typeof fetch = fetch) {}
   async publish(token: string, message: PushMessage): Promise<ExpoPushTicket> {
-    const response = await this.fetcher(this.endpoint, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ to: token, sound: 'default', priority: 'high', title: message.title, body: message.body, data: { jobId: message.click }, channelId: 'job-alerts' }) });
+    const response = await this.fetcher(this.endpoint, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ to: token, sound: 'default', priority: 'high', title: message.title, body: message.body, data: { jobId: message.click }, channelId: 'job-alerts' }), signal: AbortSignal.timeout(PUSH_REQUEST_TIMEOUT_MS) });
     if (!response.ok) throw new Error(`Expo Push Service rejected notification with HTTP ${response.status}`);
     const body = await response.json() as { data?: ExpoPushTicket | ExpoPushTicket[] };
     const ticket = Array.isArray(body.data) ? body.data[0] : body.data;
@@ -24,7 +27,7 @@ export class ExpoPushPublisher {
   }
   async receipts(ticketIds: string[]): Promise<Record<string, ExpoPushTicket>> {
     if (!ticketIds.length) return {};
-    const response = await this.fetcher('https://exp.host/--/api/v2/push/getReceipts', { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: ticketIds }) });
+    const response = await this.fetcher('https://exp.host/--/api/v2/push/getReceipts', { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: ticketIds }), signal: AbortSignal.timeout(PUSH_REQUEST_TIMEOUT_MS) });
     if (!response.ok) throw new Error(`Expo Push Service rejected receipt lookup with HTTP ${response.status}`);
     const body = await response.json() as { data?: Record<string, ExpoPushTicket> };
     return body.data ?? {};
@@ -87,7 +90,8 @@ export class NtfyPublisher implements PushPublisher {
     const response = await this.fetcher(this.endpoint.replace(/\/$/, ''), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic: this.topic, title: message.title, message: message.body, priority: 4, ...(message.tags?.length ? { tags: message.tags } : {}), ...(message.click ? { click: message.click } : {}) })
+      body: JSON.stringify({ topic: this.topic, title: message.title, message: message.body, priority: 4, ...(message.tags?.length ? { tags: message.tags } : {}), ...(message.click ? { click: message.click } : {}) }),
+      signal: AbortSignal.timeout(PUSH_REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) throw new Error(`ntfy rejected notification with HTTP ${response.status}`);
   }
@@ -143,7 +147,10 @@ export function summaryChunks(jobs: Internship[], limit = 1200): Internship[][] 
 }
 
 export async function sendPendingNotifications(store: InternshipStore, publisher: PushPublisher, templates: PushTemplates = defaultPushTemplates, now: () => Date = () => new Date()): Promise<{ sent: number; failed: number }> {
-  const jobs = rankInternships(await store.pendingSms()); let sent = 0; let failed = 0;
+  // This fallback shares a Lambda with ingestion. Bound each pass so a stale
+  // delivery destination cannot consume the entire invocation and trigger
+  // overlapping Scheduler retries. Remaining jobs stay pending for later runs.
+  const jobs = rankInternships(await store.pendingSms()).slice(0, MAX_LEGACY_PUSH_JOBS_PER_RUN); let sent = 0; let failed = 0;
   for (const job of jobs.slice(0, 5)) {
     try { await publisher.publish(pushMessage(job, templates)); await store.markSmsSent(job.jobId, now().toISOString()); sent += 1; }
     catch { failed += 1; }

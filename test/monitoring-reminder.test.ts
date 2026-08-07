@@ -12,6 +12,7 @@ const overview = {
     activeAlarms: 1,
     queuedMessages: 4,
     processingMessages: 2,
+    legacyPendingNotifications: 817,
   },
   checklist: {
     period: '2026-07',
@@ -36,11 +37,12 @@ describe('monitoring reminder', () => {
       emailSender: { async send(subject, text, html) { messages.push({ subject, text, html }); } },
     });
 
-    await expect(handler()).resolves.toMatchObject({ sent: true, pending: 1, attentionSignals: 7 });
+    await expect(handler()).resolves.toMatchObject({ sent: true, pending: 1, attentionSignals: 8 });
     expect(messages).toHaveLength(1);
     expect(messages[0]?.subject).toContain('1 monitoring checks pending');
     expect(messages[0]?.text).toContain('Dead-letter messages: 2');
     expect(messages[0]?.text).toContain('Failed extractions (24h): 3');
+    expect(messages[0]?.text).toContain('Legacy notifications pending: 817');
     expect(messages[0]?.text).toContain('Pending check');
     expect(messages[0]?.html).toContain('https://monitoring.example.com');
   });

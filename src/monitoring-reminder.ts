@@ -24,6 +24,7 @@ type MonitoringOverview = {
     activeAlarms: number;
     queuedMessages: number;
     processingMessages: number;
+    legacyPendingNotifications: number;
   };
   checklist: Checklist;
 };
@@ -75,6 +76,7 @@ export function createMonitoringReminderHandler(dependencies: MonitoringReminder
       `Quarantined sources: ${metrics.quarantinedSources}`,
       `Paused sources: ${metrics.pausedSources}`,
       `Active alarms: ${metrics.activeAlarms}`,
+      `Legacy notifications pending: ${metrics.legacyPendingNotifications}`,
       `Queue: ${metrics.queuedMessages} waiting, ${metrics.processingMessages} processing`,
     ];
     const text = [
@@ -95,7 +97,8 @@ export function createMonitoringReminderHandler(dependencies: MonitoringReminder
       `<ul>${pending.map((item) => `<li><strong>${escapeHtml(item.label)}</strong><br>${escapeHtml(item.description)}</li>`).join('')}</ul>`,
       `<p><a href="${escapeHtml(dependencies.dashboardUrl)}">Open the shared monitoring pane</a></p>`,
     ].join('');
-    const attention = metrics.deadLetterMessages + metrics.failedExtractions24h + metrics.staleSources + metrics.quarantinedSources + metrics.activeAlarms;
+    const attention = metrics.deadLetterMessages + metrics.failedExtractions24h + metrics.staleSources + metrics.quarantinedSources + metrics.activeAlarms
+      + Number(metrics.legacyPendingNotifications > 0);
     await dependencies.emailSender.send(
       `[InternNotifs] ${pending.length} monitoring checks pending${attention ? ` · ${attention} signals need review` : ''}`,
       text,
