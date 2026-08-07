@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryInternshipStore, MemoryUserStore } from '../src/store.js';
-import { compactRoleTitle, ExpoPushPublisher, MAX_LEGACY_PUSH_JOBS_PER_RUN, NtfyPublisher, renderPushTemplate, sendDigest, sendNewJobNotifications, sendPendingNotifications, summaryChunks, type PushMessage } from '../src/notifications.js';
+import { compactRoleTitle, ExpoPushPublisher, MAX_LEGACY_PUSH_JOBS_PER_RUN, notificationSourceLabel, NtfyPublisher, renderPushTemplate, sendDigest, sendNewJobNotifications, sendPendingNotifications, summaryChunks, type PushMessage } from '../src/notifications.js';
 import type { Internship } from '../src/types.js';
 
 function job(index: number, company = 'Unknown'): Internship { return { jobId: `j${index}`, company, title: `Role ${index}`, location: 'NYC', season: 'summer-2027', applyUrl: `https://apply.example.com/${index}`, normalizedUrl: `https://apply.example.com/${index}`, fingerprint: String(index), compensation: { raw: '$50/hr', maxHourlyUSD: 50 }, sourceReferences: [{ sourceId: 'x', document: 'README', sourceUrl: 'x', row: index, company, title: `Role ${index}`, location: 'NYC', season: 'summer-2027', applyUrl: `https://apply.example.com/${index}`, compensation: { raw: '' }, state: 'open' }], open: true, firstSeenAt: `2026-01-0${index}T00:00:00Z`, lastSeenAt: '2026-01-01T00:00:00Z', notification: { smsPending: true, digestPending: true } }; }
@@ -8,7 +8,7 @@ describe('notifications', () => {
   it('sends five individual jobs and preserves links in summary chunks', async () => {
     const store = new MemoryInternshipStore(); for (let index = 1; index <= 7; index += 1) await store.putInternship(job(index, index === 1 ? 'OpenAI' : 'Unknown'));
     const messages: PushMessage[] = []; await sendPendingNotifications(store, { publish: async (message) => { messages.push(message); } });
-    expect(messages).toHaveLength(6); expect(messages[0]).toMatchObject({ title: 'Role 1 — OpenAI', body: 'NYC · summer-2027 · $50/hr\nhttps://apply.example.com/1', click: 'https://apply.example.com/1' }); expect(messages.map((message) => message.body).join('\n')).toContain('https://apply.example.com/7'); expect(await store.pendingSms()).toHaveLength(0);
+    expect(messages).toHaveLength(6); expect(messages[0]).toMatchObject({ title: 'Role 1 — OpenAI', body: 'NYC · summer-2027 · $50/hr\nSource: Job board\nhttps://apply.example.com/1', click: 'https://apply.example.com/1' }); expect(messages.map((message) => message.body).join('\n')).toContain('https://apply.example.com/7'); expect(await store.pendingSms()).toHaveLength(0);
   });
   it('does not mark a failed SMS and does not send empty digests', async () => {
     const store = new MemoryInternshipStore(); await store.putInternship(job(1));
@@ -36,6 +36,10 @@ describe('notifications', () => {
     expect(compactRoleTitle('Cloud Infrastructure Software Engineering Intern')).toBe('SWE');
     expect(compactRoleTitle('Software Engineering Intern', { 'software engineering': 'Dev' })).toBe('Dev');
     expect(renderPushTemplate('{focus}{postedDetail}', { ...listing, title: 'Machine Learning Intern', sourceReferences: [{ ...listing.sourceReferences[0], postedAt: '2026-07-19' }] })).toBe('Focus: AI/ML · Posted: 2026-07-19');
+    expect(notificationSourceLabel({ ...listing, sourceReferences: [{ ...listing.sourceReferences[0], sourceId: 'greenhouse-openai' }] })).toBe('Greenhouse');
+    expect(notificationSourceLabel({ ...listing, sourceReferences: [{ ...listing.sourceReferences[0], sourceId: 'lever-palantir' }] })).toBe('Lever');
+    expect(notificationSourceLabel(listing)).toBe('Job board');
+    expect(renderPushTemplate('Source: {source}', { ...listing, sourceReferences: [{ ...listing.sourceReferences[0], sourceId: 'greenhouse-openai' }] })).toBe('Source: Greenhouse');
     const store = new MemoryInternshipStore(); await store.putInternship({ ...listing, title: 'Software Engineering Intern', notification: { smsPending: true, digestPending: false } });
     const pushes: PushMessage[] = []; await sendPendingNotifications(store, { publish: async (message) => { pushes.push(message); } }); expect(pushes[0]?.tags).toEqual(['computer']);
   });
@@ -51,6 +55,6 @@ describe('notifications', () => {
     await users.putDevice({ userId: 'user-1', token: 'ExponentPushToken[test]', platform: 'ios', active: true, createdAt: '2026-07-19T00:00:00Z', updatedAt: '2026-07-19T00:00:00Z' });
     const publisher = new ExpoPushPublisher('https://push.example.test', async (_url, init) => { calls.push(init ?? {}); return new Response(JSON.stringify({ data: { id: 'ticket-1', status: 'ok' } }), { status: 200 }); });
     await sendNewJobNotifications([internship], users, publisher);
-    expect(JSON.parse(String(calls[0]?.body))).toMatchObject({ title: 'OpenAI: Role 1', body: 'summer-2027 | https://apply.example.com/1', data: { jobId: 'j1' } });
+    expect(JSON.parse(String(calls[0]?.body))).toMatchObject({ title: 'OpenAI: Role 1', body: 'summer-2027 | https://apply.example.com/1\nSource: Job board', data: { jobId: 'j1' } });
   });
 });

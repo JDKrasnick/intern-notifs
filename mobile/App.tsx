@@ -2757,8 +2757,15 @@ function Profile({
       .replace(/\{focus\}/g, "Focus: Backend/API")
       .replace(/\{posted\}/g, "Today")
       .replace(/\{postedDetail\}/g, " · Posted: Today")
-      .replace(/\{source\}/g, "InternNotifs")
+      .replace(/\{source\}/g, "Job board")
       .replace(/\{url\}/g, "internnotifs.app/roles/northstar");
+  const previewDescription = (template: string, fallback: string) => {
+    const selected = template.trim() || fallback;
+    return previewTemplate(
+      selected.includes("{source}") ? selected : `${selected}\nSource: {source}`,
+      fallback,
+    );
+  };
   return (
     <ScrollView
       style={styles.list}
@@ -3070,7 +3077,7 @@ function Profile({
       <TextInput
         style={[styles.search, styles.multiline]}
         accessibilityLabel="Notification description"
-        placeholder="Description: {location} · {season}\n{url}"
+        placeholder="Description: {location} · {season}\nSource: {source}\n{url}"
         placeholderTextColor={colors.placeholder}
         value={descriptionTemplate}
         onChangeText={setDescriptionTemplate}
@@ -3120,9 +3127,9 @@ function Profile({
           {previewTemplate(titleTemplate, "{shortTitle} — {company}")}
         </Text>
         <Text style={styles.notificationPreviewBody}>
-          {previewTemplate(
+          {previewDescription(
             descriptionTemplate,
-            "{location} · {season}{compensationDetail}\n{focus}{postedDetail}\n{url}",
+            "{location} · {season}{compensationDetail}\n{focus}{postedDetail}\nSource: {source}\n{url}",
           )}
         </Text>
       </View>
