@@ -6,7 +6,7 @@ import { ashbyBoardNameFromUrl, buildAshbyCandidateLedger } from '../src/sources
 import { collectAshbyManifestViolations, nodeAshbyManifestFs, type AshbyManifestFs } from '../src/sources/ashby-manifest.js';
 import { probeAshbyBoard, type AshbyProbeResult } from '../src/sources/ashby-probe.js';
 import { recheckAshbyEvidence } from '../src/sources/ashby-reverify.js';
-import type { ReviewedSourceRecord } from '../src/sources/reviewed-source.js';
+import type { ReviewedSourceRecord, SourcePromotionSnapshotEvidence } from '../src/sources/reviewed-source.js';
 
 const evidence = (overrides: Partial<AshbyOwnershipEvidence> = {}): AshbyOwnershipEvidence => ({
   provider: 'ashby', boardKey: 'acme.io', apiRegion: 'global',
@@ -212,6 +212,77 @@ describe('Ashby offline manifest and reverification', () => {
       'ashby-acme-io: admittedAt is in the future',
       'ashby-acme-io: probe artifact probedAt is in the future',
     ]));
+  });
+
+  it('blocks publication without three approved clean snapshots spanning 24 hours', async () => {
+    const probe = await okProbe();
+    const files = {
+      'fixtures/acme.io/evidence.json': evidence(),
+      'fixtures/acme.io/probe.json': { probedAt: '2026-08-09T00:00:00Z', retention: 'metadata-only', results: [probe] },
+    };
+    const withoutEvidence = collectAshbyManifestViolations([source({ status: 'published' })], {
+      fs: fakeFs(files), root: 'fixtures', now: new Date('2026-08-10T12:00:00Z'),
+    });
+    expect(withoutEvidence).toContain('ashby-acme-io: published source lacks promotionEvidence');
+
+    const snapshot = (runId: string, completedAt: string): SourcePromotionSnapshotEvidence => ({
+      runId, completedAt, outcome: 'success_unchanged_hash', rawRows: 1, eligibleRows: 1, withheldRows: 0,
+      applicationLinksChecked: 1, applicationLinkFailures: 0, complete: true, identityVerified: true, schemaValid: true,
+    });
+    const promoted = source({
+      status: 'published',
+      promotionEvidence: {
+        approvedAt: '2026-08-10T12:00:00Z', approvedBy: 'JDKrasnick', quietBaselineApproved: true,
+        stableIdentity: true, stableApplicationHosts: true,
+        snapshots: [
+          snapshot('run-1', '2026-08-09T00:00:00Z'),
+          snapshot('run-2', '2026-08-09T12:00:00Z'),
+          snapshot('run-3', '2026-08-10T00:00:00Z'),
+        ],
+      },
+    });
+    expect(collectAshbyManifestViolations([promoted], {
+      fs: fakeFs(files), root: 'fixtures', now: new Date('2026-08-10T12:00:00Z'),
+    })).toEqual([]);
+
+    const inconsistentCounts = source({
+      status: 'published',
+      promotionEvidence: {
+        ...promoted.promotionEvidence!,
+        snapshots: promoted.promotionEvidence!.snapshots.map((item, index) => index === 0
+          ? { ...item, eligibleRows: 0, applicationLinksChecked: 0, applicationLinkFailures: 1 }
+          : item),
+      },
+    });
+    expect(collectAshbyManifestViolations([inconsistentCounts], {
+      fs: fakeFs(files), root: 'fixtures', now: new Date('2026-08-10T12:00:00Z'),
+    })).toContain('ashby-acme-io: run-1: application-link failures exceed checked links');
+
+    const futureEvidence = source({
+      status: 'published',
+      promotionEvidence: {
+        ...promoted.promotionEvidence!, approvedAt: '2026-08-12T01:00:00Z',
+        snapshots: [
+          snapshot('future-1', '2026-08-11T00:00:00Z'),
+          snapshot('future-2', '2026-08-11T12:00:00Z'),
+          snapshot('future-3', '2026-08-12T00:00:00Z'),
+        ],
+      },
+    });
+    expect(collectAshbyManifestViolations([futureEvidence], {
+      fs: fakeFs(files), root: 'fixtures', now: new Date('2026-08-10T12:00:00Z'),
+    })).toEqual(expect.arrayContaining([
+      'ashby-acme-io: promotion evidence approvedAt is in the future',
+      'ashby-acme-io: promotion snapshot timestamp is in the future',
+    ]));
+
+    const prematureApproval = source({
+      status: 'published',
+      promotionEvidence: { ...promoted.promotionEvidence!, approvedAt: '2026-08-09T23:59:59Z' },
+    });
+    expect(collectAshbyManifestViolations([prematureApproval], {
+      fs: fakeFs(files), root: 'fixtures', now: new Date('2026-08-10T12:00:00Z'),
+    })).toContain('ashby-acme-io: promotion approval must follow the latest snapshot');
   });
 
   it('rechecks the employer page without writing state', async () => {

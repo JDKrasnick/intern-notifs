@@ -206,6 +206,7 @@ export type MonitoringChecklistItemId =
   | 'confirm-dead-letter-queues'
   | 'exercise-greenhouse-recovery'
   | 'exercise-lever-recovery'
+  | 'exercise-ashby-recovery'
   | 'verify-reminder-delivery'
   | 'confirm-nightly-contract';
 

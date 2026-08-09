@@ -8,17 +8,17 @@ export const monitoringChecklistItems: ReadonlyArray<{
   {
     id: 'review-fleet-health',
     label: 'Review fleet health',
-    description: 'Review stale, paused, degraded, and quarantined sources across both providers.',
+    description: 'Review stale, paused, degraded, and quarantined sources across all official providers.',
   },
   {
     id: 'inspect-failed-extractions',
     label: 'Inspect failed extractions',
-    description: 'Review failed or rejected Greenhouse and Lever runs from the last 24 hours.',
+    description: 'Review failed or rejected Greenhouse, Lever, and Ashby runs from the last 24 hours.',
   },
   {
     id: 'confirm-dead-letter-queues',
     label: 'Confirm dead-letter queues',
-    description: 'Confirm both provider dead-letter queues are empty or every message is understood.',
+    description: 'Confirm all provider dead-letter queues are empty or every message is understood.',
   },
   {
     id: 'exercise-greenhouse-recovery',
@@ -31,6 +31,11 @@ export const monitoringChecklistItems: ReadonlyArray<{
     description: 'Pause, resume, and replay one Lever shadow source and confirm a trusted snapshot.',
   },
   {
+    id: 'exercise-ashby-recovery',
+    label: 'Exercise Ashby recovery',
+    description: 'Quarantine one Ashby shadow source, recover it through a clean forced validation, then resume it.',
+  },
+  {
     id: 'verify-reminder-delivery',
     label: 'Verify reminder delivery',
     description: 'Confirm the combined Monday digest reaches the expected inbox and links to this pane.',
@@ -38,7 +43,7 @@ export const monitoringChecklistItems: ReadonlyArray<{
   {
     id: 'confirm-nightly-contract',
     label: 'Confirm nightly live contract',
-    description: 'Review the latest bounded live provider-contract run for both enabled regions.',
+    description: 'Review the latest bounded live contract run for every official provider and enabled region.',
   },
 ];
 

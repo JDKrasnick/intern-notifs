@@ -158,7 +158,7 @@ After both monitoring stacks are deployed, confirm:
 
 - the `InternNotifs-Lever` CloudWatch dashboard is present;
 - the active-source freshness alarm has data within one scheduler cycle;
-- the shared operations pane lists both provider fleets; and
+- the shared operations pane lists all three official provider fleets; and
 - pause, resume, and replay work for one shadow source from each provider;
 - the monthly monitoring checklist persists after a refresh; and
 - a test invocation of the monitoring reminder reaches the deployment address.

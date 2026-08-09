@@ -32,15 +32,22 @@ board verify:
 
 Pause and resume one source, issue an operator replay, inspect queue and DLQ
 counts, and verify the four Ashby alarms and `InternNotifs-Ashby` dashboard.
+Also exercise the safe quarantine flow: provide a reason, recover the source
+through a forced clean validation while it remains paused, inspect the new
+trusted snapshot, and only then resume normal scheduling.
 Operator pause, backoff, replay, and tier overrides take precedence over the
 automatic six-hour quiet cadence.
 
 ## Promotion
 
-Promotion is per board. Change only an individually qualified source from
-`shadow` to `published`, review the config diff, rerun the manifest and focused
-tests, then deploy `InternNotifsAshby`. A single deployment may contain several
-independently approved promotions.
+Promotion is per board. Add committed `promotionEvidence` containing three
+unique clean snapshot run IDs spanning at least 24 hours, their counts and link
+results, stable identity and host approvals, and the named quiet-baseline
+approval. Then change only that individually qualified source from `shadow` to
+`published`, review the config diff, rerun the manifest and focused tests, and
+deploy `InternNotifsAshby`. The manifest rejects publication when this evidence
+is absent or incomplete. A single deployment may contain several independently
+approved promotions.
 
 Verify that the first published run creates the source checkpoint as a quiet
 baseline and creates no notification event. A later genuine addition follows
@@ -48,12 +55,31 @@ normal reconciliation and notification behavior. Updates are not new-role
 alerts; one complete omission marks a role missing and the second consecutive
 complete omission closes it.
 
+## Provider outage
+
+Do not replay the fleet while Ashby is returning widespread transport, `429`,
+or `5xx` failures. Confirm the provider-wide pattern in incidents and alarms,
+leave bounded backoff in control, and pause affected sources if retries are
+adding pressure. Preserve the last trusted catalog state. After the provider is
+healthy, recover one representative shadow source first, verify its identity,
+schema, hosts, and link results, then resume the remaining sources gradually.
+
+## Schema or identity drift
+
+For API-version, malformed-row, wrong-board path, or unexplained application-host
+failures, quarantine the affected source and do not override the rejected
+snapshot. Capture only redacted diagnostics, reproduce against a metadata-only
+fixture, and update the adapter or reviewed host evidence through code review.
+Deploy the reviewed fix, run a forced recovery validation while the source is
+paused, and resume only after a trusted complete snapshot succeeds.
+
 ## Recovery and rollback
 
-For a bad or stale board, pause it from operations before investigating. Replay
-only after checking the diagnostic, provider response, application hosts, and
-backoff. Redrive DLQ work only after the underlying condition is fixed; FIFO
-message groups preserve per-source ordering.
+For a bad or stale board, quarantine it with a concise reason before
+investigating. `recover` queues one forced validation but deliberately leaves the
+source paused. Resume only after that run returns the source to healthy. Redrive
+DLQ work only after the underlying condition is fixed; FIFO message groups
+preserve per-source ordering.
 
 To roll back publication, change the affected source back to `shadow` and deploy
 Ashby. This stops catalog writes without blocking other boards. Do not delete

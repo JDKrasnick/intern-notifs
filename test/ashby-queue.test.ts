@@ -83,6 +83,28 @@ describe('Ashby queue worker', () => {
     });
   });
 
+  it('backfills link evidence for an unchanged pre-observability snapshot', async () => {
+    const store = new MemoryInternshipStore();
+    await runAshbyBoard(message(), {
+      store, sources: [shadowSource], fetchImpl: async () => response(), linkValidator: async (url) => url,
+    });
+    const previous = (await store.getSourceHealth(shadowSource.id))!;
+    const legacyHealth = { ...previous };
+    delete legacyHealth.applicationLinksChecked;
+    delete legacyHealth.applicationLinkFailures;
+    await store.putSourceHealth(legacyHealth);
+    let validations = 0;
+
+    await expect(runAshbyBoard(message(), {
+      store, sources: [shadowSource], fetchImpl: async () => response(),
+      linkValidator: async (url) => { validations += 1; return url; },
+    })).resolves.toMatchObject({ notModified: true });
+    expect(validations).toBe(1);
+    expect(await store.getSourceHealth(shadowSource.id)).toMatchObject({
+      applicationLinksChecked: 1, applicationLinkFailures: 0,
+    });
+  });
+
   it('rejects a shadow snapshot when link failures exceed the threshold', async () => {
     const store = new MemoryInternshipStore();
     await expect(runAshbyBoard(message(), {

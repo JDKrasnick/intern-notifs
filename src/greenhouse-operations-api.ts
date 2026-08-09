@@ -302,9 +302,9 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
       try { input = parseBody(event); }
       catch { return reply(400, { code: 'INVALID_REQUEST', message: 'Request body must be valid JSON.' }); }
       const action = input.action;
-      const allowed = ['pause', 'resume', 'replay', 'acknowledge', 'resolve', 'set-tier'];
+      const allowed = ['pause', 'resume', 'replay', 'quarantine', 'recover', 'acknowledge', 'resolve', 'set-tier'];
       if (typeof action !== 'string' || !allowed.includes(action)) {
-        return reply(400, { code: 'INVALID_ACTION', message: 'Action must be pause, resume, replay, acknowledge, resolve, or set-tier.' });
+        return reply(400, { code: 'INVALID_ACTION', message: 'Action must be pause, resume, replay, quarantine, recover, acknowledge, resolve, or set-tier.' });
       }
       const actor = header(event, 'x-operations-actor')?.trim() || 'operations-owner';
       const changedAt = new Date(timestamp).toISOString();
@@ -325,6 +325,25 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         changedBy: actor,
       };
       if (action === 'pause') updated = { ...updated, sourceStatus: 'paused' };
+      if (action === 'quarantine') {
+        const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
+        if (!reason || reason.length > 500) {
+          return reply(400, { code: 'INVALID_QUARANTINE_REASON', message: 'A quarantine reason between 1 and 500 characters is required.' });
+        }
+        updated = {
+          ...updated,
+          state: 'quarantined',
+          sourceStatus: 'paused',
+          diagnostic: reason,
+          lastSafeDiagnostic: reason,
+          quarantineReason: reason,
+          quarantinedAt: changedAt,
+          incidentState: 'open',
+          incidentSeverity: 'high',
+          incidentOpenedAt: base.incidentOpenedAt ?? changedAt,
+          incidentUpdatedAt: changedAt,
+        };
+      }
       if (action === 'resume') {
         const withoutBackoff = { ...updated };
         delete withoutBackoff.backoffUntil;
@@ -345,7 +364,10 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
       if (action === 'resolve') {
         updated = { ...updated, incidentState: 'resolved', incidentResolvedAt: changedAt, incidentUpdatedAt: changedAt };
       }
-      if (action === 'replay') {
+      if (action === 'replay' || action === 'recover') {
+        if (action === 'recover' && base.state !== 'quarantined') {
+          return reply(409, { code: 'SOURCE_NOT_QUARANTINED', message: 'Recovery requires a quarantined source.' });
+        }
         const configuredFleets = await providerFleets(
           dependencies.fleets ?? {
             greenhouse: dependencies.queueUrl && dependencies.deadLetterQueueUrl
@@ -359,19 +381,37 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         );
         const fleet = configuredFleets[source.provider];
         if (!fleet) return reply(503, { code: 'PROVIDER_QUEUE_UNAVAILABLE', message: `${source.provider} replay is not configured.` });
-        const runId = `operator-${randomUUID()}`;
-        await (dependencies.sqs ?? new SQSClient({})).send(new SendMessageCommand({
-          QueueUrl: fleet.queueUrl,
-          MessageBody: JSON.stringify({ version: 1, sourceId, scheduledAt: changedAt, force: true, ...(source.provider !== 'greenhouse' ? { runId } : {}) }),
-          MessageGroupId: sourceId,
-          MessageDeduplicationId: runId,
-        }));
-        console.log(JSON.stringify({ event: 'source_replay_requested', sourceId, provider: source.provider, runId, actor }));
-        return reply(202, { sourceId, action, runId, queuedAt: changedAt });
+        if (action === 'recover') {
+          updated = { ...updated, sourceStatus: 'paused', incidentState: 'acknowledged', incidentAcknowledgedAt: changedAt, incidentUpdatedAt: changedAt };
+          await dependencies.store.putSourceHealth(updated);
+        }
+        const runId = `${action === 'recover' ? 'recovery' : 'operator'}-${randomUUID()}`;
+        try {
+          await (dependencies.sqs ?? new SQSClient({})).send(new SendMessageCommand({
+            QueueUrl: fleet.queueUrl,
+            MessageBody: JSON.stringify({ version: 1, sourceId, scheduledAt: changedAt, force: true, ...(source.provider !== 'greenhouse' ? { runId } : {}) }),
+            MessageGroupId: sourceId,
+            MessageDeduplicationId: runId,
+          }));
+        } catch (error) {
+          if (action !== 'recover') throw error;
+          const enqueueFailed = {
+            ...updated,
+            incidentState: base.incidentState ?? 'open' as const,
+            incidentUpdatedAt: changedAt,
+          };
+          if (base.incidentAcknowledgedAt) enqueueFailed.incidentAcknowledgedAt = base.incidentAcknowledgedAt;
+          else delete enqueueFailed.incidentAcknowledgedAt;
+          await dependencies.store.putSourceHealth(enqueueFailed);
+          console.error(JSON.stringify({ event: 'source_recovery_enqueue_failed', sourceId, provider: source.provider, runId, actor }));
+          return reply(503, { code: 'RECOVERY_ENQUEUE_FAILED', message: 'Recovery validation could not be queued.' });
+        }
+        console.log(JSON.stringify({ event: action === 'recover' ? 'source_recovery_requested' : 'source_replay_requested', sourceId, provider: source.provider, runId, actor }));
+        return reply(202, { sourceId, action, runId, queuedAt: changedAt, ...(action === 'recover' ? { sourceStatus: 'paused' } : {}) });
       }
       await dependencies.store.putSourceHealth(updated);
       console.log(JSON.stringify({
-        event: action === 'pause' || action === 'resume' || action === 'set-tier'
+        event: action === 'pause' || action === 'resume' || action === 'set-tier' || action === 'quarantine'
           ? 'source_setting_changed'
           : 'source_incident_state_changed',
         sourceId,
