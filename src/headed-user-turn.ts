@@ -2,6 +2,19 @@ import type { GreenhouseField, GreenhouseFieldPlan, GreenhousePage } from './gre
 
 export type UserTurnReason = 'verification' | 'sensitive-question' | 'unresolved-field';
 
+export type HeadedFieldControlState = {
+  type?: string;
+  value?: string;
+  checked?: boolean;
+};
+
+/** Converts live browser control state into the field-level completion flag. */
+export function headedFieldCompleted(control: HeadedFieldControlState, radioGroupChecked = false) {
+  if (control.type === 'radio') return radioGroupChecked;
+  if (control.type === 'checkbox') return Boolean(control.checked);
+  return Boolean(control.value?.trim());
+}
+
 /**
  * A blocked page must be revisited only through an explicit user action. This
  * function contains no browser action and therefore cannot resume filling.

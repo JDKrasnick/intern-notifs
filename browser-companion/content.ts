@@ -10,7 +10,7 @@ import {
 import { detectLeverApplication, isLeverApplicationUrl } from '../src/lever-headed.js';
 import { detectAshbyApplication, isAshbyApplicationUrl } from '../src/ashby-headed.js';
 import { nextFocusableApplicationField } from '../src/headed-focus.js';
-import { headedUserTurnReason, type UserTurnReason } from '../src/headed-user-turn.js';
+import { headedFieldCompleted, headedUserTurnReason, type UserTurnReason } from '../src/headed-user-turn.js';
 import { shouldShowBrowserCompanion } from '../src/companion-surface.js';
 
 declare const chrome: {
@@ -77,13 +77,16 @@ function snapshot(): PageSnapshot {
       role: element.tagName === 'BUTTON' ? 'button' : 'link',
       visible: isVisible(element),
       enabled: isEnabled(element),
-      completed: input.type === 'checkbox' || input.type === 'radio' ? input.checked : Boolean(input.value.trim()),
     };
   });
   const fields: GreenhouseField[] = Array.from(document.querySelectorAll<HTMLElement>('input, textarea, select')).map((element, index) => {
     const id = `field-${index}`;
     elements.set(id, element);
     const input = element as HTMLInputElement;
+    const radioGroupChecked = input.type === 'radio' && (input.name
+      ? Array.from(document.querySelectorAll<HTMLInputElement>('input[type="radio"]'))
+        .some((candidate) => candidate.form === input.form && candidate.name === input.name && candidate.checked)
+      : input.checked);
     return {
       id,
       label: labelFor(element),
@@ -93,6 +96,7 @@ function snapshot(): PageSnapshot {
       required: input.required,
       visible: isVisible(element),
       enabled: isEnabled(element),
+      completed: headedFieldCompleted(input, radioGroupChecked),
     };
   });
   return { url: location.href, controls, fields, challenge: challenge(), elements };
@@ -124,7 +128,8 @@ function nativeSetValue(element: HTMLInputElement | HTMLTextAreaElement, value: 
 
 function isFocusable(element: HTMLElement) {
   if (!isVisible(element) || !isEnabled(element)) return false;
-  if (element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) return !element.readOnly;
+  if (element instanceof HTMLTextAreaElement) return !element.readOnly;
+  if (element instanceof HTMLSelectElement) return true;
   if (!(element instanceof HTMLInputElement) || element.readOnly) return false;
   return !['hidden', 'button', 'submit', 'reset', 'checkbox', 'radio', 'file'].includes(element.type);
 }
