@@ -9,14 +9,22 @@ export const ASHBY_EVIDENCE_ROOT = 'test/fixtures/ashby';
 const ASHBY_PROMOTION_MIN_SNAPSHOTS = 3;
 const ASHBY_PROMOTION_MIN_SPAN_MS = 24 * 60 * 60 * 1000;
 const ASHBY_PROMOTION_MAX_LINK_FAILURE_RATE = 0.2;
+const CLOCK_SKEW_MS = 5 * 60_000;
+const ASHBY_PROMOTION_SUCCESS_OUTCOMES = new Set([
+  'success_changed',
+  'success_unchanged_304',
+  'success_unchanged_hash',
+]);
 
-function promotionEvidenceViolations(source: ReviewedSourceRecord): string[] {
+function promotionEvidenceViolations(source: ReviewedSourceRecord, now: Date): string[] {
   if (source.status !== 'published') return [];
   const evidence = source.promotionEvidence;
   if (!evidence) return ['published source lacks promotionEvidence'];
   const violations: string[] = [];
   if (!evidence.approvedBy.trim()) violations.push('promotion evidence lacks approver');
-  if (!Number.isFinite(Date.parse(evidence.approvedAt))) violations.push('promotion evidence approvedAt is invalid');
+  const approvedAt = Date.parse(evidence.approvedAt);
+  if (!Number.isFinite(approvedAt)) violations.push('promotion evidence approvedAt is invalid');
+  else if (approvedAt > now.getTime() + CLOCK_SKEW_MS) violations.push('promotion evidence approvedAt is in the future');
   if (!evidence.quietBaselineApproved) violations.push('quiet baseline is not approved');
   if (!evidence.stableIdentity) violations.push('identity is not approved as stable');
   if (!evidence.stableApplicationHosts) violations.push('application hosts are not approved as stable');
@@ -26,18 +34,27 @@ function promotionEvidenceViolations(source: ReviewedSourceRecord): string[] {
   }
   const timestamps = evidence.snapshots.map(({ completedAt }) => Date.parse(completedAt));
   if (timestamps.some((timestamp) => !Number.isFinite(timestamp))) violations.push('promotion snapshot timestamp is invalid');
-  else if (Math.max(...timestamps) - Math.min(...timestamps) < ASHBY_PROMOTION_MIN_SPAN_MS) {
-    violations.push('promotion snapshots must span at least 24 hours');
+  else {
+    const latestSnapshot = Math.max(...timestamps);
+    if (latestSnapshot - Math.min(...timestamps) < ASHBY_PROMOTION_MIN_SPAN_MS) {
+      violations.push('promotion snapshots must span at least 24 hours');
+    }
+    if (latestSnapshot > now.getTime() + CLOCK_SKEW_MS) violations.push('promotion snapshot timestamp is in the future');
+    if (Number.isFinite(approvedAt) && approvedAt < latestSnapshot) {
+      violations.push('promotion approval must follow the latest snapshot');
+    }
   }
   if (new Set(evidence.snapshots.map(({ runId }) => runId)).size !== evidence.snapshots.length) {
     violations.push('promotion snapshot run IDs must be unique');
   }
   for (const snapshot of evidence.snapshots) {
-    if (!snapshot.outcome.startsWith('success_')) violations.push(`${snapshot.runId}: snapshot did not succeed`);
+    if (!ASHBY_PROMOTION_SUCCESS_OUTCOMES.has(snapshot.outcome)) violations.push(`${snapshot.runId}: snapshot did not succeed`);
     if (!snapshot.complete) violations.push(`${snapshot.runId}: snapshot is not complete`);
     if (!snapshot.identityVerified) violations.push(`${snapshot.runId}: identity was not verified`);
     if (!snapshot.schemaValid) violations.push(`${snapshot.runId}: schema was not valid`);
-    if (snapshot.applicationLinksChecked < snapshot.eligibleRows) violations.push(`${snapshot.runId}: not every eligible application link was checked`);
+    if (snapshot.eligibleRows + snapshot.withheldRows > snapshot.rawRows) violations.push(`${snapshot.runId}: eligible and withheld rows exceed raw rows`);
+    if (snapshot.applicationLinksChecked !== snapshot.eligibleRows) violations.push(`${snapshot.runId}: every eligible application link must be checked exactly once`);
+    if (snapshot.applicationLinkFailures > snapshot.applicationLinksChecked) violations.push(`${snapshot.runId}: application-link failures exceed checked links`);
     if (snapshot.applicationLinksChecked > 0
       && snapshot.applicationLinkFailures / snapshot.applicationLinksChecked > ASHBY_PROMOTION_MAX_LINK_FAILURE_RATE) {
       violations.push(`${snapshot.runId}: application-link failure rate exceeds 20%`);
@@ -50,7 +67,6 @@ function promotionEvidenceViolations(source: ReviewedSourceRecord): string[] {
 export const ASHBY_REVERIFICATION_DAYS = 180;
 export const ASHBY_ADMISSION_WINDOW_DAYS = 7;
 const DAY_MS = 86_400_000;
-const CLOCK_SKEW_MS = 5 * 60_000;
 
 export interface AshbyManifestFs {
   listBoardDirs(root: string): string[];
@@ -93,7 +109,7 @@ export function collectAshbyManifestViolations(
     ids.add(source.id); boards.add(board); claimedDirs.add(board);
     if (source.identity.provider !== 'ashby') violations.push(`${source.id}: provider is not ashby`);
     if (source.status !== 'shadow' && source.status !== 'published') violations.push(`${source.id}: invalid status`);
-    for (const issue of promotionEvidenceViolations(source)) violations.push(`${source.id}: ${issue}`);
+    for (const issue of promotionEvidenceViolations(source, now)) violations.push(`${source.id}: ${issue}`);
     const admitted = Date.parse(source.admittedAt);
     if (Number.isNaN(admitted)) violations.push(`${source.id}: admittedAt is invalid`);
     else if (admitted > now.getTime() + CLOCK_SKEW_MS) violations.push(`${source.id}: admittedAt is in the future`);

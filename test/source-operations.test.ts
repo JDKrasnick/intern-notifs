@@ -199,4 +199,50 @@ describe('shared source operations', () => {
     expect(response.statusCode).toBe(409);
     expect(JSON.parse(response.body)).toMatchObject({ code: 'SOURCE_NOT_QUARANTINED' });
   });
+
+  it('keeps a quarantined incident open when its recovery fleet is unavailable', async () => {
+    const store = new MemoryInternshipStore();
+    const setup = dependencies(store);
+    const source = reviewedAshbySources[0]!;
+    await createSourceOperationsHandler(setup.value)(event(
+      `/operations/sources/${source.id}/actions`, 'POST', { action: 'quarantine', reason: 'Investigating schema drift' },
+    ));
+
+    const response = await createSourceOperationsHandler({
+      ...setup.value,
+      fleets: { greenhouse: setup.value.fleets.greenhouse, lever: setup.value.fleets.lever },
+    })(event(`/operations/sources/${source.id}/actions`, 'POST', { action: 'recover' }));
+
+    expect(response.statusCode).toBe(503);
+    expect(JSON.parse(response.body)).toMatchObject({ code: 'PROVIDER_QUEUE_UNAVAILABLE' });
+    expect(await store.getSourceHealth(source.id)).toMatchObject({
+      state: 'quarantined', sourceStatus: 'paused', incidentState: 'open',
+    });
+  });
+
+  it('reopens a quarantined incident when its recovery message cannot be queued', async () => {
+    const store = new MemoryInternshipStore();
+    const setup = dependencies(store);
+    const source = reviewedAshbySources[0]!;
+    await createSourceOperationsHandler(setup.value)(event(
+      `/operations/sources/${source.id}/actions`, 'POST', { action: 'quarantine', reason: 'Investigating schema drift' },
+    ));
+    const failingSqs = {
+      async send(command: unknown) {
+        if (command instanceof SendMessageCommand) throw new Error('SQS unavailable');
+        return {};
+      },
+    } as unknown as SQSClient;
+
+    const response = await createSourceOperationsHandler({ ...setup.value, sqs: failingSqs })(event(
+      `/operations/sources/${source.id}/actions`, 'POST', { action: 'recover' },
+    ));
+
+    expect(response.statusCode).toBe(503);
+    expect(JSON.parse(response.body)).toMatchObject({ code: 'RECOVERY_ENQUEUE_FAILED' });
+    expect(await store.getSourceHealth(source.id)).toMatchObject({
+      state: 'quarantined', sourceStatus: 'paused', incidentState: 'open',
+    });
+    expect((await store.getSourceHealth(source.id))?.incidentAcknowledgedAt).toBeUndefined();
+  });
 });

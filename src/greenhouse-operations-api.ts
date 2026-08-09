@@ -368,10 +368,6 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         if (action === 'recover' && base.state !== 'quarantined') {
           return reply(409, { code: 'SOURCE_NOT_QUARANTINED', message: 'Recovery requires a quarantined source.' });
         }
-        if (action === 'recover') {
-          updated = { ...updated, sourceStatus: 'paused', incidentState: 'acknowledged', incidentAcknowledgedAt: changedAt, incidentUpdatedAt: changedAt };
-          await dependencies.store.putSourceHealth(updated);
-        }
         const configuredFleets = await providerFleets(
           dependencies.fleets ?? {
             greenhouse: dependencies.queueUrl && dependencies.deadLetterQueueUrl
@@ -385,13 +381,31 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         );
         const fleet = configuredFleets[source.provider];
         if (!fleet) return reply(503, { code: 'PROVIDER_QUEUE_UNAVAILABLE', message: `${source.provider} replay is not configured.` });
+        if (action === 'recover') {
+          updated = { ...updated, sourceStatus: 'paused', incidentState: 'acknowledged', incidentAcknowledgedAt: changedAt, incidentUpdatedAt: changedAt };
+          await dependencies.store.putSourceHealth(updated);
+        }
         const runId = `${action === 'recover' ? 'recovery' : 'operator'}-${randomUUID()}`;
-        await (dependencies.sqs ?? new SQSClient({})).send(new SendMessageCommand({
-          QueueUrl: fleet.queueUrl,
-          MessageBody: JSON.stringify({ version: 1, sourceId, scheduledAt: changedAt, force: true, ...(source.provider !== 'greenhouse' ? { runId } : {}) }),
-          MessageGroupId: sourceId,
-          MessageDeduplicationId: runId,
-        }));
+        try {
+          await (dependencies.sqs ?? new SQSClient({})).send(new SendMessageCommand({
+            QueueUrl: fleet.queueUrl,
+            MessageBody: JSON.stringify({ version: 1, sourceId, scheduledAt: changedAt, force: true, ...(source.provider !== 'greenhouse' ? { runId } : {}) }),
+            MessageGroupId: sourceId,
+            MessageDeduplicationId: runId,
+          }));
+        } catch (error) {
+          if (action !== 'recover') throw error;
+          const enqueueFailed = {
+            ...updated,
+            incidentState: base.incidentState ?? 'open' as const,
+            incidentUpdatedAt: changedAt,
+          };
+          if (base.incidentAcknowledgedAt) enqueueFailed.incidentAcknowledgedAt = base.incidentAcknowledgedAt;
+          else delete enqueueFailed.incidentAcknowledgedAt;
+          await dependencies.store.putSourceHealth(enqueueFailed);
+          console.error(JSON.stringify({ event: 'source_recovery_enqueue_failed', sourceId, provider: source.provider, runId, actor }));
+          return reply(503, { code: 'RECOVERY_ENQUEUE_FAILED', message: 'Recovery validation could not be queued.' });
+        }
         console.log(JSON.stringify({ event: action === 'recover' ? 'source_recovery_requested' : 'source_replay_requested', sourceId, provider: source.provider, runId, actor }));
         return reply(202, { sourceId, action, runId, queuedAt: changedAt, ...(action === 'recover' ? { sourceStatus: 'paused' } : {}) });
       }

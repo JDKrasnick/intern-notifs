@@ -26,7 +26,7 @@ export interface ReviewedApplicationHost {
 export interface SourcePromotionSnapshotEvidence {
   runId: string;
   completedAt: string;
-  outcome: string;
+  outcome: 'success_changed' | 'success_unchanged_304' | 'success_unchanged_hash';
   rawRows: number;
   eligibleRows: number;
   withheldRows: number;
