@@ -16,9 +16,17 @@ jobs:
       - run: npm run discover:firecrawl -- artifacts/firecrawl-discovery-review.json
         env:
           FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
+      - run: npm run ashby:ledger -- artifacts/ashby-candidate-ledger.json
+        if: always()
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: firecrawl-discovery-review
           path: artifacts/firecrawl-discovery-review.json
           if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ashby-candidate-ledger
+          path: artifacts/ashby-candidate-ledger.json
+          if-no-files-found: error

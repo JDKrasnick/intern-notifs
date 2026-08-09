@@ -1,0 +1,12 @@
+{
+  "probedAt": "2026-08-09T13:16:04.895Z",
+  "retention": "metadata-only",
+  "results": [{
+    "state": "ok", "boardName": "mistral.ai", "endpoint": "https://api.ashbyhq.com/posting-api/job-board/mistral.ai",
+    "apiVersion": "1", "apiRegion": "global", "rawRows": 164, "listedRows": 164, "unlistedRows": 0,
+    "malformedRows": 0, "boardPathViolations": 0, "technicalEarlyCareerRoles": 3,
+    "geographicCoverage": ["Abu Dhabi", "Amsterdam", "Bangalore", "Casablanca", "Dubai", "London", "Luxembourg", "Madrid", "Marseille", "Montréal", "Munich", "New York", "Palo Alto", "Paris", "San Francisco", "Seoul", "Singapore", "Stockholm", "Warsaw", "Zurich"],
+    "applicationHostSummary": { "jobs.ashbyhq.com": 164 },
+    "qualifyingRoleSamples": [{ "id": "fcdb8407-20b9-4179-81b6-f2ca2c79a39b", "title": "Applied AI, Forward Deployed Machine Learning Engineer - (Internship)", "location": "Paris" }]
+  }]
+}

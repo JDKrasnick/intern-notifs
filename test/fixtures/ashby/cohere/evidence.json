@@ -1,0 +1,14 @@
+{
+  "provider": "ashby",
+  "boardKey": "cohere",
+  "apiRegion": "global",
+  "careersUrl": "https://cohere.com/careers",
+  "firstPartyEvidenceUrl": "https://cohere.com/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/cohere",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/cohere\">View open roles</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/cohere/8c035d3d-081d-4c8a-914a-72f4efaad254",
+  "verifiedAt": "2026-08-09T00:00:00Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 3,
+  "allowedApplicationHosts": [{ "host": "jobs.ashbyhq.com" }]
+}

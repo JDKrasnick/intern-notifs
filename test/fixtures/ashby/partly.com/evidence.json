@@ -1,0 +1,14 @@
+{
+  "provider": "ashby",
+  "boardKey": "partly.com",
+  "apiRegion": "global",
+  "careersUrl": "https://www.partly.com/careers",
+  "firstPartyEvidenceUrl": "https://www.partly.com/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/partly.com/embed",
+  "evidenceExcerpt": "<iframe src=\"https://jobs.ashbyhq.com/partly.com/embed\"></iframe>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/partly.com/899fcf9b-07ec-4289-993f-57a2aba0f26d",
+  "verifiedAt": "2026-08-09T00:00:00Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 3,
+  "allowedApplicationHosts": [{ "host": "jobs.ashbyhq.com" }]
+}

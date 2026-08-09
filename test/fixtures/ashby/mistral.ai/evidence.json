@@ -1,0 +1,14 @@
+{
+  "provider": "ashby",
+  "boardKey": "mistral.ai",
+  "apiRegion": "global",
+  "careersUrl": "https://mistral.ai/careers/",
+  "firstPartyEvidenceUrl": "https://mistral.ai/careers/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/mistral.ai",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/mistral.ai\">Apply now</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/mistral.ai/fcdb8407-20b9-4179-81b6-f2ca2c79a39b",
+  "verifiedAt": "2026-08-09T00:00:00Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 3,
+  "allowedApplicationHosts": [{ "host": "jobs.ashbyhq.com" }]
+}
