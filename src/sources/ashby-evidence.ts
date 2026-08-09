@@ -7,7 +7,6 @@ const BLOCKED_EVIDENCE_HOSTS = [
   'wellfound.com', 'ycombinator.com', 'workatastartup.com', 'github.com', 'web.archive.org',
   'google.com', 'bing.com', 'duckduckgo.com',
 ];
-const TWO_LABEL_SUFFIXES = ['co.uk', 'org.uk', 'com.au', 'net.au', 'co.nz', 'co.za', 'co.jp', 'co.in', 'com.br', 'com.sg'];
 const MAX_EXCERPT_LENGTH = 2_000;
 
 export interface AshbyOwnershipEvidence extends EmployerCareersEvidence {
@@ -24,10 +23,8 @@ function httpsHost(value: string): string | undefined {
   } catch { return undefined; }
 }
 
-function registrableDomain(host: string): string {
-  const labels = host.split('.');
-  const count = TWO_LABEL_SUFFIXES.includes(labels.slice(-2).join('.')) ? 3 : 2;
-  return labels.slice(-count).join('.');
+function sameHostOrSubdomain(left: string, right: string): boolean {
+  return left === right || left.endsWith(`.${right}`) || right.endsWith(`.${left}`);
 }
 
 function blocked(host: string): boolean {
@@ -52,7 +49,7 @@ export function ashbyEvidenceViolations(evidence: AshbyOwnershipEvidence): strin
   const evidenceHost = httpsHost(evidence.firstPartyEvidenceUrl);
   if (!careersHost || blocked(careersHost)) violations.push('careersUrl is not an employer-controlled HTTPS URL');
   if (!evidenceHost || blocked(evidenceHost)) violations.push('firstPartyEvidenceUrl is not an employer-controlled HTTPS URL');
-  if (careersHost && evidenceHost && registrableDomain(careersHost) !== registrableDomain(evidenceHost)) {
+  if (careersHost && evidenceHost && !sameHostOrSubdomain(careersHost, evidenceHost)) {
     violations.push('firstPartyEvidenceUrl is not on the same employer domain as careersUrl');
   }
   if (ashbyBoardNameFromUrl(evidence.exactBoardUrl) !== evidence.boardKey) violations.push('exactBoardUrl does not identify boardKey');

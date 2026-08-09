@@ -130,6 +130,13 @@ describe('Ashby ownership and admission evidence', () => {
     }
   });
 
+  it('rejects unrelated hosts that share an unlisted multi-label public suffix', () => {
+    expect(ashbyEvidenceViolations(evidence({
+      careersUrl: 'https://real-company.co.kr/careers',
+      firstPartyEvidenceUrl: 'https://attacker.co.kr/jobs',
+    }))).toContain('firstPartyEvidenceUrl is not on the same employer domain as careersUrl');
+  });
+
   it('requires explicit justification and review time for employer-controlled external application hosts', () => {
     expect(ashbyEvidenceViolations(evidence({ allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }, { host: 'careers.acme.io' }] })))
       .toContain('external application host careers.acme.io lacks human-reviewed justification and timestamp');
@@ -169,6 +176,29 @@ describe('Ashby offline manifest and reverification', () => {
     expect(violations).toEqual(expect.arrayContaining([
       expect.stringContaining('duplicate board identity'), expect.stringContaining('overdue for re-verification'),
       'pending: reviewed evidence is pending explicit registry admission',
+    ]));
+  });
+
+  it('rejects stale admission probes and future-dated evidence', async () => {
+    const probe = await okProbe();
+    const staleFiles = {
+      'fixtures/acme.io/evidence.json': evidence(),
+      'fixtures/acme.io/probe.json': { probedAt: '2026-07-01T00:00:00Z', retention: 'metadata-only', results: [probe] },
+    };
+    expect(collectAshbyManifestViolations([source()], {
+      fs: fakeFs(staleFiles), root: 'fixtures', now: new Date('2026-08-09T14:00:00Z'),
+    })).toContain('ashby-acme-io: probe and admission timestamps differ by more than 7 days');
+
+    const futureSource = source({ admittedAt: '2026-08-10T00:00:00Z' });
+    const futureFiles = {
+      'fixtures/acme.io/evidence.json': evidence({ verifiedAt: '2026-08-10T00:00:00Z' }),
+      'fixtures/acme.io/probe.json': { probedAt: '2026-08-10T00:00:00Z', retention: 'metadata-only', results: [probe] },
+    };
+    expect(collectAshbyManifestViolations([futureSource], {
+      fs: fakeFs(futureFiles), root: 'fixtures', now: new Date('2026-08-09T14:00:00Z'),
+    })).toEqual(expect.arrayContaining([
+      'ashby-acme-io: admittedAt is in the future',
+      'ashby-acme-io: probe artifact probedAt is in the future',
     ]));
   });
 

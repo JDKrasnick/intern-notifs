@@ -7,7 +7,9 @@ import type { ReviewedSourceRecord } from './reviewed-source.js';
 
 export const ASHBY_EVIDENCE_ROOT = 'test/fixtures/ashby';
 export const ASHBY_REVERIFICATION_DAYS = 180;
+export const ASHBY_ADMISSION_WINDOW_DAYS = 7;
 const DAY_MS = 86_400_000;
+const CLOCK_SKEW_MS = 5 * 60_000;
 
 export interface AshbyManifestFs {
   listBoardDirs(root: string): string[];
@@ -52,6 +54,7 @@ export function collectAshbyManifestViolations(
     if (source.status !== 'shadow' && source.status !== 'published') violations.push(`${source.id}: invalid status`);
     const admitted = Date.parse(source.admittedAt);
     if (Number.isNaN(admitted)) violations.push(`${source.id}: admittedAt is invalid`);
+    else if (admitted > now.getTime() + CLOCK_SKEW_MS) violations.push(`${source.id}: admittedAt is in the future`);
     else if (Math.floor((now.getTime() - admitted) / DAY_MS) > ASHBY_REVERIFICATION_DAYS) violations.push(`${source.id}: evidence is overdue for re-verification`);
     const evidencePath = `${root}/${board}/evidence.json`;
     const probePath = `${root}/${board}/probe.json`;
@@ -62,7 +65,14 @@ export function collectAshbyManifestViolations(
     if (typeof evidence === 'string') { violations.push(`${source.id}: evidence.json ${evidence}`); continue; }
     if (typeof artifact === 'string') { violations.push(`${source.id}: probe.json ${artifact}`); continue; }
     if (artifact.retention !== 'metadata-only') violations.push(`${source.id}: probe artifact must declare metadata-only retention`);
-    if (Number.isNaN(Date.parse(artifact.probedAt))) violations.push(`${source.id}: probe artifact has invalid probedAt`);
+    const probed = Date.parse(artifact.probedAt);
+    if (Number.isNaN(probed)) violations.push(`${source.id}: probe artifact has invalid probedAt`);
+    else {
+      if (probed > now.getTime() + CLOCK_SKEW_MS) violations.push(`${source.id}: probe artifact probedAt is in the future`);
+      if (!Number.isNaN(admitted) && Math.abs(probed - admitted) > ASHBY_ADMISSION_WINDOW_DAYS * DAY_MS) {
+        violations.push(`${source.id}: probe and admission timestamps differ by more than ${ASHBY_ADMISSION_WINDOW_DAYS} days`);
+      }
+    }
     if (!Array.isArray(artifact.results) || artifact.results.length !== 1) { violations.push(`${source.id}: probe artifact must contain exactly one result`); continue; }
     for (const issue of ashbyAdmissionViolations({
       reviewerApprovedOwnership: true, reviewerApprovedAdmission: true, company: source.company,

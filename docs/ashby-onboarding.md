@@ -41,7 +41,9 @@ about unlisted jobs.
 
 `ashby:manifest` is the offline admission gate. It checks evidence age, duplicate
 identities, exact ownership links, API/schema/path results, the initial live-role
-rule, allowed hosts, matching timestamps, and shadow/published status.
+rule, allowed hosts, and shadow/published status. Probe and admission timestamps
+must be within seven days, and future timestamps fail beyond five minutes of
+clock skew.
 `ashby:reverify` only re-reads employer evidence pages and reports drift.
 
 ## Human admission checklist
