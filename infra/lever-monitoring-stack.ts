@@ -87,7 +87,7 @@ export class LeverMonitoringStack extends cdk.Stack {
     schedulerDeadLetterQueue.grantSendMessages(schedulerRole);
     new scheduler.CfnSchedule(this, 'LeverPollSchedule', {
       flexibleTimeWindow: { mode: 'OFF' },
-      scheduleExpression: 'cron(7,17,27,37,47,57 * * * ? *)',
+      scheduleExpression: 'cron(22 * * * ? *)',
       scheduleExpressionTimezone: 'UTC',
       state: 'ENABLED',
       target: {

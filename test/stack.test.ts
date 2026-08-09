@@ -66,10 +66,10 @@ describe('CDK stack', () => {
     });
     template.resourceCountIs('AWS::CloudWatch::Alarm', 6);
   });
-  it('queues Greenhouse boards every ten minutes with bounded worker concurrency', () => {
+  it('queues Greenhouse boards hourly with bounded worker concurrency', () => {
     const app = new cdk.App(); const stack = new GreenhouseMonitoringStack(app, 'Greenhouse', { internshipsTableName: 'internships', usersTableName: 'users', emailAddress: 'me@example.com' }); const template = Template.fromStack(stack);
     template.resourceCountIs('AWS::SQS::Queue', 3);
-    template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: 'cron(2,12,22,32,42,52 * * * ? *)', State: 'ENABLED' });
+    template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: 'cron(12 * * * ? *)', State: 'ENABLED' });
     template.hasResourceProperties('AWS::Scheduler::Schedule', {
       ScheduleExpression: 'cron(0 9 ? * MON *)',
       ScheduleExpressionTimezone: 'America/New_York',
@@ -83,10 +83,10 @@ describe('CDK stack', () => {
     template.hasResourceProperties('AWS::Lambda::Function', { Timeout: 120 });
     expect(snapshotTemplate(template.toJSON())).toMatchSnapshot();
   });
-  it('queues Lever boards every ten minutes with bounded worker concurrency', () => {
+  it('queues Lever boards hourly with bounded worker concurrency', () => {
     const app = new cdk.App(); const stack = new LeverMonitoringStack(app, 'Lever', { internshipsTableName: 'internships', usersTableName: 'users' }); const template = Template.fromStack(stack);
     template.resourceCountIs('AWS::SQS::Queue', 3);
-    template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: 'cron(7,17,27,37,47,57 * * * ? *)', State: 'ENABLED' });
+    template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: 'cron(22 * * * ? *)', State: 'ENABLED' });
     template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
       BatchSize: 10,
       FunctionResponseTypes: ['ReportBatchItemFailures'],

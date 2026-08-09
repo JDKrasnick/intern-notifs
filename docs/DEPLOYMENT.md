@@ -19,9 +19,9 @@ InternNotifs is an Expo mobile app with a serverless AWS backend.
 
 The catalog is public. Accounts, preferences, device tokens, profiles, documents, and application tracking are private to the Cognito subject.
 
-Greenhouse uses a dedicated ten-minute EventBridge schedule, dispatcher Lambda,
+Greenhouse uses a dedicated hourly EventBridge schedule, dispatcher Lambda,
 FIFO work queue, two-minute worker, and dead-letter queue. Active boards are
-checked every ten minutes; boards whose last successful snapshot had zero
+checked hourly; boards whose last successful snapshot had zero
 eligible roles are staggered across six-hour checks. See
 [`greenhouse/architecture.md`](greenhouse/architecture.md) for the complete
 shadow, promotion, retry, and alarm flow.

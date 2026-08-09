@@ -20,7 +20,7 @@ deploy the main stack as a substitute for a Greenhouse-only change.
 
 ## Runtime flow
 
-EventBridge invokes a small dispatcher every ten minutes. The dispatcher
+EventBridge invokes a small dispatcher hourly. The dispatcher
 creates one FIFO message for every reviewed Greenhouse board. Each board ID is
 its own message group, which prevents overlapping work for the same board while
 allowing different boards to run concurrently.
@@ -42,7 +42,7 @@ reconcile push receipts and the optional ntfy fallback.
 
 ## Capacity and failure boundaries
 
-- Schedule: every ten minutes.
+- Schedule: hourly.
 - Queue batch size: ten boards.
 - Worker maximum concurrency: four.
 - Worker timeout: two minutes.
