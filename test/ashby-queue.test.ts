@@ -6,7 +6,9 @@ import { reviewedAshbySources, type ReviewedAshbySource } from '../src/sources/a
 import { MemoryInternshipStore } from '../src/store.js';
 
 const scheduledAt = '2026-08-09T12:00:00.000Z';
-const shadowSource = reviewedAshbySources[0]!;
+const shadowSource: ReviewedAshbySource = {
+  ...reviewedAshbySources[0]!, status: 'shadow', promotionEvidence: undefined,
+};
 const message = (sourceId = shadowSource.id): AshbyWorkMessage => ({ version: 1, sourceId, scheduledAt });
 const posting = {
   id: '123e4567-e89b-42d3-a456-426614174000', title: 'Software Engineering Intern', location: 'New York, NY',

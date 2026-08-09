@@ -1,11 +1,12 @@
 import type { ReviewedSourceRecord } from './reviewed-source.js';
+import { ashbyEmergencyPromotionEvidence } from './ashby-promotion-evidence.js';
 
 export type ReviewedAshbySource = ReviewedSourceRecord & {
   identity: ReviewedSourceRecord['identity'] & { provider: 'ashby'; apiRegion: 'global' };
 };
 
 /** Human-reviewed Ashby boards consumed by the independent shadow/published runtime. */
-export const reviewedAshbySources: ReviewedAshbySource[] = [
+const admittedAshbySources: ReviewedAshbySource[] = [
   {
     id: 'ashby-etched', company: 'Etched', identity: { provider: 'ashby', boardKey: 'etched', apiRegion: 'global' },
     careersUrl: 'https://www.etched.com/join', admittedAt: '2026-08-09T00:00:00Z', evidenceState: 'ownership-verified',
@@ -182,6 +183,13 @@ export const reviewedAshbySources: ReviewedAshbySource[] = [
     allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
   },
 ];
+
+/** All currently admitted boards were explicitly owner-approved for immediate publication. */
+export const reviewedAshbySources: ReviewedAshbySource[] = admittedAshbySources.map((source) => {
+  const promotionEvidence = ashbyEmergencyPromotionEvidence[source.id];
+  if (!promotionEvidence) throw new Error(`Missing Ashby promotion evidence for ${source.id}`);
+  return { ...source, status: 'published', promotionEvidence };
+});
 
 /** Ordered expansion replacements not yet reviewed or admitted. */
 export const ashbyExpansionFallbacks = [] as const;

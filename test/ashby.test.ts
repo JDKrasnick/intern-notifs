@@ -161,7 +161,7 @@ describe('Ashby ownership and admission evidence', () => {
 });
 
 describe('Ashby offline manifest and reverification', () => {
-  it('passes all committed shadow sources, including the owner-approved expansion', () => {
+  it('passes all committed published sources, including the owner-approved expansion', () => {
     expect(reviewedAshbySources.map(({ company }) => company)).toEqual([
       'Etched', 'Deepgram', 'Cohere', 'Mistral AI', 'Partly',
       'Notion', 'Alan', 'Base Power', 'Reonic', 'Terranova', 'Melius', 'Rho', 'CTGT', 'OpusClip',
@@ -169,7 +169,7 @@ describe('Ashby offline manifest and reverification', () => {
       'Circleback', 'Eragon', 'Modal', 'Yotta Labs', 'Anthelion Capital', 'Saronic', 'First Order Effects',
       'Junior', 'Airwallex', 'Netic', 'Retell AI', 'Quadrillion', 'Pylon', 'NationGraph',
     ]);
-    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-09T23:05:00Z') })).toEqual([]);
+    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-09T23:30:00Z') })).toEqual([]);
   });
 
   it('keeps any expansion replacements ordered and unadmitted', () => {
@@ -279,6 +279,36 @@ describe('Ashby offline manifest and reverification', () => {
     expect(collectAshbyManifestViolations([prematureApproval], {
       fs: fakeFs(files), root: 'fixtures', now: new Date('2026-08-10T12:00:00Z'),
     })).toContain('ashby-acme-io: promotion approval must follow the latest snapshot');
+
+    const ownerOverride = source({
+      status: 'published',
+      promotionEvidence: {
+        approvedAt: '2026-08-09T01:00:00Z', approvedBy: 'JDKrasnick', quietBaselineApproved: true,
+        stableIdentity: true, stableApplicationHosts: true,
+        snapshots: [snapshot('override-run', '2026-08-09T00:30:00Z')],
+        observationWindowOverride: {
+          reason: 'Owner directed immediate publication after reviewing the boards.',
+          followUpAfter: '2026-08-10T01:00:00Z',
+        },
+      },
+    });
+    expect(collectAshbyManifestViolations([ownerOverride], {
+      fs: fakeFs(files), root: 'fixtures', now: new Date('2026-08-09T02:00:00Z'),
+    })).toEqual([]);
+
+    const invalidOverride = source({
+      ...ownerOverride,
+      promotionEvidence: {
+        ...ownerOverride.promotionEvidence!,
+        observationWindowOverride: { reason: '', followUpAfter: '2026-08-09T00:59:00Z' },
+      },
+    });
+    expect(collectAshbyManifestViolations([invalidOverride], {
+      fs: fakeFs(files), root: 'fixtures', now: new Date('2026-08-09T02:00:00Z'),
+    })).toEqual(expect.arrayContaining([
+      'ashby-acme-io: observation-window override lacks a reason',
+      'ashby-acme-io: observation-window override follow-up must be after approval',
+    ]));
   });
 
   it('rechecks the employer page without writing state', async () => {

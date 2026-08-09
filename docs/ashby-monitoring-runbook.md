@@ -49,6 +49,14 @@ deploy `InternNotifsAshby`. The manifest rejects publication when this evidence
 is absent or incomplete. A single deployment may contain several independently
 approved promotions.
 
+An owner may explicitly authorize publication before the normal observation
+window completes. Record that exceptional decision as
+`observationWindowOverride`, retain at least one clean link-checked snapshot,
+name a follow-up time after the skipped window would have completed, and create
+a tracked follow-up review. This override changes timing only; it does not
+bypass identity, schema, application-host, link, quiet-baseline, or named-owner
+approval checks.
+
 Verify that the first published run creates the source checkpoint as a quiet
 baseline and creates no notification event. A later genuine addition follows
 normal reconciliation and notification behavior. Updates are not new-role
