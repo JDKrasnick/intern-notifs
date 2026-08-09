@@ -94,7 +94,7 @@ scales to at most four concurrent workers.
 1. Load the board's last successful hash, row count, success time, and active role IDs.
 2. Build the request from the stored provider and board token only. Use the fixed `boards-api.greenhouse.io` host, encode the token as one path segment, and reject configuration that contains a URL, slash, query string, or unknown provider.
 3. Fetch the jobs endpoint. Use an ETag if Greenhouse provides one; otherwise compare a SHA-256 hash of a normalized, sorted response.
-4. Discard prospects, convert the response to the common role shape, and keep only technical internships, co-ops, and apprenticeships.
+4. Discard prospects and convert the response to the common role shape. The shared lifecycle classifier admits technical internships, co-ops, apprenticeships, new-grad programs, and explicitly entry-level titles; generic and merely junior titles remain excluded.
 5. For every new or changed application URL, require HTTPS, reject aggregators, require an expected host or reviewed exception, then validate resolution with `HEAD` and a small ranged `GET` fallback.
 6. Commit the complete successful snapshot and new source state together. Only then calculate role additions, edits, omissions, and closures.
 7. Retry only failed SQS records. After four receives, move a persistent failure

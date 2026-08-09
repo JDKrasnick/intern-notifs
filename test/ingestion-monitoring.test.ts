@@ -91,7 +91,7 @@ describe('ingestion health and retry policy', () => {
     ], now);
     expect(result).toEqual({
       staleCount: 2,
-      byProvider: { github: 1, lever: 1, greenhouse: 0, unknown: 0 },
+      byProvider: { github: 1, lever: 1, greenhouse: 0, ashby: 0, unknown: 0 },
       staleSourceIds: ['github-never', 'lever-old'],
     });
   });

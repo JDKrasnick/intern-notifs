@@ -2,7 +2,7 @@
 
 ## Authentication: browse first
 
-**Decision:** No account is required when the app opens. Anyone can browse the public technical-internship catalog and open an employer's official application immediately.
+**Decision:** No account is required when the app opens. Anyone can browse the public technical early-career catalog and open an employer's official application immediately.
 
 An account is requested only when a person chooses a feature that stores or personalizes private data:
 
@@ -27,7 +27,7 @@ Google sign-in should not be enabled by itself on iOS; when it is offered, Sign 
 
 - [ ] Test the browse-first flow, account creation, email verification, filters, alerts, application tracking, résumé upload, sign-out, and account deletion on a physical iPhone.
 - [ ] Test notification permission approval and denial, a real push alert, and its job deep link.
-- [ ] Confirm the deployed catalog has enough current technical internships and that every source link reaches the employer's official application.
+- [ ] Confirm the deployed catalog has enough current technical early-career roles and that every source link reaches the employer's official application.
 - [ ] Produce and install a fresh TestFlight build after the browse-first change; build 3 cannot contain later commits.
 - [ ] Resolve all TestFlight feedback and crashes.
 

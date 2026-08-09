@@ -2,12 +2,12 @@
 
 ## Product in one sentence
 
-InternNotifs is a lightweight, simple mobile internship radar: it notifies students when credible technical internships appear and gets them quickly to the employer's official application form.
+InternNotifs is a lightweight, simple mobile early-career radar: it notifies students when credible technical roles appear and gets them quickly to the employer's official application form.
 
 ## Product direction
 
 - Initial audience: international and domestic undergraduate/graduate students.
-- Initial scope: technical internships only (software engineering, AI/ML, data, infrastructure/cloud, security, quantitative, product, and technical design).
+- Initial scope: technical internships, co-ops, apprenticeships, new-grad programs, and explicitly entry-level roles (software engineering, AI/ML, data, infrastructure/cloud, security, quantitative, product, and technical design).
 - Browse first: the public catalog requires no account. Ask for an account only to save applications, enable personal alerts, or store a résumé/profile.
 - Applications are always handed off to the employer's official form. Do not automate submission without an authorized partner integration.
 - The experience should remain free, calm, privacy-respecting, open-source-friendly, and **simple and clean**. One clear primary action per screen; prefer native mobile controls and plain language.

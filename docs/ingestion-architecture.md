@@ -13,7 +13,7 @@ Eligibility improvements ship separately after compatibility is proven.
 
 ```mermaid
 flowchart LR
-    Sources["GitHub · Lever · Greenhouse · future boards"]
+    Sources["GitHub · Lever · Greenhouse · Ashby · future boards"]
     Config["Reviewed source configuration"]
     Connectors["Thin source connectors"]
     Snapshot["Complete neutral posting snapshot"]
@@ -41,7 +41,7 @@ flowchart LR
 
 A `SourceConnector` returns a complete `SourceSnapshot`. Each
 `SourcedPosting.externalId` is stable within its source: ATS posting IDs for
-Lever and Greenhouse, and document path plus normalized application URL for
+Lever, Greenhouse, and Ashby, and document path plus normalized application URL for
 Markdown. Two Markdown rows that share one normalized application URL are one
 destination, so the repeat is dropped and still counted in `rawCount` rather
 than failing the snapshot. Row numbers remain diagnostics only.
@@ -56,8 +56,11 @@ The shared processor returns processed listings and an explicit decision for
 every posting. It owns text cleanup, generic URL safety, work-mode/location
 normalization, lifecycle and technical classification, season inference,
 compensation, and declared requirement extraction. `lifecycleAuthority` records
-where the internship signal comes from: ATS boards must name it in the title,
-while a reviewed early-career document carries it for every row it lists.
+where the lifecycle signal comes from: `title` requires explicit internship,
+co-op, apprenticeship, new-grad, or entry-level wording; `posting` trusts a
+provider field that explicitly marks that row as an internship; and `source`
+trusts a reviewed early-career-only document for every row it lists. A generic
+technical title, experience-range prose, or “junior” alone never qualifies.
 
 The reconciler is pure. It calculates creates, updates, first omissions,
 second-omission closures, and deterministic notification events. One snapshot
@@ -93,7 +96,8 @@ become new job alerts.
 ## Runtime and deferred scaling
 
 The existing poll Lambda remains the orchestrator. Greenhouse keeps its
-SQS-backed shadow/published scheduling, and Firecrawl remains discovery-only.
+SQS-backed shadow/published scheduling, Ashby's five reviewed boards remain
+adapter-only and shadow-only pending their runtime issue, and Firecrawl remains discovery-only.
 Per-source queues for every provider, dynamic operator configuration, and a
 management UI are deferred until source volume requires them.
 
@@ -107,3 +111,4 @@ Provider admission and incident response remain provider-specific:
 - [Lever company onboarding](lever-company-onboarding-plan.md)
 - [Lever monitoring and recovery](lever-monitoring-plan.md)
 - [Greenhouse operations](greenhouse/README.md)
+- [Ashby discovery, admission, and adapter](ashby-onboarding.md)

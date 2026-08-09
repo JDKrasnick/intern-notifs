@@ -23,11 +23,14 @@ describe('LeverPostingsAdapter', () => {
       requirements: { requiresUsCitizenship: true, advancedDegreeRequired: true }
     });
   });
-  it('emits only technical internship, co-op, and apprenticeship roles', () => {
+  it('uses the shared technical early-career title policy', () => {
     expect(mapLeverPosting({ ...posting, text: 'Finance Intern' }, options)).toBeUndefined();
     expect(mapLeverPosting({ ...posting, text: 'Software Engineer' }, options)).toBeUndefined();
     expect(mapLeverPosting({ ...posting, text: 'Software Engineering Co-op' }, options)).toMatchObject({ title: 'Software Engineering Co-op' });
     expect(mapLeverPosting({ ...posting, text: 'Security Engineering Apprenticeship' }, options)).toMatchObject({ title: 'Security Engineering Apprenticeship' });
+    expect(mapLeverPosting({ ...posting, text: 'Software Engineer, New Grad' }, options)).toMatchObject({ title: 'Software Engineer, New Grad' });
+    expect(mapLeverPosting({ ...posting, text: 'Entry-Level Data Engineer' }, options)).toMatchObject({ title: 'Entry-Level Data Engineer' });
+    expect(mapLeverPosting({ ...posting, text: 'Junior Software Engineer' }, options)).toBeUndefined();
   });
   it('infers named seasons and falls back to ongoing', () => {
     expect(inferLeverSeason('Machine Learning Intern', '2028 graduate internship')).toBe('2028');

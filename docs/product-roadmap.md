@@ -2,11 +2,11 @@
 
 ## Product direction
 
-**Promise:** a calm, mobile-first internship radar that tells students about credible technical roles quickly and gets them to the official application form with minimal friction.
+**Promise:** a calm, mobile-first early-career radar that tells students about credible technical roles quickly and gets them to the official application form with minimal friction.
 
 **Initial audience:** international and domestic undergraduate/graduate students.
 
-**Initial scope:** technical internships only — software engineering, AI/ML, data, infrastructure/cloud, security, quantitative roles, product, and technical design.
+**Initial scope:** technical internships, co-ops, apprenticeships, new-grad programs, and explicitly entry-level roles — software engineering, AI/ML, data, infrastructure/cloud, security, quantitative roles, product, and technical design.
 
 **Product constraints:**
 
@@ -20,7 +20,7 @@
 | Milestone | Status | Exit criteria |
 | --- | --- | --- |
 | Catalog definition | In progress | Continuous employer discovery, source rules, taxonomy, and reliability targets operate without an owner-selected roster |
-| Official source adapters | In progress | SQS-backed Greenhouse and Lever runtimes poll reviewed boards with quiet per-source baselines and fail-closed source gates; Ashby discovery/admission is complete with five reviewed shadow boards, while its adapter/runtime and SmartRecruiters remain planned |
+| Official source adapters | In progress | SQS-backed Greenhouse and Lever runtimes poll reviewed boards with quiet per-source baselines and fail-closed source gates; Ashby discovery, admission, and public posting adapter are complete for five reviewed shadow boards, while its runtime and SmartRecruiters remain planned |
 | Catalog operations | In progress | Standardized ingestion, shared source-quality gates, durable source health, private live dashboard, source-candidate review queue, and bounded Firecrawl research workflow operate |
 | Mobile discovery MVP | In progress | Filtered feed, native deep-link alerts, official-form handoff, and tracker are polished |
 | Human-reviewed application assistance | In progress | Headed pilot fills a supported official form, pauses for unknowns and verification, and leaves final submission to the user |
@@ -33,7 +33,7 @@
 
 ### Codex
 
-- [ ] Continuously discover and verify the broadest practical employer set, then prioritize active sources by technical-internship relevance and international/student-friendly coverage.
+- [ ] Continuously discover and verify the broadest practical employer set, then prioritize active sources by technical early-career relevance and international/student-friendly coverage.
 - [x] Define source-admission, attribution, removal, and source-quality policies.
 - [x] Add internal source-aware filtering (FAANG, verified startups/YC, normal, U.S.-citizenship requirement, advanced-degree requirement, and open/closed status) to catalog ingestion, alerts, and mobile discovery.
 - [x] Add the signed-in “new since last open” inbox with a calm first-open baseline, saved-filter matching, and count-led mobile launch screen.
@@ -52,7 +52,8 @@
 - [x] Standardize Greenhouse, Lever, general Markdown, and Quant Markdown behind neutral complete snapshots, shared processing, stable source occurrences, two-success closure reconciliation, deterministic outbox IDs, and durable source health.
 - [x] Complete Lever monitoring with shadow and published health, regional metrics, freshness incidents, bounded backoff, shared operator controls, dashboards, and recovery runbooks.
 - [x] Add Ashby URL-derived discovery, metadata-only public probing, first-party ownership evidence, deterministic admission/re-verification gates, weekly candidate-ledger upload, and five reviewed shadow boards (Etched, Deepgram, Cohere, Mistral AI, and Partly).
-- [ ] Implement the separately scoped Ashby adapter, runtime, operations, and headed-browser workflows; admission alone does not publish or schedule a board.
+- [x] Implement the Ashby public posting adapter with listed-only complete snapshots, strict identity/schema/link gates, provider-neutral processing, deterministic fixtures, and a nightly live contract for all five reviewed shadow boards.
+- [ ] Implement the separately scoped Ashby scheduling, queues, persistence, alarms, shadow operations, promotion controls, and headed-browser workflows; the adapter alone does not deploy, publish, or notify.
 - [x] Add human-readable source tags to default internship notifications for community job boards, Greenhouse, and Lever.
 - [ ] Add job freshness/source labels and notification deep links to the mobile product.
 - [ ] Add user-facing settings, account deletion, and data export surface.
@@ -91,6 +92,7 @@
 | --- | --- | --- |
 | 2026-07-19 | Initial audience is international undergraduate/graduate students | Broader early-career reach; filters must support work authorization and location needs |
 | 2026-07-19 | Initial roles are technical | Focus increases catalog quality and relevance |
+| 2026-08-09 | Initial lifecycle scope includes internships, co-ops, apprenticeships, new-grad programs, and explicitly entry-level roles | Matches how employers label student and first-role hiring while excluding generic or merely junior titles |
 | 2026-07-19 | Use official-form handoff, not universal direct submit | Better reliability and employer authorization boundary |
 | 2026-07-20 | Explore headed assistance before headless preparation; require user review, verification, and final submit | Keeps the user in control while establishing reliable field mappings and challenge rates |
 | 2026-07-29 | Track company coverage separately from any ATS provider and distinguish feed observations from reviewed direct sources | Makes broad discovery measurable without overstating community-list evidence as employer verification |
