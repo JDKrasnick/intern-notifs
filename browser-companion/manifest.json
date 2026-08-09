@@ -10,7 +10,8 @@
     "https://job-boards.greenhouse.io/*",
     "https://*.job-boards.greenhouse.io/*",
     "https://job-boards.eu.greenhouse.io/*",
-    "https://jobs.lever.co/*"
+    "https://jobs.lever.co/*",
+    "https://jobs.ashbyhq.com/*"
   ],
   "action": {
     "default_title": "InternNotifs Quick Fill",
@@ -24,7 +25,8 @@
         "https://job-boards.greenhouse.io/*",
         "https://*.job-boards.greenhouse.io/*",
         "https://job-boards.eu.greenhouse.io/*",
-        "https://jobs.lever.co/*"
+        "https://jobs.lever.co/*",
+        "https://jobs.ashbyhq.com/*"
       ],
       "js": ["dist/content.js"],
       "run_at": "document_idle"

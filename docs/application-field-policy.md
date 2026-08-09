@@ -1,6 +1,6 @@
 # Application field policy
 
-This is the reviewed source of truth for the headed Greenhouse and Lever pilots. The executable policies are [`src/greenhouse-headed.ts`](../src/greenhouse-headed.ts) and [`src/lever-headed.ts`](../src/lever-headed.ts). The assistant fills only a field that has an exact, unambiguous match and an available profile value; every other field stays for the student.
+This is the reviewed source of truth for the headed Greenhouse, Lever, and Ashby pilots. The executable policies are [`src/greenhouse-headed.ts`](../src/greenhouse-headed.ts), [`src/lever-headed.ts`](../src/lever-headed.ts), and [`src/ashby-headed.ts`](../src/ashby-headed.ts). The assistant fills only a field that has an exact, unambiguous match and an available profile value; every other field stays for the student.
 
 | Field group | Treatment | Reason |
 | --- | --- | --- |
@@ -26,3 +26,5 @@ Raw profile answers are held only in the headed browser companion's memory. Dura
 ## Other reviewed ATS routes
 
 Lever is also a reviewed high-confidence route, but only for its direct form URL: `https://jobs.lever.co/<company>/<posting>/apply`. That URL is already the application form, so the companion scrolls to its first editable field and applies the same simple-field policy; it does not hunt for or click a generic **Apply** button. All other destinations remain manual until they receive their own reviewed adapter and tests.
+
+Ashby is a reviewed high-confidence route only after a source is promoted. Its exact form URL is `https://jobs.ashbyhq.com/<board>/<posting-uuid>/application`; `<board>` must match the case-sensitive key of a `reviewedAshbySources` entry whose status is `published`. The same exact-contact policy applies, and it never uploads a résumé, answers authorization/sponsorship/history/links/free-response/demographic fields, clicks consent, navigates, or submits.

@@ -2,10 +2,12 @@ import type { Internship } from './types.js';
 import type { AssistanceEligibility } from './application-automation.js';
 import { isGreenhouseApplicationUrl } from './greenhouse-headed.js';
 import { isLeverApplicationUrl } from './lever-headed.js';
+import { isAshbyApplicationUrl } from './ashby-headed.js';
 
 export type AssistanceReasonCode =
   | 'greenhouse-headed-pilot'
   | 'lever-headed-pilot'
+  | 'ashby-headed-pilot'
   | 'destination-policy-prohibits-automation'
   | 'partner-submission-requires-employer-authorization'
   | 'destination-not-reviewed';
@@ -57,6 +59,13 @@ export function assistanceAvailability(job: Pick<Internship, 'applyUrl'>, applyM
     return {
       eligibility: 'headed-supported',
       reasonCode: 'lever-headed-pilot',
+      primaryAction: 'assist-in-safari',
+    };
+  }
+  if (isAshbyApplicationUrl(job.applyUrl)) {
+    return {
+      eligibility: 'headed-supported',
+      reasonCode: 'ashby-headed-pilot',
       primaryAction: 'assist-in-safari',
     };
   }
