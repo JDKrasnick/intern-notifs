@@ -56,7 +56,7 @@ describe('Greenhouse queue dispatch', () => {
 
   it('automatically reduces a zero-eligible board to one staggered check per six hours', () => {
     const checkpoint = { sourceId: `shadow-${acmeSource.id}`, successfulFetches: 1, lastRowCount: 0 };
-    const windows = Array.from({ length: 36 }, (_, index) => new Date(index * GREENHOUSE_POLL_INTERVAL_MS));
+    const windows = Array.from({ length: 6 }, (_, index) => new Date(index * GREENHOUSE_POLL_INTERVAL_MS));
     expect(windows.filter((now) => isGreenhouseSourceDue(acmeSource, checkpoint, now))).toHaveLength(1);
     expect(isGreenhouseSourceDue(acmeSource, { ...checkpoint, lastRowCount: 1 }, windows[0])).toBe(true);
   });

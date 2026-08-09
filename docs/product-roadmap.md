@@ -80,7 +80,7 @@
 
 | Metric | Initial target |
 | --- | --- |
-| Source freshness | 95% of listed open roles checked within 30 minutes |
+| Source freshness | 95% of listed open roles checked within 90 minutes |
 | Duplicate alert rate | Under 2% |
 | Alert relevance | At least 70% of surveyed alerts rated relevant |
 | Alert-to-detail open rate | At least 30% |

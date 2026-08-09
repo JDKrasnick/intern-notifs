@@ -78,7 +78,7 @@ describe('ingestion health and retry policy', () => {
     const result = evaluateSourceFreshness([
       {
         sourceId: 'lever-old', provider: 'lever', lastAttemptAt: '2026-07-29T12:50:00.000Z',
-        lastSuccessAt: '2026-07-29T12:00:00.000Z', outcome: 'failed', durationMs: 100, consecutiveFailures: 2,
+        lastSuccessAt: '2026-07-29T11:00:00.000Z', outcome: 'failed', durationMs: 100, consecutiveFailures: 2,
       },
       {
         sourceId: 'greenhouse-fresh', provider: 'greenhouse', lastAttemptAt: '2026-07-29T12:50:00.000Z',

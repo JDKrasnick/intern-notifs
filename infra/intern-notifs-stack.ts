@@ -101,10 +101,12 @@ export class InternNotifsStack extends cdk.Stack {
           period: cdk.Duration.minutes(5),
         }),
         threshold: 1,
-        evaluationPeriods: 6,
-        datapointsToAlarm: 6,
+        evaluationPeriods: provider === 'lever' ? 1 : 6,
+        datapointsToAlarm: provider === 'lever' ? 1 : 6,
         treatMissingData: cloudwatch.TreatMissingData.BREACHING,
-        alarmDescription: `A ${provider} source has gone 30 minutes without a trusted snapshot.`,
+        alarmDescription: provider === 'lever'
+          ? 'A lever source has gone 90 minutes without a trusted snapshot.'
+          : 'A github source has gone 30 minutes without a trusted snapshot.',
       });
       new cloudwatch.Alarm(this, `SourceFetchFailure${suffix}Alarm`, {
         metric: new cloudwatch.Metric({

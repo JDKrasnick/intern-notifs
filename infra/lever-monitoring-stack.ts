@@ -125,10 +125,10 @@ export class LeverMonitoringStack extends cdk.Stack {
         statistic: 'Maximum',
         period: cdk.Duration.minutes(10),
       }),
-      threshold: 30,
+      threshold: 90,
       evaluationPeriods: 1,
       treatMissingData: cloudwatch.TreatMissingData.BREACHING,
-      alarmDescription: 'At least one active Lever source has no trusted snapshot within thirty minutes.',
+      alarmDescription: 'At least one active Lever source has no trusted snapshot within ninety minutes.',
     });
     new cloudwatch.Dashboard(this, 'LeverMonitoringDashboard', {
       dashboardName: 'InternNotifs-Lever',

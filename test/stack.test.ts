@@ -47,7 +47,7 @@ describe('CDK stack', () => {
         MetricName: 'StaleSourceCount',
         Dimensions: [{ Name: 'provider', Value: provider }],
         Threshold: 1,
-        DatapointsToAlarm: 6,
+        DatapointsToAlarm: provider === 'lever' ? 1 : 6,
         TreatMissingData: 'breaching',
       });
       template.hasResourceProperties('AWS::CloudWatch::Alarm', {

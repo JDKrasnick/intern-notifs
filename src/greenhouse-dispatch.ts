@@ -4,7 +4,7 @@ import { DynamoInternshipStore } from './store.js';
 import type { SourceCheckpoint, SourceHealth } from './types.js';
 
 export const GREENHOUSE_DISPATCH_BATCH_SIZE = 10;
-export const GREENHOUSE_POLL_INTERVAL_MS = 10 * 60 * 1000;
+export const GREENHOUSE_POLL_INTERVAL_MS = 60 * 60 * 1000;
 export const GREENHOUSE_INACTIVE_POLL_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 export interface GreenhouseWorkMessage {

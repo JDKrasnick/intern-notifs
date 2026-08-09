@@ -97,7 +97,7 @@ What already exists:
 - ETag and content-hash checkpoints;
 - per-company fixtures and approval artifacts;
 - a read-only live contract;
-- a ten-minute EventBridge dispatcher;
+- an hourly EventBridge dispatcher;
 - a FIFO SQS work queue with per-board ordering and deduplication;
 - batches of ten with maximum worker concurrency four;
 - isolated scheduled shadow checkpoints and link checks;
@@ -509,7 +509,7 @@ npm run greenhouse:admit -- \
 A standard generated patch begins with `status: "shadow"`. An exception patch
 cannot be generated until its review fields are complete.
 
-Verified boards with zero eligible roles stay out of ten-minute ingestion and
+Verified boards with zero eligible roles stay out of hourly ingestion and
 receive a staggered six-hour jobs re-probe. When eligible roles appear, they
 automatically become active-registry candidates without rediscovery.
 
@@ -525,7 +525,7 @@ automatically become active-registry candidates without rediscovery.
 | Probe newly discovered tokens | Immediately, with concurrency 4 and backoff |
 | Work agent identity queue | Continuously in bounded batches |
 | Re-probe verified zero-eligible boards | Weekly |
-| Poll active shadow/published boards | Every ten minutes |
+| Poll active shadow/published boards | Hourly |
 | Re-probe verified zero-eligible boards | Staggered every six hours |
 
 Cadence is configurable and must back off on `429`, `5xx`, transport failure,
@@ -564,7 +564,7 @@ for every zero-eligible board. It is validated by:
 - deterministic captured-response tests for the index generator.
 
 This separation lets InternNotifs verify hundreds or thousands of boards
-without pretending they all need ten-minute polling or manufacturing an
+without pretending they all need hourly polling or manufacturing an
 eligible fixture for boards that have no relevant role.
 
 Required CI commands:
