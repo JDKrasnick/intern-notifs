@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "netic",
+  "apiRegion": "global",
+  "careersUrl": "https://www.netic.ai/company",
+  "firstPartyEvidenceUrl": "https://www.netic.ai/company",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/netic",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/netic\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/netic/bab5d1e5-e31b-42f0-9cef-334b1f17fed3",
+  "verifiedAt": "2026-08-09T23:02:24.286Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 4,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

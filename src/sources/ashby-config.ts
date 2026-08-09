@@ -111,14 +111,77 @@ export const reviewedAshbySources: ReviewedAshbySource[] = [
     careersUrl: 'https://rivianvw.tech/', admittedAt: '2026-08-09T15:55:23Z', evidenceState: 'ownership-verified',
     allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
   },
+  {
+    id: 'ashby-circleback', company: 'Circleback', identity: { provider: 'ashby', boardKey: 'circleback', apiRegion: 'global' },
+    careersUrl: 'https://circleback.ai/jobs', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
+  },
+  {
+    id: 'ashby-eragon', company: 'Eragon', identity: { provider: 'ashby', boardKey: 'Eragon', apiRegion: 'global' },
+    careersUrl: 'https://www.eragon.ai/careers/applied-ai-intern', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
+  },
+  {
+    id: 'ashby-modal', company: 'Modal', identity: { provider: 'ashby', boardKey: 'modal', apiRegion: 'global' },
+    careersUrl: 'https://modal.com/company', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
+  },
+  {
+    id: 'ashby-yotta', company: 'Yotta Labs', identity: { provider: 'ashby', boardKey: 'yotta', apiRegion: 'global' },
+    careersUrl: 'https://yottalabs.ai/', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
+  },
+  {
+    id: 'ashby-anthelioncap', company: 'Anthelion Capital', identity: { provider: 'ashby', boardKey: 'anthelioncap', apiRegion: 'global' },
+    careersUrl: 'https://www.anthelioncap.com/careers', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
+  },
+  {
+    id: 'ashby-saronic', company: 'Saronic', identity: { provider: 'ashby', boardKey: 'saronic', apiRegion: 'global' },
+    careersUrl: 'https://www.saronic.com/', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
+  },
+  {
+    id: 'ashby-firstordereffects', company: 'First Order Effects', identity: { provider: 'ashby', boardKey: 'firstordereffects', apiRegion: 'global' },
+    careersUrl: 'https://firstordereffects.com/careers.html', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
+  },
+  {
+    id: 'ashby-junior', company: 'Junior', identity: { provider: 'ashby', boardKey: 'junior', apiRegion: 'global' },
+    careersUrl: 'https://junior.ai/careers', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
+  },
+  {
+    id: 'ashby-airwallex', company: 'Airwallex', identity: { provider: 'ashby', boardKey: 'airwallex', apiRegion: 'global' },
+    careersUrl: 'https://www.airwallex.com/careers.html', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
+  },
+  {
+    id: 'ashby-netic', company: 'Netic', identity: { provider: 'ashby', boardKey: 'netic', apiRegion: 'global' },
+    careersUrl: 'https://www.netic.ai/company', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
+  },
+  {
+    id: 'ashby-retell-ai', company: 'Retell AI', identity: { provider: 'ashby', boardKey: 'retell-ai', apiRegion: 'global' },
+    careersUrl: 'https://www.retellai.com/careers', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
+  },
+  {
+    id: 'ashby-quadrillion-labs', company: 'Quadrillion', identity: { provider: 'ashby', boardKey: 'quadrillion-labs', apiRegion: 'global' },
+    careersUrl: 'https://careers.quadrillion.io/', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
+  },
+  {
+    id: 'ashby-pylon-labs', company: 'Pylon', identity: { provider: 'ashby', boardKey: 'pylon-labs', apiRegion: 'global' },
+    careersUrl: 'https://usepylon.com/careers', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
+  },
+  {
+    id: 'ashby-nationgraph', company: 'NationGraph', identity: { provider: 'ashby', boardKey: 'NationGraph', apiRegion: 'global' },
+    careersUrl: 'https://www.nationgraph.com/about-us', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
+  },
 ];
 
-/** Ordered expansion replacements; none is reviewed or admitted. */
-export const ashbyExpansionFallbacks = [
-  { priority: 1, company: 'Circleback', boardName: 'circleback', observedBoardUrl: 'https://jobs.ashbyhq.com/circleback' },
-  { priority: 2, company: 'Eragon', boardName: 'eragon', observedBoardUrl: 'https://jobs.ashbyhq.com/eragon' },
-  { priority: 3, company: 'Modal', boardName: 'modal', observedBoardUrl: 'https://jobs.ashbyhq.com/modal' },
-  { priority: 4, company: 'Yotta', boardName: 'yotta', observedBoardUrl: 'https://jobs.ashbyhq.com/yotta' },
-  { priority: 5, company: 'Anthelion Capital', boardName: 'anthelioncap', observedBoardUrl: 'https://jobs.ashbyhq.com/anthelioncap' },
-  { priority: 6, company: 'Saronic', boardName: 'saronic', observedBoardUrl: 'https://jobs.ashbyhq.com/saronic' },
-] as const;
+/** Ordered expansion replacements not yet reviewed or admitted. */
+export const ashbyExpansionFallbacks = [] as const;

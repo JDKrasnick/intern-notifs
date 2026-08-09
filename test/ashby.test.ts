@@ -166,18 +166,14 @@ describe('Ashby offline manifest and reverification', () => {
       'Etched', 'Deepgram', 'Cohere', 'Mistral AI', 'Partly',
       'Notion', 'Alan', 'Base Power', 'Reonic', 'Terranova', 'Melius', 'Rho', 'CTGT', 'OpusClip',
       'WindBorne Systems', 'Persona AI', 'Skydio', 'Heliux', 'Beacon Software', 'Centerfield', 'RV Tech',
+      'Circleback', 'Eragon', 'Modal', 'Yotta Labs', 'Anthelion Capital', 'Saronic', 'First Order Effects',
+      'Junior', 'Airwallex', 'Netic', 'Retell AI', 'Quadrillion', 'Pylon', 'NationGraph',
     ]);
-    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-09T16:00:00Z') })).toEqual([]);
+    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-09T23:05:00Z') })).toEqual([]);
   });
 
-  it('keeps expansion replacements ordered and unadmitted', () => {
-    expect(ashbyExpansionFallbacks.map(({ company, priority }) => [company, priority])).toEqual([
-      ['Circleback', 1], ['Eragon', 2], ['Modal', 3], ['Yotta', 4], ['Anthelion Capital', 5], ['Saronic', 6],
-    ]);
-    for (const fallback of ashbyExpansionFallbacks) {
-      expect(ashbyBoardNameFromUrl(fallback.observedBoardUrl)).toBe(fallback.boardName);
-      expect(reviewedAshbySources.some(({ identity }) => identity.boardKey === fallback.boardName)).toBe(false);
-    }
+  it('keeps any expansion replacements ordered and unadmitted', () => {
+    expect(ashbyExpansionFallbacks).toEqual([]);
   });
 
   it('rejects duplicate identities, expired evidence, and pending admissions', async () => {

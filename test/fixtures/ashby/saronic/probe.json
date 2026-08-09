@@ -1,0 +1,51 @@
+{
+  "probedAt": "2026-08-09T23:02:24.286Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "saronic",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/saronic",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 251,
+      "listedRows": 251,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 3,
+      "geographicCoverage": [
+        "Arlington, VA",
+        "Austin, TX",
+        "Brownsville, TX",
+        "Denmark",
+        "Franklin, LA",
+        "New Orleans, LA",
+        "Portsmouth, UK",
+        "San Diego, CA",
+        "Tampa, FL",
+        "Virginia Beach, VA"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 251
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "1c74957f-0895-415b-9324-08b0994747d7",
+          "title": "Software Engineer Intern (Fall 2026)",
+          "location": "Austin, TX"
+        },
+        {
+          "id": "41012936-b4a2-4d4d-9252-00dc7cc9bbcc",
+          "title": "Information Technology Intern (Fall 2026)",
+          "location": "Austin, TX"
+        },
+        {
+          "id": "18055a6f-030f-41ef-9116-7ffffac15f68",
+          "title": "Enterprise Technology Intern - Technical Delivery (Fall 2026)",
+          "location": "Austin, TX"
+        }
+      ]
+    }
+  ]
+}

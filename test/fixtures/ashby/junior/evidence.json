@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "junior",
+  "apiRegion": "global",
+  "careersUrl": "https://junior.ai/careers",
+  "firstPartyEvidenceUrl": "https://junior.ai/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/junior",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/junior\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/junior/23ee686b-d305-4ac9-860d-16c99ddb4891",
+  "verifiedAt": "2026-08-09T23:02:24.286Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

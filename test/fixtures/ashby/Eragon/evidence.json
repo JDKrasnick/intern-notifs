@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "Eragon",
+  "apiRegion": "global",
+  "careersUrl": "https://www.eragon.ai/careers/applied-ai-intern",
+  "firstPartyEvidenceUrl": "https://www.eragon.ai/careers/applied-ai-intern",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/Eragon",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/Eragon\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/Eragon/0b90ea4a-8684-4ae1-a7cc-c998db6e862e",
+  "verifiedAt": "2026-08-09T23:02:24.286Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

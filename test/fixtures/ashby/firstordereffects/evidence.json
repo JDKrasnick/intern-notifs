@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "firstordereffects",
+  "apiRegion": "global",
+  "careersUrl": "https://firstordereffects.com/careers.html",
+  "firstPartyEvidenceUrl": "https://firstordereffects.com/careers.html",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/firstordereffects",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/firstordereffects\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/firstordereffects/21601331-5541-4362-ab04-b347ecf1a4f2",
+  "verifiedAt": "2026-08-09T23:02:24.286Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

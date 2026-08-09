@@ -1,0 +1,37 @@
+{
+  "probedAt": "2026-08-09T23:02:24.286Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "quadrillion-labs",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/quadrillion-labs",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 6,
+      "listedRows": 6,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "New York City"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 6
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "579cef88-1dbf-45b5-a938-7ddc23505765",
+          "title": "Research Intern",
+          "location": "New York City"
+        },
+        {
+          "id": "a4acc44c-31ce-41a0-ab44-2500487b4d05",
+          "title": "Software Engineering Intern (Summer 2027)",
+          "location": "New York City"
+        }
+      ]
+    }
+  ]
+}

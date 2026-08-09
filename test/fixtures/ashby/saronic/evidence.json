@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "saronic",
+  "apiRegion": "global",
+  "careersUrl": "https://www.saronic.com/",
+  "firstPartyEvidenceUrl": "https://www.saronic.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/saronic",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/saronic\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/saronic/1c74957f-0895-415b-9324-08b0994747d7",
+  "verifiedAt": "2026-08-09T23:02:24.286Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 3,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}
