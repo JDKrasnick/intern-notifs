@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "rivianvw.tech",
+  "apiRegion": "global",
+  "careersUrl": "https://rivianvw.tech/",
+  "firstPartyEvidenceUrl": "https://rivianvw.tech/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/rivianvw.tech",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/rivianvw.tech\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/rivianvw.tech/28e87a5e-7aba-4f91-af44-74f739356a27",
+  "verifiedAt": "2026-08-09T15:55:23Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 11,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

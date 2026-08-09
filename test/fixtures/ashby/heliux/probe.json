@@ -1,0 +1,37 @@
+{
+  "probedAt": "2026-08-09T15:54:53.988Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "heliux",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/heliux",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 3,
+      "listedRows": 3,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "HQ (San Francisco, CA)"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 3
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "c71c0650-b6f7-491f-b291-6b280f58ee9c",
+          "title": "Software Engineer (Internship, Spring 2027)",
+          "location": "HQ (San Francisco, CA)"
+        },
+        {
+          "id": "ff2b6f4b-00d0-4afe-b4f5-2dbf443409ef",
+          "title": "Software Engineer (Internship, Summer 2027)",
+          "location": "HQ (San Francisco, CA)"
+        }
+      ]
+    }
+  ]
+}

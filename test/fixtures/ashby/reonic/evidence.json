@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "reonic",
+  "apiRegion": "global",
+  "careersUrl": "https://reonic.com/en-ca/about/jobs/",
+  "firstPartyEvidenceUrl": "https://reonic.com/en-ca/about/jobs/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/reonic",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/reonic\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/reonic/dd26ab09-62de-4d27-9e11-64eccb2e33df",
+  "verifiedAt": "2026-08-09T15:55:23Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 4,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

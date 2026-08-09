@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "ctgt",
+  "apiRegion": "global",
+  "careersUrl": "https://www.ctgt.ai/",
+  "firstPartyEvidenceUrl": "https://www.ctgt.ai/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/ctgt",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/ctgt\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/ctgt/f657c2f5-125e-42b6-a68a-646bbea3d155",
+  "verifiedAt": "2026-08-09T15:55:23Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

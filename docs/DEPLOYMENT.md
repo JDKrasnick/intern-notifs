@@ -163,6 +163,34 @@ After both monitoring stacks are deployed, confirm:
 - the monthly monitoring checklist persists after a refresh; and
 - a test invocation of the monitoring reminder reaches the deployment address.
 
+### Ashby monitoring deployment
+
+Ashby is a separate retained-table stack. Review the admission manifest before
+deployment; every source must be reviewed and must enter in `shadow`:
+
+```bash
+npm run ashby:manifest
+
+npx cdk diff InternNotifsAshby \
+  -c target=ashby \
+  -c internshipsTableName="$INTERNSHIPS_TABLE" \
+  -c usersTableName="$USERS_TABLE"
+
+npx cdk deploy InternNotifsAshby \
+  -c target=ashby \
+  -c internshipsTableName="$INTERNSHIPS_TABLE" \
+  -c usersTableName="$USERS_TABLE"
+```
+
+An Ashby-only diff must not replace or delete resources in `InternNotifs`. The
+stack publishes queue URLs under `/intern-notifs/operations/ashby/`. Redeploy
+`InternNotifsGreenhouse` after the Ashby stack so the shared operations Lambda
+has the expanded queue IAM policy and includes Ashby sources.
+
+Use [`ashby-monitoring-runbook.md`](ashby-monitoring-runbook.md) for shadow
+verification, recovery, per-board promotion, and rollback. Do not promote a
+board merely because deployment succeeded.
+
 ## EAS environments
 
 The production EAS environment must have these five plaintext/sensitive variables:

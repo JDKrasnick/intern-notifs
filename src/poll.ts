@@ -398,7 +398,7 @@ export class IngestionRunner {
     };
   }
 
-  async run(options: { seedOnly?: boolean; runId?: string } = {}): Promise<PollReport> {
+  async run(options: { seedOnly?: boolean; runId?: string; allowCompleteEmptySnapshot?: boolean } = {}): Promise<PollReport> {
     const report: PollReport = { fetchedSources: 0, unchangedSources: [], baselineSources: [], processedListings: 0, newJobs: [], filteredJobs: [], failures: [] };
     const health: SourceHealth[] = [];
     for (const connector of this.connectors) {
@@ -411,7 +411,9 @@ export class IngestionRunner {
         const result = await fetchWithRetry(connector, previous);
         report.fetchedSources += 1;
         failureCategory = 'quality';
-        const qualityFailures = sourceQualityFailures(result, previous);
+        const qualityFailures = sourceQualityFailures(result, previous, {
+          allowCompleteEmptySnapshot: options.allowCompleteEmptySnapshot && isSourceSnapshot(result),
+        });
         if (qualityFailures.length) throw new SourceFetchError(qualityFailures.join('; '), 'empty');
         const batch = isSourceSnapshot(result) ? neutralBatch(result) : legacyBatch(result);
         if (batch.unchanged) report.unchangedSources.push(connector.id);
@@ -567,7 +569,7 @@ export class IngestionRunner {
 
 /** @deprecated Compatibility facade; new code should construct `IngestionRunner`. */
 export class Poller extends IngestionRunner {
-  poll(options: { seedOnly?: boolean; runId?: string } = {}) {
+  poll(options: { seedOnly?: boolean; runId?: string; allowCompleteEmptySnapshot?: boolean } = {}) {
     return this.run(options);
   }
 }

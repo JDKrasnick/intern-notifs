@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "heliux",
+  "apiRegion": "global",
+  "careersUrl": "https://www.heliux.com/careers",
+  "firstPartyEvidenceUrl": "https://www.heliux.com/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/heliux/c71c0650-b6f7-491f-b291-6b280f58ee9c",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/heliux/c71c0650-b6f7-491f-b291-6b280f58ee9c\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/heliux/c71c0650-b6f7-491f-b291-6b280f58ee9c",
+  "verifiedAt": "2026-08-09T15:55:23Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "centerfield",
+  "apiRegion": "global",
+  "careersUrl": "https://www.centerfield.com/careers",
+  "firstPartyEvidenceUrl": "https://www.centerfield.com/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/centerfield/3279e803-56ab-4b13-8561-c282ac0175ba",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/centerfield/3279e803-56ab-4b13-8561-c282ac0175ba\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/centerfield/3279e803-56ab-4e12-8168-c2fd60bc8e60",
+  "verifiedAt": "2026-08-09T15:55:23Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 3,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

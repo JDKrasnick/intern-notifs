@@ -224,6 +224,12 @@ export function failedSourceHealth(input: {
     ...(input.previous?.eligibleRows !== undefined ? { eligibleRows: input.previous.eligibleRows, eligibleCount: input.previous.eligibleRows } : {}),
     ...(input.previous?.filteredRows !== undefined ? { filteredRows: input.previous.filteredRows, filteredCount: input.previous.filteredRows } : {}),
     ...(input.previous?.withheldRows !== undefined ? { withheldRows: input.previous.withheldRows, withheldCount: input.previous.withheldRows } : {}),
+    ...(input.previous?.applicationLinksChecked !== undefined
+      ? { applicationLinksChecked: input.previous.applicationLinksChecked }
+      : {}),
+    ...(input.previous?.applicationLinkFailures !== undefined
+      ? { applicationLinkFailures: input.previous.applicationLinkFailures }
+      : {}),
     recentRuns: withRun(input.previous, run),
   };
 }

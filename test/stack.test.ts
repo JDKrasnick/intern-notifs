@@ -4,6 +4,7 @@ import { Template } from 'aws-cdk-lib/assertions';
 import { GreenhouseMonitoringStack } from '../infra/greenhouse-monitoring-stack.js';
 import { InternNotifsStack } from '../infra/intern-notifs-stack.js';
 import { LeverMonitoringStack } from '../infra/lever-monitoring-stack.js';
+import { AshbyMonitoringStack } from '../infra/ashby-monitoring-stack.js';
 
 function snapshotTemplate(template: Record<string, unknown>) {
   // NodejsFunction assets are content-addressed bundled artifacts. Their S3
@@ -95,5 +96,16 @@ describe('CDK stack', () => {
     template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
     template.resourceCountIs('AWS::CloudWatch::Dashboard', 1);
     expect(snapshotTemplate(template.toJSON())).toMatchSnapshot();
+  });
+  it('queues Ashby boards on a staggered ten-minute schedule with bounded concurrency', () => {
+    const app = new cdk.App(); const stack = new AshbyMonitoringStack(app, 'Ashby', { internshipsTableName: 'internships', usersTableName: 'users' }); const template = Template.fromStack(stack);
+    template.resourceCountIs('AWS::SQS::Queue', 3);
+    template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: 'cron(4,14,24,34,44,54 * * * ? *)', State: 'ENABLED' });
+    template.hasResourceProperties('AWS::Lambda::EventSourceMapping', { BatchSize: 10, FunctionResponseTypes: ['ReportBatchItemFailures'], ScalingConfig: { MaximumConcurrency: 4 } });
+    template.hasResourceProperties('AWS::Lambda::Function', { Timeout: 120 });
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
+    template.resourceCountIs('AWS::CloudWatch::Dashboard', 1);
+    template.hasResourceProperties('AWS::SSM::Parameter', { Name: '/intern-notifs/operations/ashby/queue-url' });
+    template.hasResourceProperties('AWS::SSM::Parameter', { Name: '/intern-notifs/operations/ashby/dead-letter-queue-url' });
   });
 });

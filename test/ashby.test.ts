@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ashbyAdmissionViolations } from '../src/sources/ashby-admission.js';
-import { ashbyPilotFallbacks, reviewedAshbySources } from '../src/sources/ashby-config.js';
+import { ashbyExpansionFallbacks, reviewedAshbySources } from '../src/sources/ashby-config.js';
 import { ashbyEvidenceViolations, reviewedAshbySourceFromEvidence, type AshbyOwnershipEvidence } from '../src/sources/ashby-evidence.js';
 import { ashbyBoardNameFromUrl, buildAshbyCandidateLedger } from '../src/sources/ashby-ledger.js';
 import { collectAshbyManifestViolations, nodeAshbyManifestFs, type AshbyManifestFs } from '../src/sources/ashby-manifest.js';
@@ -79,6 +79,12 @@ describe('Ashby candidate ledger', () => {
       { sourceId: 'a', company: 'Notion', location: 'SF', applyUrl: 'https://jobs.ashbyhq.com/notion/id/application' },
     ], { registeredBoards: ['notion'] })).toEqual([]);
   });
+
+  it('suppresses registered board aliases case-insensitively', () => {
+    expect(buildAshbyCandidateLedger([
+      { sourceId: 'a', company: 'Etched', location: 'San Jose', applyUrl: 'https://jobs.ashbyhq.com/Etched/id/application' },
+    ], { registeredBoards: ['etched'] })).toEqual([]);
+  });
 });
 
 describe('Ashby read-only probe', () => {
@@ -155,14 +161,20 @@ describe('Ashby ownership and admission evidence', () => {
 });
 
 describe('Ashby offline manifest and reverification', () => {
-  it('passes all five committed shadow pilots', () => {
-    expect(reviewedAshbySources.map(({ company }) => company)).toEqual(['Etched', 'Deepgram', 'Cohere', 'Mistral AI', 'Partly']);
-    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-09T14:00:00Z') })).toEqual([]);
+  it('passes all committed shadow sources, including the owner-approved expansion', () => {
+    expect(reviewedAshbySources.map(({ company }) => company)).toEqual([
+      'Etched', 'Deepgram', 'Cohere', 'Mistral AI', 'Partly',
+      'Notion', 'Alan', 'Base Power', 'Reonic', 'Terranova', 'Melius', 'Rho', 'CTGT', 'OpusClip',
+      'WindBorne Systems', 'Persona AI', 'Skydio', 'Heliux', 'Beacon Software', 'Centerfield', 'RV Tech',
+    ]);
+    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-09T16:00:00Z') })).toEqual([]);
   });
 
-  it('keeps Alan then Notion as observed but unadmitted fallbacks', () => {
-    expect(ashbyPilotFallbacks.map(({ company, priority }) => [company, priority])).toEqual([['Alan', 1], ['Notion', 2]]);
-    for (const fallback of ashbyPilotFallbacks) {
+  it('keeps expansion replacements ordered and unadmitted', () => {
+    expect(ashbyExpansionFallbacks.map(({ company, priority }) => [company, priority])).toEqual([
+      ['Circleback', 1], ['Eragon', 2], ['Modal', 3], ['Yotta', 4], ['Anthelion Capital', 5], ['Saronic', 6],
+    ]);
+    for (const fallback of ashbyExpansionFallbacks) {
       expect(ashbyBoardNameFromUrl(fallback.observedBoardUrl)).toBe(fallback.boardName);
       expect(reviewedAshbySources.some(({ identity }) => identity.boardKey === fallback.boardName)).toBe(false);
     }

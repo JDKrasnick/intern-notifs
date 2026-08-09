@@ -1,0 +1,33 @@
+{
+  "probedAt": "2026-08-09T15:54:53.988Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "opusclip",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/opusclip",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 8,
+      "listedRows": 8,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Mountain View",
+        "Remote"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 8
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "1966160d-8b4a-40f8-96c5-39a6d81122c2",
+          "title": "AI Research Intern",
+          "location": "Mountain View"
+        }
+      ]
+    }
+  ]
+}

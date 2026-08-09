@@ -1,0 +1,54 @@
+{
+  "probedAt": "2026-08-09T15:54:53.988Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "persona.ai",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/persona.ai",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 22,
+      "listedRows": 22,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 6,
+      "geographicCoverage": [
+        "Houston",
+        "Houston, TX",
+        "Pensacola, FL or Houston, TX"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 22
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "a68c0823-0b61-4741-9fbc-a1f6d701e4ed",
+          "title": "Electrical Engineering Intern",
+          "location": "Pensacola, FL or Houston, TX "
+        },
+        {
+          "id": "fd514a3f-4138-48d5-9862-05ff74a4ca08",
+          "title": "Autonomy Software Engineering Internship, World Modeling",
+          "location": "Houston, TX"
+        },
+        {
+          "id": "2a136483-0d0c-4de3-a433-d4878b75dfcb",
+          "title": "Reinforcement Learning Engineering Intern",
+          "location": "Pensacola, FL or Houston, TX "
+        },
+        {
+          "id": "6078fafd-ba34-4c89-b260-7eb15be3cb9c",
+          "title": "Teleoperation Software Engineering Internship",
+          "location": "Pensacola, FL or Houston, TX "
+        },
+        {
+          "id": "c7981f54-698b-4617-a72a-ff251f3fa8a7",
+          "title": "Robotics Data Pipeline Intern",
+          "location": "Pensacola, FL or Houston, TX "
+        }
+      ]
+    }
+  ]
+}

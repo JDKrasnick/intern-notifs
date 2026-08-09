@@ -1,0 +1,58 @@
+{
+  "probedAt": "2026-08-09T15:54:53.988Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "rivianvw.tech",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/rivianvw.tech",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 118,
+      "listedRows": 118,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 11,
+      "geographicCoverage": [
+        "Belgrade",
+        "Berlin",
+        "Irvine, California",
+        "Lund",
+        "Palo Alto, California",
+        "Toronto, Ontario",
+        "Vancouver, British Columbia"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 118
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "28e87a5e-7aba-4f91-af44-74f739356a27",
+          "title": "Software Engineering Intern - Systems Engineering (Fall-Spring Co-op)",
+          "location": "Vancouver, British Columbia"
+        },
+        {
+          "id": "5633bb03-cc16-47fc-af02-db9dc355eddd",
+          "title": "Android Developer Intern (Fall 2026)",
+          "location": "Palo Alto, California"
+        },
+        {
+          "id": "14734be2-9c81-4aab-bfa6-7dbbe95c94a6",
+          "title": "Electromechanical Design Engineering Intern (Fall 2026)",
+          "location": "Irvine, California"
+        },
+        {
+          "id": "89feb2fe-c28c-4dad-846f-09594632ba55",
+          "title": "Software Engineering Intern - Vehicle Controls (Fall 2026)",
+          "location": "Irvine, California"
+        },
+        {
+          "id": "4dfbf1e6-3778-4101-8ac7-cd4015d47eff",
+          "title": "Software Engineering Intern - Embedded Platforms (Fall 2026)",
+          "location": "Palo Alto, California"
+        }
+      ]
+    }
+  ]
+}

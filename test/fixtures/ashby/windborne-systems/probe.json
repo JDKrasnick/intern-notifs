@@ -1,0 +1,33 @@
+{
+  "probedAt": "2026-08-09T15:54:53.988Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "windborne-systems",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/windborne-systems",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 20,
+      "listedRows": 20,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "RWC HQ",
+        "Remote"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 20
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "75c5c65c-8179-4ca0-9659-39bf0f8f7b8b",
+          "title": "Firmware Intern",
+          "location": "RWC HQ"
+        }
+      ]
+    }
+  ]
+}

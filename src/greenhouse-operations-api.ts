@@ -4,6 +4,7 @@ import { GetQueueAttributesCommand, SendMessageCommand, SQSClient } from '@aws-s
 import { GetParametersByPathCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { reviewedGreenhouseSources } from './sources/greenhouse-config.js';
 import { reviewedLeverSources, type ReviewedLeverSource } from './sources/lever-config.js';
+import { reviewedAshbySources, type ReviewedAshbySource } from './sources/ashby-config.js';
 import { DynamoInternshipStore, type InternshipStore } from './store.js';
 import { acceptLeverAdmission, listLeverCandidates, verifyLeverAdmission, type LeverAdmissionInput } from './lever-admission.js';
 import { monitoringChecklistItems, monitoringPeriod, publicMonitoringChecklist } from './monitoring-checklist.js';
@@ -29,11 +30,12 @@ const responseHeaders = {
 const reply = (statusCode: number, body: unknown) => ({ statusCode, headers: responseHeaders, body: JSON.stringify(body) });
 const healthWindowMs = 30 * 60_000;
 const inactiveHealthWindowMs = 7 * 60 * 60_000;
-type Provider = 'greenhouse' | 'lever';
+type Provider = 'greenhouse' | 'lever' | 'ashby';
 type OperationsSource =
   | (typeof reviewedGreenhouseSources[number] & { provider: 'greenhouse' })
-  | (ReviewedLeverSource & { provider: 'lever' });
-type FleetConfiguration = Record<Provider, { queueUrl: string; deadLetterQueueUrl: string } | undefined>;
+  | (ReviewedLeverSource & { provider: 'lever' })
+  | (ReviewedAshbySource & { provider: 'ashby' });
+type FleetConfiguration = Partial<Record<Provider, { queueUrl: string; deadLetterQueueUrl: string }>>;
 
 function header(event: ApiEvent, name: string): string | undefined {
   const match = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === name.toLowerCase());
@@ -73,12 +75,12 @@ function publicSource(
     source: {
       sourceId: source.id,
       provider: source.provider,
-      region: source.provider === 'lever' ? source.region : 'unknown',
-      displayName: source.provider === 'lever' ? source.company : source.displayName,
+      region: source.provider === 'lever' ? source.region : source.provider === 'ashby' ? source.identity.apiRegion : 'unknown',
+      displayName: source.provider === 'greenhouse' ? source.displayName : source.company,
       careersUrl: source.careersUrl,
       mode: source.status,
-      boardToken: source.provider === 'lever' ? source.site : source.boardToken,
-      evidenceStatus: source.evidenceStatus,
+      boardToken: source.provider === 'lever' ? source.site : source.provider === 'ashby' ? source.identity.boardKey : source.boardToken,
+      evidenceStatus: source.provider === 'ashby' ? source.evidenceState : source.evidenceStatus,
     },
     state,
     ...(lastSuccessAt ? { lastSuccessfulSnapshotAt: lastSuccessAt, ageSeconds: Math.max(0, Math.floor((timestamp - Date.parse(lastSuccessAt)) / 1000)) } : {}),
@@ -97,6 +99,8 @@ function publicSource(
     rawRows: health?.rawRows ?? checkpoint?.lastRawRowCount,
     eligibleRows: health?.eligibleRows ?? checkpoint?.lastRowCount,
     withheldRows: health?.withheldRows ?? checkpoint?.lastWithheldRowCount ?? 0,
+    applicationLinksChecked: health?.applicationLinksChecked,
+    applicationLinkFailures: health?.applicationLinkFailures,
     recentRuns: recentRuns.length,
     successRate: recentRuns.length ? successfulRuns / recentRuns.length : lastSuccessAt ? 1 : 0,
   };
@@ -118,7 +122,7 @@ async function fleetStatus(
       AttributeNames: ['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible'],
     })),
     cloudwatch.send(new DescribeAlarmsCommand({
-      AlarmNamePrefix: provider === 'greenhouse' ? 'InternNotifsGreenhouse-' : 'InternNotifsLever-',
+      AlarmNamePrefix: `InternNotifs${provider[0]!.toUpperCase()}${provider.slice(1)}-`,
     })),
   ]);
   const number = (value: string | undefined) => Number(value ?? 0);
@@ -153,7 +157,7 @@ async function providerFleets(
   ssm: SSMClient,
   parameterPrefix?: string,
 ): Promise<FleetConfiguration> {
-  if (!parameterPrefix || (configured.greenhouse && configured.lever)) return configured;
+  if (!parameterPrefix || (configured.greenhouse && configured.lever && configured.ashby)) return configured;
   const response = await ssm.send(new GetParametersByPathCommand({
     Path: parameterPrefix,
     Recursive: true,
@@ -170,6 +174,7 @@ async function providerFleets(
   return {
     greenhouse: configured.greenhouse ?? fromParameters('greenhouse'),
     lever: configured.lever ?? fromParameters('lever'),
+    ashby: configured.ashby ?? fromParameters('ashby'),
   };
 }
 
@@ -233,13 +238,14 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
     const sources: OperationsSource[] = [
       ...reviewedGreenhouseSources.map((source) => ({ ...source, provider: 'greenhouse' as const })),
       ...[...leverById.values()].map((source) => ({ ...source, provider: 'lever' as const })),
+      ...reviewedAshbySources.map((source) => ({ ...source, provider: 'ashby' as const })),
     ];
     const ids = sources.map((source) => source.id);
     const checklistPeriod = monitoringPeriod(new Date(timestamp));
     const [healthRecords, checkpoints, storedChecklist] = await Promise.all([
       dependencies.store.getSourceHealthMany(ids),
       Promise.all(sources.map((source) => dependencies.store.getCheckpoint(
-        source.provider === 'lever' && source.status === 'shadow' ? `shadow-${source.id}` : source.id,
+        source.provider !== 'greenhouse' && source.status === 'shadow' ? `shadow-${source.id}` : source.id,
       ))),
       dependencies.store.getMonitoringChecklist(checklistPeriod),
     ]);
@@ -306,7 +312,7 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
       const base: SourceHealth = previous ?? {
         sourceId,
         provider: source.provider,
-        region: source.provider === 'lever' ? source.region : 'unknown',
+        region: source.provider === 'lever' ? source.region : source.provider === 'ashby' ? source.identity.apiRegion : 'unknown',
         state: 'never-succeeded',
         lastAttemptAt: changedAt,
         consecutiveFailures: 0,
@@ -346,6 +352,7 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
               ? { queueUrl: dependencies.queueUrl, deadLetterQueueUrl: dependencies.deadLetterQueueUrl }
               : undefined,
             lever: undefined,
+            ashby: undefined,
           },
           dependencies.ssm ?? new SSMClient({}),
           dependencies.parameterPrefix,
@@ -355,7 +362,7 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         const runId = `operator-${randomUUID()}`;
         await (dependencies.sqs ?? new SQSClient({})).send(new SendMessageCommand({
           QueueUrl: fleet.queueUrl,
-          MessageBody: JSON.stringify({ version: 1, sourceId, scheduledAt: changedAt, force: true, ...(source.provider === 'lever' ? { runId } : {}) }),
+          MessageBody: JSON.stringify({ version: 1, sourceId, scheduledAt: changedAt, force: true, ...(source.provider !== 'greenhouse' ? { runId } : {}) }),
           MessageGroupId: sourceId,
           MessageDeduplicationId: runId,
         }));
@@ -384,6 +391,7 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
             ? { queueUrl: dependencies.queueUrl, deadLetterQueueUrl: dependencies.deadLetterQueueUrl }
             : undefined,
           lever: undefined,
+          ashby: undefined,
         },
         dependencies.ssm ?? new SSMClient({}),
         dependencies.parameterPrefix,

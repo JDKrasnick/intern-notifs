@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "rho",
+  "apiRegion": "global",
+  "careersUrl": "https://www.rho.co/careers",
+  "firstPartyEvidenceUrl": "https://www.rho.co/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/rho/0995fe05-6af7-4055-bfc4-17639b0b8839",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/rho/0995fe05-6af7-4055-bfc4-17639b0b8839\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/rho/99bd5065-7f56-401e-84e3-8e22c95d33cf",
+  "verifiedAt": "2026-08-09T15:55:23Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

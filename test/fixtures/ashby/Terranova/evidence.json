@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "Terranova",
+  "apiRegion": "global",
+  "careersUrl": "https://www.terranova.inc/",
+  "firstPartyEvidenceUrl": "https://www.terranova.inc/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/Terranova",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/Terranova\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/Terranova/7ba048ea-818d-46b5-8ff8-3ce58d39bcc6",
+  "verifiedAt": "2026-08-09T15:55:23Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 4,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

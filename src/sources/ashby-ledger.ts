@@ -52,13 +52,16 @@ export function buildAshbyCandidateLedger(
   sightings: readonly AshbyCandidateSighting[],
   options: AshbyLedgerOptions = {},
 ): AshbyCandidate[] {
-  const registered = new Set(options.registeredBoards ?? []);
+  // Discovery is case-insensitive so provider aliases such as `etched` and
+  // `Etched` cannot re-enter the review queue. The observed board spelling is
+  // still retained exactly for every candidate that is not already registered.
+  const registered = new Set([...options.registeredBoards ?? []].map((board) => board.toLowerCase()));
   const observedAt = options.observedAt ?? new Date().toISOString();
   type Tally = { companies: Map<string, number>; sources: Set<string>; locations: Set<string>; roleCount: number; sampleJobUrl: string };
   const byBoard = new Map<string, Tally>();
   for (const sighting of sightings) {
     const boardName = ashbyBoardNameFromUrl(sighting.applyUrl);
-    if (!boardName || registered.has(boardName)) continue;
+    if (!boardName || registered.has(boardName.toLowerCase())) continue;
     const tally = byBoard.get(boardName) ?? { companies: new Map(), sources: new Set(), locations: new Set(), roleCount: 0, sampleJobUrl: '' };
     const company = sighting.company.trim();
     if (company) tally.companies.set(company, (tally.companies.get(company) ?? 0) + 1);

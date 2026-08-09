@@ -2534,6 +2534,26 @@ exports[`CDK stack > queues Greenhouse boards every ten minutes with bounded wor
                     ],
                   ],
                 },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":sqs:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":InternNotifsAshby-*",
+                    ],
+                  ],
+                },
               ],
             },
             {

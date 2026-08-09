@@ -1,0 +1,44 @@
+{
+  "probedAt": "2026-08-09T15:54:53.988Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "rho",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/rho",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 40,
+      "listedRows": 40,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "Austin",
+        "Belgrade",
+        "Boston",
+        "Los Angeles",
+        "NYC",
+        "Poland - Remote",
+        "Salt Lake City",
+        "San Francisco"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 40
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "99bd5065-7f56-401e-84e3-8e22c95d33cf",
+          "title": "Design Intern",
+          "location": "NYC"
+        },
+        {
+          "id": "eb5c9709-ab43-4e9e-9c41-ccb122955fcf",
+          "title": "Quantitative Analyst Intern",
+          "location": "NYC"
+        }
+      ]
+    }
+  ]
+}

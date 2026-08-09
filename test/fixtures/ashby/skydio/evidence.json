@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "skydio",
+  "apiRegion": "global",
+  "careersUrl": "https://www.skydio.com/jobs/cc83824e-a1cd-4bc7-9206-7264da9fbd61/",
+  "firstPartyEvidenceUrl": "https://www.skydio.com/jobs/cc83824e-a1cd-4bc7-9206-7264da9fbd61/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/skydio/cc83824e-a1cd-4bc7-9206-7264da9fbd61",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/skydio/cc83824e-a1cd-4bc7-9206-7264da9fbd61\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/skydio/ce482813-99c2-4eaa-a165-2ed201249182",
+  "verifiedAt": "2026-08-09T15:55:23Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 3,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

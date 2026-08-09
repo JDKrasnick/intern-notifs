@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "notion",
+  "apiRegion": "global",
+  "careersUrl": "https://www.notion.com/careers",
+  "firstPartyEvidenceUrl": "https://www.notion.com/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/notion/00f42dd8-c3b3-45cf-829e-550b675b3dd8",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/notion/00f42dd8-c3b3-45cf-829e-550b675b3dd8\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/notion/85947779-6b87-466a-98bc-30a640448c28",
+  "verifiedAt": "2026-08-09T15:55:23Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

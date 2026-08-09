@@ -1,0 +1,46 @@
+{
+  "probedAt": "2026-08-09T15:54:53.988Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "alan",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/alan",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 93,
+      "listedRows": 93,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Anywhere in Belgium",
+        "Anywhere in France",
+        "Anywhere in France, Belgium, Spain",
+        "Anywhere in Québec",
+        "Anywhere in Spain",
+        "Lyon, France; Marseille, France; Bordeaux, France",
+        "Madrid, Spain",
+        "Paris",
+        "Paris, France",
+        "Paris, France; Bordeaux, France",
+        "Paris, France; Bordeaux, France; Marseille, France; Lyon, France; Brussels, Belgium; Madrid, Spain; Barcelona, Spain",
+        "Paris, France; Bordeaux, France; Marseille, France; Lyon, France; Nantes, France; Brussels, Belgium; Barcelona, Spain; Madrid, Spain; Amsterdam, Netherlands;",
+        "Paris, France; Lyon, France; Bordeaux, France",
+        "Paris, France; Lyon, France; Marseille, France; Bordeaux, France",
+        "Toronto, ON, Canada"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 93
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "de4c30ae-698f-43e9-84d1-f458955fd671",
+          "title": "Software Engineer Internship (6 months)",
+          "location": "Paris"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "melius",
+  "apiRegion": "global",
+  "careersUrl": "https://www.melius.com/",
+  "firstPartyEvidenceUrl": "https://www.melius.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/melius",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/melius\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/melius/6a944911-dbbf-44c7-ba52-7866f7b433cf",
+  "verifiedAt": "2026-08-09T15:55:23Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

@@ -3,9 +3,11 @@
 Ashby admission and ingestion are separate trust stages. Admission discovers
 board identities, probes the public contract, and validates committed human
 decisions. The public posting adapter then produces strict, listed-only neutral
-snapshots for reviewed sources. Neither stage writes the registry, publishes a
-board, sends notifications, or deploys infrastructure. Scheduling, queues,
-persistence, alarms, promotion controls, and headed-browser work remain separate.
+snapshots for reviewed sources. Neither admission command writes the registry,
+publishes a board, sends notifications, or deploys infrastructure. The
+independently deployable runtime is documented in
+[`ashby-monitoring-runbook.md`](ashby-monitoring-runbook.md); headed-browser work
+remains separately scoped.
 
 ## Trust boundary
 
@@ -53,7 +55,7 @@ clock skew.
 
 ## Public posting adapter
 
-The adapter calls
+The adapter and queue worker call
 `posting-api/job-board/{exact-board-name}?includeCompensation=true` with a
 15-second attempt timeout. It rejects redirects, API version drift, malformed
 responses, duplicate UUIDs, invalid publication dates, and wrong-board job or
@@ -65,7 +67,7 @@ without discarding the rest of a valid snapshot.
 Ashby's `employmentType: Intern` is a trusted posting-level lifecycle signal.
 Other employment types still require explicit early-career title wording. The
 shared processor—not Ashby—decides whether a qualifying role is technical.
-`test:ashby:live` is a read-only nightly contract across the five shadow boards;
+`test:ashby:live` is a read-only nightly contract across every reviewed board;
 it deploys and publishes nothing.
 
 ## Human admission checklist
@@ -80,10 +82,15 @@ it deploys and publishes nothing.
 7. Add the provider-neutral reviewed-source record in shadow and run the manifest.
 8. A person separately decides whether and when the source may be published.
 
-## Initial cohort and fallback order
+## Reviewed cohort and fallback order
 
-The reviewed shadow cohort is Etched, Deepgram, Cohere, Mistral AI, and Partly.
-If first-party evidence stops qualifying before admission, review Alan first and
-Notion second. A fallback is not pre-approved: it must satisfy the same observed
-URL, current technical early-career role, ownership evidence, host, and manifest
-gates.
+The reviewed shadow cohort contains the five initial boards plus 16
+owner-approved expansion boards. The exact case-sensitive expansion identities
+are `notion`, `alan`, `base-power`, `reonic`, `Terranova`, `melius`, `rho`,
+`ctgt`, `opusclip`, `windborne-systems`, `persona.ai`, `skydio`, `heliux`,
+`beaconsoftware`, `centerfield`, and `rivianvw.tech`.
+
+Enpal, NEURA Robotics, Terminal, and Bild AI were not admitted because they did
+not satisfy the exact first-party ownership-evidence gate. Review replacements
+in this order: `circleback`, `eragon`, `modal`, `yotta`, `anthelioncap`, then
+`saronic`. A fallback is not pre-approved and must pass every normal gate.
