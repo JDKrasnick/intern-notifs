@@ -2,7 +2,7 @@ import type { SourceCheckpoint, SourceHealth, SourceOccurrenceState, SourceOccur
 
 export interface SourceFreshness {
   staleCount: number;
-  byProvider: Record<'github' | 'lever' | 'greenhouse' | 'unknown', number>;
+  byProvider: Record<'github' | 'lever' | 'greenhouse' | 'ashby' | 'unknown', number>;
   staleSourceIds: string[];
 }
 
@@ -33,7 +33,7 @@ export function evaluateSourceFreshness(
 ): SourceFreshness {
   const cutoff = now.getTime() - staleAfterMinutes * 60_000;
   const stale = records.filter((record) => !record.lastSuccessAt || Date.parse(record.lastSuccessAt) < cutoff);
-  const byProvider: SourceFreshness['byProvider'] = { github: 0, lever: 0, greenhouse: 0, unknown: 0 };
+  const byProvider: SourceFreshness['byProvider'] = { github: 0, lever: 0, greenhouse: 0, ashby: 0, unknown: 0 };
   for (const record of stale) byProvider[record.provider ?? 'unknown'] += 1;
   return {
     staleCount: stale.length,

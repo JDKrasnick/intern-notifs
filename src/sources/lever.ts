@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { hasLifecycleTitleSignal } from '../core/early-career.js';
 import { isTechnicalJob } from '../core/filters.js';
 import { parseCompensation } from '../core/normalize.js';
 import { processSnapshot } from '../ingestion/processor.js';
@@ -30,7 +31,6 @@ export interface LeverAdapterOptions {
   now?: () => Date;
 }
 
-const rolePattern = /\b(?:intern(?:ship)?|co[ -]?op|cooperative education|apprentice(?:ship)?)\b/i;
 const usCitizen = '(?:u\\.?s\\.?|united states)\\s+citizens?';
 const degree = "(?:advanced degree|master'?s|ph\\.?d\\.?|doctorate|mba)";
 const citizenshipPattern = new RegExp(`(?:\\b(?:must|requires?|requirement|eligible only|only)\\b[^.]{0,120}${usCitizen}|${usCitizen}[^.]{0,80}\\b(?:required|only|must)\\b)`, 'i');
@@ -71,7 +71,7 @@ function postedAt(posting: LeverPosting): string | undefined {
 export function mapLeverPosting(posting: LeverPosting, options: Pick<LeverAdapterOptions, 'id' | 'company' | 'site'>, fetchedAt = new Date().toISOString(), row = 1): RawListing | undefined {
   const title = plain(posting.text);
   const content = [posting.descriptionPlain, posting.description, posting.additionalPlain, posting.additional].map(plain).join(' ');
-  if (!title || !posting.applyUrl || !rolePattern.test(title)) return undefined;
+  if (!title || !posting.applyUrl || !hasLifecycleTitleSignal(title)) return undefined;
   const season = inferLeverSeason(title, content);
   const location = plain(posting.categories?.location) || posting.categories?.allLocations?.map(plain).filter(Boolean).join(' / ') || 'Unspecified';
   const listing: RawListing = {

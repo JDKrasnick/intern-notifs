@@ -65,13 +65,14 @@ async function forEachBounded<T>(items: readonly T[], task: (item: T, index: num
 }
 
 function providerFor(sourceId: string): SourceHealth['provider'] {
+  if (sourceId.startsWith('ashby-')) return 'ashby';
   if (sourceId.startsWith('lever-')) return 'lever';
   if (sourceId.includes('greenhouse-')) return 'greenhouse';
   return sourceId ? 'github' : 'unknown';
 }
 
 function regionFor(provider: SourceHealth['provider']): NonNullable<SourceHealth['region']> {
-  return provider === 'lever' ? 'global' : 'unknown';
+  return provider === 'lever' || provider === 'ashby' ? 'global' : 'unknown';
 }
 
 function emitSuccessMetric(

@@ -46,7 +46,7 @@ New cards get a little reward without becoming a distraction: on first render, t
 }
 ```
 
-`jobs` are open technical internships whose `firstSeenAt` is strictly after `previousOpenedAt` and no later than `openedAt`, after applying the saved role and employer filters. The call then records `lastCatalogOpenedAt`. On first use, `previousOpenedAt` is `null`, with no jobs and no historical scan.
+`jobs` are open technical early-career roles whose `firstSeenAt` is strictly after `previousOpenedAt` and no later than `openedAt`, after applying the saved role and employer filters. The call then records `lastCatalogOpenedAt`. On first use, `previousOpenedAt` is `null`, with no jobs and no historical scan.
 
 The implementation uses the existing `openJobsIndex` and its `firstSeenAt#jobId` sort key, so it needs no new DynamoDB index or infrastructure migration. Saving profile/alert preferences preserves the launch marker.
 

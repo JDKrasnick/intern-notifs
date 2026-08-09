@@ -133,7 +133,7 @@ export type SourceOutcome =
 export interface SourceHealth {
   sourceId: string;
   employerId?: string;
-  provider?: 'github' | 'lever' | 'greenhouse' | 'unknown';
+  provider?: 'github' | 'lever' | 'greenhouse' | 'ashby' | 'unknown';
   region?: 'global' | 'eu' | 'unknown';
   state?: SourceHealthState;
   sourceStatus?: SourceOperationalStatus;
@@ -324,11 +324,11 @@ export interface SourcedPosting {
   hostedUrl?: string;
   sourceState: 'open' | 'closed' | 'prospect';
   /**
-   * `title` requires an internship signal in the posting title. `source` marks a
-   * reviewed early-career-only document, where the source itself carries the
-   * lifecycle signal and the title only decides technical classification.
+   * `title` requires an explicit early-career signal in the posting title.
+   * `posting` trusts a provider field that explicitly identifies this row as an
+   * internship. `source` marks a reviewed early-career-only document.
    */
-  lifecycleAuthority?: 'title' | 'source';
+  lifecycleAuthority?: 'title' | 'posting' | 'source';
   publishedAt?: string;
   seasonHint?: string;
   seasonHintAuthority?: 'posting' | 'source-default';

@@ -1,6 +1,6 @@
 import type { ReviewedSourceRecord } from './reviewed-source.js';
 
-/** Human-reviewed Ashby boards. Runtime consumption is intentionally deferred. */
+/** Human-reviewed Ashby boards. Runtime scheduling and publication are intentionally deferred. */
 export const reviewedAshbySources: ReviewedSourceRecord[] = [
   {
     id: 'ashby-etched', company: 'Etched', identity: { provider: 'ashby', boardKey: 'etched', apiRegion: 'global' },

@@ -6,9 +6,12 @@ on:
       - 'src/sources/reviewed-source.ts'
       - 'scripts/ashby-*'
       - 'test/ashby.test.ts'
+      - 'test/ashby-adapter.test.ts'
+      - 'test/ashby.live.test.ts'
       - 'test/fixtures/ashby/**'
       - 'docs/ashby-onboarding.md'
       - '.github/workflows/ashby.yml'
+      - '.github/workflows/ashby-live.yml'
   pull_request:
     paths: *ashby_paths
 permissions: { contents: read }
@@ -23,5 +26,5 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run ashby:manifest
-      - run: npx vitest run test/ashby.test.ts
+      - run: npx vitest run test/ashby.test.ts test/ashby-adapter.test.ts test/processor.test.ts
       - run: npm run test:unit

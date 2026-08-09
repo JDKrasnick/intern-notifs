@@ -102,4 +102,23 @@ describe('shared posting processor', () => {
       { externalId: 'aggregator', outcome: 'withheld', reason: 'aggregator-destination' },
     ]);
   });
+
+  it('applies new-grad and explicit entry-level title rules identically across providers', () => {
+    const postings = ['lever', 'greenhouse', 'ashby'].flatMap((provider) => [
+      posting({ sourceId: `${provider}-acme`, externalId: `${provider}-new-grad`, title: 'Software Engineer, New Grad', content: [] }),
+      posting({ sourceId: `${provider}-acme`, externalId: `${provider}-entry`, title: 'Entry-Level Data Engineer', content: [] }),
+      posting({ sourceId: `${provider}-acme`, externalId: `${provider}-generic`, title: 'Software Engineer', content: [] }),
+      posting({ sourceId: `${provider}-acme`, externalId: `${provider}-junior`, title: 'Junior Software Engineer', content: [] }),
+    ]);
+    const result = processSnapshot({
+      sourceId: 'cross-provider', outcome: 'changed', complete: true, postings, rawCount: postings.length,
+      contentHash: 'hash', checkpoint: { sourceId: 'cross-provider', successfulFetches: 1 },
+    });
+    for (const provider of ['lever', 'greenhouse', 'ashby']) {
+      expect(result.decisions.filter(({ externalId }) => externalId.startsWith(provider)).map(({ outcome, reason }) => [outcome, reason])).toEqual([
+        ['included', 'source-policy'], ['included', 'source-policy'],
+        ['filtered', 'not-early-career'], ['filtered', 'not-early-career'],
+      ]);
+    }
+  });
 });

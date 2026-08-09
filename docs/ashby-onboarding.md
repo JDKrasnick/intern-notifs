@@ -1,9 +1,11 @@
 # Ashby discovery and admission
 
-Ashby admission is a review workflow, not a runtime adapter. It discovers board
-identities, probes the public contract, and validates committed human decisions.
-It never writes the source registry, publishes a board, or deploys infrastructure.
-Adapter, runtime, operations, and headed-browser work remain separate.
+Ashby admission and ingestion are separate trust stages. Admission discovers
+board identities, probes the public contract, and validates committed human
+decisions. The public posting adapter then produces strict, listed-only neutral
+snapshots for reviewed sources. Neither stage writes the registry, publishes a
+board, sends notifications, or deploys infrastructure. Scheduling, queues,
+persistence, alarms, promotion controls, and headed-browser work remain separate.
 
 ## Trust boundary
 
@@ -13,7 +15,9 @@ Adapter, runtime, operations, and headed-browser work remain separate.
 - Ownership requires an employer-controlled HTTPS page containing the exact board
   path. Ashby, aggregators, search results, and archives cannot establish it.
 - Initial admission requires at least one listed technical internship, co-op,
-  apprenticeship, or new-graduate role. A later closure does not revoke review.
+  apprenticeship, new-graduate program, or explicitly entry-level role. A later
+  closure does not revoke review. Generic titles, prose-only experience ranges,
+  and “junior” alone do not qualify.
 - The normal application host is `jobs.ashbyhq.com`. Any employer-controlled
   external host requires a recorded justification and human review timestamp.
 - Every new source enters `shadow`. Promotion to `published` is a separate human
@@ -29,6 +33,7 @@ npm run ashby:ledger
 npm run ashby:probe -- etched Deepgram --out artifacts/ashby-probes.json
 npm run ashby:manifest
 npm run ashby:reverify
+npm run test:ashby:live
 ```
 
 `ashby:ledger` scans the weekly catalog sources and writes the full candidate
@@ -45,6 +50,23 @@ rule, allowed hosts, and shadow/published status. Probe and admission timestamps
 must be within seven days, and future timestamps fail beyond five minutes of
 clock skew.
 `ashby:reverify` only re-reads employer evidence pages and reports drift.
+
+## Public posting adapter
+
+The adapter calls
+`posting-api/job-board/{exact-board-name}?includeCompensation=true` with a
+15-second attempt timeout. It rejects redirects, API version drift, malformed
+responses, duplicate UUIDs, invalid publication dates, and wrong-board job or
+Ashby application paths. Unlisted rows are removed before hashing and neutral
+processing. An external application URL is accepted only when its HTTPS host is
+recorded in the reviewed source; an off-allowlist row is withheld and reported
+without discarding the rest of a valid snapshot.
+
+Ashby's `employmentType: Intern` is a trusted posting-level lifecycle signal.
+Other employment types still require explicit early-career title wording. The
+shared processor—not Ashby—decides whether a qualifying role is technical.
+`test:ashby:live` is a read-only nightly contract across the five shadow boards;
+it deploys and publishes nothing.
 
 ## Human admission checklist
 
