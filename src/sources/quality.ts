@@ -187,7 +187,13 @@ export function qualityPolicyFor(sourceId: string): SourceQualityPolicy {
 }
 
 /** Shared runtime guard so sources cannot silently accept a parser-zero regression. */
-export function sourceQualityFailures(result: SourceFetchResult, previous: SourceCheckpoint | undefined): string[] {
+export function sourceQualityFailures(
+  result: SourceFetchResult,
+  previous: SourceCheckpoint | undefined,
+  options: { allowCompleteEmptySnapshot?: boolean } = {},
+): string[] {
+  if (options.allowCompleteEmptySnapshot && !result.notModified
+    && (result.rawRowCount ?? result.listings.length) === 0) return [];
   const configuredPolicy = sourceQualityPolicies.find((candidate) => candidate.id === result.sourceId);
   // Test adapters and one-off integrations are processed row-by-row by the
   // poller.  Applying the catalog-wide URL policy to those inputs here would

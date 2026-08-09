@@ -160,6 +160,8 @@ export interface SourceHealth {
   filteredCount?: number;
   withheldRows?: number;
   withheldCount?: number;
+  applicationLinksChecked?: number;
+  applicationLinkFailures?: number;
   durationMs: number;
   failureCategory?: SourceFailureCategory;
   lastFailureCategory?: SourceFailureCategory;

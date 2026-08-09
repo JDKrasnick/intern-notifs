@@ -89,7 +89,16 @@ async function fetchShadowWithRetry(
   throw lastError;
 }
 
-function emitShadowSuccess(sourceId: string, outcome: string, durationMs: number, raw: number, eligible: number, withheld: number) {
+function emitShadowSuccess(
+  sourceId: string,
+  outcome: string,
+  durationMs: number,
+  raw: number,
+  eligible: number,
+  withheld: number,
+  applicationLinksChecked: number,
+  applicationLinkFailures: number,
+) {
   console.log(JSON.stringify({
     _aws: {
       Timestamp: Date.now(),
@@ -102,6 +111,8 @@ function emitShadowSuccess(sourceId: string, outcome: string, durationMs: number
           { Name: 'RawListingCount', Unit: 'Count' },
           { Name: 'EligibleListingCount', Unit: 'Count' },
           { Name: 'ListingWithheld', Unit: 'Count' },
+          { Name: 'ApplicationLinksChecked', Unit: 'Count' },
+          { Name: 'ApplicationLinkFailures', Unit: 'Count' },
         ],
       }],
     },
@@ -115,6 +126,8 @@ function emitShadowSuccess(sourceId: string, outcome: string, durationMs: number
     RawListingCount: raw,
     EligibleListingCount: eligible,
     ListingWithheld: withheld,
+    ApplicationLinksChecked: applicationLinksChecked,
+    ApplicationLinkFailures: applicationLinkFailures,
   }));
 }
 
@@ -144,6 +157,7 @@ async function validateShadowLinks(
   if (listings.length && failures / listings.length > SHADOW_LINK_FAILURE_THRESHOLD) {
     throw new Error(`${failures}/${listings.length} eligible Ashby application links failed shadow validation`);
   }
+  return { checked: listings.length, failures };
 }
 
 export async function runAshbyBoard(
@@ -179,36 +193,44 @@ export async function runAshbyBoard(
         previous,
         dependencies.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))),
       );
+      let linkValidation = {
+        checked: previousHealth?.applicationLinksChecked ?? 0,
+        failures: previousHealth?.applicationLinkFailures ?? 0,
+      };
       if (!result.notModified) {
         if ((previous?.lastRawCount ?? 0) > 0 && (result.rawRowCount ?? 0) === 0) {
           throw new SourceFetchError(`${source.id}: rejected an unexpected raw-zero snapshot`, 'empty');
         }
-        await validateShadowLinks(result.listings, validate);
+        linkValidation = await validateShadowLinks(result.listings, validate);
       }
       await dependencies.store.putCheckpoint({ ...result.checkpoint, sourceId: checkpointId });
       const completedAt = new Date().toISOString();
       const counts = result.processed?.counts;
       const unchanged304 = result.unchangedReason === 'not_modified';
-      const health = successfulSourceHealth({
-        sourceId: source.id,
-        employerId: source.id.replace(/^ashby-/, ''),
-        provider: 'ashby',
-        region: source.identity.apiRegion,
-        previous: previousHealth,
-        startedAt,
-        completedAt,
-        runId: message.runId,
-        outcome: !result.notModified
-          ? 'success_changed'
-          : result.unchangedReason === 'not_modified' ? 'success_unchanged_304' : 'success_unchanged_hash',
-        etag: result.checkpoint.etag,
-        contentHash: result.checkpoint.contentHash,
-        rawRows: unchanged304 ? previous?.lastRawCount ?? previousHealth?.rawRows : counts?.raw ?? result.rawRowCount,
-        validRows: unchanged304 ? previousHealth?.validRows : counts?.valid,
-        eligibleRows: unchanged304 ? previous?.lastRowCount ?? previousHealth?.eligibleRows : counts?.eligible ?? result.listings.length,
-        filteredRows: unchanged304 ? previousHealth?.filteredRows : counts?.filtered,
-        withheldRows: unchanged304 ? previous?.lastWithheldRowCount ?? previousHealth?.withheldRows : counts?.withheld ?? result.rejectedApplicationUrls?.length,
-      });
+      const health = {
+        ...successfulSourceHealth({
+          sourceId: source.id,
+          employerId: source.id.replace(/^ashby-/, ''),
+          provider: 'ashby',
+          region: source.identity.apiRegion,
+          previous: previousHealth,
+          startedAt,
+          completedAt,
+          runId: message.runId,
+          outcome: !result.notModified
+            ? 'success_changed'
+            : result.unchangedReason === 'not_modified' ? 'success_unchanged_304' : 'success_unchanged_hash',
+          etag: result.checkpoint.etag,
+          contentHash: result.checkpoint.contentHash,
+          rawRows: unchanged304 ? previous?.lastRawCount ?? previousHealth?.rawRows : counts?.raw ?? result.rawRowCount,
+          validRows: unchanged304 ? previousHealth?.validRows : counts?.valid,
+          eligibleRows: unchanged304 ? previous?.lastRowCount ?? previousHealth?.eligibleRows : counts?.eligible ?? result.listings.length,
+          filteredRows: unchanged304 ? previousHealth?.filteredRows : counts?.filtered,
+          withheldRows: unchanged304 ? previous?.lastWithheldRowCount ?? previousHealth?.withheldRows : counts?.withheld ?? result.rejectedApplicationUrls?.length,
+        }),
+        applicationLinksChecked: linkValidation.checked,
+        applicationLinkFailures: linkValidation.failures,
+      };
       await dependencies.store.putSourceHealth(health);
       emitShadowSuccess(
         source.id,
@@ -217,6 +239,8 @@ export async function runAshbyBoard(
         health.rawRows ?? 0,
         health.eligibleRows ?? 0,
         health.withheldRows ?? 0,
+        health.applicationLinksChecked,
+        health.applicationLinkFailures,
       );
       return {
         sourceId: source.id,
@@ -278,7 +302,10 @@ export async function runAshbyBoard(
     }
   }
 
-  const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate).poll({ runId: message.runId });
+  const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate).poll({
+    runId: message.runId,
+    allowCompleteEmptySnapshot: true,
+  });
   if (poll.failures.length) throw new Error(poll.failures.join('; '));
   const publishedHealth = await dependencies.store.getSourceHealth(source.id);
   if (publishedHealth) {

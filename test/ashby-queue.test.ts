@@ -54,7 +54,45 @@ describe('Ashby queue worker', () => {
     expect(store.jobs.size).toBe(0);
     expect(await store.getCheckpoint(`shadow-${shadowSource.id}`)).toMatchObject({ lastRawCount: 1, lastRowCount: 1 });
     expect(await store.getCheckpoint(shadowSource.id)).toBeUndefined();
-    expect(await store.getSourceHealth(shadowSource.id)).toMatchObject({ provider: 'ashby', region: 'global', consecutiveFailures: 0 });
+    expect(await store.getSourceHealth(shadowSource.id)).toMatchObject({
+      provider: 'ashby', region: 'global', consecutiveFailures: 0,
+      applicationLinksChecked: 1, applicationLinkFailures: 0,
+    });
+  });
+
+  it('retains tolerated shadow link failures for per-board verification', async () => {
+    const store = new MemoryInternshipStore();
+    const jobs = Array.from({ length: 5 }, (_, index) => {
+      const id = `${index + 1}23e4567-e89b-42d3-a456-42661417400${index}`;
+      return {
+        ...posting, id,
+        jobUrl: `https://jobs.ashbyhq.com/${shadowSource.identity.boardKey}/${id}`,
+        applyUrl: `https://jobs.ashbyhq.com/${shadowSource.identity.boardKey}/${id}/application`,
+      };
+    });
+    await runAshbyBoard(message(), {
+      store, sources: [shadowSource], fetchImpl: async () => response(jobs),
+      linkValidator: async (url) => {
+        if (url.includes(jobs[0]!.id)) throw new Error('temporary link failure');
+        return url;
+      },
+    });
+    expect(await store.getSourceHealth(shadowSource.id)).toMatchObject({
+      applicationLinksChecked: 5,
+      applicationLinkFailures: 1,
+    });
+  });
+
+  it('rejects a shadow snapshot when link failures exceed the threshold', async () => {
+    const store = new MemoryInternshipStore();
+    await expect(runAshbyBoard(message(), {
+      store, sources: [shadowSource], fetchImpl: async () => response(),
+      linkValidator: async () => { throw new Error('link unavailable'); },
+    })).rejects.toThrow('1/1 eligible Ashby application links failed');
+    expect(await store.getSourceHealth(shadowSource.id)).toMatchObject({
+      failureCategory: 'link',
+      consecutiveFailures: 1,
+    });
   });
 
   it('rejects a suspicious raw-zero without advancing its checkpoint', async () => {
@@ -80,6 +118,20 @@ describe('Ashby queue worker', () => {
     }];
     await runAshbyBoard(message(published.id), dependencies);
     expect(await store.pendingSms()).toHaveLength(1);
+  });
+
+  it('closes the last published role after two complete empty snapshots', async () => {
+    const published: ReviewedAshbySource = { ...shadowSource, status: 'published' };
+    const store = new MemoryInternshipStore();
+    let jobs = [posting];
+    const dependencies = { store, sources: [published], fetchImpl: async () => response(jobs), linkValidator: async (url: string) => url };
+    await runAshbyBoard(message(published.id), dependencies);
+    jobs = [];
+    await runAshbyBoard(message(published.id), dependencies);
+    expect([...store.jobs.values()][0]).toMatchObject({ open: true });
+    await runAshbyBoard(message(published.id), dependencies);
+    expect([...store.jobs.values()][0]).toMatchObject({ open: false });
+    expect(await store.pendingSms()).toEqual([]);
   });
 
   it('returns failed records and blocks later work in the same FIFO group', async () => {

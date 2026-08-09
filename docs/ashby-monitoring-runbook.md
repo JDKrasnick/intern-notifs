@@ -24,7 +24,8 @@ has at least three successful snapshots spanning at least 24 hours. For each
 board verify:
 
 - exact Ashby identity and schema, zero malformed rows, and no path violations;
-- no unexplained application host and link failures at or below 20%;
+- no unexplained application host and link failures at or below 20%; inspect
+  `applicationLinksChecked` and `applicationLinkFailures` for each board;
 - reviewed inclusion/exclusion samples and a rehearsed quiet baseline;
 - health/checkpoints exist, but there are no catalog, occurrence, outbox,
   user-store, or publisher writes from the shadow run.

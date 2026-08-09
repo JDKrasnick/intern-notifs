@@ -99,6 +99,8 @@ function publicSource(
     rawRows: health?.rawRows ?? checkpoint?.lastRawRowCount,
     eligibleRows: health?.eligibleRows ?? checkpoint?.lastRowCount,
     withheldRows: health?.withheldRows ?? checkpoint?.lastWithheldRowCount ?? 0,
+    applicationLinksChecked: health?.applicationLinksChecked,
+    applicationLinkFailures: health?.applicationLinkFailures,
     recentRuns: recentRuns.length,
     successRate: recentRuns.length ? successfulRuns / recentRuns.length : lastSuccessAt ? 1 : 0,
   };
