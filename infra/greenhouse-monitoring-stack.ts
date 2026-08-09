@@ -178,7 +178,7 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
     schedulerDeadLetterQueue.grantSendMessages(schedulerRole);
     new scheduler.CfnSchedule(this, 'GreenhousePollSchedule', {
       flexibleTimeWindow: { mode: 'OFF' },
-      scheduleExpression: 'cron(2,12,22,32,42,52 * * * ? *)',
+      scheduleExpression: 'cron(12 * * * ? *)',
       scheduleExpressionTimezone: 'UTC',
       state: 'ENABLED',
       target: {
