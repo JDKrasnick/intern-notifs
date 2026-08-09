@@ -138,6 +138,16 @@ async function fleetStatus(
   };
 }
 
+async function applicationAlarms(cloudwatch: CloudWatchClient) {
+  const response = await cloudwatch.send(new DescribeAlarmsCommand({ AlarmNamePrefix: 'InternNotifs-' }));
+  return (response.MetricAlarms ?? []).map((alarm) => ({
+    name: alarm.AlarmName,
+    state: alarm.StateValue,
+    updatedAt: alarm.StateUpdatedTimestamp?.toISOString(),
+    description: alarm.AlarmDescription,
+  }));
+}
+
 async function providerFleets(
   configured: FleetConfiguration,
   ssm: SSMClient,
@@ -378,19 +388,28 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         dependencies.ssm ?? new SSMClient({}),
         dependencies.parameterPrefix,
       );
-      const fleetRows = (await Promise.all(
+      const cloudwatch = dependencies.cloudwatch ?? new CloudWatchClient({});
+      const [fleetRows, allApplicationAlarms, legacyPendingNotifications] = await Promise.all([
+        Promise.all(
         (Object.entries(configuredFleets) as Array<[Provider, FleetConfiguration[Provider]]>)
           .flatMap(([provider, configuration]) => configuration
-            ? [fleetStatus(provider, configuration, dependencies.sqs ?? new SQSClient({}), dependencies.cloudwatch ?? new CloudWatchClient({}))]
+            ? [fleetStatus(provider, configuration, dependencies.sqs ?? new SQSClient({}), cloudwatch)]
             : []),
-      ));
+        ),
+        applicationAlarms(cloudwatch),
+        dependencies.store.pendingSms().then((jobs) => jobs.length),
+      ]);
+      const alarmsByName = new Map(allApplicationAlarms.flatMap((alarm) => alarm.name ? [[alarm.name, alarm] as const] : []));
+      for (const alarm of fleetRows.flatMap((row) => row.alarms)) {
+        if (alarm.name) alarmsByName.set(alarm.name, alarm);
+      }
       const fleet = {
         queue: fleetRows.reduce((total, row) => ({
           waiting: total.waiting + row.queue.waiting,
           processing: total.processing + row.queue.processing,
           deadLettered: total.deadLettered + row.queue.deadLettered,
         }), { waiting: 0, processing: 0, deadLettered: 0 }),
-        alarms: fleetRows.flatMap((row) => row.alarms),
+        alarms: [...alarmsByName.values()],
       };
       const cutoff = timestamp - 24 * 60 * 60_000;
       const failedExtractions24h = healthRecords.reduce((total, record) => total + (record.recentRuns ?? [])
@@ -404,6 +423,7 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         activeAlarms: fleet.alarms.filter((alarm) => alarm.state === 'ALARM').length,
         queuedMessages: fleet.queue.waiting,
         processingMessages: fleet.queue.processing,
+        legacyPendingNotifications,
       };
       const order: Record<SourceHealthState, number> = { quarantined: 0, degraded: 1, 'never-succeeded': 2, healthy: 3 };
       return reply(200, {

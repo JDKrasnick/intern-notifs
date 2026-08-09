@@ -53,6 +53,7 @@
 - [x] Complete Lever monitoring with shadow and published health, regional metrics, freshness incidents, bounded backoff, shared operator controls, dashboards, and recovery runbooks.
 - [x] Add Ashby URL-derived discovery, metadata-only public probing, first-party ownership evidence, deterministic admission/re-verification gates, weekly candidate-ledger upload, and five reviewed shadow boards (Etched, Deepgram, Cohere, Mistral AI, and Partly).
 - [ ] Implement the separately scoped Ashby adapter, runtime, operations, and headed-browser workflows; admission alone does not publish or schedule a board.
+- [x] Add human-readable source tags to default internship notifications for community job boards, Greenhouse, and Lever.
 - [ ] Add job freshness/source labels and notification deep links to the mobile product.
 - [ ] Add user-facing settings, account deletion, and data export surface.
 - [x] Add source-quality reports, drift gates, nightly live probing, source-candidate review artifacts, and Firecrawl discovery-only workflow.
