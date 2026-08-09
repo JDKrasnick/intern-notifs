@@ -8,7 +8,9 @@ import {
   type SimpleApplicantValues,
 } from '../src/greenhouse-headed.js';
 import { detectLeverApplication, isLeverApplicationUrl } from '../src/lever-headed.js';
+import { detectAshbyApplication, isAshbyApplicationUrl } from '../src/ashby-headed.js';
 import { nextFocusableApplicationField } from '../src/headed-focus.js';
+import { headedUserTurnReason, type UserTurnReason } from '../src/headed-user-turn.js';
 import { shouldShowBrowserCompanion } from '../src/companion-surface.js';
 
 declare const chrome: {
@@ -75,6 +77,7 @@ function snapshot(): PageSnapshot {
       role: element.tagName === 'BUTTON' ? 'button' : 'link',
       visible: isVisible(element),
       enabled: isEnabled(element),
+      completed: input.type === 'checkbox' || input.type === 'radio' ? input.checked : Boolean(input.value.trim()),
     };
   });
   const fields: GreenhouseField[] = Array.from(document.querySelectorAll<HTMLElement>('input, textarea, select')).map((element, index) => {
@@ -135,8 +138,32 @@ function isSimpleAssistable(element: HTMLElement) {
   );
 }
 
+function currentUserTurn(page: PageSnapshot, profile: StoredProfile): UserTurnReason | undefined {
+  const applicant = values(profile);
+  if (page.challenge) return 'verification';
+  return applicant ? headedUserTurnReason(page, planGreenhouseFields(page, applicant)) : undefined;
+}
+
+function turnMessage(reason: UserTurnReason) {
+  if (reason === 'verification') return 'Your turn — finish verification, then select Continue.';
+  if (reason === 'sensitive-question') return 'Your turn — answer the sensitive question, then select Continue.';
+  return 'Your turn — complete the required field, then select Continue.';
+}
+
+function setYourTurn(reason: UserTurnReason) {
+  const button = document.querySelector<HTMLButtonElement>('#internnotifs-quick-fill-button');
+  if (button) button.textContent = 'Continue';
+  setStatus(turnMessage(reason));
+}
+
+function setReadyButton() {
+  const button = document.querySelector<HTMLButtonElement>('#internnotifs-quick-fill-button');
+  if (button) button.textContent = 'Quick fill';
+}
+
 function advanceFrom(element: HTMLElement) {
   if (filling || currentProfile.advance === false || !isFocusable(element) || !isSimpleAssistable(element)) return;
+  if (currentUserTurn(snapshot(), currentProfile)) return;
   const fields = Array.from(document.querySelectorAll<HTMLElement>('input, textarea, select')).map((candidate, index) => ({
     id: String(index),
     completed: candidate === element ? Boolean((candidate as HTMLInputElement).value.trim()) : Boolean((candidate as HTMLInputElement).value?.trim()),
@@ -156,6 +183,9 @@ function fillCurrentPage(profile: StoredProfile) {
   const applicant = values(profile);
   if (!applicant) return setStatus('Add your email in the extension first.');
   const page = snapshot();
+  const blocked = currentUserTurn(page, profile);
+  if (blocked) return setYourTurn(blocked);
+  setReadyButton();
   const planned = planGreenhouseFields(page, applicant);
   filling = true;
   let filled = 0;
@@ -183,11 +213,16 @@ function fillCurrentPage(profile: StoredProfile) {
     firstEmpty.focus({ preventScroll: true });
     firstEmpty.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
+  const handoff = currentUserTurn(snapshot(), profile);
+  if (handoff) return setYourTurn(handoff);
   setStatus(filled ? `Filled ${filled} contact field${filled === 1 ? '' : 's'}.` : 'Contact details are already filled.');
 }
 
 function runQuickFill() {
   const page = snapshot();
+  const blocked = currentUserTurn(page, currentProfile);
+  if (blocked) return setYourTurn(blocked);
+  setReadyButton();
   if (isGreenhouseApplicationUrl(page.url)) {
     const quickApply = detectGreenhouseQuickApply(page);
     if (quickApply.outcome === 'ready') {
@@ -199,11 +234,19 @@ function runQuickFill() {
       setStatus('Opening Quick Apply…');
       return;
     }
-    if (quickApply.reason === 'challenge') return setStatus('Finish the verification first.');
+    if (quickApply.reason === 'challenge') return setYourTurn('verification');
   }
   if (isLeverApplicationUrl(page.url)) {
     const lever = detectLeverApplication(page);
-    if (lever.outcome === 'manual') return setStatus('Finish the verification first.');
+    if (lever.outcome === 'manual') return setYourTurn('verification');
+  }
+  if (isAshbyApplicationUrl(page.url)) {
+    const ashby = detectAshbyApplication(page);
+    if (ashby.outcome === 'manual') {
+      return ashby.reason === 'challenge'
+        ? setYourTurn('verification')
+        : setStatus('This Ashby application is no longer approved for assistance.');
+    }
   }
   fillCurrentPage(currentProfile);
 }

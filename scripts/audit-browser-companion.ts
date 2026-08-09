@@ -1,5 +1,6 @@
 import { isGreenhouseApplicationUrl } from '../src/greenhouse-headed.js';
 import { isLeverApplicationUrl } from '../src/lever-headed.js';
+import { isAshbyApplicationUrl } from '../src/ashby-headed.js';
 
 const catalogUrl = 'https://5dx7gpfa7d.execute-api.us-east-1.amazonaws.com/jobs?status=open&limit=50';
 
@@ -30,14 +31,16 @@ for (const job of catalog.jobs ?? []) {
 }
 
 const catalogHosts = [...uniqueByHost.values()];
-const reviewedSamples = catalogHosts.filter((job) => isGreenhouseApplicationUrl(job.applyUrl) || isLeverApplicationUrl(job.applyUrl));
-const manualSamples = catalogHosts.filter((job) => !isGreenhouseApplicationUrl(job.applyUrl) && !isLeverApplicationUrl(job.applyUrl));
+const reviewedSamples = catalogHosts.filter((job) => isGreenhouseApplicationUrl(job.applyUrl) || isLeverApplicationUrl(job.applyUrl) || isAshbyApplicationUrl(job.applyUrl));
+const manualSamples = catalogHosts.filter((job) => !isGreenhouseApplicationUrl(job.applyUrl) && !isLeverApplicationUrl(job.applyUrl) && !isAshbyApplicationUrl(job.applyUrl));
 const samples = [...reviewedSamples, ...manualSamples].slice(0, 16);
 const report = await Promise.all(samples.map(async (job) => {
   const reviewed = isGreenhouseApplicationUrl(job.applyUrl)
     ? 'greenhouse'
     : isLeverApplicationUrl(job.applyUrl)
       ? 'lever'
+      : isAshbyApplicationUrl(job.applyUrl)
+        ? 'ashby'
       : 'manual';
   try {
     const page = await fetchPage(job.applyUrl);
