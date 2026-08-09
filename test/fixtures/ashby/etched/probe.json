@@ -1,0 +1,12 @@
+{
+  "probedAt": "2026-08-09T13:16:04.895Z",
+  "retention": "metadata-only",
+  "results": [{
+    "state": "ok", "boardName": "etched", "endpoint": "https://api.ashbyhq.com/posting-api/job-board/etched",
+    "apiVersion": "1", "apiRegion": "global", "rawRows": 109, "listedRows": 109, "unlistedRows": 0,
+    "malformedRows": 0, "boardPathViolations": 0, "technicalEarlyCareerRoles": 6,
+    "geographicCoverage": ["Austin", "Remote", "San Jose", "Taipei"],
+    "applicationHostSummary": { "jobs.ashbyhq.com": 109 },
+    "qualifyingRoleSamples": [{ "id": "27e5bd6b-9357-45f0-9e79-cfa2bf4eeba8", "title": "Chip Simulation Software Intern", "location": "San Jose" }]
+  }]
+}

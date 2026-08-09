@@ -1,0 +1,27 @@
+name: Ashby admission
+on:
+  push:
+    paths: &ashby_paths
+      - 'src/sources/ashby-*'
+      - 'src/sources/reviewed-source.ts'
+      - 'scripts/ashby-*'
+      - 'test/ashby.test.ts'
+      - 'test/fixtures/ashby/**'
+      - 'docs/ashby-onboarding.md'
+      - '.github/workflows/ashby.yml'
+  pull_request:
+    paths: *ashby_paths
+permissions: { contents: read }
+jobs:
+  admission-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run ashby:manifest
+      - run: npx vitest run test/ashby.test.ts
+      - run: npm run test:unit

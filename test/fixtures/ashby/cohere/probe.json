@@ -1,0 +1,12 @@
+{
+  "probedAt": "2026-08-09T13:16:04.895Z",
+  "retention": "metadata-only",
+  "results": [{
+    "state": "ok", "boardName": "cohere", "endpoint": "https://api.ashbyhq.com/posting-api/job-board/cohere",
+    "apiVersion": "1", "apiRegion": "global", "rawRows": 141, "listedRows": 141, "unlistedRows": 0,
+    "malformedRows": 0, "boardPathViolations": 0, "technicalEarlyCareerRoles": 3,
+    "geographicCoverage": ["Berlin", "Boston", "Calgary", "Canada", "Dubai", "Europe", "France", "Germany", "Korea", "London", "Miami", "Middle East", "Montreal", "New York", "Ottawa", "Paris", "Riyadh", "San Francisco", "Saudi Arabia", "Singapore", "Tokyo", "Toronto", "United Kingdom", "United States", "Washington, DC"],
+    "applicationHostSummary": { "jobs.ashbyhq.com": 141 },
+    "qualifyingRoleSamples": [{ "id": "8c035d3d-081d-4c8a-914a-72f4efaad254", "title": "Software Engineer Intern (Fall / Winter 2026)", "location": "Canada" }]
+  }]
+}

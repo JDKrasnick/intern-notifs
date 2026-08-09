@@ -1,0 +1,14 @@
+{
+  "provider": "ashby",
+  "boardKey": "Deepgram",
+  "apiRegion": "global",
+  "careersUrl": "https://deepgram.com/careers",
+  "firstPartyEvidenceUrl": "https://deepgram.com/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/Deepgram/dc8693b5-72ce-4ca3-ab15-9c8434d35da1",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/Deepgram/dc8693b5-72ce-4ca3-ab15-9c8434d35da1\">Software Engineering Internship</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/Deepgram/dc8693b5-72ce-4ca3-ab15-9c8434d35da1",
+  "verifiedAt": "2026-08-09T00:00:00Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [{ "host": "jobs.ashbyhq.com" }]
+}

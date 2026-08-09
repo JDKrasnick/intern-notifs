@@ -1,0 +1,14 @@
+{
+  "provider": "ashby",
+  "boardKey": "etched",
+  "apiRegion": "global",
+  "careersUrl": "https://www.etched.com/join",
+  "firstPartyEvidenceUrl": "https://www.etched.com/join",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/etched/27e5bd6b-9357-45f0-9e79-cfa2bf4eeba8",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/etched/27e5bd6b-9357-45f0-9e79-cfa2bf4eeba8\">Chip Simulation Software Intern</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/etched/27e5bd6b-9357-45f0-9e79-cfa2bf4eeba8",
+  "verifiedAt": "2026-08-09T00:00:00Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 6,
+  "allowedApplicationHosts": [{ "host": "jobs.ashbyhq.com" }]
+}

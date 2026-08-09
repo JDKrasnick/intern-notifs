@@ -1,0 +1,12 @@
+{
+  "probedAt": "2026-08-09T13:16:04.895Z",
+  "retention": "metadata-only",
+  "results": [{
+    "state": "ok", "boardName": "partly.com", "endpoint": "https://api.ashbyhq.com/posting-api/job-board/partly.com",
+    "apiVersion": "1", "apiRegion": "global", "rawRows": 44, "listedRows": 44, "unlistedRows": 0,
+    "malformedRows": 0, "boardPathViolations": 0, "technicalEarlyCareerRoles": 3,
+    "geographicCoverage": ["Auckland", "Austin, Texas", "Birmingham", "Christchurch", "Finland", "London, Remote", "London, United Kingdom", "Manchester, United Kingdom", "New Zealand, Remote", "Philippines, Remote", "Scotland"],
+    "applicationHostSummary": { "jobs.ashbyhq.com": 44 },
+    "qualifyingRoleSamples": [{ "id": "899fcf9b-07ec-4289-993f-57a2aba0f26d", "title": "Intern/ Graduate Software Engineer, NZ", "location": "Christchurch" }]
+  }]
+}

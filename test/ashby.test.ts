@@ -1,0 +1,181 @@
+import { describe, expect, it } from 'vitest';
+import { ashbyAdmissionViolations } from '../src/sources/ashby-admission.js';
+import { ashbyPilotFallbacks, reviewedAshbySources } from '../src/sources/ashby-config.js';
+import { ashbyEvidenceViolations, reviewedAshbySourceFromEvidence, type AshbyOwnershipEvidence } from '../src/sources/ashby-evidence.js';
+import { ashbyBoardNameFromUrl, buildAshbyCandidateLedger } from '../src/sources/ashby-ledger.js';
+import { collectAshbyManifestViolations, nodeAshbyManifestFs, type AshbyManifestFs } from '../src/sources/ashby-manifest.js';
+import { probeAshbyBoard, type AshbyProbeResult } from '../src/sources/ashby-probe.js';
+import { recheckAshbyEvidence } from '../src/sources/ashby-reverify.js';
+import type { ReviewedSourceRecord } from '../src/sources/reviewed-source.js';
+
+const evidence = (overrides: Partial<AshbyOwnershipEvidence> = {}): AshbyOwnershipEvidence => ({
+  provider: 'ashby', boardKey: 'acme.io', apiRegion: 'global',
+  careersUrl: 'https://acme.io/careers', firstPartyEvidenceUrl: 'https://www.acme.io/careers',
+  exactBoardUrl: 'https://jobs.ashbyhq.com/acme.io',
+  evidenceExcerpt: '<a href="https://jobs.ashbyhq.com/acme.io">Open roles</a>',
+  observedJobUrl: 'https://jobs.ashbyhq.com/acme.io/11111111-1111-4111-8111-111111111111',
+  verifiedAt: '2026-08-09T00:00:00Z', state: 'ownership-verified', initialTechnicalEarlyCareerRoles: 1,
+  allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], ...overrides,
+});
+
+const source = (overrides: Partial<ReviewedSourceRecord> = {}): ReviewedSourceRecord => ({
+  id: 'ashby-acme-io', company: 'Acme', identity: { provider: 'ashby', boardKey: 'acme.io', apiRegion: 'global' },
+  careersUrl: 'https://acme.io/careers', admittedAt: '2026-08-09T00:00:00Z', evidenceState: 'ownership-verified',
+  allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow', ...overrides,
+});
+
+const row = (id: string, title: string, overrides: Record<string, unknown> = {}) => ({
+  id, title, location: 'Toronto', isListed: true, employmentType: 'Intern',
+  jobUrl: `https://jobs.ashbyhq.com/acme.io/${id}`,
+  applyUrl: `https://jobs.ashbyhq.com/acme.io/${id}/application`, ...overrides,
+});
+
+const response = (payload: unknown, init: ResponseInit = {}) => new Response(JSON.stringify(payload), { status: 200, ...init });
+
+async function okProbe(rows = [row('one', 'Software Engineer Intern')]): Promise<AshbyProbeResult> {
+  return probeAshbyBoard('acme.io', (async () => response({ apiVersion: '1', jobs: rows })) as typeof fetch);
+}
+
+function fakeFs(files: Record<string, unknown>): AshbyManifestFs {
+  return {
+    listBoardDirs: (root) => [...new Set(Object.keys(files).filter((path) => path.startsWith(`${root}/`)).map((path) => path.slice(root.length + 1).split('/')[0]!))],
+    fileExists: (path) => path in files,
+    readJson: (path) => { if (!(path in files)) throw new Error('missing'); if (files[path] === 'INVALID') throw new SyntaxError('bad'); return files[path]; },
+  };
+}
+
+describe('Ashby candidate ledger', () => {
+  it('extracts exact, case-sensitive board identities from observed URLs', () => {
+    expect(ashbyBoardNameFromUrl('https://jobs.ashbyhq.com/Deepgram/abc/application?x=1')).toBe('Deepgram');
+    expect(ashbyBoardNameFromUrl('https://jobs.ashbyhq.com/partly.com/embed')).toBe('partly.com');
+    expect(ashbyBoardNameFromUrl('https://jobs.ashbyhq.com/cohere')).toBe('cohere');
+  });
+
+  it('rejects ambiguous paths, insecure URLs, and malicious lookalike hosts', () => {
+    for (const value of [
+      'http://jobs.ashbyhq.com/acme', 'https://jobs.ashbyhq.com.evil.test/acme',
+      'https://jobs.ashbyhq.com@evil.test/acme', 'https://api.ashbyhq.com/acme',
+      'https://jobs.ashbyhq.com/acme/a/not-application', 'not a url',
+    ]) expect(ashbyBoardNameFromUrl(value)).toBeUndefined();
+  });
+
+  it('records variants, sources, role counts, geography, timestamps, ambiguity, and deterministic ordering', () => {
+    const result = buildAshbyCandidateLedger([
+      { sourceId: 'b', company: 'Acme Inc', location: 'New York', applyUrl: 'https://jobs.ashbyhq.com/acme/a/application' },
+      { sourceId: 'a', company: 'Acme', location: 'Toronto', applyUrl: 'https://jobs.ashbyhq.com/acme/b/application' },
+      { sourceId: 'a', company: 'Beta', location: 'Paris', applyUrl: 'https://jobs.ashbyhq.com/beta/c/application' },
+    ], { observedAt: '2026-08-09T01:02:03Z' });
+    expect(result.map(({ boardName }) => boardName)).toEqual(['acme', 'beta']);
+    expect(result[0]).toMatchObject({
+      observedCompanyVariants: ['Acme', 'Acme Inc'], referencingSources: ['a', 'b'], roleCount: 2,
+      geographicCoverage: ['New York', 'Toronto'], firstSeenAt: '2026-08-09T01:02:03Z',
+      lastSeenAt: '2026-08-09T01:02:03Z', reviewState: 'ambiguous-owner',
+    });
+  });
+
+  it('never guesses a board name and omits registered identities', () => {
+    expect(buildAshbyCandidateLedger([
+      { sourceId: 'a', company: 'Mistral AI', location: 'Paris', applyUrl: 'https://example.com/jobs' },
+      { sourceId: 'a', company: 'Notion', location: 'SF', applyUrl: 'https://jobs.ashbyhq.com/notion/id/application' },
+    ], { registeredBoards: ['notion'] })).toEqual([]);
+  });
+});
+
+describe('Ashby read-only probe', () => {
+  it('validates version/schema and qualifies only listed technical early-career roles', async () => {
+    const result = await okProbe([
+      row('one', 'Software Engineer Intern'), row('two', 'Finance Intern'),
+      row('three', 'Secret Software Intern', { isListed: false, location: 'Secret place' }),
+      row('four', 'Staff Software Engineer', { employmentType: 'FullTime' }),
+    ]);
+    expect(result).toMatchObject({ state: 'ok', apiVersion: '1', rawRows: 4, listedRows: 3, unlistedRows: 1, technicalEarlyCareerRoles: 1 });
+    expect(JSON.stringify(result)).not.toContain('Secret Software Intern');
+    expect(JSON.stringify(result)).not.toContain('Secret place');
+  });
+
+  it('classifies empty, malformed, version-drift, HTTP, and transport responses', async () => {
+    expect(await okProbe([])).toMatchObject({ state: 'ok', technicalEarlyCareerRoles: 0 });
+    expect((await probeAshbyBoard('acme.io', (async () => response({ apiVersion: '1', jobs: [{}] })) as typeof fetch))).toMatchObject({ state: 'ok', malformedRows: 1 });
+    expect((await probeAshbyBoard('acme.io', (async () => response({ apiVersion: '2', jobs: [] })) as typeof fetch)).state).toBe('api-version-error');
+    expect((await probeAshbyBoard('acme.io', (async () => response({ apiVersion: '1' })) as typeof fetch)).state).toBe('schema-error');
+    expect((await probeAshbyBoard('acme.io', (async () => new Response('{', { status: 200 })) as typeof fetch)).state).toBe('json-error');
+    expect((await probeAshbyBoard('acme.io', (async () => new Response('', { status: 404 })) as typeof fetch)).state).toBe('not-found');
+    expect((await probeAshbyBoard('acme.io', (async () => { throw new Error('offline'); }) as typeof fetch)).state).toBe('transport-error');
+  });
+
+  it('rejects redirects and counts wrong-board paths', async () => {
+    const redirected = response({ apiVersion: '1', jobs: [] });
+    Object.defineProperties(redirected, { redirected: { value: true }, url: { value: 'https://api.ashbyhq.com/other' } });
+    expect((await probeAshbyBoard('acme.io', (async () => redirected) as typeof fetch)).state).toBe('redirect-error');
+    const result = await okProbe([row('one', 'Software Intern', { jobUrl: 'https://jobs.ashbyhq.com/other/one' })]);
+    expect(result).toMatchObject({ state: 'ok', boardPathViolations: 1 });
+  });
+
+  it('records custom application hosts without automatically allowing them', async () => {
+    const result = await okProbe([row('one', 'Software Intern', { applyUrl: 'https://careers.acme.io/apply/one' })]);
+    expect(result).toMatchObject({ state: 'ok', boardPathViolations: 0, applicationHostSummary: { 'careers.acme.io': 1 } });
+  });
+});
+
+describe('Ashby ownership and admission evidence', () => {
+  it('requires first-party evidence containing the exact board link', () => {
+    expect(ashbyEvidenceViolations(evidence())).toEqual([]);
+    expect(ashbyEvidenceViolations(evidence({ evidenceExcerpt: '<a href="https://jobs.ashbyhq.com/acme.io-2">Jobs</a>' })))
+      .toContain('evidenceExcerpt does not contain the exact Ashby board link');
+  });
+
+  it('blocks Ashby itself and aggregators from establishing ownership', () => {
+    for (const url of ['https://jobs.ashbyhq.com/acme.io', 'https://linkedin.com/jobs/1', 'https://web.archive.org/example']) {
+      expect(ashbyEvidenceViolations(evidence({ careersUrl: url, firstPartyEvidenceUrl: url }))).toContain('careersUrl is not an employer-controlled HTTPS URL');
+    }
+  });
+
+  it('requires explicit justification and review time for employer-controlled external application hosts', () => {
+    expect(ashbyEvidenceViolations(evidence({ allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }, { host: 'careers.acme.io' }] })))
+      .toContain('external application host careers.acme.io lacks human-reviewed justification and timestamp');
+    expect(ashbyEvidenceViolations(evidence({ allowedApplicationHosts: [
+      { host: 'jobs.ashbyhq.com' }, { host: 'careers.acme.io', justification: 'Employer application form', reviewedAt: '2026-08-09T00:00:00Z' },
+    ] }))).toEqual([]);
+  });
+
+  it('proposes shadow only and gates current technical roles and unreviewed hosts', async () => {
+    const probe = await okProbe([]);
+    const proposed = reviewedAshbySourceFromEvidence(evidence(), 'Acme');
+    expect(proposed.status).toBe('shadow');
+    expect(ashbyAdmissionViolations({ reviewerApprovedOwnership: true, reviewerApprovedAdmission: true, company: 'Acme', evidence: evidence(), probe, proposedSource: proposed }))
+      .toContain('initial admission requires a current technical early-career role');
+  });
+});
+
+describe('Ashby offline manifest and reverification', () => {
+  it('passes all five committed shadow pilots', () => {
+    expect(reviewedAshbySources.map(({ company }) => company)).toEqual(['Etched', 'Deepgram', 'Cohere', 'Mistral AI', 'Partly']);
+    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-09T14:00:00Z') })).toEqual([]);
+  });
+
+  it('keeps Alan then Notion as observed but unadmitted fallbacks', () => {
+    expect(ashbyPilotFallbacks.map(({ company, priority }) => [company, priority])).toEqual([['Alan', 1], ['Notion', 2]]);
+    for (const fallback of ashbyPilotFallbacks) {
+      expect(ashbyBoardNameFromUrl(fallback.observedBoardUrl)).toBe(fallback.boardName);
+      expect(reviewedAshbySources.some(({ identity }) => identity.boardKey === fallback.boardName)).toBe(false);
+    }
+  });
+
+  it('rejects duplicate identities, expired evidence, and pending admissions', async () => {
+    const probe = await okProbe();
+    const artifact = { probedAt: '2026-08-09T00:00:00Z', retention: 'metadata-only', results: [probe] };
+    const files = { 'fixtures/acme.io/evidence.json': evidence(), 'fixtures/acme.io/probe.json': artifact, 'fixtures/pending/evidence.json': evidence({ boardKey: 'pending', exactBoardUrl: 'https://jobs.ashbyhq.com/pending', observedJobUrl: 'https://jobs.ashbyhq.com/pending/id' }) };
+    const violations = collectAshbyManifestViolations([source(), source({ id: 'ashby-other' })], { fs: fakeFs(files), root: 'fixtures', now: new Date('2027-03-01T00:00:00Z') });
+    expect(violations).toEqual(expect.arrayContaining([
+      expect.stringContaining('duplicate board identity'), expect.stringContaining('overdue for re-verification'),
+      'pending: reviewed evidence is pending explicit registry admission',
+    ]));
+  });
+
+  it('rechecks the employer page without writing state', async () => {
+    const fetchImpl = (async () => new Response('<a href="https://jobs.ashbyhq.com/acme.io">Jobs</a>', { status: 200 })) as typeof fetch;
+    expect(await recheckAshbyEvidence(evidence(), fetchImpl)).toMatchObject({ state: 'ok', stillProven: true });
+    const missing = (async () => new Response('<p>No board here</p>', { status: 200 })) as typeof fetch;
+    expect(await recheckAshbyEvidence(evidence(), missing)).toMatchObject({ state: 'ok', stillProven: false });
+  });
+});
