@@ -31,7 +31,7 @@ const reply = (statusCode: number, body: unknown) => ({ statusCode, headers: res
 const activeHealthWindowMs: Record<Provider, number> = {
   greenhouse: 90 * 60_000,
   lever: 90 * 60_000,
-  ashby: 30 * 60_000,
+  ashby: 90 * 60_000,
 };
 const inactiveHealthWindowMs = 7 * 60 * 60_000;
 type Provider = 'greenhouse' | 'lever' | 'ashby';

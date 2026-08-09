@@ -1,7 +1,7 @@
 # Ashby monitoring runbook
 
 The `InternNotifsAshby` stack is an independently deployable polling plane over
-the retained internship and user tables. It owns a staggered ten-minute
+the retained internship and user tables. It owns a staggered hourly
 scheduler, dispatcher, encrypted FIFO work queue, worker, work DLQ, scheduler
 DLQ, four alarms, a dashboard, and operations-discovery parameters.
 

@@ -87,7 +87,7 @@ export class AshbyMonitoringStack extends cdk.Stack {
     schedulerDeadLetterQueue.grantSendMessages(schedulerRole);
     new scheduler.CfnSchedule(this, 'AshbyPollSchedule', {
       flexibleTimeWindow: { mode: 'OFF' },
-      scheduleExpression: 'cron(4,14,24,34,44,54 * * * ? *)',
+      scheduleExpression: 'cron(32 * * * ? *)',
       scheduleExpressionTimezone: 'UTC',
       state: 'ENABLED',
       target: {
@@ -125,10 +125,10 @@ export class AshbyMonitoringStack extends cdk.Stack {
         statistic: 'Maximum',
         period: cdk.Duration.minutes(10),
       }),
-      threshold: 30,
+      threshold: 90,
       evaluationPeriods: 1,
       treatMissingData: cloudwatch.TreatMissingData.BREACHING,
-      alarmDescription: 'At least one active Ashby source has no trusted snapshot within thirty minutes.',
+      alarmDescription: 'At least one active Ashby source has no trusted snapshot within ninety minutes.',
     });
     new cloudwatch.Dashboard(this, 'AshbyMonitoringDashboard', {
       dashboardName: 'InternNotifs-Ashby',
