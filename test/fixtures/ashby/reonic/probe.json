@@ -1,0 +1,49 @@
+{
+  "probedAt": "2026-08-09T15:54:53.988Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "reonic",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/reonic",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 32,
+      "listedRows": 32,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 4,
+      "geographicCoverage": [
+        "Augsburg",
+        "Berlin",
+        "Brazil - São Paulo"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 32
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "dd26ab09-62de-4d27-9e11-64eccb2e33df",
+          "title": "Software Engineering Intern (AI x Greentech) (m/f/d)",
+          "location": "Berlin"
+        },
+        {
+          "id": "79d56c30-6b6f-4f1d-9370-2873e2db8b9b",
+          "title": "Go-to-Market AI & Data Intern (AI x Greentech) (m/f/d)",
+          "location": "Berlin"
+        },
+        {
+          "id": "5b1d3176-9919-4e48-9712-d0a6cb642cc6",
+          "title": "Venture Development Intern - New Products (AI x Greentech) (m/f/d) ",
+          "location": "Berlin"
+        },
+        {
+          "id": "ee83f202-3d71-4d72-baee-0ae744103248",
+          "title": "Operations Management Intern (AI x Greentech) – Italy (m/f/d)",
+          "location": "Berlin"
+        }
+      ]
+    }
+  ]
+}

@@ -2,12 +2,13 @@
 import * as cdk from 'aws-cdk-lib';
 import { GreenhouseMonitoringStack } from './greenhouse-monitoring-stack.js';
 import { LeverMonitoringStack } from './lever-monitoring-stack.js';
+import { AshbyMonitoringStack } from './ashby-monitoring-stack.js';
 import { InternNotifsStack } from './intern-notifs-stack.js';
 
 const app = new cdk.App();
 const deploymentTarget = app.node.tryGetContext('target') || 'main';
 const region = app.node.tryGetContext('region') || 'us-east-1';
-if (deploymentTarget === 'greenhouse' || deploymentTarget === 'lever') {
+if (deploymentTarget === 'greenhouse' || deploymentTarget === 'lever' || deploymentTarget === 'ashby') {
   const internshipsTableName = app.node.tryGetContext('internshipsTableName');
   const usersTableName = app.node.tryGetContext('usersTableName');
   if (!internshipsTableName || !usersTableName) throw new Error(`Set -c internshipsTableName=... and -c usersTableName=... for the ${deploymentTarget} monitoring stack.`);
@@ -17,7 +18,8 @@ if (deploymentTarget === 'greenhouse' || deploymentTarget === 'lever') {
     if (!emailAddress) throw new Error('Set -c emailAddress=you@example.com or SES_EMAIL for the greenhouse monitoring reminder.');
     new GreenhouseMonitoringStack(app, 'InternNotifsGreenhouse', { ...props, emailAddress });
   }
-  else new LeverMonitoringStack(app, 'InternNotifsLever', props);
+  else if (deploymentTarget === 'lever') new LeverMonitoringStack(app, 'InternNotifsLever', props);
+  else new AshbyMonitoringStack(app, 'InternNotifsAshby', props);
 } else {
   const githubRepository = app.node.tryGetContext('githubRepository') || process.env.GITHUB_REPOSITORY;
   const emailAddress = app.node.tryGetContext('emailAddress') || process.env.SES_EMAIL;

@@ -1,0 +1,47 @@
+{
+  "probedAt": "2026-08-09T15:54:53.988Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "Terranova",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/Terranova",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 15,
+      "listedRows": 15,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 4,
+      "geographicCoverage": [
+        "Berkeley"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 15
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "7ba048ea-818d-46b5-8ff8-3ce58d39bcc6",
+          "title": "Mechanical/Test Engineering Intern",
+          "location": "Berkeley"
+        },
+        {
+          "id": "a8e5a8d2-4af3-4736-b66e-e0804447f7a0",
+          "title": "Software Engineering Intern",
+          "location": "Berkeley"
+        },
+        {
+          "id": "8fdce1f7-a1df-4e64-8f10-c78771a399da",
+          "title": "Embedded Systems Intern",
+          "location": "Berkeley"
+        },
+        {
+          "id": "58b4f28b-80eb-449a-ad41-63469edb8c6d",
+          "title": "Controls/Robotics Intern",
+          "location": "Berkeley"
+        }
+      ]
+    }
+  ]
+}

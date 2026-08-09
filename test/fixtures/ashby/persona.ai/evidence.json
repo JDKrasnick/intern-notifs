@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "persona.ai",
+  "apiRegion": "global",
+  "careersUrl": "https://persona.ai/",
+  "firstPartyEvidenceUrl": "https://persona.ai/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/persona.ai/",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/persona.ai/\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/persona.ai/a68c0823-0b61-4741-9fbc-a1f6d701e4ed",
+  "verifiedAt": "2026-08-09T15:55:23Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 6,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+import type { SendMessageBatchCommand } from '@aws-sdk/client-sqs';
+import { describe, expect, it } from 'vitest';
+import { ashbyWorkMessages, ASHBY_POLL_INTERVAL_MS, dispatchAshbyBoards, isAshbySourceDue, type AshbyWorkMessage } from '../src/ashby-dispatch.js';
+import { ashbySourceRunFailure, processAshbyQueue, runAshbyBoard } from '../src/ashby-worker.js';
+import { reviewedAshbySources, type ReviewedAshbySource } from '../src/sources/ashby-config.js';
+import { MemoryInternshipStore } from '../src/store.js';
+
+const scheduledAt = '2026-08-09T12:00:00.000Z';
+const shadowSource = reviewedAshbySources[0]!;
+const message = (sourceId = shadowSource.id): AshbyWorkMessage => ({ version: 1, sourceId, scheduledAt });
+const posting = {
+  id: '123e4567-e89b-42d3-a456-426614174000', title: 'Software Engineering Intern', location: 'New York, NY',
+  isListed: true, employmentType: 'Intern', jobUrl: `https://jobs.ashbyhq.com/${shadowSource.identity.boardKey}/123e4567-e89b-42d3-a456-426614174000`,
+  applyUrl: `https://jobs.ashbyhq.com/${shadowSource.identity.boardKey}/123e4567-e89b-42d3-a456-426614174000/application`,
+};
+const response = (jobs = [posting]) => new Response(JSON.stringify({ apiVersion: '1', jobs }), {
+  status: 200, headers: { 'Content-Type': 'application/json' },
+});
+
+describe('Ashby queue dispatch', () => {
+  it('creates versioned FIFO work and batches boards', async () => {
+    expect(ashbyWorkMessages([shadowSource], new Date(scheduledAt))).toEqual([message()]);
+    const sources = Array.from({ length: 12 }, (_, index) => ({ ...shadowSource, id: `ashby-board-${index}` }));
+    const commands: SendMessageBatchCommand[] = [];
+    await expect(dispatchAshbyBoards({
+      queueUrl: 'https://sqs.us-east-1.amazonaws.com/123/ashby.fifo', sources,
+      now: () => new Date(scheduledAt), client: { async send(command) { commands.push(command); return {}; } },
+    })).resolves.toEqual({ queued: 12 });
+    expect(commands.map((command) => command.input.Entries?.length)).toEqual([10, 2]);
+    expect(commands[0]!.input.Entries?.[0]).toMatchObject({
+      MessageGroupId: 'ashby-board-0', MessageDeduplicationId: expect.stringMatching(/^ashby-board-0:\d+$/),
+    });
+  });
+
+  it('deterministically polls successful empty boards once per six hours', () => {
+    const checkpoint = { sourceId: `shadow-${shadowSource.id}`, successfulFetches: 1, lastRowCount: 0 };
+    const windows = Array.from({ length: 36 }, (_, index) => new Date(index * ASHBY_POLL_INTERVAL_MS));
+    expect(windows.filter((now) => isAshbySourceDue(shadowSource, checkpoint, now))).toHaveLength(1);
+    expect(isAshbySourceDue(shadowSource, { ...checkpoint, lastRowCount: 1 }, windows[0]!)).toBe(true);
+  });
+});
+
+describe('Ashby queue worker', () => {
+  it('maps detailed failures to the low-cardinality operations contract', () => {
+    expect(['transport', 'http', 'rate_limit'].map(ashbySourceRunFailure)).toEqual(['fetch', 'fetch', 'fetch']);
+    expect(['json', 'identity', 'link', 'empty', 'quality', 'persistence'].map(ashbySourceRunFailure))
+      .toEqual(['schema', 'identity', 'link', 'empty', 'quality', 'persistence']);
+  });
+  it('isolates shadow checkpoints and performs no catalog writes', async () => {
+    const store = new MemoryInternshipStore();
+    await expect(runAshbyBoard(message(), {
+      store, sources: [shadowSource], fetchImpl: async () => response(), linkValidator: async (url) => url,
+    })).resolves.toMatchObject({ sourceId: shadowSource.id, mode: 'shadow', listings: 1 });
+    expect(store.jobs.size).toBe(0);
+    expect(await store.getCheckpoint(`shadow-${shadowSource.id}`)).toMatchObject({ lastRawCount: 1, lastRowCount: 1 });
+    expect(await store.getCheckpoint(shadowSource.id)).toBeUndefined();
+    expect(await store.getSourceHealth(shadowSource.id)).toMatchObject({ provider: 'ashby', region: 'global', consecutiveFailures: 0 });
+  });
+
+  it('rejects a suspicious raw-zero without advancing its checkpoint', async () => {
+    const store = new MemoryInternshipStore();
+    const dependencies = { store, sources: [shadowSource], linkValidator: async (url: string) => url };
+    await runAshbyBoard(message(), { ...dependencies, fetchImpl: async () => response() });
+    await expect(runAshbyBoard(message(), { ...dependencies, fetchImpl: async () => response([]) }))
+      .rejects.toThrow('unexpected raw-zero');
+    expect(await store.getCheckpoint(`shadow-${shadowSource.id}`)).toMatchObject({ lastRawCount: 1 });
+  });
+
+  it('quietly baselines published boards and only emits later additions', async () => {
+    const published: ReviewedAshbySource = { ...shadowSource, status: 'published' };
+    const store = new MemoryInternshipStore();
+    let jobs = [posting];
+    const dependencies = { store, sources: [published], fetchImpl: async () => response(jobs), linkValidator: async (url: string) => url };
+    await runAshbyBoard(message(published.id), dependencies);
+    expect(await store.pendingSms()).toEqual([]);
+    jobs = [...jobs, {
+      ...posting, id: '223e4567-e89b-42d3-a456-426614174000', title: 'Machine Learning Intern',
+      jobUrl: `https://jobs.ashbyhq.com/${shadowSource.identity.boardKey}/223e4567-e89b-42d3-a456-426614174000`,
+      applyUrl: `https://jobs.ashbyhq.com/${shadowSource.identity.boardKey}/223e4567-e89b-42d3-a456-426614174000/application`,
+    }];
+    await runAshbyBoard(message(published.id), dependencies);
+    expect(await store.pendingSms()).toHaveLength(1);
+  });
+
+  it('returns failed records and blocks later work in the same FIFO group', async () => {
+    const result = await processAshbyQueue({ Records: [
+      { messageId: 'bad', body: JSON.stringify(message('ashby-unknown')), attributes: { MessageGroupId: 'same' } },
+      { messageId: 'blocked', body: JSON.stringify(message()), attributes: { MessageGroupId: 'same' } },
+    ] }, { store: new MemoryInternshipStore(), sources: [shadowSource] });
+    expect(result.batchItemFailures).toEqual([{ itemIdentifier: 'bad' }, { itemIdentifier: 'blocked' }]);
+  });
+});

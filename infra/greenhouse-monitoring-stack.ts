@@ -113,6 +113,7 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
         queue.queueArn,
         deadLetterQueue.queueArn,
         cdk.Stack.of(this).formatArn({ service: 'sqs', resource: 'InternNotifsLever-*' }),
+        cdk.Stack.of(this).formatArn({ service: 'sqs', resource: 'InternNotifsAshby-*' }),
       ],
     }));
     operationsHandler.addToRolePolicy(new iam.PolicyStatement({

@@ -1,0 +1,53 @@
+{
+  "probedAt": "2026-08-09T15:54:53.988Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "skydio",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/skydio",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 114,
+      "listedRows": 114,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 3,
+      "geographicCoverage": [
+        "Chicago, Illinois, United States",
+        "Hayward, California, United States",
+        "Los Angeles, California, United States",
+        "New York, United States",
+        "San Mateo, California, United States",
+        "Singapore",
+        "Taiwan",
+        "Tampere, Finland",
+        "Tokyo, Japan",
+        "US CA San Mateo",
+        "US Remote",
+        "Zurich, Switzerland"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 114
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "ce482813-99c2-4eaa-a165-2ed201249182",
+          "title": "Product Design Engineer Intern",
+          "location": "San Mateo, California, United States"
+        },
+        {
+          "id": "d75d4adf-760c-46b6-bb98-3497650a8924",
+          "title": "Hardware Test & Reliability Intern",
+          "location": "US CA San Mateo"
+        },
+        {
+          "id": "1ec2fe3c-3fb2-4485-870d-764a3e5f5baf",
+          "title": "Product Management Intern",
+          "location": "San Mateo, California, United States"
+        }
+      ]
+    }
+  ]
+}

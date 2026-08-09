@@ -1,0 +1,46 @@
+{
+  "probedAt": "2026-08-09T15:54:53.988Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "centerfield",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/centerfield",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 21,
+      "listedRows": 21,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 3,
+      "geographicCoverage": [
+        "Boston, Massachusetts",
+        "Los Angeles, California",
+        "Montego Bay, Jamaica",
+        "Portmore, Jamaica",
+        "Remote, United States"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 21
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "3279e803-56ab-4e12-8168-c2fd60bc8e60",
+          "title": "Software Engineer Intern",
+          "location": "Los Angeles, California"
+        },
+        {
+          "id": "916dcf42-d69a-4f00-875a-f8fe630e0f33",
+          "title": "Data Science Intern",
+          "location": "Los Angeles, California"
+        },
+        {
+          "id": "1d7eacc1-37f7-478c-9b0a-fa7974f1a9e4",
+          "title": "Frontend Engineer Intern (6 month internship)",
+          "location": "Los Angeles, California"
+        }
+      ]
+    }
+  ]
+}

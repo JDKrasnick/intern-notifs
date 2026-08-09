@@ -1,0 +1,57 @@
+{
+  "probedAt": "2026-08-09T15:54:53.988Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "base-power",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/base-power",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 171,
+      "listedRows": 171,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 7,
+      "geographicCoverage": [
+        "Austin, TX",
+        "Bloomingdale, IL",
+        "Dallas, TX",
+        "Houston, TX",
+        "Mexico",
+        "San Antonio, TX"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 171
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "7ba325d9-4256-4567-83a4-8dd9c72a0d10",
+          "title": "Hardware Sourcing Intern",
+          "location": "Austin, TX"
+        },
+        {
+          "id": "a92c9d93-eac0-4da5-b3f2-edf1eeef146b",
+          "title": "Manufacturing Engineering Intern",
+          "location": "Austin, TX"
+        },
+        {
+          "id": "b6b2332e-1226-4575-b2c9-9e5258f2540e",
+          "title": "Quantitative Developer Intern",
+          "location": "Austin, TX"
+        },
+        {
+          "id": "a8ee9a66-e90b-42c2-a4a2-28d997c3e8c7",
+          "title": "Firmware Engineering Intern",
+          "location": "Austin, TX"
+        },
+        {
+          "id": "5353ea33-57d4-46fa-9a96-e392a3f841bc",
+          "title": "Software Engineering Intern",
+          "location": "Austin, TX"
+        }
+      ]
+    }
+  ]
+}

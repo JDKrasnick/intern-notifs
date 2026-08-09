@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "opusclip",
+  "apiRegion": "global",
+  "careersUrl": "https://www.opus.pro/careers",
+  "firstPartyEvidenceUrl": "https://www.opus.pro/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/opusclip",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/opusclip\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/opusclip/1966160d-8b4a-40f8-96c5-39a6d81122c2",
+  "verifiedAt": "2026-08-09T15:55:23Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

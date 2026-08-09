@@ -2,6 +2,7 @@ import type { SourceAdapter } from '../types.js';
 import { defaultSources as githubSources } from './github.js';
 import { reviewedGreenhouseSources } from './greenhouse-config.js';
 import { reviewedLeverSources } from './lever-config.js';
+import { reviewedAshbySources } from './ashby-config.js';
 
 /**
  * Sources handled by the general poll Lambda. Reviewed Greenhouse and Lever
@@ -20,5 +21,6 @@ export function reviewedBoardIndex(): Map<string, string> {
   const index = new Map<string, string>();
   for (const source of reviewedGreenhouseSources) index.set(`greenhouse:${source.boardToken.toLowerCase()}`, source.id);
   for (const source of reviewedLeverSources) index.set(`lever:${source.site.toLowerCase()}`, source.id);
+  for (const source of reviewedAshbySources) index.set(`ashby:${source.identity.boardKey.toLowerCase()}`, source.id);
   return index;
 }

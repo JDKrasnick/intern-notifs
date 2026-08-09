@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { createSourceOperationsHandler } from '../src/greenhouse-operations-api.js';
 import { reviewedGreenhouseSources } from '../src/sources/greenhouse-config.js';
 import { reviewedLeverSources } from '../src/sources/lever-config.js';
+import { reviewedAshbySources } from '../src/sources/ashby-config.js';
 import { MemoryInternshipStore } from '../src/store.js';
 
 const secret = 'fixture-secret';
@@ -24,6 +25,7 @@ function dependencies(store: MemoryInternshipStore) {
       fleets: {
         greenhouse: { queueUrl: 'https://sqs.test/greenhouse.fifo', deadLetterQueueUrl: 'https://sqs.test/greenhouse-dlq.fifo' },
         lever: { queueUrl: 'https://sqs.test/lever.fifo', deadLetterQueueUrl: 'https://sqs.test/lever-dlq.fifo' },
+        ashby: { queueUrl: 'https://sqs.test/ashby.fifo', deadLetterQueueUrl: 'https://sqs.test/ashby-dlq.fifo' },
       },
       sqs: {
         async send(command: unknown) {
@@ -44,7 +46,7 @@ function dependencies(store: MemoryInternshipStore) {
 }
 
 describe('shared source operations', () => {
-  it('returns Greenhouse and Lever sources through one fleet view', async () => {
+  it('returns Greenhouse, Lever, and Ashby sources through one fleet view', async () => {
     const store = new MemoryInternshipStore();
     const setup = dependencies(store);
     const response = await createSourceOperationsHandler(setup.value)(event('/operations/sources'));
@@ -52,8 +54,8 @@ describe('shared source operations', () => {
 
     expect(response.statusCode).toBe(200);
     expect(new Set(body.sources.map((row: { source: { provider: string } }) => row.source.provider)))
-      .toEqual(new Set(['greenhouse', 'lever']));
-    expect(body.fleets.map((fleet: { provider: string }) => fleet.provider).sort()).toEqual(['greenhouse', 'lever']);
+      .toEqual(new Set(['greenhouse', 'lever', 'ashby']));
+    expect(body.fleets.map((fleet: { provider: string }) => fleet.provider).sort()).toEqual(['ashby', 'greenhouse', 'lever']);
     expect(body.productionMetrics).toMatchObject({
       deadLetterMessages: 0,
       failedExtractions24h: 0,
@@ -147,5 +149,18 @@ describe('shared source operations', () => {
 
     expect(response.statusCode).toBe(200);
     expect(await store.getSourceHealth(source.id)).toMatchObject({ pollTier: 'quiet', pollTierMode: 'operator' });
+  });
+
+  it('routes an Ashby replay to the independently discovered fleet', async () => {
+    const store = new MemoryInternshipStore();
+    const setup = dependencies(store);
+    const source = reviewedAshbySources[0]!;
+    const response = await createSourceOperationsHandler(setup.value)(event(
+      `/operations/sources/${source.id}/actions`, 'POST', { action: 'replay' },
+    ));
+    expect(response.statusCode).toBe(202);
+    const replay = setup.commands.find((command) => command instanceof SendMessageCommand) as SendMessageCommand;
+    expect(replay.input).toMatchObject({ QueueUrl: 'https://sqs.test/ashby.fifo', MessageGroupId: source.id });
+    expect(JSON.parse(replay.input.MessageBody!)).toMatchObject({ version: 1, sourceId: source.id, force: true, runId: expect.any(String) });
   });
 });
