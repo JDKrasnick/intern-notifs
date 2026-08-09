@@ -63,7 +63,7 @@ describe('shared source operations', () => {
       legacyPendingNotifications: 0,
     });
     expect(body.fleet.alarms).toContainEqual(expect.objectContaining({ name: 'InternNotifs-PollDuration', state: 'ALARM' }));
-    expect(body.checklist).toMatchObject({ period: '2026-07', completed: 0, total: 7, complete: false });
+    expect(body.checklist).toMatchObject({ period: '2026-07', completed: 0, total: 8, complete: false });
   });
 
   it('uses the quiet cadence when classifying source freshness', async () => {
@@ -96,14 +96,14 @@ describe('shared source operations', () => {
     expect(row).toMatchObject({ state: 'healthy', pollTier: 'quiet', eligibleRows: 0 });
   });
 
-  it('tracks monthly monitoring checks for both provider fleets', async () => {
+  it('tracks monthly monitoring checks for all provider fleets', async () => {
     const store = new MemoryInternshipStore();
     const setup = dependencies(store);
     const handler = createSourceOperationsHandler(setup.value);
 
     const completed = await handler(event('/operations/checklist/exercise-greenhouse-recovery', 'POST', { completed: true }));
     expect(completed.statusCode).toBe(200);
-    expect(JSON.parse(completed.body)).toMatchObject({ completed: 1, total: 7, complete: false });
+    expect(JSON.parse(completed.body)).toMatchObject({ completed: 1, total: 8, complete: false });
 
     const overview = await handler(event('/operations/sources'));
     expect(JSON.parse(overview.body).checklist.items).toContainEqual(expect.objectContaining({
@@ -162,5 +162,41 @@ describe('shared source operations', () => {
     const replay = setup.commands.find((command) => command instanceof SendMessageCommand) as SendMessageCommand;
     expect(replay.input).toMatchObject({ QueueUrl: 'https://sqs.test/ashby.fifo', MessageGroupId: source.id });
     expect(JSON.parse(replay.input.MessageBody!)).toMatchObject({ version: 1, sourceId: source.id, force: true, runId: expect.any(String) });
+  });
+
+  it('quarantines an Ashby source and queues a paused validation recovery', async () => {
+    const store = new MemoryInternshipStore();
+    const setup = dependencies(store);
+    const source = reviewedAshbySources[0]!;
+    const handler = createSourceOperationsHandler(setup.value);
+
+    const quarantined = await handler(event(
+      `/operations/sources/${source.id}/actions`, 'POST', { action: 'quarantine', reason: 'Unexpected application host under review' },
+    ));
+    expect(quarantined.statusCode).toBe(200);
+    expect(await store.getSourceHealth(source.id)).toMatchObject({
+      state: 'quarantined', sourceStatus: 'paused', incidentState: 'open', incidentSeverity: 'high',
+      quarantineReason: 'Unexpected application host under review',
+    });
+
+    const recovery = await handler(event(`/operations/sources/${source.id}/actions`, 'POST', { action: 'recover' }));
+    expect(recovery.statusCode).toBe(202);
+    expect(JSON.parse(recovery.body)).toMatchObject({ action: 'recover', sourceStatus: 'paused' });
+    expect(await store.getSourceHealth(source.id)).toMatchObject({
+      state: 'quarantined', sourceStatus: 'paused', incidentState: 'acknowledged',
+    });
+    const command = setup.commands.find((candidate) => candidate instanceof SendMessageCommand) as SendMessageCommand;
+    expect(command.input).toMatchObject({ QueueUrl: 'https://sqs.test/ashby.fifo', MessageGroupId: source.id });
+    expect(JSON.parse(command.input.MessageBody!)).toMatchObject({ force: true, runId: expect.stringMatching(/^recovery-/) });
+  });
+
+  it('rejects recovery for a source that is not quarantined', async () => {
+    const store = new MemoryInternshipStore();
+    const source = reviewedAshbySources[0]!;
+    const response = await createSourceOperationsHandler(dependencies(store).value)(event(
+      `/operations/sources/${source.id}/actions`, 'POST', { action: 'recover' },
+    ));
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body)).toMatchObject({ code: 'SOURCE_NOT_QUARANTINED' });
   });
 });

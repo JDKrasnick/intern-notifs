@@ -197,7 +197,9 @@ export async function runAshbyBoard(
         checked: previousHealth?.applicationLinksChecked ?? 0,
         failures: previousHealth?.applicationLinkFailures ?? 0,
       };
-      if (!result.notModified) {
+      const needsLinkEvidenceBackfill = previousHealth?.applicationLinksChecked === undefined
+        || previousHealth.applicationLinkFailures === undefined;
+      if (!result.notModified || (result.unchangedReason === 'content_hash' && needsLinkEvidenceBackfill)) {
         if ((previous?.lastRawCount ?? 0) > 0 && (result.rawRowCount ?? 0) === 0) {
           throw new SourceFetchError(`${source.id}: rejected an unexpected raw-zero snapshot`, 'empty');
         }

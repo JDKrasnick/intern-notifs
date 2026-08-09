@@ -214,6 +214,38 @@ describe('Ashby offline manifest and reverification', () => {
     ]));
   });
 
+  it('blocks publication without three approved clean snapshots spanning 24 hours', async () => {
+    const probe = await okProbe();
+    const files = {
+      'fixtures/acme.io/evidence.json': evidence(),
+      'fixtures/acme.io/probe.json': { probedAt: '2026-08-09T00:00:00Z', retention: 'metadata-only', results: [probe] },
+    };
+    const withoutEvidence = collectAshbyManifestViolations([source({ status: 'published' })], {
+      fs: fakeFs(files), root: 'fixtures', now: new Date('2026-08-10T12:00:00Z'),
+    });
+    expect(withoutEvidence).toContain('ashby-acme-io: published source lacks promotionEvidence');
+
+    const snapshot = (runId: string, completedAt: string) => ({
+      runId, completedAt, outcome: 'success_unchanged_hash', rawRows: 1, eligibleRows: 1, withheldRows: 0,
+      applicationLinksChecked: 1, applicationLinkFailures: 0, complete: true, identityVerified: true, schemaValid: true,
+    });
+    const promoted = source({
+      status: 'published',
+      promotionEvidence: {
+        approvedAt: '2026-08-10T12:00:00Z', approvedBy: 'JDKrasnick', quietBaselineApproved: true,
+        stableIdentity: true, stableApplicationHosts: true,
+        snapshots: [
+          snapshot('run-1', '2026-08-09T00:00:00Z'),
+          snapshot('run-2', '2026-08-09T12:00:00Z'),
+          snapshot('run-3', '2026-08-10T00:00:00Z'),
+        ],
+      },
+    });
+    expect(collectAshbyManifestViolations([promoted], {
+      fs: fakeFs(files), root: 'fixtures', now: new Date('2026-08-10T12:00:00Z'),
+    })).toEqual([]);
+  });
+
   it('rechecks the employer page without writing state', async () => {
     const fetchImpl = (async () => new Response('<a href="https://jobs.ashbyhq.com/acme.io">Jobs</a>', { status: 200 })) as typeof fetch;
     expect(await recheckAshbyEvidence(evidence(), fetchImpl)).toMatchObject({ state: 'ok', stillProven: true });

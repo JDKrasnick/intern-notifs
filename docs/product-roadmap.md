@@ -53,7 +53,7 @@
 - [x] Complete Lever monitoring with shadow and published health, regional metrics, freshness incidents, bounded backoff, shared operator controls, dashboards, and recovery runbooks.
 - [x] Add Ashby URL-derived discovery, metadata-only public probing, first-party ownership evidence, deterministic admission/re-verification gates, weekly candidate-ledger upload, and 21 reviewed shadow boards.
 - [x] Implement the Ashby public posting adapter with listed-only complete snapshots, strict identity/schema/link gates, provider-neutral processing, deterministic fixtures, and a nightly live contract for every reviewed board.
-- [ ] Complete Ashby production shadow verification and per-board promotion: the scheduler, queues, persistence, alarms, shared operations, and first successful shadow snapshot are deployed; three successful snapshots spanning at least 24 hours are still required before promotion.
+- [ ] Complete Ashby production shadow verification and per-board promotion: the scheduler, queues, persistence, alarms, shared dashboard fields, quarantine/recovery controls, and enforced promotion-evidence gate are deployed; link evidence was backfilled for all 21 healthy boards on 2026-08-09, so three clean snapshots spanning at least 24 hours and owner approval are still required before the first cohort is promoted.
 - [ ] Add Ashby application-assistance route detection and headed-browser workflows after runtime promotion; this remains separate from source ingestion.
 - [x] Add human-readable source tags to default internship notifications for community job boards, Greenhouse, and Lever.
 - [ ] Add job freshness/source labels and notification deep links to the mobile product.

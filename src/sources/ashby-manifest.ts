@@ -6,6 +6,47 @@ import type { AshbyProbeResult } from './ashby-probe.js';
 import type { ReviewedSourceRecord } from './reviewed-source.js';
 
 export const ASHBY_EVIDENCE_ROOT = 'test/fixtures/ashby';
+const ASHBY_PROMOTION_MIN_SNAPSHOTS = 3;
+const ASHBY_PROMOTION_MIN_SPAN_MS = 24 * 60 * 60 * 1000;
+const ASHBY_PROMOTION_MAX_LINK_FAILURE_RATE = 0.2;
+
+function promotionEvidenceViolations(source: ReviewedSourceRecord): string[] {
+  if (source.status !== 'published') return [];
+  const evidence = source.promotionEvidence;
+  if (!evidence) return ['published source lacks promotionEvidence'];
+  const violations: string[] = [];
+  if (!evidence.approvedBy.trim()) violations.push('promotion evidence lacks approver');
+  if (!Number.isFinite(Date.parse(evidence.approvedAt))) violations.push('promotion evidence approvedAt is invalid');
+  if (!evidence.quietBaselineApproved) violations.push('quiet baseline is not approved');
+  if (!evidence.stableIdentity) violations.push('identity is not approved as stable');
+  if (!evidence.stableApplicationHosts) violations.push('application hosts are not approved as stable');
+  if (evidence.snapshots.length < ASHBY_PROMOTION_MIN_SNAPSHOTS) {
+    violations.push(`promotion requires at least ${ASHBY_PROMOTION_MIN_SNAPSHOTS} clean snapshots`);
+    return violations;
+  }
+  const timestamps = evidence.snapshots.map(({ completedAt }) => Date.parse(completedAt));
+  if (timestamps.some((timestamp) => !Number.isFinite(timestamp))) violations.push('promotion snapshot timestamp is invalid');
+  else if (Math.max(...timestamps) - Math.min(...timestamps) < ASHBY_PROMOTION_MIN_SPAN_MS) {
+    violations.push('promotion snapshots must span at least 24 hours');
+  }
+  if (new Set(evidence.snapshots.map(({ runId }) => runId)).size !== evidence.snapshots.length) {
+    violations.push('promotion snapshot run IDs must be unique');
+  }
+  for (const snapshot of evidence.snapshots) {
+    if (!snapshot.outcome.startsWith('success_')) violations.push(`${snapshot.runId}: snapshot did not succeed`);
+    if (!snapshot.complete) violations.push(`${snapshot.runId}: snapshot is not complete`);
+    if (!snapshot.identityVerified) violations.push(`${snapshot.runId}: identity was not verified`);
+    if (!snapshot.schemaValid) violations.push(`${snapshot.runId}: schema was not valid`);
+    if (snapshot.applicationLinksChecked < snapshot.eligibleRows) violations.push(`${snapshot.runId}: not every eligible application link was checked`);
+    if (snapshot.applicationLinksChecked > 0
+      && snapshot.applicationLinkFailures / snapshot.applicationLinksChecked > ASHBY_PROMOTION_MAX_LINK_FAILURE_RATE) {
+      violations.push(`${snapshot.runId}: application-link failure rate exceeds 20%`);
+    }
+    if ([snapshot.rawRows, snapshot.eligibleRows, snapshot.withheldRows, snapshot.applicationLinksChecked, snapshot.applicationLinkFailures]
+      .some((count) => !Number.isInteger(count) || count < 0)) violations.push(`${snapshot.runId}: snapshot counts must be non-negative integers`);
+  }
+  return violations;
+}
 export const ASHBY_REVERIFICATION_DAYS = 180;
 export const ASHBY_ADMISSION_WINDOW_DAYS = 7;
 const DAY_MS = 86_400_000;
@@ -52,6 +93,7 @@ export function collectAshbyManifestViolations(
     ids.add(source.id); boards.add(board); claimedDirs.add(board);
     if (source.identity.provider !== 'ashby') violations.push(`${source.id}: provider is not ashby`);
     if (source.status !== 'shadow' && source.status !== 'published') violations.push(`${source.id}: invalid status`);
+    for (const issue of promotionEvidenceViolations(source)) violations.push(`${source.id}: ${issue}`);
     const admitted = Date.parse(source.admittedAt);
     if (Number.isNaN(admitted)) violations.push(`${source.id}: admittedAt is invalid`);
     else if (admitted > now.getTime() + CLOCK_SKEW_MS) violations.push(`${source.id}: admittedAt is in the future`);
@@ -76,7 +118,7 @@ export function collectAshbyManifestViolations(
     if (!Array.isArray(artifact.results) || artifact.results.length !== 1) { violations.push(`${source.id}: probe artifact must contain exactly one result`); continue; }
     for (const issue of ashbyAdmissionViolations({
       reviewerApprovedOwnership: true, reviewerApprovedAdmission: true, company: source.company,
-      evidence, probe: artifact.results[0]!, proposedSource: source,
+      evidence, probe: artifact.results[0]!, proposedSource: { ...source, status: 'shadow' },
     })) violations.push(`${source.id}: ${issue}`);
     if (evidence.careersUrl !== source.careersUrl) violations.push(`${source.id}: careers URL differs from evidence`);
     if (Date.parse(evidence.verifiedAt) !== Date.parse(source.admittedAt)) violations.push(`${source.id}: admission timestamp differs from evidence`);

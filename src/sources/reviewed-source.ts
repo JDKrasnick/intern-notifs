@@ -23,6 +23,30 @@ export interface ReviewedApplicationHost {
   reviewedAt?: string;
 }
 
+export interface SourcePromotionSnapshotEvidence {
+  runId: string;
+  completedAt: string;
+  outcome: string;
+  rawRows: number;
+  eligibleRows: number;
+  withheldRows: number;
+  applicationLinksChecked: number;
+  applicationLinkFailures: number;
+  complete: boolean;
+  identityVerified: boolean;
+  schemaValid: boolean;
+}
+
+/** Durable, human-approved evidence required before a reviewed source may publish. */
+export interface SourcePromotionEvidence {
+  approvedAt: string;
+  approvedBy: string;
+  quietBaselineApproved: boolean;
+  stableIdentity: boolean;
+  stableApplicationHosts: boolean;
+  snapshots: SourcePromotionSnapshotEvidence[];
+}
+
 export interface ReviewedSourceRecord {
   id: string;
   company: string;
@@ -32,6 +56,7 @@ export interface ReviewedSourceRecord {
   evidenceState: ReviewedEvidenceState;
   allowedApplicationHosts: ReviewedApplicationHost[];
   status: ReviewedSourceStatus;
+  promotionEvidence?: SourcePromotionEvidence;
 }
 
 export interface EmployerCareersEvidence {
