@@ -41,6 +41,25 @@ describe('DynamoDB persistence contract', () => {
     expect((send.mock.calls[0]?.[0] as QueryCommand).input).toMatchObject({ TableName: 'jobs-table', IndexName: 'openJobsIndex', ScanIndexForward: false, Limit: 10, ExclusiveStartKey: { pk: 'JOB#previous', sk: 'META' } });
   });
 
+  it('advances past an expired GSI page before returning an unfiltered catalog page', async () => {
+    const { send, client } = fakeClient(); const store = new DynamoInternshipStore('jobs-table', client);
+    send.mockResolvedValueOnce({ Items: [{ job: job('Software Engineering Intern', { season: 'summer-2020' }) }], LastEvaluatedKey: { pk: 'JOB#expired', sk: 'META' } });
+    send.mockResolvedValueOnce({ Items: [{ job: job('Software Engineering Intern', { jobId: 'live' }) }] });
+    expect((await store.listOpen!(undefined, 10)).jobs).toMatchObject([{ jobId: 'live' }]);
+    expect((send.mock.calls[1]?.[0] as QueryCommand).input.ExclusiveStartKey).toEqual({ pk: 'JOB#expired', sk: 'META' });
+  });
+
+  it('uses the catalog index query for search and source filters', async () => {
+    const { send, client } = fakeClient(); const store = new DynamoInternshipStore('jobs-table', client);
+    send.mockResolvedValueOnce({ Items: [{ job: job() }] });
+    await store.listOpen!(undefined, 10, 'open', { query: 'acme', source: 'direct' });
+    expect((send.mock.calls[0]?.[0] as QueryCommand).input).toMatchObject({
+      IndexName: 'openJobsIndex', KeyConditionExpression: 'openPk = :status',
+      FilterExpression: 'contains(catalogSearchText, :query) AND contains(catalogSourceClasses, :source)',
+      ExpressionAttributeValues: { ':status': 'OPEN', ':query': 'acme', ':source': 'direct' },
+    });
+  });
+
   it('queries the open-jobs index inside the launch interval', async () => {
     const { send, client } = fakeClient(); const store = new DynamoInternshipStore('jobs-table', client);
     send.mockResolvedValueOnce({ Items: [
