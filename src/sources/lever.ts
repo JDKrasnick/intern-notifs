@@ -5,7 +5,7 @@ import { parseCompensation } from '../core/normalize.js';
 import { processSnapshot } from '../ingestion/processor.js';
 import { publishedLeverSources } from './lever-config.js';
 import { SourceFetchError } from './source-error.js';
-import type { JobRequirements, RawListing, SourceAdapter, SourceCheckpoint, SourceConnector, SourceFetchResult, SourceSnapshot, SourcedPosting } from '../types.js';
+import type { JobRequirements, ProviderTimestamp, RawListing, SourceAdapter, SourceCheckpoint, SourceConnector, SourceFetchResult, SourceSnapshot, SourcedPosting } from '../types.js';
 
 export interface LeverPosting {
   id?: string;
@@ -68,6 +68,11 @@ function postedAt(posting: LeverPosting): string | undefined {
   return timestamp ? new Date(timestamp).toISOString() : undefined;
 }
 
+function providerTimestamp(posting: LeverPosting): ProviderTimestamp | undefined {
+  const value = postedAt(posting);
+  return value ? { value, semantics: posting.createdAt ? 'published' : 'updated' } : undefined;
+}
+
 export function mapLeverPosting(posting: LeverPosting, options: Pick<LeverAdapterOptions, 'id' | 'company' | 'site'>, fetchedAt = new Date().toISOString(), row = 1): RawListing | undefined {
   const title = plain(posting.text);
   const content = [posting.descriptionPlain, posting.description, posting.additionalPlain, posting.additional].map(plain).join(' ');
@@ -88,6 +93,7 @@ export function mapLeverPosting(posting: LeverPosting, options: Pick<LeverAdapte
     requirements: leverRequirements(content),
     state: 'open',
     postedAt: postedAt(posting),
+    ...(providerTimestamp(posting) ? { providerTimestamp: providerTimestamp(posting) } : {}),
     workMode: workMode(posting.workplaceType),
     fetchedAt
   };
@@ -143,7 +149,7 @@ export function mapLeverSourcedPosting(
     applyUrl: posting.applyUrl,
     hostedUrl: posting.hostedUrl,
     sourceState: 'open',
-    ...(postedAt(posting) ? { publishedAt: postedAt(posting) } : {}),
+    ...(providerTimestamp(posting) ? { publishedAt: providerTimestamp(posting)!.value, providerTimestamp: providerTimestamp(posting)! } : {}),
     classificationTags: [posting.categories?.commitment, posting.categories?.team].filter((value): value is string => Boolean(value)),
     declaredWorkMode: posting.workplaceType,
   };

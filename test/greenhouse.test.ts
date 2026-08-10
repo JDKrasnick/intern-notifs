@@ -35,6 +35,7 @@ describe('mapGreenhouseJob', () => {
       season: 'summer-2027',
       applyUrl: 'https://job-boards.greenhouse.io/acmerobotics/jobs/5001',
       postedAt: '2026-07-20T12:00:00.000Z',
+      providerTimestamp: { value: '2026-07-20T12:00:00.000Z', semantics: 'updated' },
       workMode: 'hybrid',
       requirements: { requiresUsCitizenship: true, advancedDegreeRequired: false },
     });

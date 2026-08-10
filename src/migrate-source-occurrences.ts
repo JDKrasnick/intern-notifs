@@ -64,6 +64,9 @@ async function main() {
           consecutiveOmissions: 0,
           changedSnapshotHash: checkpoint?.contentHash ?? 'backfill',
           changedAt: seededAt,
+          // Catalog records do not retain the original source discovery time.
+          // Mark it unknown rather than treating the migration clock as history.
+          firstObservedAtPrecision: 'unknown',
         });
         known.add(externalId);
         seeded += 1;

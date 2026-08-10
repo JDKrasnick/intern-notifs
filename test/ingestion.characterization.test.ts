@@ -36,6 +36,7 @@ describe('legacy ingestion characterization', () => {
       requirements: { requiresUsCitizenship: true, advancedDegreeRequired: false },
       state: 'open',
       postedAt: '2026-07-03T09:46:40.000Z',
+      providerTimestamp: { value: '2026-07-03T09:46:40.000Z', semantics: 'published' },
       workMode: 'hybrid',
       fetchedAt,
     });
@@ -59,6 +60,7 @@ describe('legacy ingestion characterization', () => {
       requirements: { requiresUsCitizenship: true, advancedDegreeRequired: false },
       state: 'open',
       postedAt: '2026-07-20T12:00:00.000Z',
+      providerTimestamp: { value: '2026-07-20T12:00:00.000Z', semantics: 'updated' },
       workMode: 'hybrid',
       fetchedAt,
     });

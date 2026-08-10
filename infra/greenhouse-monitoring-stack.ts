@@ -138,6 +138,7 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
     const operationsIntegration = new apigatewayIntegrations.HttpLambdaIntegration('GreenhouseOperationsIntegration', operationsHandler);
     operationsApi.addRoutes({ path: '/operations/sources', methods: [apigatewayv2.HttpMethod.GET], integration: operationsIntegration });
     operationsApi.addRoutes({ path: '/operations/sources/{sourceId}', methods: [apigatewayv2.HttpMethod.GET], integration: operationsIntegration });
+    operationsApi.addRoutes({ path: '/operations/attribution/{jobId}', methods: [apigatewayv2.HttpMethod.GET], integration: operationsIntegration });
     operationsApi.addRoutes({ path: '/operations/sources/{sourceId}/actions', methods: [apigatewayv2.HttpMethod.POST], integration: operationsIntegration });
     operationsApi.addRoutes({ path: '/operations/checklist/{itemId}', methods: [apigatewayv2.HttpMethod.POST], integration: operationsIntegration });
     operationsApi.addRoutes({ path: '/operations/lever/candidates', methods: [apigatewayv2.HttpMethod.GET], integration: operationsIntegration });

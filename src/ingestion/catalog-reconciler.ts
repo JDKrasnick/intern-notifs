@@ -42,6 +42,7 @@ function occurrence(listing: ProcessedListing, externalId: string): SourceOccurr
     sourceUrl: listing.sourceUrl,
     row: listing.row,
     postedAt: listing.postedAt,
+    ...(listing.providerTimestamp ? { providerTimestamp: listing.providerTimestamp } : {}),
     workMode: listing.workMode,
     company: listing.company,
     title: listing.title,
@@ -93,8 +94,12 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
   const location = genericLocation(existing.location) ? listing.location || existing.location : existing.location;
   const company = existing.company || listing.company;
   const sourceReferences = match >= 0
-    ? existing.sourceReferences.map((item, index) => index === match ? reference : item)
-    : [...existing.sourceReferences, reference];
+    ? existing.sourceReferences.map((item, index) => index === match ? {
+      ...reference,
+      ...(item.firstAttachedAt ? { firstAttachedAt: item.firstAttachedAt } : {}),
+      ...(item.firstAttachedAtPrecision ? { firstAttachedAtPrecision: item.firstAttachedAtPrecision } : item.firstAttachedAt ? { firstAttachedAtPrecision: 'exact' as const } : { firstAttachedAtPrecision: 'unknown' as const }),
+    } : item)
+    : [...existing.sourceReferences, { ...reference, firstAttachedAt: now, firstAttachedAtPrecision: 'exact' as const }];
   const listingNormalizedUrl = normalizeUrl(listing.applyUrl);
   const keepQuarantined = existing.invalidApplicationUrl === listingNormalizedUrl;
   const replaceStoredUrl = Boolean(applicationUrlValidatedAt && (!existing.applicationUrlValidatedAt || existing.normalizedUrl !== listingNormalizedUrl));
@@ -138,7 +143,7 @@ function create(listing: ProcessedListing, externalId: string, now: string, appl
     compensation: listing.compensation,
     ...(listing.requirements ? { requirements: listing.requirements } : {}),
     employerCategory: employerCategory(listing.company),
-    sourceReferences: [occurrence(listing, externalId)],
+    sourceReferences: [{ ...occurrence(listing, externalId), firstAttachedAt: now, firstAttachedAtPrecision: 'exact' },],
     technical: listing.technical ?? isTechnicalJob(listing),
     open: listing.state === 'open',
     firstSeenAt: now,
@@ -249,6 +254,14 @@ export class CatalogReconciler {
         consecutiveOmissions: 0,
         changedSnapshotHash: input.snapshotHash,
         changedAt: input.now,
+        ...(priorById.get(externalId)?.firstObservedAt
+          ? { firstObservedAt: priorById.get(externalId)!.firstObservedAt }
+          : priorById.has(externalId)
+            ? { firstObservedAtPrecision: 'unknown' as const }
+            : { firstObservedAt: input.now, firstObservedAtPrecision: 'exact' as const }),
+        ...(priorById.get(externalId)?.firstObservedAtPrecision
+          ? { firstObservedAtPrecision: priorById.get(externalId)!.firstObservedAtPrecision }
+          : {}),
       };
       if (occurrenceChanged(priorById.get(externalId), next)) occurrences.push(next);
     }

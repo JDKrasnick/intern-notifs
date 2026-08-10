@@ -22,6 +22,7 @@ export function occurrenceStatus(
     ...occurrence,
     ...(confirmed && checkpoint?.contentHash ? { confirmedSnapshotHash: checkpoint.contentHash } : {}),
     ...(confirmed && confirmedAt ? { confirmedAt } : {}),
+    ...(confirmed && confirmedAt ? { lastConfirmedAt: confirmedAt } : {}),
   };
 }
 

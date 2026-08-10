@@ -6,6 +6,7 @@ import { reviewedGreenhouseSources } from '../src/sources/greenhouse-config.js';
 import { reviewedLeverSources } from '../src/sources/lever-config.js';
 import { reviewedAshbySources } from '../src/sources/ashby-config.js';
 import { MemoryInternshipStore } from '../src/store.js';
+import type { Internship } from '../src/types.js';
 
 const secret = 'fixture-secret';
 const event = (path: string, method = 'GET', body?: unknown) => ({
@@ -46,6 +47,39 @@ function dependencies(store: MemoryInternshipStore) {
 }
 
 describe('shared source operations', () => {
+  it('reports exact provider-versus-aggregator discovery lag without inventing legacy precision', async () => {
+    const store = new MemoryInternshipStore();
+    const direct = reviewedGreenhouseSources.find((candidate) => candidate.status === 'published')!;
+    const job: Internship = {
+      jobId: 'attribution-job', company: 'Acme', title: 'Software Intern', location: 'Remote', season: 'summer-2027',
+      applyUrl: 'https://careers.example.test/role', normalizedUrl: 'https://careers.example.test/role', fingerprint: 'acme-role', compensation: { raw: '' },
+      open: true, technical: true, firstSeenAt: '2026-07-30T10:00:00.000Z', lastSeenAt: '2026-07-30T10:00:00.000Z', notification: { smsPending: false, digestPending: false },
+      sourceReferences: [
+        { sourceId: 'community-list', externalId: 'list-1', document: 'README.md', sourceUrl: 'https://github.test/list', row: 1, company: 'Acme', title: 'Software Intern', location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/role', compensation: { raw: '' }, state: 'open', firstAttachedAt: '2026-07-30T10:00:00.000Z', firstAttachedAtPrecision: 'exact' },
+        { sourceId: direct.id, externalId: 'provider-1', document: 'provider-1', sourceUrl: 'https://boards.example.test', row: 1, company: 'Acme', title: 'Software Intern', location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/role', compensation: { raw: '' }, state: 'open', firstAttachedAtPrecision: 'unknown', providerTimestamp: { value: '2026-07-29T10:00:00.000Z', semantics: 'updated' } },
+      ],
+    };
+    await store.putInternship(job);
+    await store.putSourceOccurrence({ sourceId: 'community-list', externalId: 'list-1', jobId: job.jobId, occurrence: job.sourceReferences[0]!, present: true, consecutiveOmissions: 0, changedSnapshotHash: 'a', changedAt: '2026-07-30T10:00:00.000Z', firstObservedAt: '2026-07-30T10:00:00.000Z', firstObservedAtPrecision: 'exact' });
+    await store.putSourceOccurrence({ sourceId: direct.id, externalId: 'provider-1', jobId: job.jobId, occurrence: job.sourceReferences[1]!, present: true, consecutiveOmissions: 0, changedSnapshotHash: 'b', changedAt: '2026-07-30T10:05:00.000Z', firstObservedAt: '2026-07-30T10:05:00.000Z', firstObservedAtPrecision: 'exact' });
+    await store.putCheckpoint({ sourceId: 'community-list', successfulFetches: 1, lastRowCount: 1, activeExternalIds: ['list-1'], contentHash: 'aggregator-confirmed', lastSuccessAt: '2026-07-30T11:00:00.000Z' });
+
+    const response = await createSourceOperationsHandler(dependencies(store).value)(event(`/operations/attribution/${job.jobId}`));
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body).toMatchObject({
+      providerFirstObservedAt: '2026-07-30T10:05:00.000Z',
+      aggregatorFirstObservedAt: '2026-07-30T10:00:00.000Z',
+      providerMinusAggregatorLagMs: 300000,
+    });
+    expect(body.occurrences.find((occurrence: { sourceId: string }) => occurrence.sourceId === direct.id)).toMatchObject({
+      firstAttachedAtPrecision: 'unknown', providerTimestamp: { semantics: 'updated' },
+    });
+    expect(body.occurrences.find((occurrence: { sourceId: string }) => occurrence.sourceId === 'community-list')).toMatchObject({
+      lastConfirmedAt: '2026-07-30T11:00:00.000Z',
+    });
+  });
+
   it('returns Greenhouse, Lever, and Ashby sources through one fleet view', async () => {
     const store = new MemoryInternshipStore();
     const setup = dependencies(store);
