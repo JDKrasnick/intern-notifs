@@ -81,4 +81,39 @@ describe('Ashby catalog-recency migration', () => {
       apply: true, expectedCount: 1, expectedRepairToken: dryRun.repairToken,
     })).rejects.toMatchObject({ name: 'ConditionalCheckFailedException' });
   });
+
+  it('lets an operator narrow a reviewed dry run without accepting unknown IDs', async () => {
+    const second = item({
+      pk: 'JOB#job-2',
+      job: job({ jobId: 'job-2', normalizedUrl: 'https://jobs.ashbyhq.com/etched/role-2/application' }),
+      openSk: `${observedAt}#job-2`,
+    });
+    const selected = await migrateCatalogRecency('jobs', {
+      send: vi.fn().mockResolvedValueOnce({ Items: [item(), second] }),
+    } as unknown as DynamoDBDocumentClient, { candidateJobIds: ['job-2'] });
+    expect(selected).toMatchObject({ candidates: 1, candidateJobIds: ['job-2'] });
+
+    await expect(migrateCatalogRecency('jobs', {
+      send: vi.fn().mockResolvedValueOnce({ Items: [item(), second] }),
+    } as unknown as DynamoDBDocumentClient, { candidateJobIds: ['job-missing'] }))
+      .rejects.toThrow('Requested candidate job IDs were not found: job-missing');
+  });
+
+  it('uses no unused closed-index aliases when repairing a closed technical job', async () => {
+    const closed = item({
+      job: job({ open: false }), openPk: undefined, openSk: undefined,
+      closedPk: 'CLOSED', closedSk: `${observedAt}#job-1`,
+    });
+    const dryRun = await migrateCatalogRecency('jobs', {
+      send: vi.fn().mockResolvedValueOnce({ Items: [closed] }),
+    } as unknown as DynamoDBDocumentClient);
+    const send = vi.fn().mockResolvedValueOnce({ Items: [closed] }).mockResolvedValueOnce({});
+    await migrateCatalogRecency('jobs', { send } as unknown as DynamoDBDocumentClient, {
+      apply: true, expectedCount: 1, expectedRepairToken: dryRun.repairToken,
+    });
+    const update = (send.mock.calls[1]?.[0] as { input: Record<string, unknown> }).input;
+    expect(update.ExpressionAttributeNames).not.toHaveProperty('#closedPk');
+    expect(update.ExpressionAttributeNames).not.toHaveProperty('#closedSk');
+    expect(update.UpdateExpression).toContain('REMOVE #openPk, #openSk');
+  });
 });

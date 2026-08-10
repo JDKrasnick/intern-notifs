@@ -113,6 +113,19 @@ npm run migrate:catalog-recency -- --apply --expected-count EXACT_COUNT --expect
 npm run migrate:catalog-recency
 ```
 
+If review finds any same-day role that was not part of an initial baseline,
+rerun the dry run with the exact approved subset by repeating
+`--candidate-job-id JOB_ID` for every approved job. Use the count and token from
+that narrowed dry run, and repeat the same job-ID arguments on apply. The command
+rejects IDs that are no longer candidates, so a typo or stale selection cannot
+silently broaden the repair.
+
+```bash
+npm run migrate:catalog-recency -- --candidate-job-id JOB_1 --candidate-job-id JOB_2
+npm run migrate:catalog-recency -- --apply --candidate-job-id JOB_1 --candidate-job-id JOB_2 \
+  --expected-count 2 --expected-repair-token NARROWED_TOKEN
+```
+
 The second dry run must report zero candidates. Next run the catalog-index audit
 and guarded open-index repair described above so all legacy normal rows receive
 explicit metadata and ranked keys. Verify `GET /jobs` page by page: normal roles

@@ -31,6 +31,14 @@ export interface CatalogRecencyMigrationReport {
   repaired: number;
 }
 
+export interface CatalogRecencyMigrationOptions {
+  apply?: boolean;
+  expectedCount?: number;
+  expectedRepairToken?: string;
+  /** Optional operator-reviewed subset from a preceding unrestricted dry run. */
+  candidateJobIds?: readonly string[];
+}
+
 const ASHBY_BASELINE_DATE = '2026-08-09';
 const CONFIRMED_ASHBY_SOURCE_IDS = new Set(reviewedAshbySources.map((source) => source.id));
 
@@ -70,7 +78,7 @@ async function repairCandidate(tableName: string, client: DynamoDBDocumentClient
   const names: Record<string, string> = {
     '#job': 'job', '#jobId': 'jobId', '#firstSeenAt': 'firstSeenAt', '#lastSeenAt': 'lastSeenAt',
     '#sourceReferences': 'sourceReferences', '#notification': 'notification', '#catalogVisibleAt': 'catalogVisibleAt',
-    '#catalogRecency': 'catalogRecency', '#openPk': 'openPk', '#openSk': 'openSk', '#closedPk': 'closedPk', '#closedSk': 'closedSk',
+    '#catalogRecency': 'catalogRecency',
   };
   const values: Record<string, unknown> = {
     ':jobId': item.job.jobId, ':firstSeenAt': item.job.firstSeenAt, ':lastSeenAt': item.job.lastSeenAt,
@@ -91,12 +99,15 @@ async function repairCandidate(tableName: string, client: DynamoDBDocumentClient
     conditions.push('#job.#catalogRecency = :oldCatalogRecency');
   }
   if (item.job.technical !== false && item.job.open) {
+    Object.assign(names, { '#openPk': 'openPk', '#openSk': 'openSk', '#closedPk': 'closedPk', '#closedSk': 'closedSk' });
     Object.assign(values, { ':openPk': 'OPEN', ':openSk': openCatalogSortKey(baseline) });
     set.push('#openPk = :openPk', '#openSk = :openSk');
     remove.push('#closedPk', '#closedSk');
   } else if (item.job.technical !== false) {
+    Object.assign(names, { '#openPk': 'openPk', '#openSk': 'openSk' });
     remove.push('#openPk', '#openSk');
   } else {
+    Object.assign(names, { '#openPk': 'openPk', '#openSk': 'openSk', '#closedPk': 'closedPk', '#closedSk': 'closedSk' });
     remove.push('#openPk', '#openSk', '#closedPk', '#closedSk');
   }
   await client.send(new UpdateCommand({
@@ -112,9 +123,9 @@ async function repairCandidate(tableName: string, client: DynamoDBDocumentClient
 export async function migrateCatalogRecency(
   tableName: string,
   client: DynamoDBDocumentClient,
-  options: { apply?: boolean; expectedCount?: number; expectedRepairToken?: string } = {},
+  options: CatalogRecencyMigrationOptions = {},
 ): Promise<CatalogRecencyMigrationReport> {
-  const candidates: Candidate[] = [];
+  const discoveredCandidates: Candidate[] = [];
   let scannedItems = 0;
   let jobs = 0;
   let startKey: Record<string, unknown> | undefined;
@@ -125,10 +136,18 @@ export async function migrateCatalogRecency(
       const item = raw as CatalogRecencyMigrationItem;
       if (item.pk?.startsWith('JOB#') && item.sk === 'META' && item.job) jobs += 1;
       const candidate = ashbyBaselineCandidate(item);
-      if (candidate) candidates.push(candidate);
+      if (candidate) discoveredCandidates.push(candidate);
     }
     startKey = page.LastEvaluatedKey;
   } while (startKey);
+  const requestedJobIds = options.candidateJobIds && new Set(options.candidateJobIds);
+  if (requestedJobIds?.size !== options.candidateJobIds?.length) throw new Error('candidateJobIds must not contain duplicates');
+  const discoveredJobIds = new Set(discoveredCandidates.map(({ item }) => item.job.jobId));
+  const missingJobIds = [...(requestedJobIds ?? [])].filter((jobId) => !discoveredJobIds.has(jobId)).sort();
+  if (missingJobIds.length) throw new Error(`Requested candidate job IDs were not found: ${missingJobIds.join(', ')}`);
+  const candidates = requestedJobIds
+    ? discoveredCandidates.filter(({ item }) => requestedJobIds.has(item.job.jobId))
+    : discoveredCandidates;
   const token = repairToken(candidates);
   const report: CatalogRecencyMigrationReport = {
     scannedItems, jobs, candidates: candidates.length,
@@ -164,17 +183,30 @@ function stringOption(name: string): string | undefined {
   return value;
 }
 
+function repeatedStringOption(name: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < process.argv.length; index += 1) {
+    if (process.argv[index] !== name) continue;
+    const value = process.argv[index + 1];
+    if (!value || value.startsWith('--')) throw new Error(`${name} requires a value`);
+    values.push(value);
+  }
+  return values;
+}
+
 async function main(): Promise<void> {
   const tableName = process.env.INTERNSHIPS_TABLE;
   if (!tableName) throw new Error('INTERNSHIPS_TABLE is required');
   const apply = process.argv.includes('--apply');
   const expectedCount = integerOption('--expected-count');
   const expectedRepairToken = stringOption('--expected-repair-token');
+  const candidateJobIds = repeatedStringOption('--candidate-job-id');
   if (apply && (expectedCount === undefined || !expectedRepairToken)) {
     throw new Error('--apply requires --expected-count and --expected-repair-token from a preceding dry-run');
   }
   const report = await migrateCatalogRecency(tableName, createDynamoDocumentClient(new DynamoDBClient({})), {
     apply, expectedCount, expectedRepairToken,
+    ...(candidateJobIds.length ? { candidateJobIds } : {}),
   });
   console.log(JSON.stringify({ tableName, mode: apply ? 'apply' : 'dry-run', ...report }));
 }
