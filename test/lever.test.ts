@@ -20,6 +20,7 @@ describe('LeverPostingsAdapter', () => {
       sourceId: 'lever-acme', document: 'job-1', sourceUrl: 'https://api.lever.co/v0/postings/acme?mode=json',
       row: 3, company: 'Acme', title: 'Software Engineering Intern, Summer 2027', location: 'New York, NY', season: 'summer-2027',
       applyUrl: 'https://jobs.lever.co/acme/job-1/apply', postedAt: '2026-07-03T09:46:40.000Z', workMode: 'hybrid',
+      providerTimestamp: { value: '2026-07-03T09:46:40.000Z', semantics: 'published' },
       requirements: { requiresUsCitizenship: true, advancedDegreeRequired: true }
     });
   });

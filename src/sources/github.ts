@@ -27,7 +27,7 @@ export function markdownListingToSourcedPosting(listing: RawListing): SourcedPos
     // These documents are reviewed early-career lists, so a row keeps the
     // lifecycle standing the list gives it even when its title omits "intern".
     lifecycleAuthority: 'source',
-    ...(listing.postedAt ? { publishedAt: listing.postedAt } : {}),
+    ...(listing.postedAt ? { publishedAt: listing.postedAt, providerTimestamp: { value: listing.postedAt, semantics: 'published' as const } } : {}),
     seasonHint: listing.season,
     seasonHintAuthority: 'source-default',
     compensationText: listing.compensation.raw,

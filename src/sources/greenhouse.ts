@@ -238,7 +238,10 @@ export function mapGreenhouseJob(
     compensation: parseCompensation(content),
     requirements: earlyCareerRequirements(content),
     state: 'open',
-    ...(job.updated_at && !Number.isNaN(Date.parse(job.updated_at)) ? { postedAt: new Date(job.updated_at).toISOString() } : {}),
+    ...(job.updated_at && !Number.isNaN(Date.parse(job.updated_at)) ? {
+      postedAt: new Date(job.updated_at).toISOString(),
+      providerTimestamp: { value: new Date(job.updated_at).toISOString(), semantics: 'updated' as const },
+    } : {}),
     ...(workMode ? { workMode } : {}),
     fetchedAt,
   };
@@ -270,7 +273,10 @@ export function mapGreenhouseSourcedPosting(
     locations: [htmlToText(job.location?.name ?? undefined)].filter(Boolean),
     applyUrl: job.absolute_url,
     sourceState: job.internal_job_id === null || job.internal_job_id === undefined ? 'prospect' : 'open',
-    ...(job.updated_at && !Number.isNaN(Date.parse(job.updated_at)) ? { publishedAt: new Date(job.updated_at).toISOString() } : {}),
+    ...(job.updated_at && !Number.isNaN(Date.parse(job.updated_at)) ? {
+      publishedAt: new Date(job.updated_at).toISOString(),
+      providerTimestamp: { value: new Date(job.updated_at).toISOString(), semantics: 'updated' as const },
+    } : {}),
     classificationTags: [names(job.departments), names(job.offices)].filter(Boolean),
   };
 }

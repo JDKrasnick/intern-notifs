@@ -157,7 +157,7 @@ function mapPosting(row: AshbyPosting, source: ReviewedSourceRecord, fetchedAt: 
     content: description ? [description] : [], locations: uniqueLocations(row), applyUrl: row.applyUrl,
     hostedUrl: row.jobUrl, sourceState: 'open',
     ...(row.employmentType?.toLowerCase() === 'intern' ? { lifecycleAuthority: 'posting' as const } : {}),
-    ...(row.publishedAt ? { publishedAt: row.publishedAt } : {}),
+    ...(row.publishedAt ? { publishedAt: row.publishedAt, providerTimestamp: { value: row.publishedAt, semantics: 'published' as const } } : {}),
     classificationTags: [row.department, row.team, row.employmentType].filter((value): value is string => Boolean(value?.trim())),
     ...(declaredWorkMode ? { declaredWorkMode } : {}), ...(compensationText ? { compensationText } : {}),
   };

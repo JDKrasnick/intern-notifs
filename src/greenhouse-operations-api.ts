@@ -8,6 +8,7 @@ import { reviewedAshbySources, type ReviewedAshbySource } from './sources/ashby-
 import { DynamoInternshipStore, type InternshipStore } from './store.js';
 import { acceptLeverAdmission, listLeverCandidates, verifyLeverAdmission, type LeverAdmissionInput } from './lever-admission.js';
 import { monitoringChecklistItems, monitoringPeriod, publicMonitoringChecklist } from './monitoring-checklist.js';
+import { occurrenceStatus } from './ingestion/monitoring.js';
 import type { MonitoringChecklist, MonitoringChecklistItemId, SourceCheckpoint, SourceHealth, SourceHealthState } from './types.js';
 
 type ApiEvent = {
@@ -295,6 +296,51 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         version: updated.version,
       }));
       return reply(200, publicMonitoringChecklist(updated, checklistPeriod));
+    }
+
+    const attributionMatch = path.match(/^\/operations\/attribution\/([^/]+)$/);
+    if (attributionMatch) {
+      if (method !== 'GET') return reply(405, { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed.' });
+      const jobId = decodeURIComponent(attributionMatch[1]);
+      const job = await dependencies.store.getJob(jobId);
+      if (!job) return reply(404, { code: 'JOB_NOT_FOUND', message: 'Catalog job not found.' });
+      const sourceById = new Map(sources.map((source) => [source.id, source]));
+      const occurrenceGroups = await Promise.all(job.sourceReferences.map(async (reference) => [reference, await dependencies.store.getSourceOccurrences(reference.sourceId)] as const));
+      const occurrences = occurrenceGroups.map(([reference, candidates]) => {
+        const state = candidates.find((candidate) => candidate.externalId === reference.externalId)
+          ?? candidates.find((candidate) => candidate.occurrence.document === reference.document && candidate.occurrence.row === reference.row);
+        const source = sourceById.get(reference.sourceId);
+        const checkpoint = checkpoints[sources.findIndex((candidate) => candidate.id === reference.sourceId)];
+        const status = state ? occurrenceStatus(state, checkpoint, health.get(reference.sourceId)) : undefined;
+        return {
+          sourceId: reference.sourceId,
+          sourceKind: source ? 'direct-provider' as const : 'aggregator' as const,
+          externalId: reference.externalId,
+          firstObservedAt: status?.firstObservedAt,
+          firstObservedAtPrecision: status?.firstObservedAtPrecision ?? 'unknown',
+          lastConfirmedAt: status?.lastConfirmedAt,
+          firstAttachedAt: reference.firstAttachedAt,
+          firstAttachedAtPrecision: reference.firstAttachedAtPrecision ?? 'unknown',
+          providerTimestamp: reference.providerTimestamp,
+        };
+      });
+      const firstExact = (kind: 'direct-provider' | 'aggregator') => occurrences
+        .filter((item) => item.sourceKind === kind && item.firstObservedAtPrecision === 'exact' && item.firstObservedAt)
+        .sort((a, b) => a.firstObservedAt!.localeCompare(b.firstObservedAt!))[0];
+      const providerFirst = firstExact('direct-provider');
+      const aggregatorFirst = firstExact('aggregator');
+      const providerMinusAggregatorLagMs = providerFirst && aggregatorFirst
+        ? Date.parse(providerFirst.firstObservedAt!) - Date.parse(aggregatorFirst.firstObservedAt!)
+        : undefined;
+      return reply(200, {
+        generatedAt: new Date(timestamp).toISOString(),
+        jobId: job.jobId,
+        occurrences,
+        providerFirstObservedAt: providerFirst?.firstObservedAt,
+        aggregatorFirstObservedAt: aggregatorFirst?.firstObservedAt,
+        // Positive means the aggregator was seen first; negative means a direct provider was seen first.
+        ...(providerMinusAggregatorLagMs === undefined ? {} : { providerMinusAggregatorLagMs }),
+      });
     }
 
     const actionMatch = path.match(/^\/operations\/sources\/([^/]+)\/actions$/);

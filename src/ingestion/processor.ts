@@ -85,6 +85,7 @@ export function processPosting(
     requirements: requirements(posting, content),
     state: posting.sourceState,
     ...(posting.publishedAt ? { postedAt: posting.publishedAt } : {}),
+    ...(posting.providerTimestamp ? { providerTimestamp: posting.providerTimestamp } : {}),
     ...(workMode ? { workMode } : {}),
     fetchedAt: posting.fetchedAt,
     technical: assessment.technical,

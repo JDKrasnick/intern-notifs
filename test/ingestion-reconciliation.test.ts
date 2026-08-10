@@ -77,6 +77,29 @@ describe('snapshot reconciliation', () => {
     ]);
   });
 
+  it('keeps source observation facts immutable and timestamps an exact later attachment', async () => {
+    const store = new MemoryInternshipStore();
+    const aggregator = new MutableAdapter('source-a', [listing('source-a')]);
+    await new IngestionRunner([aggregator], store).run();
+    const first = (await store.getSourceOccurrences('source-a'))[0]!;
+    const firstReference = [...store.jobs.values()][0]!.sourceReferences[0]!;
+
+    await new IngestionRunner([aggregator], store).run();
+    const repeated = (await store.getSourceOccurrences('source-a'))[0]!;
+    expect(repeated.firstObservedAt).toBe(first.firstObservedAt);
+    expect(repeated.firstObservedAtPrecision).toBe('exact');
+    expect([...store.jobs.values()][0]!.sourceReferences[0]).toMatchObject({
+      firstAttachedAt: firstReference.firstAttachedAt,
+      firstAttachedAtPrecision: 'exact',
+    });
+
+    const provider = new MutableAdapter('source-b', [listing('source-b')]);
+    await new IngestionRunner([provider], store).run();
+    const attached = [...store.jobs.values()][0]!.sourceReferences.find((reference) => reference.sourceId === 'source-b')!;
+    const providerOccurrence = (await store.getSourceOccurrences('source-b'))[0]!;
+    expect(attached).toMatchObject({ firstAttachedAt: providerOccurrence.firstObservedAt, firstAttachedAtPrecision: 'exact' });
+  });
+
   it('keeps a role catalogued while any open source occurrence classifies it as technical', async () => {
     const store = new MemoryInternshipStore();
     const technical = new MutableAdapter('source-technical', [listing('source-technical', { technical: true })]);

@@ -229,8 +229,16 @@ export interface SourceReference {
   sourceUrl: string;
   row: number;
   postedAt?: string;
+  /** Provider timestamp kept separate from when InternNotifs observed the row. */
+  providerTimestamp?: ProviderTimestamp;
   /** Source-declared workplace arrangement; absent when the source does not declare one. */
   workMode?: 'remote' | 'hybrid' | 'onsite';
+}
+
+/** The meaning the provider assigns to a timestamp; it is never an InternNotifs observation time. */
+export interface ProviderTimestamp {
+  value: string;
+  semantics: 'published' | 'updated';
 }
 
 export interface Compensation {
@@ -256,6 +264,10 @@ export interface SourceOccurrence extends SourceReference {
   compensation: Compensation;
   requirements?: JobRequirements;
   state: 'open' | 'closed';
+  /** Exact time this source was first linked to this catalog job, when known. */
+  firstAttachedAt?: string;
+  /** Legacy references predate attribution tracking and must not imply precision. */
+  firstAttachedAtPrecision?: 'exact' | 'unknown';
 }
 
 export interface SourceOccurrenceState {
@@ -268,6 +280,10 @@ export interface SourceOccurrenceState {
   /** Snapshot in which this occurrence last changed. */
   changedSnapshotHash: string;
   changedAt: string;
+  /** Immutable InternNotifs observation time, never a provider timestamp. */
+  firstObservedAt?: string;
+  /** `unknown` explicitly identifies legacy/backfilled records. */
+  firstObservedAtPrecision?: 'exact' | 'unknown';
 }
 
 /**
@@ -278,6 +294,8 @@ export interface SourceOccurrenceState {
 export interface SourceOccurrenceStatus extends SourceOccurrenceState {
   confirmedSnapshotHash?: string;
   confirmedAt?: string;
+  /** Alias for operator reports: confirmation comes from the durable source checkpoint. */
+  lastConfirmedAt?: string;
 }
 
 export interface NotificationEvent {
@@ -333,6 +351,7 @@ export interface SourcedPosting {
    */
   lifecycleAuthority?: 'title' | 'posting' | 'source';
   publishedAt?: string;
+  providerTimestamp?: ProviderTimestamp;
   seasonHint?: string;
   seasonHintAuthority?: 'posting' | 'source-default';
   classificationTags?: string[];
