@@ -40,7 +40,14 @@ export function isQuietSourceDue(
   const lastPollAt = timestamp(health?.lastAttemptAt)
     ?? timestamp(health?.lastSuccessAt)
     ?? timestamp(checkpoint?.lastSuccessAt);
-  if (lastPollAt !== undefined) return now.getTime() - lastPollAt >= SOURCE_POLL_CADENCE.quietIntervalMs;
+  if (lastPollAt !== undefined) {
+    // Workers record completion slightly after the fixed-minute dispatcher
+    // invocation. Compare hourly scheduler windows so that normal processing
+    // latency does not defer the sixth invocation to the seventh hour.
+    const elapsedWindows = Math.floor(now.getTime() / SOURCE_POLL_CADENCE.activeIntervalMs)
+      - Math.floor(lastPollAt / SOURCE_POLL_CADENCE.activeIntervalMs);
+    return elapsedWindows >= SOURCE_POLL_CADENCE.quietIntervalMs / SOURCE_POLL_CADENCE.activeIntervalMs;
+  }
 
   // A source with state but no usable timestamp must recover immediately. Only
   // brand-new quiet sources are spread across the first six hourly runs.
