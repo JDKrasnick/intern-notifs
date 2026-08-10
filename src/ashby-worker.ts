@@ -8,6 +8,7 @@ import { failedSourceHealth, safeDiagnostic, successfulSourceHealth } from './so
 import { DynamoInternshipStore, DynamoUserStore, type InternshipStore, type UserStore } from './store.js';
 import type { SourceCheckpoint, SourceFetchResult } from './types.js';
 import type { AshbyWorkMessage } from './ashby-dispatch.js';
+import { processFifoBatch } from './sqs-fifo-batch.js';
 
 const SHADOW_CHECKPOINT_PREFIX = 'shadow-';
 const SHADOW_LINK_CONCURRENCY = 4;
@@ -339,14 +340,7 @@ export async function processAshbyQueue(
   dependencies: AshbyBoardDependencies,
   context?: { awsRequestId?: string },
 ): Promise<{ batchItemFailures: Array<{ itemIdentifier: string }> }> {
-  const batchItemFailures: Array<{ itemIdentifier: string }> = [];
-  const blockedGroups = new Set<string>();
-  for (const record of event.Records) {
-    const groupId = record.attributes?.MessageGroupId;
-    if (groupId && blockedGroups.has(groupId)) {
-      batchItemFailures.push({ itemIdentifier: record.messageId });
-      continue;
-    }
+  return processFifoBatch(event.Records, async (record) => {
     try {
       const parsed = parseWorkMessage(record.body);
       const result = await runAshbyBoard(
@@ -365,11 +359,9 @@ export async function processAshbyQueue(
         messageId: record.messageId,
         error: safeDiagnostic(error),
       }));
-      batchItemFailures.push({ itemIdentifier: record.messageId });
-      if (groupId) blockedGroups.add(groupId);
+      throw error;
     }
-  }
-  return { batchItemFailures };
+  });
 }
 
 export async function handler(

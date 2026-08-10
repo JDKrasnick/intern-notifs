@@ -5,8 +5,8 @@ import { isProviderSourceDue, SOURCE_POLL_CADENCE } from './source-poll-cadence.
 import type { SourceCheckpoint, SourceHealth } from './types.js';
 
 export const GREENHOUSE_DISPATCH_BATCH_SIZE = 10;
-export const GREENHOUSE_POLL_INTERVAL_MS = SOURCE_POLL_CADENCE.activeIntervalMs;
-export const GREENHOUSE_INACTIVE_POLL_INTERVAL_MS = SOURCE_POLL_CADENCE.quietIntervalMs;
+export const GREENHOUSE_POLL_INTERVAL_MS = SOURCE_POLL_CADENCE.publishedIntervalMs;
+export const GREENHOUSE_SHADOW_POLL_INTERVAL_MS = SOURCE_POLL_CADENCE.shadowIntervalMs;
 
 export interface GreenhouseWorkMessage {
   version: 1;
@@ -53,7 +53,7 @@ export function isGreenhouseSourceDue(
   now: Date,
   health?: SourceHealth,
 ): boolean {
-  return isProviderSourceDue(source.id, checkpoint, now, health);
+  return isProviderSourceDue(source.id, source.status, checkpoint, now, health);
 }
 
 async function dueSources(

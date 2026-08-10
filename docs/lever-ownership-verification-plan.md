@@ -184,8 +184,8 @@ discarded, its evidence URLs are kept, and the numbers come from the probe.
 `region`. The dedicated Lever FIFO runner schedules every reviewed board:
 published boards write through the normal poller, while shadow boards use
 isolated `shadow-{sourceId}` checkpoints and never write jobs or notifications.
-Boards with eligible roles run hourly; empty boards are deterministically
-staggered across six-hour checks.
+Published boards run every thirty minutes whether active or quiet. Shadow
+boards are deterministically staggered across three-hour checks.
 
 Shadow evaluation should observe, for at least one week:
 

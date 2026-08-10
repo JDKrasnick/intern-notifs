@@ -54,15 +54,20 @@ describe('Greenhouse queue dispatch', () => {
     })).rejects.toThrow('throttled');
   });
 
-  it('uses elapsed quiet cadence on the deployed hourly schedule and catches up after a missed run', () => {
+  it('polls shadow boards every three hours on the deployed half-hour schedule', () => {
     const firstScheduledAt = Date.parse('2026-07-29T00:12:00.000Z');
     const lastSuccessAt = new Date(firstScheduledAt + 60_000).toISOString();
     const checkpoint = { sourceId: `shadow-${acmeSource.id}`, successfulFetches: 1, lastRowCount: 0, lastSuccessAt };
-    const hourlyRuns = Array.from({ length: 7 }, (_, hour) => new Date(firstScheduledAt + hour * GREENHOUSE_POLL_INTERVAL_MS));
-    expect(hourlyRuns.slice(0, 6).every((now) => !isGreenhouseSourceDue(acmeSource, checkpoint, now))).toBe(true);
-    expect(isGreenhouseSourceDue(acmeSource, checkpoint, hourlyRuns[6]!)).toBe(true);
+    const scheduledRuns = Array.from({ length: 7 }, (_, window) => new Date(firstScheduledAt + window * GREENHOUSE_POLL_INTERVAL_MS));
+    expect(scheduledRuns.slice(0, 6).every((now) => !isGreenhouseSourceDue(acmeSource, checkpoint, now))).toBe(true);
+    expect(isGreenhouseSourceDue(acmeSource, checkpoint, scheduledRuns[6]!)).toBe(true);
     expect(isGreenhouseSourceDue(acmeSource, checkpoint, new Date(firstScheduledAt + 10 * GREENHOUSE_POLL_INTERVAL_MS))).toBe(true);
-    expect(isGreenhouseSourceDue(acmeSource, { ...checkpoint, lastRowCount: 1 }, hourlyRuns[0]!)).toBe(true);
+  });
+
+  it('polls published boards every half hour even when they are quiet', () => {
+    const published: ReviewedGreenhouseSource = { ...acmeSource, status: 'published' };
+    const checkpoint = { sourceId: published.id, successfulFetches: 1, lastRowCount: 0, lastSuccessAt: scheduledAt };
+    expect(isGreenhouseSourceDue(published, checkpoint, new Date(Date.parse(scheduledAt) + GREENHOUSE_POLL_INTERVAL_MS))).toBe(true);
   });
 });
 
