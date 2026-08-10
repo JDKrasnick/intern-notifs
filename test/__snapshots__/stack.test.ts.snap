@@ -228,6 +228,64 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
       "Type": "AWS::DynamoDB::Table",
       "UpdateReplacePolicy": "Retain",
     },
+    "CatalogIndexAuditSchedule": {
+      "Properties": {
+        "FlexibleTimeWindow": {
+          "Mode": "OFF",
+        },
+        "ScheduleExpression": "cron(42 8 * * ? *)",
+        "ScheduleExpressionTimezone": "UTC",
+        "State": "ENABLED",
+        "Target": {
+          "Arn": {
+            "Fn::GetAtt": [
+              "NotifierDFD80165",
+              "Arn",
+            ],
+          },
+          "DeadLetterConfig": {
+            "Arn": {
+              "Fn::GetAtt": [
+                "SchedulerDeadLetterQueueFA1FB96A",
+                "Arn",
+              ],
+            },
+          },
+          "Input": "{"command":"audit-catalog-indexes"}",
+          "RetryPolicy": {
+            "MaximumEventAgeInSeconds": 3600,
+            "MaximumRetryAttempts": 2,
+          },
+          "RoleArn": {
+            "Fn::GetAtt": [
+              "SchedulerInvokeRoleE2A7D616",
+              "Arn",
+            ],
+          },
+        },
+      },
+      "Type": "AWS::Scheduler::Schedule",
+    },
+    "CatalogIndexMismatchAlarm027CC35E": {
+      "Properties": {
+        "AlarmDescription": "Stored job state and the open/closed catalog index attributes diverge, or the daily audit did not report.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "Service",
+            "Value": "catalog",
+          },
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "CatalogIndexMismatchCount",
+        "Namespace": "InternNotifs/Catalog",
+        "Period": 86400,
+        "Statistic": "Maximum",
+        "Threshold": 1,
+        "TreatMissingData": "breaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
     "CustomAWSCDKOpenIdConnectProviderCustomResourceProviderHandlerF2C543E0": {
       "DependsOn": [
         "CustomAWSCDKOpenIdConnectProviderCustomResourceProviderRole517FED65",
@@ -715,6 +773,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
                 "dynamodb:GetItem",
                 "dynamodb:PutItem",
                 "dynamodb:Query",
+                "dynamodb:Scan",
               ],
               "Effect": "Allow",
               "Resource": [

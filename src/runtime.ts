@@ -1,4 +1,7 @@
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { auditCatalogIndexes, emitCatalogIndexAuditMetric } from './catalog-index-audit.js';
 import { validateApplicationUrlWithEvidence, type ApplicationUrlValidator } from './core/application-url.js';
 import { defaultPushTemplates, ExpoPushPublisher, inspectExpoPushReceipts, NtfyPublisher, sendDigest, sendNewJobNotifications, sendPendingNotifications, SesEmailSender, type EmailSender, type PushPublisher } from './notifications.js';
 import { Poller } from './poll.js';
@@ -66,11 +69,17 @@ export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies
 
 export async function runtimeHandler(event: { command?: string } = {}) {
   const command = event.command;
-  if (command !== 'poll' && command !== 'digest') throw new Error('Scheduler event command must be poll or digest');
+  if (command !== 'poll' && command !== 'digest' && command !== 'audit-catalog-indexes') throw new Error('Scheduler event command must be poll, digest, or audit-catalog-indexes');
   const tableName = process.env.INTERNSHIPS_TABLE;
+  if (!tableName) throw new Error('INTERNSHIPS_TABLE is required');
+  if (command === 'audit-catalog-indexes') {
+    const result = await auditCatalogIndexes(tableName, DynamoDBDocumentClient.from(new DynamoDBClient({})));
+    emitCatalogIndexAuditMetric(result);
+    return result;
+  }
   const parameterName = process.env.RUNTIME_CONFIG_PARAMETER_NAME;
   const usersTable = process.env.USERS_TABLE;
-  if (!tableName || !parameterName || !usersTable) throw new Error('INTERNSHIPS_TABLE, USERS_TABLE, and RUNTIME_CONFIG_PARAMETER_NAME are required');
+  if (!parameterName || !usersTable) throw new Error('USERS_TABLE and RUNTIME_CONFIG_PARAMETER_NAME are required');
   const result = await runRuntimeCommand(command, { store: new DynamoInternshipStore(tableName), userStore: new DynamoUserStore(usersTable), config: await loadRuntimeConfig(parameterName) });
   console.log(JSON.stringify({ command, ...result }));
   return result;
