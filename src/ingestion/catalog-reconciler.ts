@@ -126,7 +126,7 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
   };
 }
 
-function create(listing: ProcessedListing, externalId: string, now: string, applicationUrlValidatedAt?: string, metadataVersion?: number): Internship {
+function create(listing: ProcessedListing, externalId: string, now: string, baseline: boolean, applicationUrlValidatedAt?: string, metadataVersion?: number): Internship {
   const normalizedUrl = normalizeUrl(listing.applyUrl);
   const key = fingerprint(listing.company, listing.title, listing.location, listing.season);
   return {
@@ -147,6 +147,8 @@ function create(listing: ProcessedListing, externalId: string, now: string, appl
     technical: listing.technical ?? isTechnicalJob(listing),
     open: listing.state === 'open',
     firstSeenAt: now,
+    catalogVisibleAt: now,
+    catalogRecency: baseline ? 'baseline' : 'normal',
     lastSeenAt: now,
     notification: { smsPending: true, digestPending: true },
   };
@@ -221,7 +223,7 @@ export class CatalogReconciler {
       const metadataVersion = input.metadataValidated?.get(externalId);
       const job = existing
         ? merge(existing, listing, externalId, input.now, validatedAt, metadataVersion)
-        : create(listing, externalId, input.now, validatedAt, metadataVersion);
+        : create(listing, externalId, input.now, input.baseline, validatedAt, metadataVersion);
       const retryingUncommittedCreate = Boolean(stored && !inSnapshot
         && !priorById.has(externalId)
         && stored.sourceReferences.length === 1

@@ -14,7 +14,8 @@ const auditJob = (overrides: Partial<Internship> = {}): Internship => ({
   jobId: 'job-1', company: 'Acme', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2027',
   applyUrl: 'https://careers.example.test/job-1', normalizedUrl: 'https://careers.example.test/job-1', fingerprint: 'fingerprint-1',
   compensation: { raw: '' }, sourceReferences: [], technical: true, open: true,
-  firstSeenAt: '2026-08-01T00:00:00.000Z', lastSeenAt: '2026-08-02T00:00:00.000Z',
+  firstSeenAt: '2026-08-01T00:00:00.000Z', catalogVisibleAt: '2026-08-01T00:00:00.000Z', catalogRecency: 'normal',
+  lastSeenAt: '2026-08-02T00:00:00.000Z',
   notification: { smsPending: false, digestPending: false }, ...overrides,
 });
 
@@ -100,7 +101,7 @@ describe('catalog index audit', () => {
   it('enforces the open, closed, and nontechnical index invariant', () => {
     const open = auditJob();
     expect(catalogIndexMismatch({ pk: 'JOB#job-1', sk: 'META', job: open })).toBe('openTechnical');
-    expect(catalogIndexMismatch({ pk: 'JOB#job-1', sk: 'META', job: open, openPk: 'OPEN', openSk: `${open.firstSeenAt}#job-1` })).toBeUndefined();
+    expect(catalogIndexMismatch({ pk: 'JOB#job-1', sk: 'META', job: open, openPk: 'OPEN', openSk: `3#${open.firstSeenAt}#job-1` })).toBeUndefined();
 
     const closed = auditJob({ open: false });
     expect(catalogIndexMismatch({ pk: 'JOB#job-1', sk: 'META', job: closed, openPk: 'OPEN', openSk: 'stale' })).toBe('closedTechnical');
@@ -112,7 +113,7 @@ describe('catalog index audit', () => {
   });
 
   it('classifies legacy jobs once before auditing or repairing them', () => {
-    expect(canonicalCatalogJob(auditJob({ technical: undefined })).technical).toBe(true);
+    expect(canonicalCatalogJob(auditJob({ technical: undefined, catalogVisibleAt: undefined, catalogRecency: undefined }))).toMatchObject({ technical: true, catalogVisibleAt: '2026-08-01T00:00:00.000Z', catalogRecency: 'normal' });
     expect(canonicalCatalogJob(auditJob({ title: 'Graduate Clinical Intern', technical: undefined })).technical).toBe(false);
   });
 

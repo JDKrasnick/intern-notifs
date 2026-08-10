@@ -32,6 +32,7 @@
     "test:ashby:live": "ASHBY_LIVE=1 vitest run test/ashby.live.test.ts",
     "discover:firecrawl": "tsx scripts/firecrawl-discovery.ts",
     "migrate:open-index": "tsx src/migrate-open-index.ts",
+    "migrate:catalog-recency": "tsx src/migrate-catalog-recency.ts",
     "audit:catalog-index": "tsx src/migrate-open-index.ts",
     "migrate:catalog-search": "tsx src/migrate-catalog-search.ts",
     "migrate:source-occurrences": "tsx src/migrate-source-occurrences.ts",

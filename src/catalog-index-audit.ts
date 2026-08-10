@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { isTechnicalJob } from './core/filters.js';
+import { canonicalCatalogRecency, openCatalogSortKey } from './catalog-recency.js';
 import type { Internship } from './types.js';
 
 export type CatalogIndexMismatchKind = 'openTechnical' | 'closedTechnical' | 'nontechnical';
@@ -33,7 +34,8 @@ interface AffectedCatalogIndexItem {
 }
 
 export function canonicalCatalogJob(job: Internship): Internship {
-  return job.technical === undefined ? { ...job, technical: isTechnicalJob(job) } : job;
+  const canonical = canonicalCatalogRecency(job);
+  return canonical.technical === undefined ? { ...canonical, technical: isTechnicalJob(canonical) } : canonical;
 }
 
 export function catalogIndexMismatch(item: CatalogIndexItem): CatalogIndexMismatchKind | undefined {
@@ -41,12 +43,13 @@ export function catalogIndexMismatch(item: CatalogIndexItem): CatalogIndexMismat
   const job = canonicalCatalogJob(item.job);
   const noOpenIndex = item.openPk === undefined && item.openSk === undefined;
   const noClosedIndex = item.closedPk === undefined && item.closedSk === undefined;
-  if (job.technical === false) return noOpenIndex && noClosedIndex ? undefined : 'nontechnical';
+  const canonicalRecency = item.job.catalogVisibleAt === job.catalogVisibleAt && item.job.catalogRecency === job.catalogRecency;
+  if (job.technical === false) return noOpenIndex && noClosedIndex && canonicalRecency ? undefined : 'nontechnical';
   if (job.open) {
-    return item.openPk === 'OPEN' && item.openSk === `${job.firstSeenAt}#${job.jobId}` && noClosedIndex
+    return item.openPk === 'OPEN' && item.openSk === openCatalogSortKey(job) && noClosedIndex && canonicalRecency
       ? undefined : 'openTechnical';
   }
-  return item.closedPk === 'CLOSED' && item.closedSk === `${job.lastSeenAt}#${job.jobId}` && noOpenIndex
+  return item.closedPk === 'CLOSED' && item.closedSk === `${job.lastSeenAt}#${job.jobId}` && noOpenIndex && canonicalRecency
     ? undefined : 'closedTechnical';
 }
 
@@ -61,6 +64,8 @@ function catalogIndexRepairToken(affected: AffectedCatalogIndexItem[]): string {
     technical: item.job.technical ?? null,
     open: item.job.open,
     firstSeenAt: item.job.firstSeenAt,
+    catalogVisibleAt: item.job.catalogVisibleAt ?? null,
+    catalogRecency: item.job.catalogRecency ?? null,
     lastSeenAt: item.job.lastSeenAt,
     openPk: item.openPk ?? null,
     openSk: item.openSk ?? null,
@@ -78,11 +83,13 @@ async function repairCatalogIndexItem(
   const { item, job } = affected;
   const names: Record<string, string> = {
     '#job': 'job', '#jobId': 'jobId', '#open': 'open', '#firstSeenAt': 'firstSeenAt', '#lastSeenAt': 'lastSeenAt',
+    '#catalogVisibleAt': 'catalogVisibleAt', '#catalogRecency': 'catalogRecency',
     '#openPk': 'openPk', '#openSk': 'openSk', '#closedPk': 'closedPk', '#closedSk': 'closedSk',
   };
   const values: Record<string, unknown> = {
     ':jobId': item.job.jobId, ':open': item.job.open,
     ':firstSeenAt': item.job.firstSeenAt, ':lastSeenAt': item.job.lastSeenAt,
+    ':catalogVisibleAt': job.catalogVisibleAt, ':catalogRecency': job.catalogRecency,
   };
   const conditions = [
     '#job.#jobId = :jobId', '#job.#open = :open',
@@ -90,6 +97,19 @@ async function repairCatalogIndexItem(
   ];
   const set: string[] = [];
   const remove: string[] = [];
+
+  if (item.job.catalogVisibleAt === undefined) {
+    conditions.push('attribute_not_exists(#job.#catalogVisibleAt)');
+    set.push('#job.#catalogVisibleAt = :catalogVisibleAt');
+  } else {
+    conditions.push('#job.#catalogVisibleAt = :catalogVisibleAt');
+  }
+  if (item.job.catalogRecency === undefined) {
+    conditions.push('attribute_not_exists(#job.#catalogRecency)');
+    set.push('#job.#catalogRecency = :catalogRecency');
+  } else {
+    conditions.push('#job.#catalogRecency = :catalogRecency');
+  }
 
   names['#technical'] = 'technical';
   if (item.job.technical === undefined) {
@@ -112,7 +132,7 @@ async function repairCatalogIndexItem(
   if (job.technical === false) {
     remove.push('#openPk', '#openSk', '#closedPk', '#closedSk');
   } else if (job.open) {
-    Object.assign(values, { ':indexPk': 'OPEN', ':indexSk': `${job.firstSeenAt}#${job.jobId}` });
+    Object.assign(values, { ':indexPk': 'OPEN', ':indexSk': openCatalogSortKey(job) });
     set.push('#openPk = :indexPk', '#openSk = :indexSk');
     remove.push('#closedPk', '#closedSk');
   } else {

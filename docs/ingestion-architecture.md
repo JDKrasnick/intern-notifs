@@ -78,6 +78,31 @@ stays quiet. Checkpoints advance only after all writes for a snapshot succeed.
 Store indexes use the already-processed catalog state and never re-run
 classification.
 
+### Catalog and source time facts
+
+Catalog timestamps and provider timestamps answer different questions and are
+never substituted for one another:
+
+- `Internship.firstSeenAt` is the immutable time InternNotifs first observed the
+  canonical job. It is not a provider creation or publication time.
+- `Internship.catalogVisibleAt` is the immutable time that canonical job became
+  visible in the InternNotifs catalog. `catalogRecency=normal` sorts by this
+  value; `baseline` remains browseable but sorts after every normal job.
+- `SourceOccurrenceState.firstObservedAt` is when InternNotifs first observed
+  that source-local posting. Its precision field marks legacy unknowns.
+- `SourceOccurrence.firstAttachedAt` is when that source occurrence was first
+  attached to the canonical catalog job. Attaching a provider baseline to an
+  existing community job does not change the job's catalog timestamps or rank.
+- `SourceOccurrence.providerTimestamp` retains the provider's declared
+  `published` or `updated` semantics. In particular, an `updated` value is never
+  converted into a creation, observation, attachment, or visibility time.
+
+The open sparse-index key starts with the recency rank and then uses
+`catalogVisibleAt#jobId`. Normal rows use rank `3`; baseline rows use rank `1`.
+This makes one descending query return every normal role before any baseline
+role. Legacy unranked normal keys remain readable during rollout and the catalog
+index audit canonicalizes them.
+
 ## Compatibility and rollout
 
 Migration order is Greenhouse, Lever, general GitHub Markdown, then Quant

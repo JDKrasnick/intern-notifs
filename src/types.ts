@@ -426,7 +426,12 @@ export interface Internship {
   /** Persisted preprocessing result used by indexes and queries. */
   technical?: boolean;
   open: boolean;
+  /** Immutable time InternNotifs first observed this canonical catalog role. */
   firstSeenAt: string;
+  /** Immutable time this canonical role first became visible; absent only on legacy rows. */
+  catalogVisibleAt?: string;
+  /** Baseline roles remain public but rank after normal roles; legacy rows imply normal. */
+  catalogRecency?: 'normal' | 'baseline';
   lastSeenAt: string;
   notification: NotificationState;
 }

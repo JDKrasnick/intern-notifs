@@ -91,11 +91,58 @@ npm run migrate:catalog-search -- --apply
 ```
 
 The final audit must report zero mismatches. It verifies that open technical
-jobs use `openPk=OPEN` and `firstSeenAt#jobId` as `openSk`, closed technical jobs
-use `closedPk=CLOSED` and `lastSeenAt#jobId` as `closedSk`, and nontechnical jobs
-use neither sparse index. Finally, paginate `GET /jobs` to exhaustion and confirm
-the repaired job IDs occur in the response; preserve each returned `cursor` as
-the next request's `cursor` query parameter.
+jobs use `openPk=OPEN` and `recency-rank#catalogVisibleAt#jobId` as `openSk`,
+closed technical jobs use `closedPk=CLOSED` and `lastSeenAt#jobId` as `closedSk`,
+and nontechnical jobs use neither sparse index. Finally, paginate `GET /jobs` to
+exhaustion and confirm the repaired job IDs occur in the response; preserve each
+returned `cursor` as the next request's `cursor` query parameter.
+
+### 2026-08-09 Ashby catalog-recency repair
+
+Run this one-time repair after deploying catalog-recency-aware code. It selects
+only quiet, unnotified jobs created on 2026-08-09 whose first exact source
+attachment is one of the reviewed Ashby sources. An Ashby occurrence later
+attached to an existing community job is not a candidate.
+
+The default mode is read-only. Save the exact `candidates`, `candidateJobIds`,
+and deterministic `repairToken` output:
+
+```bash
+npm run migrate:catalog-recency
+```
+
+Review every candidate, then apply only with the dry-run guards. Each write is a
+narrow conditional update and stops if the job, its source attachments, its
+notification state, or its timestamps changed concurrently:
+
+```bash
+npm run migrate:catalog-recency -- --apply --expected-count EXACT_COUNT --expected-repair-token EXACT_TOKEN
+npm run migrate:catalog-recency
+```
+
+After an unrestricted apply, the second dry run must report zero candidates.
+
+If review finds any same-day role that was not part of an initial baseline,
+rerun the dry run with the exact approved subset by repeating
+`--candidate-job-id JOB_ID` for every approved job. Use the count and token from
+that narrowed dry run, and repeat the same job-ID arguments on apply. The command
+rejects IDs that are no longer candidates, so a typo or stale selection cannot
+silently broaden the repair.
+
+```bash
+npm run migrate:catalog-recency -- --candidate-job-id JOB_1 --candidate-job-id JOB_2
+npm run migrate:catalog-recency -- --apply --candidate-job-id JOB_1 --candidate-job-id JOB_2 \
+  --expected-count 2 --expected-repair-token NARROWED_TOKEN
+```
+
+After a narrowed apply, an unrestricted dry run must list exactly the reviewed
+and intentionally excluded IDs; the approved IDs are no longer candidates.
+Next run the catalog-index audit and guarded open-index repair described above so
+all legacy normal rows receive explicit metadata and ranked keys. Verify
+`GET /jobs` page by page: normal roles must appear newest-first before all
+baseline roles. Also verify a signed-in opening interval does not return any
+repaired baseline job IDs. Production execution is an operator action separate
+from deployment and this code change.
 
 ## AWS deployment
 
