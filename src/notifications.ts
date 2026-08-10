@@ -4,6 +4,7 @@ import { score } from './core/normalize.js';
 import type { DeliveryReceipt, Internship } from './types.js';
 import type { InternshipStore, UserStore } from './store.js';
 import { matchesJobFilter } from './core/filters.js';
+import { notificationSourceLabelFor } from './sources/source-label.js';
 
 export const rankInternships = (jobs: Internship[]) => [...jobs].sort((a, b) => score(b.company, b.compensation) - score(a.company, a.compensation) || (b.sourceReferences[0]?.postedAt ?? '').localeCompare(a.sourceReferences[0]?.postedAt ?? '') || b.firstSeenAt.localeCompare(a.firstSeenAt));
 
@@ -117,10 +118,7 @@ export const defaultPushTemplates: Required<PushTemplates> = {
 function displayValue(value: string | undefined) { return (value ?? '').replace(/[\r\n\t]+/g, ' ').trim(); }
 function safeClick(url: string) { try { const parsed = new URL(url); return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.toString() : undefined; } catch { return undefined; } }
 export function notificationSourceLabel(job: Internship): string {
-  const sourceId = job.sourceReferences[0]?.sourceId.toLowerCase() ?? '';
-  if (/^(?:shadow-)?greenhouse-/.test(sourceId)) return 'Greenhouse';
-  if (/^(?:shadow-)?lever-/.test(sourceId)) return 'Lever';
-  return 'Job board';
+  return notificationSourceLabelFor(job.sourceReferences);
 }
 export function compactRoleTitle(title: string, roleAbbreviations: Record<string, string> = defaultRoleAbbreviations) {
   const original = displayValue(title);
