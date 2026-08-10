@@ -981,7 +981,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         "FlexibleTimeWindow": {
           "Mode": "OFF",
         },
-        "ScheduleExpression": "cron(2/10 * * * ? *)",
+        "ScheduleExpression": "cron(7/10 * * * ? *)",
         "ScheduleExpressionTimezone": "UTC",
         "State": "ENABLED",
         "Target": {

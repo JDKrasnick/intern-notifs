@@ -5,7 +5,7 @@ export const SOURCE_POLL_CADENCE = {
   publishedIntervalMs: 30 * 60 * 1000,
   shadowIntervalMs: 3 * 60 * 60 * 1000,
   schedules: {
-    github: 'cron(2/10 * * * ? *)',
+    github: 'cron(7/10 * * * ? *)',
     greenhouse: 'cron(12,42 * * * ? *)',
     lever: 'cron(22,52 * * * ? *)',
     ashby: 'cron(2,32 * * * ? *)',
