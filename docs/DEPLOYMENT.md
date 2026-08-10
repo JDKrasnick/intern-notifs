@@ -120,6 +120,8 @@ npm run migrate:catalog-recency -- --apply --expected-count EXACT_COUNT --expect
 npm run migrate:catalog-recency
 ```
 
+After an unrestricted apply, the second dry run must report zero candidates.
+
 If review finds any same-day role that was not part of an initial baseline,
 rerun the dry run with the exact approved subset by repeating
 `--candidate-job-id JOB_ID` for every approved job. Use the count and token from
@@ -133,12 +135,14 @@ npm run migrate:catalog-recency -- --apply --candidate-job-id JOB_1 --candidate-
   --expected-count 2 --expected-repair-token NARROWED_TOKEN
 ```
 
-The second dry run must report zero candidates. Next run the catalog-index audit
-and guarded open-index repair described above so all legacy normal rows receive
-explicit metadata and ranked keys. Verify `GET /jobs` page by page: normal roles
-must appear newest-first before all baseline roles. Also verify a signed-in
-opening interval does not return any repaired baseline job IDs. Production
-execution is an operator action separate from deployment and this code change.
+After a narrowed apply, an unrestricted dry run must list exactly the reviewed
+and intentionally excluded IDs; the approved IDs are no longer candidates.
+Next run the catalog-index audit and guarded open-index repair described above so
+all legacy normal rows receive explicit metadata and ranked keys. Verify
+`GET /jobs` page by page: normal roles must appear newest-first before all
+baseline roles. Also verify a signed-in opening interval does not return any
+repaired baseline job IDs. Production execution is an operator action separate
+from deployment and this code change.
 
 ## AWS deployment
 
