@@ -55,12 +55,13 @@ describe('Lever queue dispatch', () => {
   });
 
   it('uses elapsed quiet cadence on the deployed hourly schedule and catches up after a missed run', () => {
-    const lastSuccessAt = '2026-07-30T00:00:00.000Z';
+    const firstScheduledAt = Date.parse('2026-07-30T00:22:00.000Z');
+    const lastSuccessAt = new Date(firstScheduledAt + 60_000).toISOString();
     const checkpoint = { sourceId: `shadow-${shadowSource.id}`, successfulFetches: 1, lastRowCount: 0, lastSuccessAt };
-    const hourlyRuns = Array.from({ length: 7 }, (_, hour) => new Date(Date.parse(lastSuccessAt) + hour * LEVER_POLL_INTERVAL_MS));
+    const hourlyRuns = Array.from({ length: 7 }, (_, hour) => new Date(firstScheduledAt + hour * LEVER_POLL_INTERVAL_MS));
     expect(hourlyRuns.slice(0, 6).every((now) => !isLeverSourceDue(shadowSource, checkpoint, now))).toBe(true);
     expect(isLeverSourceDue(shadowSource, checkpoint, hourlyRuns[6]!)).toBe(true);
-    expect(isLeverSourceDue(shadowSource, checkpoint, new Date(Date.parse(lastSuccessAt) + 10 * LEVER_POLL_INTERVAL_MS))).toBe(true);
+    expect(isLeverSourceDue(shadowSource, checkpoint, new Date(firstScheduledAt + 10 * LEVER_POLL_INTERVAL_MS))).toBe(true);
     expect(isLeverSourceDue(shadowSource, { ...checkpoint, lastRowCount: 1 }, hourlyRuns[0]!)).toBe(true);
   });
 
