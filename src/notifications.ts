@@ -1,5 +1,5 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
-import { inferJobFocuses, type JobFocus } from './core/filters.js';
+import { evaluateJobFilter, inferJobFocuses, type FilterMatchReason, type JobFocus } from './core/filters.js';
 import { score } from './core/normalize.js';
 import type { DeliveryReceipt, Internship } from './types.js';
 import type { InternshipStore, UserStore } from './store.js';
@@ -8,7 +8,13 @@ import { notificationSourceLabelFor } from './sources/source-label.js';
 
 export const rankInternships = (jobs: Internship[]) => [...jobs].sort((a, b) => score(b.company, b.compensation) - score(a.company, a.compensation) || (b.sourceReferences[0]?.postedAt ?? '').localeCompare(a.sourceReferences[0]?.postedAt ?? '') || b.firstSeenAt.localeCompare(a.firstSeenAt));
 
-export interface PushMessage { title: string; body: string; click?: string; tags?: string[]; }
+export interface PushMessage {
+  title: string;
+  body: string;
+  click?: string;
+  tags?: string[];
+  data?: { destination: 'job'; jobId: string; url: string; matchedFilters: { reasons: FilterMatchReason[]; exclusionsApplied: boolean } };
+}
 export interface PushPublisher { publish(message: PushMessage): Promise<void>; }
 
 const PUSH_REQUEST_TIMEOUT_MS = 5_000;
@@ -19,7 +25,7 @@ export interface ExpoPushTicket { id?: string; status: 'ok' | 'error'; details?:
 export class ExpoPushPublisher {
   constructor(private readonly endpoint = 'https://exp.host/--/api/v2/push/send', private readonly fetcher: typeof fetch = fetch) {}
   async publish(token: string, message: PushMessage): Promise<ExpoPushTicket> {
-    const response = await this.fetcher(this.endpoint, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ to: token, sound: 'default', priority: 'high', title: message.title, body: message.body, data: { jobId: message.click }, channelId: 'job-alerts' }), signal: AbortSignal.timeout(PUSH_REQUEST_TIMEOUT_MS) });
+    const response = await this.fetcher(this.endpoint, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ to: token, sound: 'default', priority: 'high', title: message.title, body: message.body, data: message.data ?? { jobId: message.click }, channelId: 'job-alerts' }), signal: AbortSignal.timeout(PUSH_REQUEST_TIMEOUT_MS) });
     if (!response.ok) throw new Error(`Expo Push Service rejected notification with HTTP ${response.status}`);
     const body = await response.json() as { data?: ExpoPushTicket | ExpoPushTicket[] };
     const ticket = Array.isArray(body.data) ? body.data[0] : body.data;
@@ -35,9 +41,19 @@ export class ExpoPushPublisher {
   }
 }
 
-function nativePushMessage(job: Internship, templates?: PushTemplates): PushMessage {
+function nativePushMessage(job: Internship, filter: Parameters<typeof evaluateJobFilter>[1], templates?: PushTemplates): PushMessage {
   // Keep the legacy compact title/body defaults; only the transport changes from ntfy to Expo.
-  return { ...pushMessage(job, templates ?? defaultPushTemplates), click: job.jobId };
+  const evaluation = evaluateJobFilter(job, filter);
+  return {
+    ...pushMessage(job, templates ?? defaultPushTemplates),
+    click: job.jobId,
+    data: {
+      destination: 'job',
+      jobId: job.jobId,
+      url: `internnotifs://jobs/${encodeURIComponent(job.jobId)}`,
+      matchedFilters: { reasons: evaluation.reasons, exclusionsApplied: evaluation.exclusionsApplied }
+    }
+  };
 }
 
 /**
@@ -57,7 +73,7 @@ export async function sendNewJobNotifications(jobs: Internship[], users: UserSto
     const timestamp = now().toISOString(); const receipt: DeliveryReceipt = { userId: device.userId, jobId: job.jobId, token: device.token, status: 'pending', createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp };
     await users.putReceipt(receipt);
     try {
-      const ticket = await publisher.publish(device.token, nativePushMessage(job, preference.push));
+      const ticket = await publisher.publish(device.token, nativePushMessage(job, preference.filter, preference.push));
       // A successful Expo response without a ticket cannot be reconciled; leave it retryable.
       const status = ticket.status === 'ok' && ticket.id ? 'pending' : 'error';
       await users.putReceipt({ ...receipt, ticketId: ticket.id, status, updatedAt: now().toISOString() });

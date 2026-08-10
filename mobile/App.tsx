@@ -35,6 +35,18 @@ import {
   registerForJobAlerts,
   scheduleApplicationFollowUp,
 } from "./src/notifications";
+import {
+  destinationFromNotification,
+  destinationFromUrl,
+  freshnessLabel,
+  isNewJob,
+  isDuplicateJobOpen,
+  routeFailureState,
+  sourcePresentation,
+  validatedOfficialUrl,
+  type AppDestination,
+  type FilterMatchReason,
+} from "./src/job-detail";
 
 type Job = {
   jobId: string;
@@ -48,6 +60,10 @@ type Job = {
   requirements?: { requiresUsCitizenship: boolean; advancedDegreeRequired: boolean };
   open: boolean;
   firstSeenAt: string;
+  lastSeenAt: string;
+  applicationUrlValidatedAt?: string;
+  invalidApplicationUrl?: string;
+  sourceReferences: Array<{ sourceId: string; sourceUrl: string }>;
 };
 type EmployerCategory = "faang" | "startup" | "normal";
 type CatalogSource = "all" | "direct" | "community" | "corroborated";
@@ -461,12 +477,16 @@ function NewRoleCard({
 function JobDetailSheet({
   job,
   signedIn,
+  matchedReasons = [],
+  exclusionsApplied = false,
   onDismiss,
   onApply,
   onOpenListing,
 }: {
   job: Job | null;
   signedIn: boolean;
+  matchedReasons?: FilterMatchReason[];
+  exclusionsApplied?: boolean;
   onDismiss: () => void;
   onApply: (job: Job) => void;
   onOpenListing: (job: Job) => void;
@@ -513,6 +533,8 @@ function JobDetailSheet({
       ? "Apply on official site"
       : "Open official application";
   const greenhouseQuickApply = hasGreenhouseQuickApply(role.applyUrl);
+  const source = sourcePresentation(role.sourceReferences ?? []);
+  const closedListingUrl = !role.open ? validatedOfficialUrl(role) : undefined;
   return (
     <Modal
       animationType="none"
@@ -543,13 +565,26 @@ function JobDetailSheet({
           style={[styles.jobSheet, { transform: [{ translateY: sheetOffset }] }]}
         >
           <View style={styles.sheetHandle} />
-          <Text style={styles.sheetEyebrow}>Official application</Text>
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetContent}>
+          <Text style={styles.sheetEyebrow}>{role.open ? "Role details" : "Closed role"}</Text>
           <Text style={styles.sheetTitle}>{role.title}</Text>
           <Text style={styles.sheetCompany}>{role.company}</Text>
           <Text style={styles.sheetDetail}>{details}</Text>
+          <View style={styles.sheetTrustBlock}>
+            <Text style={styles.sheetTrustPrimary}>{source.primary}</Text>
+            {source.corroboration ? <Text style={styles.sheetTrustSecondary}>{source.corroboration}</Text> : null}
+            <Text style={styles.sheetTrustSecondary}>{freshnessLabel(role.lastSeenAt)}</Text>
+          </View>
+          {matchedReasons.length ? (
+            <View style={styles.sheetMatchBlock} accessibilityLabel={`Matched filters: ${matchedReasons.map((reason) => reason.label).join(", ")}${exclusionsApplied ? ". Your exclusions were also applied." : ""}`}>
+              <Text style={styles.sheetMatchTitle}>Why you received this alert</Text>
+              <Text style={styles.sheetMatchText}>{matchedReasons.map((reason) => reason.label).join(" · ")}</Text>
+              {exclusionsApplied ? <Text style={styles.sheetMatchHelper}>Your exclusions were also applied.</Text> : null}
+            </View>
+          ) : null}
           {!role.open ? (
             <View style={styles.sheetClosedNotice}>
-              <Text style={styles.sheetClosedText}>This listing is marked closed.</Text>
+              <Text style={styles.sheetClosedText}>Applications for this role are closed.</Text>
             </View>
           ) : null}
           <View style={styles.sheetActions}>
@@ -565,23 +600,28 @@ function JobDetailSheet({
                 onPress={() => startRoleAction("apply")}
               />
             ) : null}
-            <ActionButton
-              label={role.open ? "Read the official listing first" : actionLabel}
-              variant={role.open ? "secondary" : "primary"}
-              disabled={handoffPending}
-              onPress={() => startRoleAction("listing")}
-            />
+            {role.open || closedListingUrl ? (
+              <ActionButton
+                label={role.open ? "Read the official listing first" : "View official listing"}
+                variant="secondary"
+                disabled={handoffPending}
+                onPress={() => startRoleAction("listing")}
+              />
+            ) : null}
             <ActionButton label="Not now" variant="secondary" onPress={onDismiss} />
           </View>
           <Text style={styles.sheetHelper}>
             {!role.open
-              ? "This opportunity is shown for reference. Confirm its availability on the employer’s site."
+              ? closedListingUrl
+                ? "The last validated official listing remains available for reference."
+                : "The official listing link is no longer verified, so it has been removed."
               : greenhouseQuickApply
               ? "If this employer enables Quick Apply, MyGreenhouse can fill the details you have saved there. Review every answer before submitting."
               : signedIn
               ? "Apply now opens the employer form and saves this role to To Apply."
               : "You’ll complete the employer’s application in your browser."}
           </Text>
+          </ScrollView>
         </Animated.View>
       </View>
     </Modal>
@@ -633,6 +673,50 @@ function ApplyNowButton({
       <Text style={styles.applyNowTitle}>{label}</Text>
       <Ionicons name="open-outline" size={19} color={colors.onDark} style={styles.applyNowArrow} />
     </TouchableOpacity>
+  );
+}
+
+function JobRouteStatusSheet({
+  state,
+  onDismiss,
+  onRetry,
+}: {
+  state: "idle" | "loading" | "missing" | "error";
+  onDismiss: () => void;
+  onRetry: () => void;
+}) {
+  if (state === "idle") return null;
+  const loading = state === "loading";
+  const missing = state === "missing";
+  return (
+    <Modal transparent animationType="fade" visible onRequestClose={onDismiss} statusBarTranslucent>
+      <View style={styles.sheetOverlay}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close role details" style={styles.sheetDismissArea} onPress={onDismiss} />
+        <View accessibilityViewIsModal style={styles.jobSheet}>
+          <View style={styles.sheetHandle} />
+          {loading ? (
+            <View accessibilityRole="progressbar" accessibilityLabel="Loading role details">
+              <Text style={styles.sheetEyebrow}>Role details</Text>
+              <Skeleton width={250} height={24} />
+              <View style={styles.skeletonGap12} />
+              <Skeleton width={180} />
+              <View style={styles.skeletonGap8} />
+              <Skeleton width={220} />
+            </View>
+          ) : (
+            <>
+              <Text style={styles.sheetEyebrow}>{missing ? "Role unavailable" : "Couldn’t load role"}</Text>
+              <Text style={styles.sheetTitle}>{missing ? "This role is no longer available." : "Check your connection and try again."}</Text>
+              <Text style={styles.sheetHelper}>{missing ? "It may have been removed from the catalog." : "Your alert and saved filters are unchanged."}</Text>
+              <View style={styles.sheetActions}>
+                {!missing ? <ActionButton label="Try again" onPress={onRetry} /> : null}
+                <ActionButton label="Back to roles" variant="secondary" onPress={onDismiss} />
+              </View>
+            </>
+          )}
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -1446,6 +1530,11 @@ function AppContent() {
   const [hideAdvancedDegreeRequired, setHideAdvancedDegreeRequired] = useState(false);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [selectedMatchReasons, setSelectedMatchReasons] = useState<FilterMatchReason[]>([]);
+  const [selectedExclusionsApplied, setSelectedExclusionsApplied] = useState(false);
+  const [jobRouteState, setJobRouteState] = useState<"idle" | "loading" | "missing" | "error">("idle");
+  const routedJobId = useRef<string | undefined>(undefined);
+  const handledOpenKeys = useRef(new Set<string>());
   const [launchInbox, setLaunchInbox] = useState<LaunchInbox>();
   const [showLaunchInbox, setShowLaunchInbox] = useState(false);
   const [launchLoaded, setLaunchLoaded] = useState(false);
@@ -1620,34 +1709,61 @@ function AppContent() {
         if (launchRequestId.current === requestId) setLaunchLoaded(true);
       });
   }, [launchLoaded, launchToken, preferences?.onboardingComplete, token]);
+  const openDestination = (destination: AppDestination | undefined, eventKey: string) => {
+    if (!destination || handledOpenKeys.current.has(eventKey)) return;
+    if (destination.kind === "job" && isDuplicateJobOpen(routedJobId.current, destination.jobId)) return;
+    handledOpenKeys.current.add(eventKey);
+    if (destination.kind === "saved") {
+      setTab("saved");
+      return;
+    }
+    routedJobId.current = destination.jobId;
+    setTab("feed");
+    setSelectedJob(null);
+    setSelectedMatchReasons(destination.reasons);
+    setSelectedExclusionsApplied(destination.exclusionsApplied);
+    setJobRouteState("loading");
+    void api<Job>(`/jobs/${encodeURIComponent(destination.jobId)}`, "")
+      .then((job) => {
+        if (routedJobId.current !== destination.jobId) return;
+        setSelectedJob(job);
+        setJobRouteState("idle");
+      })
+      .catch((error) => {
+        if (routedJobId.current !== destination.jobId) return;
+        setJobRouteState(routeFailureState(error));
+      });
+  };
+  const retryRoutedJob = () => {
+    const jobId = routedJobId.current;
+    if (!jobId) return;
+    handledOpenKeys.current.delete(`retry:${jobId}`);
+    openDestination({ kind: "job", jobId, reasons: selectedMatchReasons, exclusionsApplied: selectedExclusionsApplied }, `retry:${jobId}`);
+  };
+  const dismissRoutedJob = () => {
+    routedJobId.current = undefined;
+    setSelectedJob(null);
+    setSelectedMatchReasons([]);
+    setSelectedExclusionsApplied(false);
+    setJobRouteState("idle");
+  };
   useEffect(() => {
-    const subscription = Notifications.addNotificationResponseReceivedListener(
-      (response) => {
-        const jobId = response.notification.request.content.data.jobId as
-          | string
-          | undefined;
-        const applicationId = response.notification.request.content.data
-          .applicationId as string | undefined;
-        if (applicationId) {
-          setTab("saved");
-          return;
-        }
-        if (jobId) {
-          setTab("feed");
-          void api<Job>(`/jobs/${jobId}`, "")
-            .then((job) =>
-              Alert.alert(job.title, `${job.company}\n${job.location}`, [
-                {
-                  text: "Open job",
-                  onPress: () => void openOfficialApplication(job.applyUrl),
-                },
-              ]),
-            )
-            .catch(() => undefined);
-        }
-      },
-    );
-    return () => subscription.remove();
+    const notificationSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      const destination = destinationFromNotification(response.notification.request.content.data);
+      openDestination(destination, `notification:${response.notification.request.identifier}`);
+    });
+    const urlSubscription = Linking.addEventListener("url", ({ url }) => openDestination(destinationFromUrl(url), `url:${url}`));
+    void Promise.all([Notifications.getLastNotificationResponseAsync(), Linking.getInitialURL()]).then(([response, url]) => {
+      if (response) {
+        openDestination(destinationFromNotification(response.notification.request.content.data), `notification:${response.notification.request.identifier}`);
+        void Notifications.clearLastNotificationResponseAsync();
+      }
+      if (url) openDestination(destinationFromUrl(url), `url:${url}`);
+    });
+    return () => {
+      notificationSubscription.remove();
+      urlSubscription.remove();
+    };
   }, []);
   const catalogJobs = useMemo(() => {
     const newJobs = jobStatus === "open" ? launchInbox?.jobs ?? [] : [];
@@ -1720,6 +1836,12 @@ function AppContent() {
     return (
       <GuestExperience
         jobs={jobs}
+        routedJob={selectedJob}
+        routedMatchReasons={selectedMatchReasons}
+        routedExclusionsApplied={selectedExclusionsApplied}
+        routeState={jobRouteState}
+        onDismissRoute={dismissRoutedJob}
+        onRetryRoute={retryRoutedJob}
         jobStatus={jobStatus}
         onJobStatusChange={setJobStatus}
         onSearchQueryChange={setGuestSearchQuery}
@@ -1971,7 +2093,9 @@ function AppContent() {
       <JobDetailSheet
         job={selectedJob}
         signedIn
-        onDismiss={() => setSelectedJob(null)}
+        matchedReasons={selectedMatchReasons}
+        exclusionsApplied={selectedExclusionsApplied}
+        onDismiss={dismissRoutedJob}
         onApply={(job) => {
           if (job.open) void apply(job);
           else void openOfficialApplication(job.applyUrl);
@@ -1980,6 +2104,7 @@ function AppContent() {
           void openOfficialApplication(job.applyUrl);
         }}
       />
+      <JobRouteStatusSheet state={jobRouteState} onDismiss={dismissRoutedJob} onRetry={retryRoutedJob} />
     </SafeAreaView>
   );
 }
@@ -1995,6 +2120,12 @@ export default function App() {
 
 function GuestExperience({
   jobs,
+  routedJob,
+  routedMatchReasons,
+  routedExclusionsApplied,
+  routeState,
+  onDismissRoute,
+  onRetryRoute,
   jobStatus,
   onJobStatusChange,
   onSearchQueryChange,
@@ -2015,6 +2146,12 @@ function GuestExperience({
   onSession,
 }: {
   jobs: Job[];
+  routedJob: Job | null;
+  routedMatchReasons: FilterMatchReason[];
+  routedExclusionsApplied: boolean;
+  routeState: "idle" | "loading" | "missing" | "error";
+  onDismissRoute: () => void;
+  onRetryRoute: () => void;
   jobStatus: "open" | "closed";
   onJobStatusChange: (status: "open" | "closed") => void;
   onSearchQueryChange: (query: string) => void;
@@ -2044,6 +2181,7 @@ function GuestExperience({
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const visibleJob = routedJob ?? selectedJob;
   const filtered = useMemo(
     () =>
       jobs
@@ -2109,6 +2247,7 @@ function GuestExperience({
                     <JobCard
                       job={item}
                       onOpen={() => setSelectedJob(item)}
+                      isNew={isNewJob(item.firstSeenAt, { signedIn: false })}
                       onHideLocally={() => onHideLocally(item)}
                     />
                   )}
@@ -2153,9 +2292,14 @@ function GuestExperience({
         {!usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} /> : null}
       </View>
       <JobDetailSheet
-        job={selectedJob}
+        job={visibleJob}
         signedIn={false}
-        onDismiss={() => setSelectedJob(null)}
+        matchedReasons={routedJob ? routedMatchReasons : []}
+        exclusionsApplied={routedJob ? routedExclusionsApplied : false}
+        onDismiss={() => {
+          setSelectedJob(null);
+          if (routedJob) onDismissRoute();
+        }}
         onApply={(job) => {
           void openOfficialApplication(job.applyUrl);
         }}
@@ -2163,6 +2307,7 @@ function GuestExperience({
           void openOfficialApplication(job.applyUrl);
         }}
       />
+      <JobRouteStatusSheet state={routeState} onDismiss={onDismissRoute} onRetry={onRetryRoute} />
     </SafeAreaView>
   );
 }
@@ -3606,7 +3751,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 32,
+    maxHeight: "92%",
   },
+  sheetContent: { paddingBottom: 4 },
   sheetHandle: {
     alignSelf: "center",
     backgroundColor: colors.border,
@@ -3642,6 +3789,18 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     marginTop: 4,
   },
+  sheetTrustBlock: { gap: 3, marginTop: 16 },
+  sheetTrustPrimary: { color: colors.body, fontSize: 14, fontWeight: "700", lineHeight: 20 },
+  sheetTrustSecondary: { color: colors.muted, fontSize: 13, lineHeight: 19 },
+  sheetMatchBlock: {
+    backgroundColor: colors.signalSoft,
+    borderRadius: 12,
+    marginTop: 18,
+    padding: 14,
+  },
+  sheetMatchTitle: { color: colors.ink, fontSize: 14, fontWeight: "700", lineHeight: 20 },
+  sheetMatchText: { color: colors.body, fontSize: 14, lineHeight: 20, marginTop: 3 },
+  sheetMatchHelper: { color: colors.muted, fontSize: 13, lineHeight: 19, marginTop: 3 },
   sheetClosedNotice: {
     backgroundColor: colors.dangerSoft,
     borderColor: colors.dangerBorder,

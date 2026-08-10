@@ -58,7 +58,7 @@
 - [ ] Close the Ashby emergency-promotion follow-up: all 35 healthy boards were published on 2026-08-09 under an explicit owner-approved observation-window override with quiet baselines; after 2026-08-10 19:32 America/New_York, confirm three clean snapshots spanning at least 24 hours, link and host stability, zero notification burst, queue health, and catalog quality, then retire the override record or quarantine any failing board.
 - [x] Add Ashby application-assistance route detection and headed-browser workflows after runtime promotion; this remains separate from source ingestion. Published reviewed boards are eligible automatically.
 - [x] Add human-readable source tags to default internship notifications for community job boards and published Greenhouse, Lever, and Ashby sources.
-- [ ] Add job freshness/source labels and notification deep links to the mobile product.
+- [x] Add job freshness and official/community provenance labels, filter-match explanations, hybrid New status, and duplicate-safe notification deep links to in-app role details, including closed and unavailable states.
 - [ ] Add user-facing settings, account deletion, and data export surface.
 - [x] Add source-quality reports, drift gates, nightly live probing, source-candidate review artifacts, and Firecrawl discovery-only workflow.
 - [x] Define the shared headed/headless application-session state machine and trust boundaries.
