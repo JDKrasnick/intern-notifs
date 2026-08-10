@@ -1,4 +1,4 @@
-import type { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+import type { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it, vi } from 'vitest';
 import { auditCatalogIndexes, canonicalCatalogJob, catalogIndexMismatch, emitCatalogIndexAuditMetric } from '../src/catalog-index-audit.js';
 import { hasLifecycleTitleSignal, inferSeason } from '../src/core/early-career.js';
@@ -123,24 +123,65 @@ describe('catalog index audit', () => {
       .mockResolvedValueOnce({ Items: [{ pk: 'JOB#job-1', sk: 'META', job: open }], LastEvaluatedKey: { pk: 'JOB#job-1', sk: 'META' } })
       .mockResolvedValueOnce({ Items: [{ pk: 'SOURCE#one', sk: 'CHECKPOINT' }, { pk: 'JOB#job-2', sk: 'META', job: nontechnical, openPk: 'OPEN', openSk: 'stale' }] });
     const client = { send } as unknown as DynamoDBDocumentClient;
-    await expect(auditCatalogIndexes('jobs', client, { repair: true, expectedMismatches: 1 }))
+    await expect(auditCatalogIndexes('jobs', client, { repair: true, expectedMismatches: 1, expectedRepairToken: 'dry-run-token' }))
       .rejects.toThrow('expected 1 mismatches but found 2');
     expect(send).toHaveBeenCalledTimes(2);
   });
 
-  it('repairs only the mismatches counted by the guarded full scan', async () => {
+  it('repairs only the exact mismatches identified by the guarded full scan', async () => {
     const open = auditJob({ technical: undefined });
-    const send = vi.fn().mockResolvedValueOnce({ Items: [{ pk: 'JOB#job-1', sk: 'META', job: open }] }).mockResolvedValueOnce({});
-    const report = await auditCatalogIndexes('jobs', { send } as unknown as DynamoDBDocumentClient, { repair: true, expectedMismatches: 1, includeJobIds: true });
+    const items = [{ pk: 'JOB#job-1', sk: 'META', job: open }];
+    const dryRun = await auditCatalogIndexes('jobs', {
+      send: vi.fn().mockResolvedValueOnce({ Items: items }),
+    } as unknown as DynamoDBDocumentClient);
+    const send = vi.fn().mockResolvedValueOnce({ Items: items }).mockResolvedValueOnce({});
+    const report = await auditCatalogIndexes('jobs', { send } as unknown as DynamoDBDocumentClient, {
+      repair: true, expectedMismatches: 1, expectedRepairToken: dryRun.repairToken, includeJobIds: true,
+    });
     expect(report).toMatchObject({ jobs: 1, mismatches: 1, byKind: { openTechnical: 1, closedTechnical: 0, nontechnical: 0 }, affectedJobIds: { openTechnical: ['job-1'], closedTechnical: [], nontechnical: [] }, repaired: 1 });
-    expect((send.mock.calls[1]?.[0] as PutCommand).input.Item).toMatchObject({ openPk: 'OPEN', job: { technical: true } });
+    expect((send.mock.calls[1]?.[0] as UpdateCommand).input).toMatchObject({
+      Key: { pk: 'JOB#job-1', sk: 'META' },
+      UpdateExpression: expect.stringContaining('SET #job.#technical = :technical, #openPk = :indexPk, #openSk = :indexSk'),
+      ConditionExpression: expect.stringContaining('attribute_not_exists(#job.#technical)'),
+      ExpressionAttributeValues: expect.objectContaining({ ':technical': true, ':indexPk': 'OPEN' }),
+    });
+  });
+
+  it('refuses a same-size repair when an affected job changed since the dry-run', async () => {
+    const before = auditJob();
+    const dryRun = await auditCatalogIndexes('jobs', {
+      send: vi.fn().mockResolvedValueOnce({ Items: [{ pk: 'JOB#job-1', sk: 'META', job: before }] }),
+    } as unknown as DynamoDBDocumentClient);
+    const after = auditJob({ title: 'Machine Learning Intern' });
+    const send = vi.fn().mockResolvedValueOnce({ Items: [{ pk: 'JOB#job-1', sk: 'META', job: after }] });
+    await expect(auditCatalogIndexes('jobs', { send } as unknown as DynamoDBDocumentClient, {
+      repair: true, expectedMismatches: 1, expectedRepairToken: dryRun.repairToken,
+    })).rejects.toThrow('expected repair token');
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses a conditional narrow update so a concurrent catalog write cannot be overwritten', async () => {
+    const open = auditJob();
+    const items = [{ pk: 'JOB#job-1', sk: 'META', job: open }];
+    const dryRun = await auditCatalogIndexes('jobs', {
+      send: vi.fn().mockResolvedValueOnce({ Items: items }),
+    } as unknown as DynamoDBDocumentClient);
+    const concurrentWrite = Object.assign(new Error('job changed'), { name: 'ConditionalCheckFailedException' });
+    const send = vi.fn().mockResolvedValueOnce({ Items: items }).mockRejectedValueOnce(concurrentWrite);
+    await expect(auditCatalogIndexes('jobs', { send } as unknown as DynamoDBDocumentClient, {
+      repair: true, expectedMismatches: 1, expectedRepairToken: dryRun.repairToken,
+    })).rejects.toMatchObject({ name: 'ConditionalCheckFailedException' });
+    const update = (send.mock.calls[1]?.[0] as UpdateCommand).input;
+    expect(update.ConditionExpression).toContain('#job.#lastSeenAt = :lastSeenAt');
+    expect(update.UpdateExpression).toBe('SET #openPk = :indexPk, #openSk = :indexSk REMOVE #closedPk, #closedSk');
+    expect(update).not.toHaveProperty('Item');
   });
 
   it('emits the mismatch count as a stable catalog metric', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     emitCatalogIndexAuditMetric({
       scannedItems: 3, jobs: 2, mismatches: 1,
-      byKind: { openTechnical: 1, closedTechnical: 0, nontechnical: 0 }, repaired: 0,
+      byKind: { openTechnical: 1, closedTechnical: 0, nontechnical: 0 }, repairToken: 'token', repaired: 0,
     }, 1234);
     expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({
       _aws: { Timestamp: 1234, CloudWatchMetrics: [{ Namespace: 'InternNotifs/Catalog' }] },

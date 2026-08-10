@@ -65,18 +65,21 @@ INTERNSHIPS_TABLE="$(aws cloudformation describe-stacks \
 export INTERNSHIPS_TABLE
 ```
 
-The command is read-only by default. Record its exact `mismatches` and `byKind`
-result before making changes:
+The command is read-only by default. Record its exact `mismatches`, `byKind`,
+and `repairToken` result before making changes:
 
 ```bash
 npm run audit:catalog-index
 ```
 
-Repair is deliberately guarded by that count. It rescans the whole table and
-refuses to write if the result changed between commands:
+Repair is deliberately guarded by that count and token. It rescans the whole
+table and refuses to write if the affected records or their relevant state
+changed between commands. Each index repair is also a narrow conditional update,
+so a concurrent catalog write is preserved and makes the repair stop for a fresh
+audit instead of being overwritten:
 
 ```bash
-npm run migrate:open-index -- --repair --expected-mismatches EXACT_COUNT
+npm run migrate:open-index -- --repair --expected-mismatches EXACT_COUNT --expected-repair-token EXACT_TOKEN
 npm run audit:catalog-index
 ```
 
