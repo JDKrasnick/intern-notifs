@@ -50,6 +50,7 @@ type Job = {
   firstSeenAt: string;
 };
 type EmployerCategory = "faang" | "startup" | "normal";
+type CatalogSource = "all" | "direct" | "community" | "corroborated";
 type Application = {
   applicationId: string;
   jobId: string;
@@ -727,6 +728,8 @@ function RoleFilters({
   onEmployerFilterChange,
   jobStatus,
   onJobStatusChange,
+  sourceFilter,
+  onSourceFilterChange,
   hideUsCitizenshipRequired,
   hideAdvancedDegreeRequired,
   onHideUsCitizenshipRequiredChange,
@@ -738,6 +741,8 @@ function RoleFilters({
   onEmployerFilterChange: (value: EmployerCategory | "all") => void;
   jobStatus: "open" | "closed";
   onJobStatusChange: (value: "open" | "closed") => void;
+  sourceFilter: CatalogSource;
+  onSourceFilterChange: (value: CatalogSource) => void;
   hideUsCitizenshipRequired: boolean;
   hideAdvancedDegreeRequired: boolean;
   onHideUsCitizenshipRequiredChange: (value: boolean) => void;
@@ -746,12 +751,14 @@ function RoleFilters({
   const activeFilterCount = [
     employerFilter !== "all",
     jobStatus !== "open",
+    sourceFilter !== "all",
     hideUsCitizenshipRequired,
     hideAdvancedDegreeRequired,
   ].filter(Boolean).length;
   const clearFilters = () => {
     onEmployerFilterChange("all");
     onJobStatusChange("open");
+    onSourceFilterChange("all");
     onHideUsCitizenshipRequiredChange(false);
     onHideAdvancedDegreeRequiredChange(false);
   };
@@ -781,6 +788,14 @@ function RoleFilters({
           <EmployerCategoryFilter selected={employerFilter} onChange={onEmployerFilterChange} />
           <Text style={styles.filterLabel}>Availability</Text>
           <JobStatusFilter status={jobStatus} onChange={onJobStatusChange} />
+          <Text style={styles.filterLabel}>Source</Text>
+          <View style={styles.companyFilter}>
+            {([['all', 'All'], ['direct', 'Direct'], ['community', 'Community'], ['corroborated', 'Direct + community']] as const).map(([value, label]) => (
+              <TouchableOpacity key={value} accessibilityRole="radio" accessibilityState={{ selected: sourceFilter === value }} style={[styles.chip, sourceFilter === value && styles.chipOn]} onPress={() => onSourceFilterChange(value)}>
+                <Text style={[styles.chipLabel, sourceFilter === value && styles.chipLabelOn]}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
           <Text style={styles.filterLabel}>Requirements</Text>
           <RequirementFilter
             hideUsCitizenshipRequired={hideUsCitizenshipRequired}
@@ -1426,6 +1441,7 @@ function AppContent() {
   const [guestSearchQuery, setGuestSearchQuery] = useState("");
   const [employerFilter, setEmployerFilter] = useState<EmployerCategory | "all">("all");
   const [jobStatus, setJobStatus] = useState<"open" | "closed">("open");
+  const [catalogSource, setCatalogSource] = useState<CatalogSource>("all");
   const [hideUsCitizenshipRequired, setHideUsCitizenshipRequired] = useState(false);
   const [hideAdvancedDegreeRequired, setHideAdvancedDegreeRequired] = useState(false);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
@@ -1481,14 +1497,18 @@ function AppContent() {
     setCatalogLoadingMore(false);
     setCatalogError(undefined);
     setCatalogMoreError(undefined);
-    void api<CatalogPage<Job>>(`/jobs?status=${jobStatus}&limit=25`, "")
+    const catalogQuery = (token ? query : guestSearchQuery).trim();
+    const params = new URLSearchParams({ status: jobStatus, limit: "25" });
+    if (catalogQuery) params.set("q", catalogQuery);
+    if (catalogSource !== "all") params.set("source", catalogSource);
+    void api<CatalogPage<Job>>(`/jobs?${params.toString()}`, "")
       .then((page) => {
         if (catalogRequestGeneration.current !== requestGeneration) return;
         catalogJobsRef.current = page.jobs;
         catalogCursorRef.current = page.cursor;
         setJobs(page.jobs);
         setNextCatalogCursor(page.cursor);
-        if (jobStatus === "open") {
+        if (jobStatus === "open" && !catalogQuery && catalogSource === "all") {
           void responseCache.set(catalogCacheKey, page);
         }
       })
@@ -1513,7 +1533,7 @@ function AppContent() {
         catalogRequestInFlight.current = false;
       }
     };
-  }, [catalogRefresh, jobStatus]);
+  }, [catalogRefresh, jobStatus, query, guestSearchQuery, catalogSource, token]);
   const loadNextCatalogPage = (retry = false) => {
     const cursor = catalogCursorRef.current;
     if (!cursor || catalogRequestInFlight.current || (!retry && catalogMoreError)) return;
@@ -1521,10 +1541,11 @@ function AppContent() {
     catalogRequestInFlight.current = true;
     setCatalogLoadingMore(true);
     setCatalogMoreError(undefined);
-    void api<CatalogPage<Job>>(
-      `/jobs?status=${jobStatus}&limit=25&cursor=${encodeURIComponent(cursor)}`,
-      "",
-    )
+    const catalogQuery = (token ? query : guestSearchQuery).trim();
+    const params = new URLSearchParams({ status: jobStatus, limit: "25", cursor });
+    if (catalogQuery) params.set("q", catalogQuery);
+    if (catalogSource !== "all") params.set("source", catalogSource);
+    void api<CatalogPage<Job>>(`/jobs?${params.toString()}`, "")
       .then((page) => {
         if (catalogRequestGeneration.current !== requestGeneration) return;
         const nextJobs = appendCatalogPage(catalogJobsRef.current, page);
@@ -1707,6 +1728,8 @@ function AppContent() {
         jobStatus={jobStatus}
         onJobStatusChange={setJobStatus}
         onSearchQueryChange={setGuestSearchQuery}
+        sourceFilter={catalogSource}
+        onSourceFilterChange={setCatalogSource}
         catalogInitialLoading={catalogInitialLoading}
         catalogError={catalogError}
         catalogLoadingMore={catalogLoadingMore}
@@ -1847,6 +1870,8 @@ function AppContent() {
                     onEmployerFilterChange={setEmployerFilter}
                     jobStatus={jobStatus}
                     onJobStatusChange={setJobStatus}
+                    sourceFilter={catalogSource}
+                    onSourceFilterChange={setCatalogSource}
                     hideUsCitizenshipRequired={hideUsCitizenshipRequired}
                     hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
                     onHideUsCitizenshipRequiredChange={setHideUsCitizenshipRequired}
@@ -1978,6 +2003,8 @@ function GuestExperience({
   jobStatus,
   onJobStatusChange,
   onSearchQueryChange,
+  sourceFilter,
+  onSourceFilterChange,
   catalogInitialLoading,
   catalogError,
   catalogLoadingMore,
@@ -1996,6 +2023,8 @@ function GuestExperience({
   jobStatus: "open" | "closed";
   onJobStatusChange: (status: "open" | "closed") => void;
   onSearchQueryChange: (query: string) => void;
+  sourceFilter: CatalogSource;
+  onSourceFilterChange: (source: CatalogSource) => void;
   catalogInitialLoading: boolean;
   catalogError?: string;
   catalogLoadingMore: boolean;
@@ -2064,6 +2093,8 @@ function GuestExperience({
                   onEmployerFilterChange={setEmployerFilter}
                   jobStatus={jobStatus}
                   onJobStatusChange={onJobStatusChange}
+                  sourceFilter={sourceFilter}
+                  onSourceFilterChange={onSourceFilterChange}
                   hideUsCitizenshipRequired={hideUsCitizenshipRequired}
                   hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
                   onHideUsCitizenshipRequiredChange={setHideUsCitizenshipRequired}
