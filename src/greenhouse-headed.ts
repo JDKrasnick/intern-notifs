@@ -18,6 +18,8 @@ export type GreenhouseField = {
   required: boolean;
   visible: boolean;
   enabled: boolean;
+  /** Current browser value state, used only for a local explicit handoff. */
+  completed?: boolean;
 };
 
 export type GreenhousePage = {

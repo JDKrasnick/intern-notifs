@@ -296,6 +296,13 @@ describe('Ashby offline manifest and reverification', () => {
       fs: fakeFs(files), root: 'fixtures', now: new Date('2026-08-09T02:00:00Z'),
     })).toEqual([]);
 
+    expect(collectAshbyManifestViolations([ownerOverride], {
+      fs: fakeFs(files), root: 'fixtures', now: new Date('2026-08-10T01:00:00Z'),
+    })).toEqual(expect.arrayContaining([
+      'ashby-acme-io: observation-window override follow-up is overdue',
+      'ashby-acme-io: promotion requires at least 3 clean snapshots',
+    ]));
+
     const invalidOverride = source({
       ...ownerOverride,
       promotionEvidence: {

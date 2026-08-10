@@ -4,7 +4,7 @@
 
 InternNotifs can help a student prepare and fill an employer's official application, but a non-partner integration must never submit it. The student reviews every answer, completes any portal verification, and operates the employer's final submit control.
 
-CAPTCHA, MFA, email verification, identity checks, portal login, and similar challenges are pause-and-handoff events. InternNotifs does not solve, outsource, or bypass them.
+CAPTCHA, MFA, email verification, identity checks, portal login, and similar challenges are pause-and-handoff events. InternNotifs does not solve, outsource, or bypass them. The browser companion keeps its **Your turn** state visible, disables filling while blocked, and rechecks only after the student explicitly selects **Continue**; it never resumes automatically.
 
 The shared session lifecycle is:
 
@@ -26,7 +26,7 @@ The assistant may:
 
 The first production pilot should be headed. It keeps authentication and portal cookies on the student's device, makes selector failures visible, and gives the student the clearest control.
 
-The reviewed Greenhouse and Lever detectors plus field treatment policy live in [`src/greenhouse-headed.ts`](../src/greenhouse-headed.ts), [`src/lever-headed.ts`](../src/lever-headed.ts), and [`docs/application-field-policy.md`](application-field-policy.md). Greenhouse scrolls to, and only after an explicit student action clicks, one exact Quick Apply control. Lever accepts only its direct `/apply` form URLs, which need no generic Apply click. Every detector fails closed for unreviewed hosts, ambiguous controls, or verification checkpoints.
+The reviewed Greenhouse, Lever, and Ashby detectors plus field treatment policy live in [`src/greenhouse-headed.ts`](../src/greenhouse-headed.ts), [`src/lever-headed.ts`](../src/lever-headed.ts), [`src/ashby-headed.ts`](../src/ashby-headed.ts), and [`docs/application-field-policy.md`](application-field-policy.md). Greenhouse scrolls to, and only after an explicit student action clicks, one exact Quick Apply control. Lever accepts only its direct `/apply` form URLs, which need no generic Apply click. Ashby accepts only `https://jobs.ashbyhq.com/<published-board>/<posting-uuid>/application`, with the reviewed board key compared case-sensitively. Every detector fails closed for unreviewed hosts, paths, boards, ambiguous controls, or verification checkpoints.
 
 ## Route 2: headless preparation
 

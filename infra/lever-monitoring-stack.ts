@@ -123,7 +123,7 @@ export class LeverMonitoringStack extends cdk.Stack {
         metricName: 'SourceFreshnessMinutes',
         dimensionsMap: { provider: 'lever', region: 'global' },
         statistic: 'Maximum',
-        period: cdk.Duration.minutes(10),
+        period: cdk.Duration.hours(1),
       }),
       threshold: 90,
       evaluationPeriods: 1,

@@ -36,6 +36,13 @@ describe('CDK stack', () => {
   });
   it('enables a DST-aware morning digest schedule', () => {
     const app = new cdk.App(); const stack = new InternNotifsStack(app, 'Schedules', { githubRepository: 'owner/repo', emailAddress: 'me@example.com' });
+    Template.fromStack(stack).hasResourceProperties('AWS::Scheduler::Schedule', {
+      ScheduleExpression: 'cron(2 * * * ? *)',
+      ScheduleExpressionTimezone: 'UTC',
+      State: 'ENABLED',
+      FlexibleTimeWindow: { Mode: 'OFF' },
+      Target: { RetryPolicy: { MaximumEventAgeInSeconds: 3600, MaximumRetryAttempts: 0 } },
+    });
     Template.fromStack(stack).hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: 'cron(0 9 * * ? *)', ScheduleExpressionTimezone: 'America/New_York', State: 'ENABLED', FlexibleTimeWindow: { Mode: 'OFF' } });
   });
   it('alarms when a polled source stops producing trusted snapshots', () => {
@@ -95,6 +102,9 @@ describe('CDK stack', () => {
     template.hasResourceProperties('AWS::Lambda::Function', { Timeout: 120 });
     template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
     template.resourceCountIs('AWS::CloudWatch::Dashboard', 1);
+    template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      MetricName: 'SourceFreshnessMinutes', Period: 3600, Threshold: 90, TreatMissingData: 'breaching',
+    });
     expect(snapshotTemplate(template.toJSON())).toMatchSnapshot();
   });
   it('queues Ashby boards on a staggered hourly schedule with bounded concurrency', () => {
@@ -105,6 +115,9 @@ describe('CDK stack', () => {
     template.hasResourceProperties('AWS::Lambda::Function', { Timeout: 120 });
     template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
     template.resourceCountIs('AWS::CloudWatch::Dashboard', 1);
+    template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      MetricName: 'SourceFreshnessMinutes', Period: 3600, Threshold: 90, TreatMissingData: 'breaching',
+    });
     template.hasResourceProperties('AWS::SSM::Parameter', { Name: '/intern-notifs/operations/ashby/queue-url' });
     template.hasResourceProperties('AWS::SSM::Parameter', { Name: '/intern-notifs/operations/ashby/dead-letter-queue-url' });
   });

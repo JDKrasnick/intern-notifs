@@ -85,8 +85,10 @@ export class InternNotifsStack extends cdk.Stack {
     const deadLetterQueue = new sqs.Queue(this, 'SchedulerDeadLetterQueue', { retentionPeriod: cdk.Duration.days(14), encryption: sqs.QueueEncryption.SQS_MANAGED });
     const schedulerRole = new iam.Role(this, 'SchedulerInvokeRole', { assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com') });
     notifier.grantInvoke(schedulerRole); deadLetterQueue.grantSendMessages(schedulerRole);
-    const target = (command: 'poll' | 'digest'): scheduler.CfnSchedule.TargetProperty => ({ arn: notifier.functionArn, roleArn: schedulerRole.roleArn, input: JSON.stringify({ command }), deadLetterConfig: { arn: deadLetterQueue.queueArn }, retryPolicy: { maximumEventAgeInSeconds: 3600, maximumRetryAttempts: 2 } });
-    new scheduler.CfnSchedule(this, 'PollSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(2,7,12,17,22,27,32,37,42,47,52,57 * * * ? *)', scheduleExpressionTimezone: 'UTC', state: 'ENABLED', target: target('poll') });
+    const target = (command: 'poll' | 'digest', maximumRetryAttempts = 2): scheduler.CfnSchedule.TargetProperty => ({ arn: notifier.functionArn, roleArn: schedulerRole.roleArn, input: JSON.stringify({ command }), deadLetterConfig: { arn: deadLetterQueue.queueArn }, retryPolicy: { maximumEventAgeInSeconds: 3600, maximumRetryAttempts } });
+    // The next hourly poll is the safe retry boundary for this expensive task;
+    // Scheduler retries previously tripled the cost of repeated timeouts.
+    new scheduler.CfnSchedule(this, 'PollSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(2 * * * ? *)', scheduleExpressionTimezone: 'UTC', state: 'ENABLED', target: target('poll', 0) });
     // The poll Lambda publishes these as embedded metrics, so a source that
     // stops succeeding surfaces without anyone reading logs. Greenhouse boards
     // are alarmed in their own stack alongside their queue.

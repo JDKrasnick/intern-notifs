@@ -29,17 +29,22 @@ function promotionEvidenceViolations(source: ReviewedSourceRecord, now: Date): s
   if (!evidence.stableIdentity) violations.push('identity is not approved as stable');
   if (!evidence.stableApplicationHosts) violations.push('application hosts are not approved as stable');
   const observationOverride = evidence.observationWindowOverride;
+  let observationOverrideActive = false;
   if (observationOverride) {
     if (!observationOverride.reason.trim()) violations.push('observation-window override lacks a reason');
     const followUpAfter = Date.parse(observationOverride.followUpAfter);
     if (!Number.isFinite(followUpAfter)) violations.push('observation-window override followUpAfter is invalid');
     else if (Number.isFinite(approvedAt) && followUpAfter <= approvedAt) {
       violations.push('observation-window override follow-up must be after approval');
+    } else if (now.getTime() >= followUpAfter) {
+      violations.push('observation-window override follow-up is overdue');
+    } else {
+      observationOverrideActive = true;
     }
   }
-  const minimumSnapshots = observationOverride ? 1 : ASHBY_PROMOTION_MIN_SNAPSHOTS;
+  const minimumSnapshots = observationOverrideActive ? 1 : ASHBY_PROMOTION_MIN_SNAPSHOTS;
   if (evidence.snapshots.length < minimumSnapshots) {
-    violations.push(observationOverride
+    violations.push(observationOverrideActive
       ? 'observation-window override requires at least one clean snapshot'
       : `promotion requires at least ${ASHBY_PROMOTION_MIN_SNAPSHOTS} clean snapshots`);
     return violations;
@@ -48,7 +53,7 @@ function promotionEvidenceViolations(source: ReviewedSourceRecord, now: Date): s
   if (timestamps.some((timestamp) => !Number.isFinite(timestamp))) violations.push('promotion snapshot timestamp is invalid');
   else {
     const latestSnapshot = Math.max(...timestamps);
-    if (!observationOverride && latestSnapshot - Math.min(...timestamps) < ASHBY_PROMOTION_MIN_SPAN_MS) {
+    if (!observationOverrideActive && latestSnapshot - Math.min(...timestamps) < ASHBY_PROMOTION_MIN_SPAN_MS) {
       violations.push('promotion snapshots must span at least 24 hours');
     }
     if (latestSnapshot > now.getTime() + CLOCK_SKEW_MS) violations.push('promotion snapshot timestamp is in the future');
