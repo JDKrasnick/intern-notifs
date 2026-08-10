@@ -12,6 +12,7 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import type { Construct } from 'constructs';
+import { SOURCE_POLL_CADENCE } from '../src/source-poll-cadence.js';
 
 export interface GreenhouseMonitoringStackProps extends cdk.StackProps {
   internshipsTableName: string;
@@ -179,7 +180,7 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
     schedulerDeadLetterQueue.grantSendMessages(schedulerRole);
     new scheduler.CfnSchedule(this, 'GreenhousePollSchedule', {
       flexibleTimeWindow: { mode: 'OFF' },
-      scheduleExpression: 'cron(12 * * * ? *)',
+      scheduleExpression: SOURCE_POLL_CADENCE.schedules.greenhouse,
       scheduleExpressionTimezone: 'UTC',
       state: 'ENABLED',
       target: {

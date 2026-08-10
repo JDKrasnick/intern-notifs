@@ -2,11 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { SendMessageBatchCommand, SQSClient, type SendMessageBatchRequestEntry } from '@aws-sdk/client-sqs';
 import { reviewedLeverSources, type ReviewedLeverSource } from './sources/lever-config.js';
 import { DynamoInternshipStore, type LeverAdmission } from './store.js';
+import { isProviderSourceDue, SOURCE_POLL_CADENCE } from './source-poll-cadence.js';
 import type { SourceCheckpoint, SourceHealth } from './types.js';
 
 export const LEVER_DISPATCH_BATCH_SIZE = 10;
-export const LEVER_POLL_INTERVAL_MS = 60 * 60 * 1000;
-export const LEVER_INACTIVE_POLL_INTERVAL_MS = 6 * 60 * 60 * 1000;
+export const LEVER_POLL_INTERVAL_MS = SOURCE_POLL_CADENCE.activeIntervalMs;
+export const LEVER_INACTIVE_POLL_INTERVAL_MS = SOURCE_POLL_CADENCE.quietIntervalMs;
 
 export interface LeverWorkMessage {
   version: 1;
@@ -57,27 +58,13 @@ export function leverWorkMessages(
   }));
 }
 
-function stableBoardBucket(sourceId: string, buckets: number): number {
-  let hash = 2166136261;
-  for (const character of sourceId) {
-    hash ^= character.charCodeAt(0);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0) % buckets;
-}
-
 export function isLeverSourceDue(
   source: ReviewedLeverSource,
   checkpoint: SourceCheckpoint | undefined,
   now: Date,
   health?: SourceHealth,
 ): boolean {
-  if (health?.sourceStatus === 'paused') return false;
-  if (health?.backoffUntil && Date.parse(health.backoffUntil) > now.getTime()) return false;
-  if (health?.pollTier !== 'quiet' && (!checkpoint || (checkpoint.lastRowCount ?? 0) > 0)) return true;
-  const buckets = LEVER_INACTIVE_POLL_INTERVAL_MS / LEVER_POLL_INTERVAL_MS;
-  const currentWindow = Math.floor(now.getTime() / LEVER_POLL_INTERVAL_MS);
-  return currentWindow % buckets === stableBoardBucket(source.id, buckets);
+  return isProviderSourceDue(source.id, checkpoint, now, health);
 }
 
 function emitFreshness(source: ReviewedLeverSource, health: SourceHealth | undefined, checkpoint: SourceCheckpoint | undefined, now: Date) {

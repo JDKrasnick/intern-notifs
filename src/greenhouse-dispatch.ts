@@ -1,11 +1,12 @@
 import { SendMessageBatchCommand, SQSClient, type SendMessageBatchRequestEntry } from '@aws-sdk/client-sqs';
 import { reviewedGreenhouseSources, type ReviewedGreenhouseSource } from './sources/greenhouse-config.js';
 import { DynamoInternshipStore } from './store.js';
+import { isProviderSourceDue, SOURCE_POLL_CADENCE } from './source-poll-cadence.js';
 import type { SourceCheckpoint, SourceHealth } from './types.js';
 
 export const GREENHOUSE_DISPATCH_BATCH_SIZE = 10;
-export const GREENHOUSE_POLL_INTERVAL_MS = 60 * 60 * 1000;
-export const GREENHOUSE_INACTIVE_POLL_INTERVAL_MS = 6 * 60 * 60 * 1000;
+export const GREENHOUSE_POLL_INTERVAL_MS = SOURCE_POLL_CADENCE.activeIntervalMs;
+export const GREENHOUSE_INACTIVE_POLL_INTERVAL_MS = SOURCE_POLL_CADENCE.quietIntervalMs;
 
 export interface GreenhouseWorkMessage {
   version: 1;
@@ -46,27 +47,13 @@ export function greenhouseWorkMessages(
   return sources.map((source) => ({ version: 1, sourceId: source.id, scheduledAt: timestamp }));
 }
 
-function stableBoardBucket(sourceId: string, buckets: number): number {
-  let hash = 2166136261;
-  for (const character of sourceId) {
-    hash ^= character.charCodeAt(0);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0) % buckets;
-}
-
 export function isGreenhouseSourceDue(
   source: ReviewedGreenhouseSource,
   checkpoint: SourceCheckpoint | undefined,
   now: Date,
   health?: SourceHealth,
 ): boolean {
-  if (health?.sourceStatus === 'paused') return false;
-  if (health?.backoffUntil && Date.parse(health.backoffUntil) > now.getTime()) return false;
-  if (health?.pollTier !== 'quiet' && (!checkpoint || (checkpoint.lastRowCount ?? 0) > 0)) return true;
-  const buckets = GREENHOUSE_INACTIVE_POLL_INTERVAL_MS / GREENHOUSE_POLL_INTERVAL_MS;
-  const currentWindow = Math.floor(now.getTime() / GREENHOUSE_POLL_INTERVAL_MS);
-  return currentWindow % buckets === stableBoardBucket(source.id, buckets);
+  return isProviderSourceDue(source.id, checkpoint, now, health);
 }
 
 async function dueSources(
