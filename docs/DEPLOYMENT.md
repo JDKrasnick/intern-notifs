@@ -83,6 +83,13 @@ npm run migrate:open-index -- --repair --expected-mismatches EXACT_COUNT --expec
 npm run audit:catalog-index
 ```
 
+After deploying catalog search, backfill the normalized search text and source
+classes once so roles imported before the release are searchable immediately:
+
+```bash
+npm run migrate:catalog-search -- --apply
+```
+
 The final audit must report zero mismatches. It verifies that open technical
 jobs use `openPk=OPEN` and `recency-rank#catalogVisibleAt#jobId` as `openSk`,
 closed technical jobs use `closedPk=CLOSED` and `lastSeenAt#jobId` as `closedSk`,

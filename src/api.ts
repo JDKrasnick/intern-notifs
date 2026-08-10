@@ -235,7 +235,11 @@ export function createApiHandler(dependencies: ApiDependencies) {
         const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 50) : 25;
         const status = event.queryStringParameters?.status ?? 'open';
         if (status !== 'open' && status !== 'closed') return reply(400, { message: 'status must be open or closed' });
-        const page = await dependencies.jobs.listOpen?.(event.queryStringParameters?.cursor, limit, status);
+        const query = event.queryStringParameters?.q?.trim();
+        if (query && query.length > 120) return reply(400, { message: 'q must be 120 characters or fewer' });
+        const source = event.queryStringParameters?.source;
+        if (source && !['all', 'direct', 'community', 'corroborated'].includes(source)) return reply(400, { message: 'source is not supported' });
+        const page = await dependencies.jobs.listOpen?.(event.queryStringParameters?.cursor, limit, status, { ...(query ? { query } : {}), ...(source ? { source: source as 'all' | 'direct' | 'community' | 'corroborated' } : {}) });
         return reply(200, page ?? { jobs: [] });
       }
       const jobMatch = path.match(/^\/jobs\/([^/]+)$/);
