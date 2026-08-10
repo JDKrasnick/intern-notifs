@@ -97,7 +97,8 @@ What already exists:
 - ETag and content-hash checkpoints;
 - per-company fixtures and approval artifacts;
 - a read-only live contract;
-- an hourly EventBridge dispatcher;
+- a half-hour EventBridge dispatcher with published boards checked every
+  thirty minutes and shadow boards staggered across three-hour checks;
 - a FIFO SQS work queue with per-board ordering and deduplication;
 - batches of ten with maximum worker concurrency four;
 - isolated scheduled shadow checkpoints and link checks;
