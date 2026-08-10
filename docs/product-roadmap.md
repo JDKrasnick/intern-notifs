@@ -40,6 +40,7 @@
 - [x] Add signed-in swipe-left save for later, synced to the responsive web Saved queue and official-form handoff.
 - [x] Add local swipe-right hide with Undo and Profile-based restore.
 - [x] Add cursor-based endless scrolling through every role in the selected availability catalog.
+- [x] Repair catalog index drift and add a guarded operator repair, daily full-table invariant audit, metric, and alarm for open, closed, and nontechnical jobs.
 - [x] Audit 25 representative employers through the GitHub Markdown ingestion and poller pipeline.
 - [x] Add a provider-neutral company-coverage snapshot, public search API, and responsive web disclosure seeded from live internship evidence and reviewed ATS registries.
 - [x] Implement the Greenhouse source adapter, admission gates, deterministic fixtures, and live contract tests.

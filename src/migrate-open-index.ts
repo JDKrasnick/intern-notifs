@@ -1,28 +1,27 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, ScanCommand } from '@aws-sdk/lib-dynamodb';
-import { isTechnicalJob } from './core/filters.js';
-import { DynamoInternshipStore } from './store.js';
-import type { Internship } from './types.js';
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { auditCatalogIndexes } from './catalog-index-audit.js';
 
-/** One-time, idempotent backfill for the open-jobs GSI introduced for the public feed. */
+function integerOption(name: string): number | undefined {
+  const index = process.argv.indexOf(name);
+  if (index < 0) return undefined;
+  const value = Number(process.argv[index + 1]);
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${name} requires a non-negative integer`);
+  return value;
+}
+
+/** Dry-run by default; repair requires the observed mismatch count as a guardrail. */
 async function main() {
   const tableName = process.env.INTERNSHIPS_TABLE;
   if (!tableName) throw new Error('INTERNSHIPS_TABLE is required');
-  const client = DynamoDBDocumentClient.from(new DynamoDBClient({})); const store = new DynamoInternshipStore(tableName, client);
-  let startKey: Record<string, unknown> | undefined; let migrated = 0;
-  do {
-    const page = await client.send(new ScanCommand({ TableName: tableName, ...(startKey ? { ExclusiveStartKey: startKey } : {}) }));
-    for (const item of page.Items ?? []) {
-      const job = item.job as Internship | undefined;
-      // Indexes read the persisted `technical` flag, so records written before it
-      // existed are classified once here instead of silently becoming visible.
-      if (item.pk?.startsWith('JOB#') && job?.open) {
-        await store.putInternship({ ...job, technical: job.technical ?? isTechnicalJob(job) });
-        migrated += 1;
-      }
-    }
-    startKey = page.LastEvaluatedKey;
-  } while (startKey);
-  console.log(JSON.stringify({ tableName, migrated }));
+  const repair = process.argv.includes('--repair');
+  const expectedMismatches = integerOption('--expected-mismatches');
+  if (repair && expectedMismatches === undefined) {
+    throw new Error('--repair requires --expected-mismatches from a preceding dry-run');
+  }
+  const client = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+  const report = await auditCatalogIndexes(tableName, client, { repair, expectedMismatches, includeJobIds: true });
+  console.log(JSON.stringify({ tableName, mode: repair ? 'repair' : 'dry-run', ...report }));
 }
+
 void main();

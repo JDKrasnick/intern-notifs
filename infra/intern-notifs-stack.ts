@@ -63,7 +63,7 @@ export class InternNotifsStack extends cdk.Stack {
       environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName, RUNTIME_CONFIG_PARAMETER_NAME: runtimeConfigParameterName },
       bundling: { externalModules: [] }
     });
-    notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], resources: [internships.tableArn, `${internships.tableArn}/index/*`] }));
+    notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query', 'dynamodb:Scan'], resources: [internships.tableArn, `${internships.tableArn}/index/*`] }));
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], resources: [users.tableArn, `${users.tableArn}/index/*`] }));
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['ses:SendEmail'], resources: [identity.emailIdentityArn] }));
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameter'], resources: [`arn:${this.partition}:ssm:${this.region}:${this.account}:parameter${runtimeConfigParameterName}`] }));
@@ -85,10 +85,11 @@ export class InternNotifsStack extends cdk.Stack {
     const deadLetterQueue = new sqs.Queue(this, 'SchedulerDeadLetterQueue', { retentionPeriod: cdk.Duration.days(14), encryption: sqs.QueueEncryption.SQS_MANAGED });
     const schedulerRole = new iam.Role(this, 'SchedulerInvokeRole', { assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com') });
     notifier.grantInvoke(schedulerRole); deadLetterQueue.grantSendMessages(schedulerRole);
-    const target = (command: 'poll' | 'digest', maximumRetryAttempts = 2): scheduler.CfnSchedule.TargetProperty => ({ arn: notifier.functionArn, roleArn: schedulerRole.roleArn, input: JSON.stringify({ command }), deadLetterConfig: { arn: deadLetterQueue.queueArn }, retryPolicy: { maximumEventAgeInSeconds: 3600, maximumRetryAttempts } });
+    const target = (command: 'poll' | 'digest' | 'audit-catalog-indexes', maximumRetryAttempts = 2): scheduler.CfnSchedule.TargetProperty => ({ arn: notifier.functionArn, roleArn: schedulerRole.roleArn, input: JSON.stringify({ command }), deadLetterConfig: { arn: deadLetterQueue.queueArn }, retryPolicy: { maximumEventAgeInSeconds: 3600, maximumRetryAttempts } });
     // The next hourly poll is the safe retry boundary for this expensive task;
     // Scheduler retries previously tripled the cost of repeated timeouts.
     new scheduler.CfnSchedule(this, 'PollSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(2 * * * ? *)', scheduleExpressionTimezone: 'UTC', state: 'ENABLED', target: target('poll', 0) });
+    new scheduler.CfnSchedule(this, 'CatalogIndexAuditSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(42 8 * * ? *)', scheduleExpressionTimezone: 'UTC', state: 'ENABLED', target: target('audit-catalog-indexes') });
     // The poll Lambda publishes these as embedded metrics, so a source that
     // stops succeeding surfaces without anyone reading logs. Greenhouse boards
     // are alarmed in their own stack alongside their queue.
@@ -137,6 +138,16 @@ export class InternNotifsStack extends cdk.Stack {
       evaluationPeriods: 1,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       alarmDescription: 'The scheduled poll/digest Lambda exceeded three minutes and is approaching its four-minute timeout.',
+    });
+    new cloudwatch.Alarm(this, 'CatalogIndexMismatchAlarm', {
+      metric: new cloudwatch.Metric({
+        namespace: 'InternNotifs/Catalog', metricName: 'CatalogIndexMismatchCount',
+        dimensionsMap: { Service: 'catalog' }, statistic: 'Maximum', period: cdk.Duration.days(1),
+      }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      treatMissingData: cloudwatch.TreatMissingData.BREACHING,
+      alarmDescription: 'Stored job state and the open/closed catalog index attributes diverge, or the daily audit did not report.',
     });
 
     new scheduler.CfnSchedule(this, 'MorningDigestSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(0 9 * * ? *)', scheduleExpressionTimezone: 'America/New_York', state: 'ENABLED', target: target('digest') });

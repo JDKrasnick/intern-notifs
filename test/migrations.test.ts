@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import type { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { describe, expect, it, vi } from 'vitest';
+import { auditCatalogIndexes, canonicalCatalogJob, catalogIndexMismatch, emitCatalogIndexAuditMetric } from '../src/catalog-index-audit.js';
 import { hasLifecycleTitleSignal, inferSeason } from '../src/core/early-career.js';
 import { occurrenceStatus } from '../src/ingestion/monitoring.js';
 import { backfilledExternalId } from '../src/migrate-source-occurrences.js';
@@ -6,7 +8,15 @@ import { publishedLeverSources, reviewedLeverSources, type ReviewedLeverSource }
 import { GitHubMarkdownAdapter } from '../src/sources/github.js';
 import { IngestionRunner } from '../src/poll.js';
 import { MemoryInternshipStore } from '../src/store.js';
-import type { SourceOccurrence } from '../src/types.js';
+import type { Internship, SourceOccurrence } from '../src/types.js';
+
+const auditJob = (overrides: Partial<Internship> = {}): Internship => ({
+  jobId: 'job-1', company: 'Acme', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2027',
+  applyUrl: 'https://careers.example.test/job-1', normalizedUrl: 'https://careers.example.test/job-1', fingerprint: 'fingerprint-1',
+  compensation: { raw: '' }, sourceReferences: [], technical: true, open: true,
+  firstSeenAt: '2026-08-01T00:00:00.000Z', lastSeenAt: '2026-08-02T00:00:00.000Z',
+  notification: { smsPending: false, digestPending: false }, ...overrides,
+});
 
 const reference = (overrides: Partial<SourceOccurrence>): SourceOccurrence => ({
   sourceId: 'markdown-fixture',
@@ -83,6 +93,60 @@ describe('source occurrence backfill', () => {
     await new IngestionRunner([adapter], store).run();
     const stored = (await store.getSourceOccurrences('markdown-fixture'))[0]!;
     expect(backfilledExternalId(stored.occurrence)).toBe(stored.externalId);
+  });
+});
+
+describe('catalog index audit', () => {
+  it('enforces the open, closed, and nontechnical index invariant', () => {
+    const open = auditJob();
+    expect(catalogIndexMismatch({ pk: 'JOB#job-1', sk: 'META', job: open })).toBe('openTechnical');
+    expect(catalogIndexMismatch({ pk: 'JOB#job-1', sk: 'META', job: open, openPk: 'OPEN', openSk: `${open.firstSeenAt}#job-1` })).toBeUndefined();
+
+    const closed = auditJob({ open: false });
+    expect(catalogIndexMismatch({ pk: 'JOB#job-1', sk: 'META', job: closed, openPk: 'OPEN', openSk: 'stale' })).toBe('closedTechnical');
+    expect(catalogIndexMismatch({ pk: 'JOB#job-1', sk: 'META', job: closed, closedPk: 'CLOSED', closedSk: `${closed.lastSeenAt}#job-1` })).toBeUndefined();
+
+    const nontechnical = auditJob({ title: 'Graduate Clinical Intern', technical: false });
+    expect(catalogIndexMismatch({ pk: 'JOB#job-1', sk: 'META', job: nontechnical, closedPk: 'CLOSED', closedSk: 'stale' })).toBe('nontechnical');
+    expect(catalogIndexMismatch({ pk: 'JOB#job-1', sk: 'META', job: nontechnical })).toBeUndefined();
+  });
+
+  it('classifies legacy jobs once before auditing or repairing them', () => {
+    expect(canonicalCatalogJob(auditJob({ technical: undefined })).technical).toBe(true);
+    expect(canonicalCatalogJob(auditJob({ title: 'Graduate Clinical Intern', technical: undefined })).technical).toBe(false);
+  });
+
+  it('scans every page and refuses a repair when the dry-run count changed', async () => {
+    const open = auditJob();
+    const nontechnical = auditJob({ jobId: 'job-2', title: 'Graduate Clinical Intern', technical: false });
+    const send = vi.fn()
+      .mockResolvedValueOnce({ Items: [{ pk: 'JOB#job-1', sk: 'META', job: open }], LastEvaluatedKey: { pk: 'JOB#job-1', sk: 'META' } })
+      .mockResolvedValueOnce({ Items: [{ pk: 'SOURCE#one', sk: 'CHECKPOINT' }, { pk: 'JOB#job-2', sk: 'META', job: nontechnical, openPk: 'OPEN', openSk: 'stale' }] });
+    const client = { send } as unknown as DynamoDBDocumentClient;
+    await expect(auditCatalogIndexes('jobs', client, { repair: true, expectedMismatches: 1 }))
+      .rejects.toThrow('expected 1 mismatches but found 2');
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('repairs only the mismatches counted by the guarded full scan', async () => {
+    const open = auditJob({ technical: undefined });
+    const send = vi.fn().mockResolvedValueOnce({ Items: [{ pk: 'JOB#job-1', sk: 'META', job: open }] }).mockResolvedValueOnce({});
+    const report = await auditCatalogIndexes('jobs', { send } as unknown as DynamoDBDocumentClient, { repair: true, expectedMismatches: 1, includeJobIds: true });
+    expect(report).toMatchObject({ jobs: 1, mismatches: 1, byKind: { openTechnical: 1, closedTechnical: 0, nontechnical: 0 }, affectedJobIds: { openTechnical: ['job-1'], closedTechnical: [], nontechnical: [] }, repaired: 1 });
+    expect((send.mock.calls[1]?.[0] as PutCommand).input.Item).toMatchObject({ openPk: 'OPEN', job: { technical: true } });
+  });
+
+  it('emits the mismatch count as a stable catalog metric', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    emitCatalogIndexAuditMetric({
+      scannedItems: 3, jobs: 2, mismatches: 1,
+      byKind: { openTechnical: 1, closedTechnical: 0, nontechnical: 0 }, repaired: 0,
+    }, 1234);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({
+      _aws: { Timestamp: 1234, CloudWatchMetrics: [{ Namespace: 'InternNotifs/Catalog' }] },
+      Service: 'catalog', CatalogIndexMismatchCount: 1, CatalogIndexJobsScanned: 2,
+    });
+    log.mockRestore();
   });
 });
 

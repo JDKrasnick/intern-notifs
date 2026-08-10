@@ -22,7 +22,7 @@ describe('CDK stack', () => {
       ExplicitAuthFlows: ['ALLOW_USER_PASSWORD_AUTH', 'ALLOW_REFRESH_TOKEN_AUTH'],
       PreventUserExistenceErrors: 'ENABLED',
     });
-    template.resourceCountIs('AWS::Scheduler::Schedule', 3);
+    template.resourceCountIs('AWS::Scheduler::Schedule', 4);
     template.resourceCountIs('AWS::SQS::Queue', 1);
     template.hasResourceProperties('AWS::IAM::Role', { AssumeRolePolicyDocument: { Statement: [{ Condition: { StringEquals: { 'token.actions.githubusercontent.com:sub': 'repo:owner/repo:ref:refs/heads/main' } } }] } });
   });
@@ -44,6 +44,10 @@ describe('CDK stack', () => {
       Target: { RetryPolicy: { MaximumEventAgeInSeconds: 3600, MaximumRetryAttempts: 0 } },
     });
     Template.fromStack(stack).hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: 'cron(0 9 * * ? *)', ScheduleExpressionTimezone: 'America/New_York', State: 'ENABLED', FlexibleTimeWindow: { Mode: 'OFF' } });
+    Template.fromStack(stack).hasResourceProperties('AWS::Scheduler::Schedule', {
+      ScheduleExpression: 'cron(42 8 * * ? *)', ScheduleExpressionTimezone: 'UTC', State: 'ENABLED',
+      Target: { Input: '{"command":"audit-catalog-indexes"}' },
+    });
   });
   it('alarms when a polled source stops producing trusted snapshots', () => {
     const app = new cdk.App(); const stack = new InternNotifsStack(app, 'Alarms', { githubRepository: 'owner/repo', emailAddress: 'me@example.com' });
@@ -71,7 +75,11 @@ describe('CDK stack', () => {
       EvaluationPeriods: 1,
       TreatMissingData: 'notBreaching',
     });
-    template.resourceCountIs('AWS::CloudWatch::Alarm', 6);
+    template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      Namespace: 'InternNotifs/Catalog', MetricName: 'CatalogIndexMismatchCount', Threshold: 1,
+      TreatMissingData: 'breaching', Dimensions: [{ Name: 'Service', Value: 'catalog' }],
+    });
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 7);
   });
   it('queues Greenhouse boards hourly with bounded worker concurrency', () => {
     const app = new cdk.App(); const stack = new GreenhouseMonitoringStack(app, 'Greenhouse', { internshipsTableName: 'internships', usersTableName: 'users', emailAddress: 'me@example.com' }); const template = Template.fromStack(stack);

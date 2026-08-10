@@ -46,6 +46,47 @@ cannot publish jobs or notifications.
 
 These are not credentials. Do not record Apple private keys, API keys, Expo tokens, password values, or personal Apple Account emails here.
 
+## Catalog index audit and repair
+
+The public catalog reads DynamoDB's `openJobsIndex`, so the stored job state and
+the sparse open/closed index attributes must agree. A daily scheduled audit
+checks every canonical job and emits `InternNotifs/Catalog / CatalogIndexMismatchCount`.
+The `CatalogIndexMismatchAlarm` warns on any mismatch or a missing daily audit.
+
+Resolve the retained production table from the stack output; never copy a
+generated physical table name into scripts or documentation:
+
+```bash
+export AWS_PROFILE=intern-notifs
+INTERNSHIPS_TABLE="$(aws cloudformation describe-stacks \
+  --stack-name InternNotifs \
+  --query 'Stacks[0].Outputs[?OutputKey==`InternshipsTableName`].OutputValue | [0]' \
+  --output text)"
+export INTERNSHIPS_TABLE
+```
+
+The command is read-only by default. Record its exact `mismatches` and `byKind`
+result before making changes:
+
+```bash
+npm run audit:catalog-index
+```
+
+Repair is deliberately guarded by that count. It rescans the whole table and
+refuses to write if the result changed between commands:
+
+```bash
+npm run migrate:open-index -- --repair --expected-mismatches EXACT_COUNT
+npm run audit:catalog-index
+```
+
+The final audit must report zero mismatches. It verifies that open technical
+jobs use `openPk=OPEN` and `firstSeenAt#jobId` as `openSk`, closed technical jobs
+use `closedPk=CLOSED` and `lastSeenAt#jobId` as `closedSk`, and nontechnical jobs
+use neither sparse index. Finally, paginate `GET /jobs` to exhaustion and confirm
+the repaired job IDs occur in the response; preserve each returned `cursor` as
+the next request's `cursor` query parameter.
+
 ## AWS deployment
 
 Use the configured `intern-notifs` assumed role from the AWS CLI. Confirm the active identity before every deployment:
