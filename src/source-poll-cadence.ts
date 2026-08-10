@@ -2,12 +2,13 @@ import type { SourceCheckpoint, SourceHealth } from './types.js';
 
 /** The single cadence contract used by provider dispatchers and their stacks. */
 export const SOURCE_POLL_CADENCE = {
-  activeIntervalMs: 60 * 60 * 1000,
-  quietIntervalMs: 6 * 60 * 60 * 1000,
+  publishedIntervalMs: 30 * 60 * 1000,
+  shadowIntervalMs: 3 * 60 * 60 * 1000,
   schedules: {
-    greenhouse: 'cron(12 * * * ? *)',
-    lever: 'cron(22 * * * ? *)',
-    ashby: 'cron(32 * * * ? *)',
+    github: 'cron(2/10 * * * ? *)',
+    greenhouse: 'cron(12,42 * * * ? *)',
+    lever: 'cron(22,52 * * * ? *)',
+    ashby: 'cron(2,32 * * * ? *)',
   },
 } as const;
 
@@ -27,11 +28,11 @@ function timestamp(value: string | undefined): number | undefined {
 }
 
 /**
- * Quiet sources use the last completed attempt when available, falling back to
- * their last trusted snapshot. This makes a delayed or missed hourly run catch
- * up instead of requiring the scheduler to hit a particular modulo window.
+ * Shadow sources use the last completed attempt when available, falling back
+ * to their last trusted snapshot. This makes a delayed or missed scheduler run
+ * catch up instead of requiring an exact modulo window.
  */
-export function isQuietSourceDue(
+function isShadowSourceDue(
   sourceId: string,
   checkpoint: SourceCheckpoint | undefined,
   now: Date,
@@ -41,24 +42,25 @@ export function isQuietSourceDue(
     ?? timestamp(health?.lastSuccessAt)
     ?? timestamp(checkpoint?.lastSuccessAt);
   if (lastPollAt !== undefined) {
-    // Workers record completion slightly after the fixed-minute dispatcher
-    // invocation. Compare hourly scheduler windows so that normal processing
-    // latency does not defer the sixth invocation to the seventh hour.
-    const elapsedWindows = Math.floor(now.getTime() / SOURCE_POLL_CADENCE.activeIntervalMs)
-      - Math.floor(lastPollAt / SOURCE_POLL_CADENCE.activeIntervalMs);
-    return elapsedWindows >= SOURCE_POLL_CADENCE.quietIntervalMs / SOURCE_POLL_CADENCE.activeIntervalMs;
+    // Workers record completion slightly after the dispatcher invocation.
+    // Compare scheduler windows so normal processing latency does not defer a
+    // three-hour poll to the following half-hour run.
+    const elapsedWindows = Math.floor(now.getTime() / SOURCE_POLL_CADENCE.publishedIntervalMs)
+      - Math.floor(lastPollAt / SOURCE_POLL_CADENCE.publishedIntervalMs);
+    return elapsedWindows >= SOURCE_POLL_CADENCE.shadowIntervalMs / SOURCE_POLL_CADENCE.publishedIntervalMs;
   }
 
   // A source with state but no usable timestamp must recover immediately. Only
-  // brand-new quiet sources are spread across the first six hourly runs.
+  // brand-new shadow sources are spread across the first six dispatcher runs.
   if (checkpoint || health) return true;
-  const buckets = SOURCE_POLL_CADENCE.quietIntervalMs / SOURCE_POLL_CADENCE.activeIntervalMs;
-  const currentWindow = Math.floor(now.getTime() / SOURCE_POLL_CADENCE.activeIntervalMs);
+  const buckets = SOURCE_POLL_CADENCE.shadowIntervalMs / SOURCE_POLL_CADENCE.publishedIntervalMs;
+  const currentWindow = Math.floor(now.getTime() / SOURCE_POLL_CADENCE.publishedIntervalMs);
   return currentWindow % buckets === stableSourceBucket(sourceId, buckets);
 }
 
 export function isProviderSourceDue(
   sourceId: string,
+  sourceStatus: 'published' | 'shadow',
   checkpoint: SourceCheckpoint | undefined,
   now: Date,
   health?: SourceHealth,
@@ -66,6 +68,6 @@ export function isProviderSourceDue(
   if (health?.sourceStatus === 'paused') return false;
   const backoffUntil = timestamp(health?.backoffUntil);
   if (backoffUntil !== undefined && backoffUntil > now.getTime()) return false;
-  if (health?.pollTier !== 'quiet' && (!checkpoint || (checkpoint.lastRowCount ?? 0) > 0)) return true;
-  return isQuietSourceDue(sourceId, checkpoint, now, health);
+  if (sourceStatus === 'published') return true;
+  return isShadowSourceDue(sourceId, checkpoint, now, health);
 }

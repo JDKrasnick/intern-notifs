@@ -19,16 +19,22 @@ InternNotifs is an Expo mobile app with a serverless AWS backend.
 
 The catalog is public. Accounts, preferences, device tokens, profiles, documents, and application tracking are private to the Cognito subject.
 
-Greenhouse uses a dedicated hourly EventBridge schedule, dispatcher Lambda,
-FIFO work queue, two-minute worker, and dead-letter queue. Active boards are
-checked hourly; boards whose last successful snapshot had zero
-eligible roles are staggered across six-hour checks. See
+Greenhouse, Lever, and Ashby use dedicated half-hour EventBridge schedules,
+dispatcher Lambdas, FIFO work queues, two-minute workers, and dead-letter
+queues. Published boards are checked every thirty minutes whether active or
+quiet; shadow boards are staggered across three-hour checks. See
 [`greenhouse/architecture.md`](greenhouse/architecture.md) for the complete
 shadow, promotion, retry, and alarm flow.
 
-Lever uses the same FIFO pattern in a separately deployable stack. Both shadow
-and published boards are scheduled; shadow checkpoints remain isolated and
-cannot publish jobs or notifications.
+The seven GitHub community feeds run through the general poll Lambda every ten
+minutes. Shadow checkpoints remain isolated and cannot publish jobs or
+notifications.
+
+The direct-provider discovery-latency objective is a normal maximum of thirty
+minutes from an upstream publication to its next published-board poll. The
+GitHub-feed objective is ten minutes, and shadow discovery is intentionally
+bounded at three hours. Queue delay, retries, provider backoff, and upstream
+timestamp semantics are measured separately from these scheduler objectives.
 
 ## Safe operational identifiers
 

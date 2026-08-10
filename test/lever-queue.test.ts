@@ -54,21 +54,27 @@ describe('Lever queue dispatch', () => {
     });
   });
 
-  it('uses elapsed quiet cadence on the deployed hourly schedule and catches up after a missed run', () => {
+  it('polls shadow boards every three hours on the deployed half-hour schedule', () => {
     const firstScheduledAt = Date.parse('2026-07-30T00:22:00.000Z');
     const lastSuccessAt = new Date(firstScheduledAt + 60_000).toISOString();
     const checkpoint = { sourceId: `shadow-${shadowSource.id}`, successfulFetches: 1, lastRowCount: 0, lastSuccessAt };
-    const hourlyRuns = Array.from({ length: 7 }, (_, hour) => new Date(firstScheduledAt + hour * LEVER_POLL_INTERVAL_MS));
-    expect(hourlyRuns.slice(0, 6).every((now) => !isLeverSourceDue(shadowSource, checkpoint, now))).toBe(true);
-    expect(isLeverSourceDue(shadowSource, checkpoint, hourlyRuns[6]!)).toBe(true);
+    const scheduledRuns = Array.from({ length: 7 }, (_, window) => new Date(firstScheduledAt + window * LEVER_POLL_INTERVAL_MS));
+    expect(scheduledRuns.slice(0, 6).every((now) => !isLeverSourceDue(shadowSource, checkpoint, now))).toBe(true);
+    expect(isLeverSourceDue(shadowSource, checkpoint, scheduledRuns[6]!)).toBe(true);
     expect(isLeverSourceDue(shadowSource, checkpoint, new Date(firstScheduledAt + 10 * LEVER_POLL_INTERVAL_MS))).toBe(true);
-    expect(isLeverSourceDue(shadowSource, { ...checkpoint, lastRowCount: 1 }, hourlyRuns[0]!)).toBe(true);
+  });
+
+  it('polls published boards every half hour even when they are quiet', () => {
+    const published: ReviewedLeverSource = { ...shadowSource, status: 'published' };
+    const checkpoint = { sourceId: published.id, successfulFetches: 1, lastRowCount: 0, lastSuccessAt: scheduledAt };
+    expect(isLeverSourceDue(published, checkpoint, new Date(Date.parse(scheduledAt) + LEVER_POLL_INTERVAL_MS))).toBe(true);
   });
 
   it('honors durable pause controls and opens a freshness incident after a stale board resumes', async () => {
+    const published: ReviewedLeverSource = { ...shadowSource, status: 'published' };
     const store = new MemoryInternshipStore();
     await store.putCheckpoint({
-      sourceId: `shadow-${shadowSource.id}`,
+      sourceId: published.id,
       successfulFetches: 1,
       lastRowCount: 1,
       lastSuccessAt: '2026-07-30T11:00:00.000Z',
@@ -87,7 +93,7 @@ describe('Lever queue dispatch', () => {
     const commands: SendMessageBatchCommand[] = [];
     expect(await dispatchLeverBoards({
       queueUrl: 'https://sqs.us-east-1.amazonaws.com/123/lever.fifo',
-      sources: [shadowSource],
+      sources: [published],
       checkpointReader: store,
       now: () => new Date(scheduledAt),
       client: { async send(command) { commands.push(command); return {}; } },
@@ -101,7 +107,7 @@ describe('Lever queue dispatch', () => {
     });
     expect(await dispatchLeverBoards({
       queueUrl: 'https://sqs.us-east-1.amazonaws.com/123/lever.fifo',
-      sources: [shadowSource],
+      sources: [published],
       checkpointReader: store,
       now: () => new Date('2026-07-30T13:00:00.000Z'),
       client: { async send(command) { commands.push(command); return {}; } },

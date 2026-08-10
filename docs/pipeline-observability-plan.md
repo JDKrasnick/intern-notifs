@@ -112,24 +112,21 @@ store so a pause or cadence change does not require a release.
 
 ### Priority policy
 
-Every top-tier employer with a confirmed, enabled provider board starts on the
-`priority` tier. It is due every five minutes; the source scheduler must keep
-its successful-fetch freshness at or below 15 minutes except during an active
-provider backoff. The top-tier list identifies employers, not board IDs: an
-employer without a confirmed Greenhouse (or other provider) board produces an
-`unknown_board` setup item and makes no speculative network calls.
+Every confirmed, enabled published provider board uses the same thirty-minute
+discovery objective. Active and quiet describe current listing state without
+changing that cadence. The top-tier list identifies employers, not board IDs:
+an employer without a confirmed provider board produces an `unknown_board`
+setup item and makes no speculative network calls.
 
-| Tier | Eligible source | Target schedule | Freshness target |
+| Status | Eligible source | Target schedule | Freshness target |
 | --- | --- | --- | --- |
-| `priority` | Every confirmed top-tier employer board | Every 5 minutes | At most 15 minutes |
-| `normal` | Other active, tracked employer boards | Every 1–4 hours | Tier interval + one scheduler cycle |
-| `quiet` | Stable, repeatedly empty boards | Daily | 36 hours |
+| `published` | Every reviewed catalog board | Every 30 minutes | At most 90 minutes |
+| `shadow` | Reviewed pre-publication board | Every 3 hours | Shadow interval + one scheduler cycle |
 | `paused` | Invalid, disabled, or operator-paused board | No fetch | Not applicable |
 
-The source scheduler must reserve enough worker capacity for all due priority
-sources before it begins normal or quiet work. A priority source may back off
-only for documented temporary provider failures; an invalid board identifier
-requires repair rather than repeated five-minute requests.
+Provider backoff may defer either scheduled status only for documented
+temporary failures; an invalid board identifier requires repair rather than
+repeated requests.
 
 ```ts
 {

@@ -13,6 +13,7 @@ import * as ses from 'aws-cdk-lib/aws-ses';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import type { Construct } from 'constructs';
+import { SOURCE_POLL_CADENCE } from '../src/source-poll-cadence.js';
 
 export interface InternNotifsStackProps extends cdk.StackProps { githubRepository: string; githubOwnerId?: string; githubRepositoryId?: string; emailAddress: string; existingOidcProviderArn?: string; }
 export class InternNotifsStack extends cdk.Stack {
@@ -86,9 +87,9 @@ export class InternNotifsStack extends cdk.Stack {
     const schedulerRole = new iam.Role(this, 'SchedulerInvokeRole', { assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com') });
     notifier.grantInvoke(schedulerRole); deadLetterQueue.grantSendMessages(schedulerRole);
     const target = (command: 'poll' | 'digest' | 'audit-catalog-indexes', maximumRetryAttempts = 2): scheduler.CfnSchedule.TargetProperty => ({ arn: notifier.functionArn, roleArn: schedulerRole.roleArn, input: JSON.stringify({ command }), deadLetterConfig: { arn: deadLetterQueue.queueArn }, retryPolicy: { maximumEventAgeInSeconds: 3600, maximumRetryAttempts } });
-    // The next hourly poll is the safe retry boundary for this expensive task;
+    // The next ten-minute poll is the safe retry boundary for this task;
     // Scheduler retries previously tripled the cost of repeated timeouts.
-    new scheduler.CfnSchedule(this, 'PollSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(2 * * * ? *)', scheduleExpressionTimezone: 'UTC', state: 'ENABLED', target: target('poll', 0) });
+    new scheduler.CfnSchedule(this, 'PollSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: SOURCE_POLL_CADENCE.schedules.github, scheduleExpressionTimezone: 'UTC', state: 'ENABLED', target: target('poll', 0) });
     new scheduler.CfnSchedule(this, 'CatalogIndexAuditSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(42 8 * * ? *)', scheduleExpressionTimezone: 'UTC', state: 'ENABLED', target: target('audit-catalog-indexes') });
     // The poll Lambda publishes these as embedded metrics, so a source that
     // stops succeeding surfaces without anyone reading logs. Greenhouse boards

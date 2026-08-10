@@ -509,8 +509,8 @@ npm run greenhouse:admit -- \
 A standard generated patch begins with `status: "shadow"`. An exception patch
 cannot be generated until its review fields are complete.
 
-Verified boards with zero eligible roles stay out of hourly ingestion and
-receive a staggered six-hour jobs re-probe. When eligible roles appear, they
+Verified candidates with zero eligible roles stay in shadow monitoring and
+receive a staggered three-hour jobs re-probe. When eligible roles appear, they
 automatically become active-registry candidates without rediscovery.
 
 ### Operating cadence
@@ -525,8 +525,8 @@ automatically become active-registry candidates without rediscovery.
 | Probe newly discovered tokens | Immediately, with concurrency 4 and backoff |
 | Work agent identity queue | Continuously in bounded batches |
 | Re-probe verified zero-eligible boards | Weekly |
-| Poll active shadow/published boards | Hourly |
-| Re-probe verified zero-eligible boards | Staggered every six hours |
+| Poll published boards | Every thirty minutes |
+| Poll shadow boards | Staggered every three hours |
 
 Cadence is configurable and must back off on `429`, `5xx`, transport failure,
 or provider-specific quota exhaustion.

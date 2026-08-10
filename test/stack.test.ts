@@ -38,7 +38,7 @@ describe('CDK stack', () => {
   it('enables a DST-aware morning digest schedule', () => {
     const app = new cdk.App(); const stack = new InternNotifsStack(app, 'Schedules', { githubRepository: 'owner/repo', emailAddress: 'me@example.com' });
     Template.fromStack(stack).hasResourceProperties('AWS::Scheduler::Schedule', {
-      ScheduleExpression: 'cron(2 * * * ? *)',
+      ScheduleExpression: SOURCE_POLL_CADENCE.schedules.github,
       ScheduleExpressionTimezone: 'UTC',
       State: 'ENABLED',
       FlexibleTimeWindow: { Mode: 'OFF' },
@@ -82,7 +82,7 @@ describe('CDK stack', () => {
     });
     template.resourceCountIs('AWS::CloudWatch::Alarm', 7);
   });
-  it('queues Greenhouse boards hourly with bounded worker concurrency', () => {
+  it('queues Greenhouse boards every half hour with bounded worker concurrency', () => {
     const app = new cdk.App(); const stack = new GreenhouseMonitoringStack(app, 'Greenhouse', { internshipsTableName: 'internships', usersTableName: 'users', emailAddress: 'me@example.com' }); const template = Template.fromStack(stack);
     template.resourceCountIs('AWS::SQS::Queue', 3);
     template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: SOURCE_POLL_CADENCE.schedules.greenhouse, State: 'ENABLED' });
@@ -99,7 +99,7 @@ describe('CDK stack', () => {
     template.hasResourceProperties('AWS::Lambda::Function', { Timeout: 120 });
     expect(snapshotTemplate(template.toJSON())).toMatchSnapshot();
   });
-  it('queues Lever boards hourly with bounded worker concurrency', () => {
+  it('queues Lever boards every half hour with bounded worker concurrency', () => {
     const app = new cdk.App(); const stack = new LeverMonitoringStack(app, 'Lever', { internshipsTableName: 'internships', usersTableName: 'users' }); const template = Template.fromStack(stack);
     template.resourceCountIs('AWS::SQS::Queue', 3);
     template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: SOURCE_POLL_CADENCE.schedules.lever, State: 'ENABLED' });
@@ -116,7 +116,7 @@ describe('CDK stack', () => {
     });
     expect(snapshotTemplate(template.toJSON())).toMatchSnapshot();
   });
-  it('queues Ashby boards on a staggered hourly schedule with bounded concurrency', () => {
+  it('queues Ashby boards on a staggered half-hour schedule with bounded concurrency', () => {
     const app = new cdk.App(); const stack = new AshbyMonitoringStack(app, 'Ashby', { internshipsTableName: 'internships', usersTableName: 'users' }); const template = Template.fromStack(stack);
     template.resourceCountIs('AWS::SQS::Queue', 3);
     template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: SOURCE_POLL_CADENCE.schedules.ashby, State: 'ENABLED' });

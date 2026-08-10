@@ -6,8 +6,8 @@ import { isProviderSourceDue, SOURCE_POLL_CADENCE } from './source-poll-cadence.
 import type { SourceCheckpoint, SourceHealth } from './types.js';
 
 export const LEVER_DISPATCH_BATCH_SIZE = 10;
-export const LEVER_POLL_INTERVAL_MS = SOURCE_POLL_CADENCE.activeIntervalMs;
-export const LEVER_INACTIVE_POLL_INTERVAL_MS = SOURCE_POLL_CADENCE.quietIntervalMs;
+export const LEVER_POLL_INTERVAL_MS = SOURCE_POLL_CADENCE.publishedIntervalMs;
+export const LEVER_SHADOW_POLL_INTERVAL_MS = SOURCE_POLL_CADENCE.shadowIntervalMs;
 
 export interface LeverWorkMessage {
   version: 1;
@@ -64,7 +64,7 @@ export function isLeverSourceDue(
   now: Date,
   health?: SourceHealth,
 ): boolean {
-  return isProviderSourceDue(source.id, checkpoint, now, health);
+  return isProviderSourceDue(source.id, source.status, checkpoint, now, health);
 }
 
 function emitFreshness(source: ReviewedLeverSource, health: SourceHealth | undefined, checkpoint: SourceCheckpoint | undefined, now: Date) {
@@ -98,9 +98,9 @@ async function recordFreshnessIncident(
   reader: CheckpointReader,
   now: Date,
 ) {
-  // Quiet/empty boards intentionally run every six hours and are not held to
-  // the active hourly freshness objective.
-  if (health?.sourceStatus === 'paused' || health?.pollTier === 'quiet' || (checkpoint && (checkpoint.lastRowCount ?? 0) === 0)) return;
+  // Shadow boards intentionally run every three hours and are not held to the
+  // published-source freshness objective.
+  if (source.status === 'shadow' || health?.sourceStatus === 'paused') return;
   const freshnessMinutes = emitFreshness(source, health, checkpoint, now);
   if (!health || freshnessMinutes < 90 || !reader.putSourceHealth) return;
   const severity = 'high' as const;

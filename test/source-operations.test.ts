@@ -100,7 +100,7 @@ describe('shared source operations', () => {
     expect(body.checklist).toMatchObject({ period: '2026-07', completed: 0, total: 8, complete: false });
   });
 
-  it('uses the quiet cadence when classifying source freshness', async () => {
+  it('retains the quiet classification for published source health', async () => {
     const store = new MemoryInternshipStore();
     const source = reviewedGreenhouseSources.find((candidate) => candidate.status === 'published')!;
     await store.putCheckpoint({
