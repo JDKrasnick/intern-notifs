@@ -41,11 +41,13 @@ import {
   freshnessLabel,
   isNewJob,
   isDuplicateJobOpen,
+  jobDetailPresentation,
   routeFailureState,
   sourcePresentation,
   validatedOfficialUrl,
   type AppDestination,
   type FilterMatchReason,
+  type JobRouteState,
 } from "./src/job-detail";
 
 type Job = {
@@ -479,7 +481,9 @@ function JobDetailSheet({
   signedIn,
   matchedReasons = [],
   exclusionsApplied = false,
+  routeState = "idle",
   onDismiss,
+  onRetry = () => undefined,
   onApply,
   onOpenListing,
 }: {
@@ -487,7 +491,9 @@ function JobDetailSheet({
   signedIn: boolean;
   matchedReasons?: FilterMatchReason[];
   exclusionsApplied?: boolean;
+  routeState?: JobRouteState;
   onDismiss: () => void;
+  onRetry?: () => void;
   onApply: (job: Job) => void;
   onOpenListing: (job: Job) => void;
 }) {
@@ -496,7 +502,8 @@ function JobDetailSheet({
   const displayedJob = useRef<Job | null>(null);
   const pendingAction = useRef<{ job: Job; kind: "apply" | "listing" } | null>(null);
   const [handoffPending, setHandoffPending] = useState(false);
-  const visible = Boolean(job);
+  const presentation = jobDetailPresentation(Boolean(job), routeState);
+  const visible = presentation.visible;
 
   if (job) displayedJob.current = job;
 
@@ -523,18 +530,18 @@ function JobDetailSheet({
   }, [motionAllowed, sheetOffset, visible]);
 
   const role = job ?? displayedJob.current;
-  if (!role) return null;
-  const details = [role.location, role.season, role.compensation.raw]
+  if (!role && presentation.content === "hidden") return null;
+  const details = [role?.location, role?.season, role?.compensation.raw]
     .filter(Boolean)
     .join(" · ");
-  const actionLabel = !role.open
+  const actionLabel = !role?.open
     ? "View official listing"
     : signedIn
       ? "Apply on official site"
       : "Open official application";
-  const greenhouseQuickApply = hasGreenhouseQuickApply(role.applyUrl);
-  const source = sourcePresentation(role.sourceReferences ?? []);
-  const closedListingUrl = !role.open ? validatedOfficialUrl(role) : undefined;
+  const greenhouseQuickApply = role ? hasGreenhouseQuickApply(role.applyUrl) : false;
+  const source = sourcePresentation(role?.sourceReferences ?? []);
+  const closedListingUrl = role && !role.open ? validatedOfficialUrl(role) : undefined;
   return (
     <Modal
       animationType="none"
@@ -565,70 +572,74 @@ function JobDetailSheet({
           style={[styles.jobSheet, { transform: [{ translateY: sheetOffset }] }]}
         >
           <View style={styles.sheetHandle} />
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetContent}>
-          <Text style={styles.sheetEyebrow}>{role.open ? "Role details" : "Closed role"}</Text>
-          <Text style={styles.sheetTitle}>{role.title}</Text>
-          <Text style={styles.sheetCompany}>{role.company}</Text>
-          <Text style={styles.sheetDetail}>{details}</Text>
-          <View style={styles.sheetTrustBlock}>
-            <Text style={styles.sheetTrustPrimary}>{source.primary}</Text>
-            {source.corroboration ? <Text style={styles.sheetTrustSecondary}>{source.corroboration}</Text> : null}
-            <Text style={styles.sheetTrustSecondary}>{freshnessLabel(role.lastSeenAt)}</Text>
-          </View>
-          {matchedReasons.length ? (
-            <View style={styles.sheetMatchBlock} accessibilityLabel={`Matched filters: ${matchedReasons.map((reason) => reason.label).join(", ")}${exclusionsApplied ? ". Your exclusions were also applied." : ""}`}>
-              <Text style={styles.sheetMatchTitle}>Why you received this alert</Text>
-              <Text style={styles.sheetMatchText}>{matchedReasons.map((reason) => reason.label).join(" · ")}</Text>
-              {exclusionsApplied ? <Text style={styles.sheetMatchHelper}>Your exclusions were also applied.</Text> : null}
-            </View>
+          {presentation.content === "route" ? (
+            <JobRouteStatusContent state={routeState} onDismiss={onDismiss} onRetry={onRetry} />
+          ) : role ? (
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetContent}>
+              <Text style={styles.sheetEyebrow}>{role.open ? "Role details" : "Closed role"}</Text>
+              <Text style={styles.sheetTitle}>{role.title}</Text>
+              <Text style={styles.sheetCompany}>{role.company}</Text>
+              <Text style={styles.sheetDetail}>{details}</Text>
+              <View style={styles.sheetTrustBlock}>
+                <Text style={styles.sheetTrustPrimary}>{source.primary}</Text>
+                {source.corroboration ? <Text style={styles.sheetTrustSecondary}>{source.corroboration}</Text> : null}
+                <Text style={styles.sheetTrustSecondary}>{freshnessLabel(role.lastSeenAt)}</Text>
+              </View>
+              {matchedReasons.length ? (
+                <View style={styles.sheetMatchBlock} accessibilityLabel={`Matched filters: ${matchedReasons.map((reason) => reason.label).join(", ")}${exclusionsApplied ? ". Your exclusions were also applied." : ""}`}>
+                  <Text style={styles.sheetMatchTitle}>Why you received this alert</Text>
+                  <Text style={styles.sheetMatchText}>{matchedReasons.map((reason) => reason.label).join(" · ")}</Text>
+                  {exclusionsApplied ? <Text style={styles.sheetMatchHelper}>Your exclusions were also applied.</Text> : null}
+                </View>
+              ) : null}
+              {!role.open ? (
+                <View style={styles.sheetClosedNotice}>
+                  <Text style={styles.sheetClosedText}>Applications for this role are closed.</Text>
+                </View>
+              ) : null}
+              <View style={styles.sheetActions}>
+                {role.open ? (
+                  <ApplyNowButton
+                    disabled={handoffPending}
+                    label={greenhouseQuickApply ? "Open Greenhouse Quick Apply" : actionLabel}
+                    hint={
+                      greenhouseQuickApply
+                        ? "Opens the official Greenhouse application. If this employer enables Quick Apply, MyGreenhouse can fill details you have saved there."
+                        : "Opens the official employer form and saves this role to To Apply."
+                    }
+                    onPress={() => startRoleAction("apply")}
+                  />
+                ) : null}
+                {role.open || closedListingUrl ? (
+                  <ActionButton
+                    label={role.open ? "Read the official listing first" : "View official listing"}
+                    variant="secondary"
+                    disabled={handoffPending}
+                    onPress={() => startRoleAction("listing")}
+                  />
+                ) : null}
+                <ActionButton label="Not now" variant="secondary" onPress={onDismiss} />
+              </View>
+              <Text style={styles.sheetHelper}>
+                {!role.open
+                  ? closedListingUrl
+                    ? "The last validated official listing remains available for reference."
+                    : "The official listing link is no longer verified, so it has been removed."
+                  : greenhouseQuickApply
+                  ? "If this employer enables Quick Apply, MyGreenhouse can fill the details you have saved there. Review every answer before submitting."
+                  : signedIn
+                  ? "Apply now opens the employer form and saves this role to To Apply."
+                  : "You’ll complete the employer’s application in your browser."}
+              </Text>
+            </ScrollView>
           ) : null}
-          {!role.open ? (
-            <View style={styles.sheetClosedNotice}>
-              <Text style={styles.sheetClosedText}>Applications for this role are closed.</Text>
-            </View>
-          ) : null}
-          <View style={styles.sheetActions}>
-            {role.open ? (
-              <ApplyNowButton
-                disabled={handoffPending}
-                label={greenhouseQuickApply ? "Open Greenhouse Quick Apply" : actionLabel}
-                hint={
-                  greenhouseQuickApply
-                    ? "Opens the official Greenhouse application. If this employer enables Quick Apply, MyGreenhouse can fill details you have saved there."
-                    : "Opens the official employer form and saves this role to To Apply."
-                }
-                onPress={() => startRoleAction("apply")}
-              />
-            ) : null}
-            {role.open || closedListingUrl ? (
-              <ActionButton
-                label={role.open ? "Read the official listing first" : "View official listing"}
-                variant="secondary"
-                disabled={handoffPending}
-                onPress={() => startRoleAction("listing")}
-              />
-            ) : null}
-            <ActionButton label="Not now" variant="secondary" onPress={onDismiss} />
-          </View>
-          <Text style={styles.sheetHelper}>
-            {!role.open
-              ? closedListingUrl
-                ? "The last validated official listing remains available for reference."
-                : "The official listing link is no longer verified, so it has been removed."
-              : greenhouseQuickApply
-              ? "If this employer enables Quick Apply, MyGreenhouse can fill the details you have saved there. Review every answer before submitting."
-              : signedIn
-              ? "Apply now opens the employer form and saves this role to To Apply."
-              : "You’ll complete the employer’s application in your browser."}
-          </Text>
-          </ScrollView>
         </Animated.View>
       </View>
     </Modal>
   );
 
   function startRoleAction(kind: "apply" | "listing") {
-    if (pendingAction.current) return;
+    if (!role || pendingAction.current) return;
     pendingAction.current = { job: role, kind };
     setHandoffPending(true);
     onDismiss();
@@ -676,12 +687,12 @@ function ApplyNowButton({
   );
 }
 
-function JobRouteStatusSheet({
+function JobRouteStatusContent({
   state,
   onDismiss,
   onRetry,
 }: {
-  state: "idle" | "loading" | "missing" | "error";
+  state: JobRouteState;
   onDismiss: () => void;
   onRetry: () => void;
 }) {
@@ -689,34 +700,28 @@ function JobRouteStatusSheet({
   const loading = state === "loading";
   const missing = state === "missing";
   return (
-    <Modal transparent animationType="fade" visible onRequestClose={onDismiss} statusBarTranslucent>
-      <View style={styles.sheetOverlay}>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close role details" style={styles.sheetDismissArea} onPress={onDismiss} />
-        <View accessibilityViewIsModal style={styles.jobSheet}>
-          <View style={styles.sheetHandle} />
-          {loading ? (
-            <View accessibilityRole="progressbar" accessibilityLabel="Loading role details">
-              <Text style={styles.sheetEyebrow}>Role details</Text>
-              <Skeleton width={250} height={24} />
-              <View style={styles.skeletonGap12} />
-              <Skeleton width={180} />
-              <View style={styles.skeletonGap8} />
-              <Skeleton width={220} />
-            </View>
-          ) : (
-            <>
-              <Text style={styles.sheetEyebrow}>{missing ? "Role unavailable" : "Couldn’t load role"}</Text>
-              <Text style={styles.sheetTitle}>{missing ? "This role is no longer available." : "Check your connection and try again."}</Text>
-              <Text style={styles.sheetHelper}>{missing ? "It may have been removed from the catalog." : "Your alert and saved filters are unchanged."}</Text>
-              <View style={styles.sheetActions}>
-                {!missing ? <ActionButton label="Try again" onPress={onRetry} /> : null}
-                <ActionButton label="Back to roles" variant="secondary" onPress={onDismiss} />
-              </View>
-            </>
-          )}
+    <View style={styles.sheetContent}>
+      {loading ? (
+        <View accessibilityRole="progressbar" accessibilityLabel="Loading role details">
+          <Text style={styles.sheetEyebrow}>Role details</Text>
+          <Skeleton width={250} height={24} />
+          <View style={styles.skeletonGap12} />
+          <Skeleton width={180} />
+          <View style={styles.skeletonGap8} />
+          <Skeleton width={220} />
         </View>
+      ) : (
+        <>
+          <Text style={styles.sheetEyebrow}>{missing ? "Role unavailable" : "Couldn’t load role"}</Text>
+          <Text style={styles.sheetTitle}>{missing ? "This role is no longer available." : "Check your connection and try again."}</Text>
+          <Text style={styles.sheetHelper}>{missing ? "It may have been removed from the catalog." : "Your alert and saved filters are unchanged."}</Text>
+          <View style={styles.sheetActions}>
+            {!missing ? <ActionButton label="Try again" onPress={onRetry} /> : null}
+            <ActionButton label="Back to roles" variant="secondary" onPress={onDismiss} />
+          </View>
+        </>
+      )}
       </View>
-    </Modal>
   );
 }
 
@@ -1532,9 +1537,8 @@ function AppContent() {
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [selectedMatchReasons, setSelectedMatchReasons] = useState<FilterMatchReason[]>([]);
   const [selectedExclusionsApplied, setSelectedExclusionsApplied] = useState(false);
-  const [jobRouteState, setJobRouteState] = useState<"idle" | "loading" | "missing" | "error">("idle");
+  const [jobRouteState, setJobRouteState] = useState<JobRouteState>("idle");
   const routedJobId = useRef<string | undefined>(undefined);
-  const handledOpenKeys = useRef(new Set<string>());
   const [launchInbox, setLaunchInbox] = useState<LaunchInbox>();
   const [showLaunchInbox, setShowLaunchInbox] = useState(false);
   const [launchLoaded, setLaunchLoaded] = useState(false);
@@ -1709,10 +1713,9 @@ function AppContent() {
         if (launchRequestId.current === requestId) setLaunchLoaded(true);
       });
   }, [launchLoaded, launchToken, preferences?.onboardingComplete, token]);
-  const openDestination = (destination: AppDestination | undefined, eventKey: string) => {
-    if (!destination || handledOpenKeys.current.has(eventKey)) return;
-    if (destination.kind === "job" && isDuplicateJobOpen(routedJobId.current, destination.jobId)) return;
-    handledOpenKeys.current.add(eventKey);
+  const openDestination = (destination: AppDestination | undefined, options: { allowActiveJob?: boolean } = {}) => {
+    if (!destination) return;
+    if (destination.kind === "job" && isDuplicateJobOpen(routedJobId.current, destination.jobId, options.allowActiveJob)) return;
     if (destination.kind === "saved") {
       setTab("saved");
       return;
@@ -1737,8 +1740,10 @@ function AppContent() {
   const retryRoutedJob = () => {
     const jobId = routedJobId.current;
     if (!jobId) return;
-    handledOpenKeys.current.delete(`retry:${jobId}`);
-    openDestination({ kind: "job", jobId, reasons: selectedMatchReasons, exclusionsApplied: selectedExclusionsApplied }, `retry:${jobId}`);
+    openDestination(
+      { kind: "job", jobId, reasons: selectedMatchReasons, exclusionsApplied: selectedExclusionsApplied },
+      { allowActiveJob: true },
+    );
   };
   const dismissRoutedJob = () => {
     routedJobId.current = undefined;
@@ -1750,15 +1755,15 @@ function AppContent() {
   useEffect(() => {
     const notificationSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
       const destination = destinationFromNotification(response.notification.request.content.data);
-      openDestination(destination, `notification:${response.notification.request.identifier}`);
+      openDestination(destination);
     });
-    const urlSubscription = Linking.addEventListener("url", ({ url }) => openDestination(destinationFromUrl(url), `url:${url}`));
+    const urlSubscription = Linking.addEventListener("url", ({ url }) => openDestination(destinationFromUrl(url)));
     void Promise.all([Notifications.getLastNotificationResponseAsync(), Linking.getInitialURL()]).then(([response, url]) => {
       if (response) {
-        openDestination(destinationFromNotification(response.notification.request.content.data), `notification:${response.notification.request.identifier}`);
+        openDestination(destinationFromNotification(response.notification.request.content.data));
         void Notifications.clearLastNotificationResponseAsync();
       }
-      if (url) openDestination(destinationFromUrl(url), `url:${url}`);
+      if (url) openDestination(destinationFromUrl(url));
     });
     return () => {
       notificationSubscription.remove();
@@ -2095,7 +2100,9 @@ function AppContent() {
         signedIn
         matchedReasons={selectedMatchReasons}
         exclusionsApplied={selectedExclusionsApplied}
+        routeState={jobRouteState}
         onDismiss={dismissRoutedJob}
+        onRetry={retryRoutedJob}
         onApply={(job) => {
           if (job.open) void apply(job);
           else void openOfficialApplication(job.applyUrl);
@@ -2104,7 +2111,6 @@ function AppContent() {
           void openOfficialApplication(job.applyUrl);
         }}
       />
-      <JobRouteStatusSheet state={jobRouteState} onDismiss={dismissRoutedJob} onRetry={retryRoutedJob} />
     </SafeAreaView>
   );
 }
@@ -2149,7 +2155,7 @@ function GuestExperience({
   routedJob: Job | null;
   routedMatchReasons: FilterMatchReason[];
   routedExclusionsApplied: boolean;
-  routeState: "idle" | "loading" | "missing" | "error";
+  routeState: JobRouteState;
   onDismissRoute: () => void;
   onRetryRoute: () => void;
   jobStatus: "open" | "closed";
@@ -2296,10 +2302,12 @@ function GuestExperience({
         signedIn={false}
         matchedReasons={routedJob ? routedMatchReasons : []}
         exclusionsApplied={routedJob ? routedExclusionsApplied : false}
+        routeState={routeState}
         onDismiss={() => {
           setSelectedJob(null);
-          if (routedJob) onDismissRoute();
+          if (routedJob || routeState !== "idle") onDismissRoute();
         }}
+        onRetry={onRetryRoute}
         onApply={(job) => {
           void openOfficialApplication(job.applyUrl);
         }}
@@ -2307,7 +2315,6 @@ function GuestExperience({
           void openOfficialApplication(job.applyUrl);
         }}
       />
-      <JobRouteStatusSheet state={routeState} onDismiss={onDismissRoute} onRetry={onRetryRoute} />
     </SafeAreaView>
   );
 }

@@ -5,6 +5,7 @@ import {
   freshnessLabel,
   isNewJob,
   isDuplicateJobOpen,
+  jobDetailPresentation,
   jobDeepLink,
   routeFailureState,
   sourcePresentation,
@@ -31,6 +32,15 @@ describe('mobile job routes', () => {
   it('suppresses duplicate initial events for the active role', () => {
     expect(isDuplicateJobOpen('role-1', 'role-1')).toBe(true);
     expect(isDuplicateJobOpen('role-1', 'role-2')).toBe(false);
+    expect(isDuplicateJobOpen('role-1', 'role-1', true)).toBe(false);
+  });
+
+  it('keeps one sheet mounted while a routed role changes from loading to detail', () => {
+    expect(jobDetailPresentation(false, 'idle')).toEqual({ visible: false, content: 'hidden' });
+    expect(jobDetailPresentation(false, 'loading')).toEqual({ visible: true, content: 'route' });
+    expect(jobDetailPresentation(true, 'idle')).toEqual({ visible: true, content: 'job' });
+    expect(jobDetailPresentation(false, 'missing')).toEqual({ visible: true, content: 'route' });
+    expect(jobDetailPresentation(false, 'error')).toEqual({ visible: true, content: 'route' });
   });
 });
 

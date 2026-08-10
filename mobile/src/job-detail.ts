@@ -15,6 +15,14 @@ export type AppDestination =
   | { kind: 'job'; jobId: string; reasons: FilterMatchReason[]; exclusionsApplied: boolean }
   | { kind: 'saved' };
 
+export type JobRouteState = 'idle' | 'loading' | 'missing' | 'error';
+
+export function jobDetailPresentation(hasJob: boolean, routeState: JobRouteState) {
+  if (routeState !== 'idle') return { visible: true, content: 'route' as const };
+  if (hasJob) return { visible: true, content: 'job' as const };
+  return { visible: false, content: 'hidden' as const };
+}
+
 function filterContext(value: unknown) {
   if (!value || typeof value !== 'object') return { reasons: [], exclusionsApplied: false };
   const context = value as { reasons?: unknown; exclusionsApplied?: unknown };
@@ -51,8 +59,8 @@ export function jobDeepLink(jobId: string) {
   return `internnotifs://jobs/${encodeURIComponent(jobId)}`;
 }
 
-export function isDuplicateJobOpen(activeJobId: string | undefined, nextJobId: string) {
-  return activeJobId === nextJobId;
+export function isDuplicateJobOpen(activeJobId: string | undefined, nextJobId: string, allowActiveJob = false) {
+  return !allowActiveJob && activeJobId === nextJobId;
 }
 
 type SourceReference = { sourceId: string; sourceUrl?: string };
