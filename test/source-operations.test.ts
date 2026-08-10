@@ -62,6 +62,7 @@ describe('shared source operations', () => {
     await store.putInternship(job);
     await store.putSourceOccurrence({ sourceId: 'community-list', externalId: 'list-1', jobId: job.jobId, occurrence: job.sourceReferences[0]!, present: true, consecutiveOmissions: 0, changedSnapshotHash: 'a', changedAt: '2026-07-30T10:00:00.000Z', firstObservedAt: '2026-07-30T10:00:00.000Z', firstObservedAtPrecision: 'exact' });
     await store.putSourceOccurrence({ sourceId: direct.id, externalId: 'provider-1', jobId: job.jobId, occurrence: job.sourceReferences[1]!, present: true, consecutiveOmissions: 0, changedSnapshotHash: 'b', changedAt: '2026-07-30T10:05:00.000Z', firstObservedAt: '2026-07-30T10:05:00.000Z', firstObservedAtPrecision: 'exact' });
+    await store.putCheckpoint({ sourceId: 'community-list', successfulFetches: 1, lastRowCount: 1, activeExternalIds: ['list-1'], contentHash: 'aggregator-confirmed', lastSuccessAt: '2026-07-30T11:00:00.000Z' });
 
     const response = await createSourceOperationsHandler(dependencies(store).value)(event(`/operations/attribution/${job.jobId}`));
     expect(response.statusCode).toBe(200);
@@ -73,6 +74,9 @@ describe('shared source operations', () => {
     });
     expect(body.occurrences.find((occurrence: { sourceId: string }) => occurrence.sourceId === direct.id)).toMatchObject({
       firstAttachedAtPrecision: 'unknown', providerTimestamp: { semantics: 'updated' },
+    });
+    expect(body.occurrences.find((occurrence: { sourceId: string }) => occurrence.sourceId === 'community-list')).toMatchObject({
+      lastConfirmedAt: '2026-07-30T11:00:00.000Z',
     });
   });
 

@@ -305,13 +305,21 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
       const job = await dependencies.store.getJob(jobId);
       if (!job) return reply(404, { code: 'JOB_NOT_FOUND', message: 'Catalog job not found.' });
       const sourceById = new Map(sources.map((source) => [source.id, source]));
-      const occurrenceGroups = await Promise.all(job.sourceReferences.map(async (reference) => [reference, await dependencies.store.getSourceOccurrences(reference.sourceId)] as const));
-      const occurrences = occurrenceGroups.map(([reference, candidates]) => {
+      const referenceSourceIds = [...new Set(job.sourceReferences.map((reference) => reference.sourceId))];
+      const [occurrenceEntries, attributionCheckpoints, attributionHealthRecords] = await Promise.all([
+        Promise.all(referenceSourceIds.map(async (sourceId) => [sourceId, await dependencies.store.getSourceOccurrences(sourceId)] as const)),
+        Promise.all(referenceSourceIds.map((sourceId) => dependencies.store.getCheckpoint(sourceId))),
+        dependencies.store.getSourceHealthMany(referenceSourceIds),
+      ]);
+      const occurrencesBySourceId = new Map(occurrenceEntries);
+      const checkpointBySourceId = new Map(referenceSourceIds.map((sourceId, index) => [sourceId, attributionCheckpoints[index]]));
+      const healthBySourceId = new Map(attributionHealthRecords.map((record) => [record.sourceId, record]));
+      const occurrences = job.sourceReferences.map((reference) => {
+        const candidates = occurrencesBySourceId.get(reference.sourceId) ?? [];
         const state = candidates.find((candidate) => candidate.externalId === reference.externalId)
           ?? candidates.find((candidate) => candidate.occurrence.document === reference.document && candidate.occurrence.row === reference.row);
         const source = sourceById.get(reference.sourceId);
-        const checkpoint = checkpoints[sources.findIndex((candidate) => candidate.id === reference.sourceId)];
-        const status = state ? occurrenceStatus(state, checkpoint, health.get(reference.sourceId)) : undefined;
+        const status = state ? occurrenceStatus(state, checkpointBySourceId.get(reference.sourceId), healthBySourceId.get(reference.sourceId)) : undefined;
         return {
           sourceId: reference.sourceId,
           sourceKind: source ? 'direct-provider' as const : 'aggregator' as const,
