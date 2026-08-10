@@ -2,6 +2,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { BatchGetCommand, DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { isPastSeason } from './core/early-career.js';
 import { employerCategory } from './core/employers.js';
+import { catalogSearchText, catalogSourceClasses, type CatalogSource } from './catalog-fields.js';
 import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
 import type { ApplicationSession } from './application-automation.js';
 import type { ReviewedLeverSource } from './sources/lever-config.js';
@@ -25,7 +26,7 @@ export function createDynamoDocumentClient(client = new DynamoDBClient({})): Dyn
   return DynamoDBDocumentClient.from(client, { marshallOptions: { removeUndefinedValues: true } });
 }
 
-export type CatalogSource = 'all' | 'direct' | 'community' | 'corroborated';
+export type { CatalogSource } from './catalog-fields.js';
 export type CatalogQuery = { query?: string; source?: CatalogSource };
 
 export interface InternshipStore {
@@ -111,13 +112,6 @@ export class MemoryInternshipStore implements InternshipStore {
 }
 
 type JobItem = { pk: string; sk: 'META'; urlPk: string; fingerprintPk: string; smsPk?: string; digestPk?: string; openPk?: string; openSk?: string; closedPk?: string; closedSk?: string; catalogSearchText?: string; catalogSourceClasses?: CatalogSource[]; job: Internship };
-
-function catalogSearchText(job: Internship) { return `${job.company} ${job.title} ${job.location}`.toLowerCase(); }
-function catalogSourceClasses(job: Internship): CatalogSource[] {
-  const direct = job.sourceReferences.some((reference) => /^(greenhouse|lever|ashby)-/i.test(reference.sourceId));
-  const community = job.sourceReferences.some((reference) => /^github-/i.test(reference.sourceId) || /github\.com/i.test(reference.sourceUrl));
-  return ['all', ...(direct ? ['direct'] as const : []), ...(community ? ['community'] as const : []), ...(direct && community ? ['corroborated'] as const : [])];
-}
 
 function internshipItem(job: Internship): JobItem {
   const item: JobItem = { pk: `JOB#${job.jobId}`, sk: 'META', urlPk: `URL#${job.normalizedUrl}`, fingerprintPk: `FP#${job.fingerprint}`, job };
@@ -259,7 +253,7 @@ export class DynamoInternshipStore implements InternshipStore {
         if (!isPastSeason(job.season)) jobs.push(withEmployerCategory(job));
       }
       startKey = result.LastEvaluatedKey;
-    } while (startKey && jobs.length < limit && Boolean(needle || source));
+    } while (startKey && (jobs.length === 0 || (jobs.length < limit && Boolean(needle || source))));
     return { jobs, ...(startKey ? { cursor: Buffer.from(JSON.stringify(startKey)).toString('base64url') } : {}) };
   }
   async listOpenSince(after: string, before: string): Promise<Internship[]> {

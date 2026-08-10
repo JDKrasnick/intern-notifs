@@ -1,5 +1,6 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { catalogSearchText, catalogSourceClasses } from './catalog-fields.js';
 import type { Internship } from './types.js';
 
 /** Backfill catalog fields after deploying server-side search and source filters. */
@@ -14,10 +15,8 @@ async function main() {
     for (const item of page.Items ?? []) {
       if (!String(item.pk).startsWith('JOB#') || item.sk !== 'META' || !item.job) continue;
       const job = item.job as Internship;
-      const searchText = `${job.company} ${job.title} ${job.location}`.toLowerCase();
-      const direct = job.sourceReferences.some((reference) => /^(greenhouse|lever|ashby)-/i.test(reference.sourceId));
-      const community = job.sourceReferences.some((reference) => /^github-/i.test(reference.sourceId) || /github\.com/i.test(reference.sourceUrl));
-      const sourceClasses = ['all', ...(direct ? ['direct'] : []), ...(community ? ['community'] : []), ...(direct && community ? ['corroborated'] : [])];
+      const searchText = catalogSearchText(job);
+      const sourceClasses = catalogSourceClasses(job);
       await client.send(new UpdateCommand({ TableName: tableName, Key: { pk: item.pk, sk: item.sk }, UpdateExpression: 'SET catalogSearchText = :searchText, catalogSourceClasses = :sourceClasses', ExpressionAttributeValues: { ':searchText': searchText, ':sourceClasses': sourceClasses } }));
       updated += 1;
     }

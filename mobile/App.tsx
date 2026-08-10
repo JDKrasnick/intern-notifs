@@ -1299,8 +1299,8 @@ function CatalogPaginationFooter({
 }) {
   if (loading) {
     return (
-      <View accessibilityRole="progressbar" accessibilityLabel={searching ? "Searching every internship" : "Loading more internships"} style={styles.catalogPagination}>
-        <Text style={styles.catalogPaginationText}>{searching ? "Searching every internship…" : "Loading more internships…"}</Text>
+      <View accessibilityRole="progressbar" accessibilityLabel={searching ? "Loading more search results" : "Loading more internships"} style={styles.catalogPagination}>
+        <Text style={styles.catalogPaginationText}>{searching ? "Loading more search results…" : "Loading more internships…"}</Text>
       </View>
     );
   }
@@ -1670,11 +1670,6 @@ function AppContent() {
         ),
     [catalogJobs, employerFilter, hiddenFeedbackJob, hiddenJobIds, hideAdvancedDegreeRequired, hideUsCitizenshipRequired, query],
   );
-  const catalogSearchQuery = token ? query : guestSearchQuery;
-  useEffect(() => {
-    if (!catalogSearchQuery.trim() || !nextCatalogCursor || catalogInitialLoading || catalogLoadingMore || catalogMoreError) return;
-    loadNextCatalogPage();
-  }, [catalogInitialLoading, catalogLoadingMore, catalogMoreError, catalogSearchQuery, nextCatalogCursor]);
   const applicationStatuses = useMemo(
     () => new Map(applications.map((application) => [application.jobId, application.status])),
     [applications],

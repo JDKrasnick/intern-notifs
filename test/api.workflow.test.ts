@@ -56,9 +56,14 @@ describe('public catalog and authenticated applicant workflow', () => {
         { sourceId: 'github-community', document: 'README', sourceUrl: 'https://github.com/community/roles', row: 2, company: 'Corroborated Co', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/corroborated', compensation: { raw: '' }, state: 'open' },
       ],
     });
+    await jobs.putInternship({
+      ...job('community', '2026-06-29T00:00:00.000Z'), company: 'Community Co',
+      sourceReferences: [{ sourceId: 'zapply-2027', document: 'README.md', sourceUrl: 'https://raw.githubusercontent.com/zapplyjobs/Internships-2027/main/README.md', row: 3, company: 'Community Co', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/community', compensation: { raw: '' }, state: 'open' }],
+    });
     const handler = createApiHandler({ jobs, users: new MemoryUserStore() });
     expect(body<{ jobs: Internship[] }>(await handler(event(undefined, 'GET', '/jobs', undefined, { q: 'older lever' }))).jobs).toMatchObject([{ jobId: 'lever' }]);
     expect(body<{ jobs: Internship[] }>(await handler(event(undefined, 'GET', '/jobs', undefined, { source: 'direct' }))).jobs.map((item) => item.jobId)).toEqual(['lever', 'corroborated']);
+    expect(body<{ jobs: Internship[] }>(await handler(event(undefined, 'GET', '/jobs', undefined, { source: 'community' }))).jobs.map((item) => item.jobId)).toEqual(['corroborated', 'community']);
     expect(body<{ jobs: Internship[] }>(await handler(event(undefined, 'GET', '/jobs', undefined, { source: 'corroborated' }))).jobs.map((item) => item.jobId)).toEqual(['corroborated']);
   });
 
