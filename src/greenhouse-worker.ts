@@ -7,6 +7,7 @@ import { greenhouseQualityPolicy, verifySourceQuality } from './sources/quality.
 import { DynamoInternshipStore, DynamoUserStore, type InternshipStore, type UserStore } from './store.js';
 import type { GreenhouseWorkMessage } from './greenhouse-dispatch.js';
 import { failedSourceHealth, successfulSourceHealth } from './source-health.js';
+import { processFifoBatch } from './sqs-fifo-batch.js';
 
 const SHADOW_CHECKPOINT_PREFIX = 'shadow-';
 const SHADOW_LINK_CONCURRENCY = 4;
@@ -147,22 +148,15 @@ export async function processGreenhouseQueue(
   event: QueueEvent,
   dependencies: GreenhouseBoardDependencies,
 ): Promise<{ batchItemFailures: Array<{ itemIdentifier: string }> }> {
-  const batchItemFailures: Array<{ itemIdentifier: string }> = [];
-  const blockedGroups = new Set<string>();
-  for (const record of event.Records) {
-    const groupId = record.attributes?.MessageGroupId;
+  return processFifoBatch(event.Records, async (record) => {
     const startedAt = new Date().toISOString();
-    if (groupId && blockedGroups.has(groupId)) {
-      batchItemFailures.push({ itemIdentifier: record.messageId });
-      continue;
-    }
     try {
       const message = parseWorkMessage(record.body);
       const previousHealth = await dependencies.store.getSourceHealth(message.sourceId);
       const result = await runGreenhouseBoard(message, dependencies);
       if (result.skipped) {
         console.log(JSON.stringify({ event: 'source_poll_skipped', command: 'greenhouse-poll', sourceId: result.sourceId, reason: result.skipped }));
-        continue;
+        return;
       }
       const completedAt = new Date().toISOString();
       await dependencies.store.putSourceHealth(successfulSourceHealth({
@@ -195,11 +189,9 @@ export async function processGreenhouseQueue(
         messageId: record.messageId,
         error: error instanceof Error ? error.message : String(error),
       }));
-      batchItemFailures.push({ itemIdentifier: record.messageId });
-      if (groupId) blockedGroups.add(groupId);
+      throw error;
     }
-  }
-  return { batchItemFailures };
+  });
 }
 
 export async function handler(event: QueueEvent): Promise<{ batchItemFailures: Array<{ itemIdentifier: string }> }> {
