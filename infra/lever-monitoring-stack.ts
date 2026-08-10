@@ -9,6 +9,7 @@ import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import type { Construct } from 'constructs';
+import { SOURCE_POLL_CADENCE } from '../src/source-poll-cadence.js';
 
 export interface LeverMonitoringStackProps extends cdk.StackProps {
   internshipsTableName: string;
@@ -87,7 +88,7 @@ export class LeverMonitoringStack extends cdk.Stack {
     schedulerDeadLetterQueue.grantSendMessages(schedulerRole);
     new scheduler.CfnSchedule(this, 'LeverPollSchedule', {
       flexibleTimeWindow: { mode: 'OFF' },
-      scheduleExpression: 'cron(22 * * * ? *)',
+      scheduleExpression: SOURCE_POLL_CADENCE.schedules.lever,
       scheduleExpressionTimezone: 'UTC',
       state: 'ENABLED',
       target: {

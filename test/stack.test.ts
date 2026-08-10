@@ -5,6 +5,7 @@ import { GreenhouseMonitoringStack } from '../infra/greenhouse-monitoring-stack.
 import { InternNotifsStack } from '../infra/intern-notifs-stack.js';
 import { LeverMonitoringStack } from '../infra/lever-monitoring-stack.js';
 import { AshbyMonitoringStack } from '../infra/ashby-monitoring-stack.js';
+import { SOURCE_POLL_CADENCE } from '../src/source-poll-cadence.js';
 
 function snapshotTemplate(template: Record<string, unknown>) {
   // NodejsFunction assets are content-addressed bundled artifacts. Their S3
@@ -76,7 +77,7 @@ describe('CDK stack', () => {
   it('queues Greenhouse boards hourly with bounded worker concurrency', () => {
     const app = new cdk.App(); const stack = new GreenhouseMonitoringStack(app, 'Greenhouse', { internshipsTableName: 'internships', usersTableName: 'users', emailAddress: 'me@example.com' }); const template = Template.fromStack(stack);
     template.resourceCountIs('AWS::SQS::Queue', 3);
-    template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: 'cron(12 * * * ? *)', State: 'ENABLED' });
+    template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: SOURCE_POLL_CADENCE.schedules.greenhouse, State: 'ENABLED' });
     template.hasResourceProperties('AWS::Scheduler::Schedule', {
       ScheduleExpression: 'cron(0 9 ? * MON *)',
       ScheduleExpressionTimezone: 'America/New_York',
@@ -93,7 +94,7 @@ describe('CDK stack', () => {
   it('queues Lever boards hourly with bounded worker concurrency', () => {
     const app = new cdk.App(); const stack = new LeverMonitoringStack(app, 'Lever', { internshipsTableName: 'internships', usersTableName: 'users' }); const template = Template.fromStack(stack);
     template.resourceCountIs('AWS::SQS::Queue', 3);
-    template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: 'cron(22 * * * ? *)', State: 'ENABLED' });
+    template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: SOURCE_POLL_CADENCE.schedules.lever, State: 'ENABLED' });
     template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
       BatchSize: 10,
       FunctionResponseTypes: ['ReportBatchItemFailures'],
@@ -110,7 +111,7 @@ describe('CDK stack', () => {
   it('queues Ashby boards on a staggered hourly schedule with bounded concurrency', () => {
     const app = new cdk.App(); const stack = new AshbyMonitoringStack(app, 'Ashby', { internshipsTableName: 'internships', usersTableName: 'users' }); const template = Template.fromStack(stack);
     template.resourceCountIs('AWS::SQS::Queue', 3);
-    template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: 'cron(32 * * * ? *)', State: 'ENABLED' });
+    template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: SOURCE_POLL_CADENCE.schedules.ashby, State: 'ENABLED' });
     template.hasResourceProperties('AWS::Lambda::EventSourceMapping', { BatchSize: 10, FunctionResponseTypes: ['ReportBatchItemFailures'], ScalingConfig: { MaximumConcurrency: 4 } });
     template.hasResourceProperties('AWS::Lambda::Function', { Timeout: 120 });
     template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
