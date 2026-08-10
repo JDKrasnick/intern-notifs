@@ -93,11 +93,20 @@ describe('snapshot reconciliation', () => {
       firstAttachedAtPrecision: 'exact',
     });
 
-    const provider = new MutableAdapter('source-b', [listing('source-b')]);
+    const provider = new MutableAdapter('source-b', [listing('source-b', {
+      providerTimestamp: { value: '2026-07-01T00:00:00.000Z', semantics: 'updated' },
+    })]);
     await new IngestionRunner([provider], store).run();
     const attached = [...store.jobs.values()][0]!.sourceReferences.find((reference) => reference.sourceId === 'source-b')!;
     const providerOccurrence = (await store.getSourceOccurrences('source-b'))[0]!;
-    expect(attached).toMatchObject({ firstAttachedAt: providerOccurrence.firstObservedAt, firstAttachedAtPrecision: 'exact' });
+    expect(attached).toMatchObject({
+      firstAttachedAt: providerOccurrence.firstObservedAt, firstAttachedAtPrecision: 'exact',
+      providerTimestamp: { value: '2026-07-01T00:00:00.000Z', semantics: 'updated' },
+    });
+    expect([...store.jobs.values()][0]).toMatchObject({
+      firstSeenAt: first.firstObservedAt, catalogVisibleAt: first.firstObservedAt,
+    });
+    expect(providerOccurrence.firstObservedAt).not.toBe(attached.providerTimestamp?.value);
   });
 
   it('keeps a role catalogued while any open source occurrence classifies it as technical', async () => {

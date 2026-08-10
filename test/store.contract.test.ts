@@ -7,7 +7,8 @@ const job = (title = 'Software Engineering Intern', overrides: Partial<Internshi
   jobId: 'job-1', company: 'Acme', title, location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/job-1',
   normalizedUrl: 'https://careers.example.test/job-1', fingerprint: 'fingerprint-1', compensation: { raw: '$50/hr', maxHourlyUSD: 50 }, sourceReferences: [],
   technical: title !== 'Graduate Clinical Intern',
-  open: true, firstSeenAt: '2026-07-19T00:00:00.000Z', lastSeenAt: '2026-07-19T00:00:00.000Z', notification: { smsPending: true, digestPending: true },
+  open: true, firstSeenAt: '2026-07-19T00:00:00.000Z', catalogVisibleAt: '2026-07-19T00:00:00.000Z', catalogRecency: 'normal',
+  lastSeenAt: '2026-07-19T00:00:00.000Z', notification: { smsPending: true, digestPending: true },
   ...overrides,
 });
 const fakeClient = () => {
@@ -27,7 +28,7 @@ describe('DynamoDB persistence contract', () => {
     const { send, client } = fakeClient(); const store = new DynamoInternshipStore('jobs-table', client);
     await store.putInternship(job());
     const technical = (send.mock.calls[0]?.[0] as PutCommand).input;
-    expect(technical.Item).toMatchObject({ pk: 'JOB#job-1', sk: 'META', urlPk: 'URL#https://careers.example.test/job-1', fingerprintPk: 'FP#fingerprint-1', smsPk: 'PENDING#SMS', digestPk: 'PENDING#DIGEST', openPk: 'OPEN' });
+    expect(technical.Item).toMatchObject({ pk: 'JOB#job-1', sk: 'META', urlPk: 'URL#https://careers.example.test/job-1', fingerprintPk: 'FP#fingerprint-1', smsPk: 'PENDING#SMS', digestPk: 'PENDING#DIGEST', openPk: 'OPEN', openSk: '3#2026-07-19T00:00:00.000Z#job-1' });
     await store.putInternship(job('Graduate Clinical Intern'));
     expect((send.mock.calls[1]?.[0] as PutCommand).input.Item).not.toHaveProperty('openPk');
   });
@@ -53,10 +54,13 @@ describe('DynamoDB persistence contract', () => {
       KeyConditionExpression: 'openPk = :open AND openSk BETWEEN :after AND :before',
       ExpressionAttributeValues: {
         ':open': 'OPEN',
-        ':after': '2026-07-18T00:00:00.000Z\uffff',
-        ':before': '2026-07-19T00:00:00.000Z\uffff',
+        ':after': '3#2026-07-18T00:00:00.000Z\uffff',
+        ':before': '3#2026-07-19T00:00:00.000Z\uffff',
       },
       ScanIndexForward: false,
+    });
+    expect((send.mock.calls[1]?.[0] as QueryCommand).input.ExpressionAttributeValues).toEqual({
+      ':open': 'OPEN', ':after': '2026-07-18T00:00:00.000Z\uffff', ':before': '2026-07-19T00:00:00.000Z\uffff',
     });
   });
 

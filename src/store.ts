@@ -2,6 +2,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { BatchGetCommand, DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { isPastSeason } from './core/early-career.js';
 import { employerCategory } from './core/employers.js';
+import { canonicalCatalogRecency, catalogRecency, catalogVisibleAt, compareCatalogRecency, openCatalogSortKey } from './catalog-recency.js';
 import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
 import type { ApplicationSession } from './application-automation.js';
 import type { ReviewedLeverSource } from './sources/lever-config.js';
@@ -17,7 +18,8 @@ export interface LeverAdmission {
 }
 
 function withEmployerCategory(job: Internship): Internship {
-  return { ...structuredClone(job), employerCategory: job.employerCategory ?? employerCategory(job.company) };
+  const canonical = canonicalCatalogRecency(structuredClone(job));
+  return { ...canonical, employerCategory: canonical.employerCategory ?? employerCategory(canonical.company) };
 }
 
 /** Optional listing/profile fields are omitted rather than rejected by DynamoDB. */
@@ -48,7 +50,7 @@ export interface InternshipStore {
   listOpen?(cursor?: string, limit?: number, status?: 'open' | 'closed'): Promise<{ jobs: Internship[]; cursor?: string }>;
   listLeverAdmissions?(): Promise<LeverAdmission[]>;
   putLeverAdmission?(admission: LeverAdmission): Promise<void>;
-  /** Open technical roles discovered strictly after `after` and no later than `before`. */
+  /** Normal-recency open technical roles made catalog-visible in `(after, before]`. */
   listOpenSince(after: string, before: string): Promise<Internship[]>;
 }
 
@@ -67,14 +69,15 @@ export class MemoryInternshipStore implements InternshipStore {
   async putSourceHealth(health: SourceHealth) { this.sourceHealth.set(health.sourceId, structuredClone(health)); }
   async getMonitoringChecklist(period: string) { return structuredClone(this.monitoringChecklists.get(period)); }
   async putMonitoringChecklist(checklist: MonitoringChecklist) { this.monitoringChecklists.set(checklist.period, structuredClone(checklist)); }
-  async findByUrl(url: string) { return [...this.jobs.values()].find((job) => job.normalizedUrl === url); }
-  async findByFingerprint(fingerprint: string) { return [...this.jobs.values()].find((job) => job.fingerprint === fingerprint); }
-  async putInternship(job: Internship) { this.jobs.set(job.jobId, structuredClone(job)); }
+  async findByUrl(url: string) { const job = [...this.jobs.values()].find((item) => item.normalizedUrl === url); return job && withEmployerCategory(job); }
+  async findByFingerprint(fingerprint: string) { const job = [...this.jobs.values()].find((item) => item.fingerprint === fingerprint); return job && withEmployerCategory(job); }
+  async putInternship(job: Internship) { const canonical = canonicalCatalogRecency(job); this.jobs.set(canonical.jobId, structuredClone(canonical)); }
   async getSourceOccurrences(sourceId: string) { return [...this.occurrences.values()].filter((value) => value.sourceId === sourceId).map((value) => structuredClone(value)); }
   async putSourceOccurrence(occurrence: SourceOccurrenceState) { this.occurrences.set(`${occurrence.sourceId}#${occurrence.externalId}`, structuredClone(occurrence)); }
   async putInternshipWithNotificationEvent(job: Internship, event: NotificationEvent) {
     if (this.notificationEvents.has(event.eventId)) return false;
-    this.jobs.set(job.jobId, structuredClone(job));
+    const canonical = canonicalCatalogRecency(job);
+    this.jobs.set(canonical.jobId, structuredClone(canonical));
     this.notificationEvents.set(event.eventId, structuredClone(event));
     return true;
   }
@@ -83,11 +86,11 @@ export class MemoryInternshipStore implements InternshipStore {
   async markSmsSent(jobId: string, sentAt: string) { const job = this.jobs.get(jobId); if (job) { job.notification.smsPending = false; job.notification.smsSentAt = sentAt; } }
   async markDigested(jobIds: string[], sentAt: string) { for (const jobId of jobIds) { const job = this.jobs.get(jobId); if (job) { job.notification.digestPending = false; job.notification.digestedAt = sentAt; } } }
   async getJob(jobId: string) { const job = this.jobs.get(jobId); return job && withEmployerCategory(job); }
-  async listOpen(cursor?: string, limit = 25, status: 'open' | 'closed' = 'open') { const jobs = [...this.jobs.values()].filter((job) => job.open === (status === 'open') && job.technical !== false && !isPastSeason(job.season)).sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt)); const offset = cursor ? Number(cursor) : 0; const page = jobs.slice(offset, offset + limit).map(withEmployerCategory); return { jobs: page, cursor: offset + page.length < jobs.length ? String(offset + page.length) : undefined }; }
+  async listOpen(cursor?: string, limit = 25, status: 'open' | 'closed' = 'open') { const jobs = [...this.jobs.values()].filter((job) => job.open === (status === 'open') && job.technical !== false && !isPastSeason(job.season)).sort(status === 'open' ? compareCatalogRecency : (a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt)); const offset = cursor ? Number(cursor) : 0; const page = jobs.slice(offset, offset + limit).map(withEmployerCategory); return { jobs: page, cursor: offset + page.length < jobs.length ? String(offset + page.length) : undefined }; }
   async listOpenSince(after: string, before: string) {
     return [...this.jobs.values()]
-      .filter((job) => job.open && job.technical !== false && !isPastSeason(job.season) && job.firstSeenAt > after && job.firstSeenAt <= before)
-      .sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt))
+      .filter((job) => job.open && job.technical !== false && catalogRecency(job) === 'normal' && !isPastSeason(job.season) && catalogVisibleAt(job) > after && catalogVisibleAt(job) <= before)
+      .sort(compareCatalogRecency)
       .map(withEmployerCategory);
   }
   async listLeverAdmissions() { return [...this.leverAdmissions.values()].map((value) => structuredClone(value)); }
@@ -100,11 +103,12 @@ export class MemoryInternshipStore implements InternshipStore {
 type JobItem = { pk: string; sk: 'META'; urlPk: string; fingerprintPk: string; smsPk?: string; digestPk?: string; openPk?: string; openSk?: string; closedPk?: string; closedSk?: string; job: Internship };
 
 function internshipItem(job: Internship): JobItem {
-  const item: JobItem = { pk: `JOB#${job.jobId}`, sk: 'META', urlPk: `URL#${job.normalizedUrl}`, fingerprintPk: `FP#${job.fingerprint}`, job };
-  if (job.notification.smsPending) item.smsPk = 'PENDING#SMS';
-  if (job.notification.digestPending) item.digestPk = 'PENDING#DIGEST';
-  if (job.open && job.technical !== false) { item.openPk = 'OPEN'; item.openSk = `${job.firstSeenAt}#${job.jobId}`; }
-  if (!job.open && job.technical !== false) { item.closedPk = 'CLOSED'; item.closedSk = `${job.lastSeenAt}#${job.jobId}`; }
+  const canonical = canonicalCatalogRecency(job);
+  const item: JobItem = { pk: `JOB#${canonical.jobId}`, sk: 'META', urlPk: `URL#${canonical.normalizedUrl}`, fingerprintPk: `FP#${canonical.fingerprint}`, job: canonical };
+  if (canonical.notification.smsPending) item.smsPk = 'PENDING#SMS';
+  if (canonical.notification.digestPending) item.digestPk = 'PENDING#DIGEST';
+  if (canonical.open && canonical.technical !== false) { item.openPk = 'OPEN'; item.openSk = openCatalogSortKey(canonical); }
+  if (!canonical.open && canonical.technical !== false) { item.closedPk = 'CLOSED'; item.closedSk = `${canonical.lastSeenAt}#${canonical.jobId}`; }
   return item;
 }
 
@@ -199,7 +203,8 @@ export class DynamoInternshipStore implements InternshipStore {
   }
   private async find(index: 'urlIndex' | 'fingerprintIndex', attribute: 'urlPk' | 'fingerprintPk', value: string) {
     const result = await this.client.send(new QueryCommand({ TableName: this.tableName, IndexName: index, KeyConditionExpression: '#key = :value', ExpressionAttributeNames: { '#key': attribute }, ExpressionAttributeValues: { ':value': value }, Limit: 1 }));
-    return result.Items?.[0]?.job as Internship | undefined;
+    const job = result.Items?.[0]?.job as Internship | undefined;
+    return job && withEmployerCategory(job);
   }
   findByUrl(url: string) { return this.find('urlIndex', 'urlPk', `URL#${url}`); }
   findByFingerprint(fingerprint: string) { return this.find('fingerprintIndex', 'fingerprintPk', `FP#${fingerprint}`); }
@@ -232,22 +237,30 @@ export class DynamoInternshipStore implements InternshipStore {
     return { jobs, ...(startKey ? { cursor: Buffer.from(JSON.stringify(startKey)).toString('base64url') } : {}) };
   }
   async listOpenSince(after: string, before: string): Promise<Internship[]> {
-    const result = await this.queryAll({
+    const normal = await this.queryAll({
       TableName: this.tableName,
       IndexName: 'openJobsIndex',
       KeyConditionExpression: 'openPk = :open AND openSk BETWEEN :after AND :before',
       ExpressionAttributeValues: {
         ':open': 'OPEN',
-        // `openSk` ends in a job ID, so this excludes roles exactly at `after`
-        // while including all roles whose firstSeenAt equals `before`.
-        ':after': `${after}\uffff`,
-        ':before': `${before}\uffff`,
+        ':after': `3#${after}\uffff`,
+        ':before': `3#${before}\uffff`,
       },
       ScanIndexForward: false,
     });
-    return result
+    // Include legacy normal rows until the catalog-index audit canonicalizes
+    // their unprefixed firstSeenAt sort keys. Baseline rows only use rank 1.
+    const legacy = await this.queryAll({
+      TableName: this.tableName,
+      IndexName: 'openJobsIndex',
+      KeyConditionExpression: 'openPk = :open AND openSk BETWEEN :after AND :before',
+      ExpressionAttributeValues: { ':open': 'OPEN', ':after': `${after}\uffff`, ':before': `${before}\uffff` },
+      ScanIndexForward: false,
+    });
+    return [...normal, ...legacy]
       .map((item) => item.job as Internship)
-      .filter((job) => !isPastSeason(job.season))
+      .filter((job) => catalogRecency(job) === 'normal' && catalogVisibleAt(job) > after && catalogVisibleAt(job) <= before && !isPastSeason(job.season))
+      .sort(compareCatalogRecency)
       .map(withEmployerCategory);
   }
   async listLeverAdmissions(): Promise<LeverAdmission[]> {

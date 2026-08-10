@@ -84,11 +84,41 @@ npm run audit:catalog-index
 ```
 
 The final audit must report zero mismatches. It verifies that open technical
-jobs use `openPk=OPEN` and `firstSeenAt#jobId` as `openSk`, closed technical jobs
-use `closedPk=CLOSED` and `lastSeenAt#jobId` as `closedSk`, and nontechnical jobs
-use neither sparse index. Finally, paginate `GET /jobs` to exhaustion and confirm
-the repaired job IDs occur in the response; preserve each returned `cursor` as
-the next request's `cursor` query parameter.
+jobs use `openPk=OPEN` and `recency-rank#catalogVisibleAt#jobId` as `openSk`,
+closed technical jobs use `closedPk=CLOSED` and `lastSeenAt#jobId` as `closedSk`,
+and nontechnical jobs use neither sparse index. Finally, paginate `GET /jobs` to
+exhaustion and confirm the repaired job IDs occur in the response; preserve each
+returned `cursor` as the next request's `cursor` query parameter.
+
+### 2026-08-09 Ashby catalog-recency repair
+
+Run this one-time repair after deploying catalog-recency-aware code. It selects
+only quiet, unnotified jobs created on 2026-08-09 whose first exact source
+attachment is one of the reviewed Ashby sources. An Ashby occurrence later
+attached to an existing community job is not a candidate.
+
+The default mode is read-only. Save the exact `candidates`, `candidateJobIds`,
+and deterministic `repairToken` output:
+
+```bash
+npm run migrate:catalog-recency
+```
+
+Review every candidate, then apply only with the dry-run guards. Each write is a
+narrow conditional update and stops if the job, its source attachments, its
+notification state, or its timestamps changed concurrently:
+
+```bash
+npm run migrate:catalog-recency -- --apply --expected-count EXACT_COUNT --expected-repair-token EXACT_TOKEN
+npm run migrate:catalog-recency
+```
+
+The second dry run must report zero candidates. Next run the catalog-index audit
+and guarded open-index repair described above so all legacy normal rows receive
+explicit metadata and ranked keys. Verify `GET /jobs` page by page: normal roles
+must appear newest-first before all baseline roles. Also verify a signed-in
+opening interval does not return any repaired baseline job IDs. Production
+execution is an operator action separate from deployment and this code change.
 
 ## AWS deployment
 
