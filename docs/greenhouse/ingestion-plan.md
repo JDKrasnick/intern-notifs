@@ -86,7 +86,7 @@ Official reference: [Greenhouse Job Board API](https://developers.greenhouse.io/
 
 ## Queued fetch and update cycle
 
-EventBridge dispatches active boards every ten minutes. Reviewed boards with no
+EventBridge dispatches active boards hourly. Reviewed boards with no
 eligible roles automatically move to a staggered six-hour check until roles
 appear. Each board is one FIFO SQS message; Lambda receives batches of ten and
 scales to at most four concurrent workers.

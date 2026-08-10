@@ -1,0 +1,32 @@
+{
+  "probedAt": "2026-08-09T23:02:24.286Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "circleback",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/circleback",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 11,
+      "listedRows": 11,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "San Francisco"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 11
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "2bb6be67-d1a8-42f7-bb1b-64ee36bf613f",
+          "title": "Software Engineering Intern (Summer 2027)",
+          "location": "San Francisco"
+        }
+      ]
+    }
+  ]
+}

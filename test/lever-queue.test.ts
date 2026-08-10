@@ -56,7 +56,7 @@ describe('Lever queue dispatch', () => {
 
   it('automatically reduces an empty board to one staggered check per six hours', () => {
     const checkpoint = { sourceId: `shadow-${shadowSource.id}`, successfulFetches: 1, lastRowCount: 0 };
-    const windows = Array.from({ length: 36 }, (_, index) => new Date(index * LEVER_POLL_INTERVAL_MS));
+    const windows = Array.from({ length: 6 }, (_, index) => new Date(index * LEVER_POLL_INTERVAL_MS));
     expect(windows.filter((now) => isLeverSourceDue(shadowSource, checkpoint, now))).toHaveLength(1);
     expect(isLeverSourceDue(shadowSource, { ...checkpoint, lastRowCount: 1 }, windows[0])).toBe(true);
   });
@@ -99,7 +99,7 @@ describe('Lever queue dispatch', () => {
       queueUrl: 'https://sqs.us-east-1.amazonaws.com/123/lever.fifo',
       sources: [shadowSource],
       checkpointReader: store,
-      now: () => new Date(scheduledAt),
+      now: () => new Date('2026-07-30T13:00:00.000Z'),
       client: { async send(command) { commands.push(command); return {}; } },
     })).toEqual({ queued: 1 });
     expect(await store.getSourceHealth(shadowSource.id)).toMatchObject({

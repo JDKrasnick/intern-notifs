@@ -45,6 +45,11 @@ export interface SourcePromotionEvidence {
   stableIdentity: boolean;
   stableApplicationHosts: boolean;
   snapshots: SourcePromotionSnapshotEvidence[];
+  /** Explicit owner authorization to publish before the normal observation window completes. */
+  observationWindowOverride?: {
+    reason: string;
+    followUpAfter: string;
+  };
 }
 
 export interface ReviewedSourceRecord {

@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "retell-ai",
+  "apiRegion": "global",
+  "careersUrl": "https://www.retellai.com/careers",
+  "firstPartyEvidenceUrl": "https://www.retellai.com/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/retell-ai",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/retell-ai\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/retell-ai/ea775189-0496-43d8-a386-df8148265463",
+  "verifiedAt": "2026-08-09T23:02:24.286Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

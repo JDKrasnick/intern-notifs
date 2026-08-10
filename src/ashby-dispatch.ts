@@ -5,7 +5,7 @@ import { DynamoInternshipStore } from './store.js';
 import type { SourceCheckpoint, SourceHealth } from './types.js';
 
 export const ASHBY_DISPATCH_BATCH_SIZE = 10;
-export const ASHBY_POLL_INTERVAL_MS = 10 * 60 * 1000;
+export const ASHBY_POLL_INTERVAL_MS = 60 * 60 * 1000;
 export const ASHBY_INACTIVE_POLL_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 export interface AshbyWorkMessage {
@@ -111,11 +111,11 @@ async function recordFreshnessIncident(
   now: Date,
 ) {
   // Quiet/empty boards intentionally run every six hours and are not held to
-  // the 30-minute open-catalog freshness objective.
+  // the active hourly freshness objective.
   if (health?.sourceStatus === 'paused' || health?.pollTier === 'quiet' || (checkpoint && (checkpoint.lastRowCount ?? 0) === 0)) return;
   const freshnessMinutes = emitFreshness(source, health, checkpoint, now);
-  if (!health || freshnessMinutes < 15 || !reader.putSourceHealth) return;
-  const severity = freshnessMinutes >= 30 ? 'high' as const : 'warning' as const;
+  if (!health || freshnessMinutes < 90 || !reader.putSourceHealth) return;
+  const severity = 'high' as const;
   const state = health.incidentState === 'acknowledged' ? 'acknowledged' as const : 'open' as const;
   if (health.incidentState === state && health.incidentSeverity === severity
     && Math.floor(health.freshnessMinutes ?? -1) === Math.floor(freshnessMinutes)) return;

@@ -1850,16 +1850,16 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
     },
     "StaleSourceLeverAlarm892C92CC": {
       "Properties": {
-        "AlarmDescription": "A lever source has gone 30 minutes without a trusted snapshot.",
+        "AlarmDescription": "A lever source has gone 90 minutes without a trusted snapshot.",
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
-        "DatapointsToAlarm": 6,
+        "DatapointsToAlarm": 1,
         "Dimensions": [
           {
             "Name": "provider",
             "Value": "lever",
           },
         ],
-        "EvaluationPeriods": 6,
+        "EvaluationPeriods": 1,
         "MetricName": "StaleSourceCount",
         "Namespace": "InternNotifs/Ingestion",
         "Period": 300,
@@ -4116,7 +4116,7 @@ exports[`CDK stack > queues Lever boards hourly with bounded worker concurrency 
     },
     "LeverFreshnessAlarmB4A7BE9A": {
       "Properties": {
-        "AlarmDescription": "At least one active Lever source has no trusted snapshot within thirty minutes.",
+        "AlarmDescription": "At least one active Lever source has no trusted snapshot within ninety minutes.",
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "Dimensions": [
           {
@@ -4131,9 +4131,9 @@ exports[`CDK stack > queues Lever boards hourly with bounded worker concurrency 
         "EvaluationPeriods": 1,
         "MetricName": "SourceFreshnessMinutes",
         "Namespace": "InternNotifs/Ingestion",
-        "Period": 600,
+        "Period": 3600,
         "Statistic": "Maximum",
-        "Threshold": 30,
+        "Threshold": 90,
         "TreatMissingData": "breaching",
       },
       "Type": "AWS::CloudWatch::Alarm",

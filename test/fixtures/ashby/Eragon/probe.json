@@ -1,0 +1,32 @@
+{
+  "probedAt": "2026-08-09T23:02:24.286Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "Eragon",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/Eragon",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 4,
+      "listedRows": 4,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "San Francisco"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 4
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "0b90ea4a-8684-4ae1-a7cc-c998db6e862e",
+          "title": "Applied AI Intern",
+          "location": "San Francisco"
+        }
+      ]
+    }
+  ]
+}

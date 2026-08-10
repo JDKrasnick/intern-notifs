@@ -28,7 +28,11 @@ const responseHeaders = {
   'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
 };
 const reply = (statusCode: number, body: unknown) => ({ statusCode, headers: responseHeaders, body: JSON.stringify(body) });
-const healthWindowMs = 30 * 60_000;
+const activeHealthWindowMs: Record<Provider, number> = {
+  greenhouse: 90 * 60_000,
+  lever: 90 * 60_000,
+  ashby: 90 * 60_000,
+};
 const inactiveHealthWindowMs = 7 * 60 * 60_000;
 type Provider = 'greenhouse' | 'lever' | 'ashby';
 type OperationsSource =
@@ -50,13 +54,13 @@ function authorized(event: ApiEvent, expectedSecret: string): boolean {
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
-function stateFor(health: SourceHealth | undefined, checkpoint: SourceCheckpoint | undefined, timestamp: number): SourceHealthState {
+function stateFor(source: OperationsSource, health: SourceHealth | undefined, checkpoint: SourceCheckpoint | undefined, timestamp: number): SourceHealthState {
   if (health?.state === 'quarantined') return 'quarantined';
   const lastSuccessAt = health?.lastSuccessAt ?? checkpoint?.lastSuccessAt;
   if (!lastSuccessAt) return health?.state ?? 'never-succeeded';
   const allowedAge = health?.pollTier === 'quiet'
     ? inactiveHealthWindowMs
-    : (checkpoint?.lastRowCount ?? health?.eligibleRows ?? 0) > 0 ? healthWindowMs : inactiveHealthWindowMs;
+    : (checkpoint?.lastRowCount ?? health?.eligibleRows ?? 0) > 0 ? activeHealthWindowMs[source.provider] : inactiveHealthWindowMs;
   if (timestamp - Date.parse(lastSuccessAt) > allowedAge || health?.state === 'degraded') return 'degraded';
   return 'healthy';
 }
@@ -70,7 +74,7 @@ function publicSource(
   const lastSuccessAt = health?.lastSuccessAt ?? checkpoint?.lastSuccessAt;
   const recentRuns = health?.recentRuns ?? [];
   const successfulRuns = recentRuns.filter((run) => run.state === 'succeeded').length;
-  const state = stateFor(health, checkpoint, timestamp);
+  const state = stateFor(source, health, checkpoint, timestamp);
   return {
     source: {
       sourceId: source.id,

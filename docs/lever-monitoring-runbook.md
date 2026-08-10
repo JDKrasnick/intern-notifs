@@ -11,7 +11,7 @@ Each Lever source exposes these safe controls:
 
 - **Pause / resume** — stop or restore scheduled work without a deployment.
 - **Replay now** — enqueue one FIFO task for the selected source.
-- **Set active / quiet** — switch between ten-minute and staggered six-hour
+- **Set active / quiet** — switch between hourly and staggered six-hour
   polling.
 - **Acknowledge / resolve** — record incident ownership and resolution.
 
@@ -54,7 +54,7 @@ the month; the next month resets automatically.
   temporary provider errors.
 - Leave last-known-good catalog entries intact.
 - Do not replay every source while provider backoff is active.
-- Page when active sources cross 30 minutes or the work queue is exhausted.
+- Page when active sources cross 90 minutes or the work queue is exhausted.
 
 ### `429`, timeout, or `5xx`
 

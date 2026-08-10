@@ -6,7 +6,9 @@ import { reviewedAshbySources, type ReviewedAshbySource } from '../src/sources/a
 import { MemoryInternshipStore } from '../src/store.js';
 
 const scheduledAt = '2026-08-09T12:00:00.000Z';
-const shadowSource = reviewedAshbySources[0]!;
+const shadowSource: ReviewedAshbySource = {
+  ...reviewedAshbySources[0]!, status: 'shadow', promotionEvidence: undefined,
+};
 const message = (sourceId = shadowSource.id): AshbyWorkMessage => ({ version: 1, sourceId, scheduledAt });
 const posting = {
   id: '123e4567-e89b-42d3-a456-426614174000', title: 'Software Engineering Intern', location: 'New York, NY',
@@ -34,7 +36,7 @@ describe('Ashby queue dispatch', () => {
 
   it('deterministically polls successful empty boards once per six hours', () => {
     const checkpoint = { sourceId: `shadow-${shadowSource.id}`, successfulFetches: 1, lastRowCount: 0 };
-    const windows = Array.from({ length: 36 }, (_, index) => new Date(index * ASHBY_POLL_INTERVAL_MS));
+    const windows = Array.from({ length: 6 }, (_, index) => new Date(index * ASHBY_POLL_INTERVAL_MS));
     expect(windows.filter((now) => isAshbySourceDue(shadowSource, checkpoint, now))).toHaveLength(1);
     expect(isAshbySourceDue(shadowSource, { ...checkpoint, lastRowCount: 1 }, windows[0]!)).toBe(true);
   });

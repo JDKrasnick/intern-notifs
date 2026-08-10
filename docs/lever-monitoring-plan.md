@@ -40,7 +40,7 @@ rejected snapshot. Checkpoints recorded successful-fetch data without a durable
 source-health or incident record.
 
 The project target is for 95% of listed open roles to have been checked within
-30 minutes. Monitoring must measure successful trusted snapshots, not merely
+90 minutes. Monitoring must measure successful trusted snapshots, not merely
 Lambda invocations.
 
 ## Research facts and operating assumptions
@@ -190,10 +190,10 @@ health records.
 ### Freshness
 
 The dedicated FIFO runner checks active published and shadow Lever boards every
-ten minutes, with stable empty boards staggered across six-hour checks:
+hourly, with stable empty boards staggered across six-hour checks:
 
 - warning/review event after 15 minutes without a trusted success;
-- high-severity freshness incident at 30 minutes;
+- high-severity freshness incident at 90 minutes;
 - suppress duplicate notifications while one incident remains open;
 - record provider backoff explicitly, but do not call a backed-off source
   healthy.

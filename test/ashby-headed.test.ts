@@ -8,6 +8,7 @@ import {
 import { reviewedAshbySources } from '../src/sources/ashby-config.js';
 
 const published = [{ ...reviewedAshbySources[0], status: 'published' as const }];
+const shadow = [{ ...reviewedAshbySources[0], status: 'shadow' as const, promotionEvidence: undefined }];
 const values = { contact: { name: 'Jordan Lee', firstName: 'Jordan', lastName: 'Lee', email: 'jordan@example.com', phone: '+1 212 555 0100' } };
 const page = (overrides: Record<string, unknown> = {}) => ({
   url: 'https://jobs.ashbyhq.com/etched/123e4567-e89b-12d3-a456-426614174000/application',
@@ -18,10 +19,12 @@ const page = (overrides: Record<string, unknown> = {}) => ({
 
 describe('Ashby headed assistant', () => {
   it('derives its exact case-sensitive allowlist only from published reviewed boards', () => {
-    expect(publishedAshbyBoardKeys()).toEqual(new Set());
+    expect(publishedAshbyBoardKeys()).toEqual(new Set(reviewedAshbySources.map((source) => source.identity.boardKey)));
     expect(publishedAshbyBoardKeys(published)).toEqual(new Set(['etched']));
-    expect(isAshbyApplicationUrl(page().url)).toBe(false);
+    expect(publishedAshbyBoardKeys(shadow)).toEqual(new Set());
+    expect(isAshbyApplicationUrl(page().url)).toBe(true);
     expect(isAshbyApplicationUrl(page().url, published)).toBe(true);
+    expect(isAshbyApplicationUrl(page().url, shadow)).toBe(false);
     expect(isAshbyApplicationUrl(page().url.replace('/etched/', '/Etched/'), published)).toBe(false);
   });
 

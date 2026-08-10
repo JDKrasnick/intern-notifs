@@ -1,0 +1,33 @@
+{
+  "probedAt": "2026-08-09T23:02:24.286Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "junior",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/junior",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 18,
+      "listedRows": 18,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "London",
+        "New York City"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 18
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "23ee686b-d305-4ac9-860d-16c99ddb4891",
+          "title": "Software Engineering Intern — Fall 2026",
+          "location": "New York City"
+        }
+      ]
+    }
+  ]
+}

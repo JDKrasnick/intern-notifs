@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "airwallex",
+  "apiRegion": "global",
+  "careersUrl": "https://www.airwallex.com/careers.html",
+  "firstPartyEvidenceUrl": "https://www.airwallex.com/careers.html",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/airwallex",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/airwallex\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/airwallex/6cdb0f39-234a-4234-b1f1-cb48a1fa2795",
+  "verifiedAt": "2026-08-09T23:02:24.286Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

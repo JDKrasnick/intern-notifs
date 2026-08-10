@@ -29,10 +29,13 @@ export function occurrenceStatus(
 export function evaluateSourceFreshness(
   records: SourceHealth[],
   now = new Date(),
-  staleAfterMinutes = 30,
+  staleAfterMinutes?: number,
 ): SourceFreshness {
-  const cutoff = now.getTime() - staleAfterMinutes * 60_000;
-  const stale = records.filter((record) => !record.lastSuccessAt || Date.parse(record.lastSuccessAt) < cutoff);
+  const stale = records.filter((record) => {
+    const allowedMinutes = staleAfterMinutes ?? (record.provider === 'lever' || record.provider === 'greenhouse' ? 90 : 30);
+    const cutoff = now.getTime() - allowedMinutes * 60_000;
+    return !record.lastSuccessAt || Date.parse(record.lastSuccessAt) < cutoff;
+  });
   const byProvider: SourceFreshness['byProvider'] = { github: 0, lever: 0, greenhouse: 0, ashby: 0, unknown: 0 };
   for (const record of stale) byProvider[record.provider ?? 'unknown'] += 1;
   return {

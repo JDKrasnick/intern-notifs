@@ -1,0 +1,33 @@
+{
+  "probedAt": "2026-08-09T23:02:24.286Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "NationGraph",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/NationGraph",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 2,
+      "listedRows": 2,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Fort Lauderdale - Miami Area",
+        "Toronto"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 2
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "a1bcdd3e-d863-42b6-8469-ec587190ad68",
+          "title": "Winter 2027 Software Engineering Intern",
+          "location": "Toronto"
+        }
+      ]
+    }
+  ]
+}

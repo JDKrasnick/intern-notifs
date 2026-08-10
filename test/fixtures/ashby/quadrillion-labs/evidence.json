@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "quadrillion-labs",
+  "apiRegion": "global",
+  "careersUrl": "https://careers.quadrillion.io/",
+  "firstPartyEvidenceUrl": "https://careers.quadrillion.io/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/quadrillion-labs",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/quadrillion-labs\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/quadrillion-labs/579cef88-1dbf-45b5-a938-7ddc23505765",
+  "verifiedAt": "2026-08-09T23:02:24.286Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

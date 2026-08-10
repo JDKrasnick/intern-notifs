@@ -1,0 +1,47 @@
+{
+  "probedAt": "2026-08-09T23:02:24.286Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "netic",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/netic",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 27,
+      "listedRows": 27,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 4,
+      "geographicCoverage": [
+        "San Francisco"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 27
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "bab5d1e5-e31b-42f0-9cef-334b1f17fed3",
+          "title": "Full-Stack Software Engineer (Product) - New Grad - 2026-2027",
+          "location": "San Francisco"
+        },
+        {
+          "id": "f291394a-f3c5-4f46-9b87-77aea3d487ef",
+          "title": "Full-Stack Software Engineer (Product) - Intern - 2026-2027",
+          "location": "San Francisco"
+        },
+        {
+          "id": "d9bcb6a2-0e54-4cb3-baec-43f2d74db18f",
+          "title": "Software Engineer (Agent Platform) - New Grad - 2026-2027",
+          "location": "San Francisco"
+        },
+        {
+          "id": "b0ea7aab-8eea-4d31-96f9-278364180ae7",
+          "title": "Software Engineer (Agent Platform) - Intern - 2026-2027",
+          "location": "San Francisco"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "probedAt": "2026-08-09T23:02:24.286Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "airwallex",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/airwallex",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 631,
+      "listedRows": 631,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "AE - Dubai",
+        "AU - Melbourne",
+        "AU - Sydney",
+        "BZ - Sao Paulo",
+        "CA - Toronto",
+        "CN - Hangzhou",
+        "CN - Shanghai",
+        "CN - Shenzhen",
+        "DE - Berlin",
+        "ES - Barcelona",
+        "FR - Paris",
+        "HK - Hong Kong SAR",
+        "ID - Jakarta",
+        "IE - Dublin",
+        "IL - Tel Aviv",
+        "IN - Bangalore",
+        "JP - Tokyo",
+        "KR - Seoul",
+        "LT - Vilnius",
+        "MX - Mexico City",
+        "MY - Kuala Lumpur",
+        "NL - Amsterdam",
+        "NZ - Auckland",
+        "SG - Singapore",
+        "UK - London",
+        "US - Austin",
+        "US - New York",
+        "US - Remote",
+        "US - San Francisco",
+        "US - Seattle",
+        "US - Utah",
+        "VN - Ho Chi Minh City"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 631
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "6cdb0f39-234a-4234-b1f1-cb48a1fa2795",
+          "title": "Software Engineer - Intern 2027",
+          "location": "SG - Singapore"
+        }
+      ]
+    }
+  ]
+}

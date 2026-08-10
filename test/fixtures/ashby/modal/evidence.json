@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "modal",
+  "apiRegion": "global",
+  "careersUrl": "https://modal.com/company",
+  "firstPartyEvidenceUrl": "https://modal.com/company",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/modal",
+  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/modal\">Careers</a>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/modal/38888294-6bc7-4dab-b072-6d0f0c2ed79a",
+  "verifiedAt": "2026-08-09T23:02:24.286Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

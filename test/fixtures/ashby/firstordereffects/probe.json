@@ -1,0 +1,33 @@
+{
+  "probedAt": "2026-08-09T23:02:24.286Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "firstordereffects",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/firstordereffects",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 12,
+      "listedRows": 12,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Austin",
+        "Washington, DC / Arlington, VA"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 12
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "21601331-5541-4362-ab04-b347ecf1a4f2",
+          "title": "Engineering Operations Intern",
+          "location": "Austin"
+        }
+      ]
+    }
+  ]
+}

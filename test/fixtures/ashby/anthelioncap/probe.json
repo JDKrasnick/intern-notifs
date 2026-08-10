@@ -1,0 +1,32 @@
+{
+  "probedAt": "2026-08-09T23:02:24.286Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "anthelioncap",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/anthelioncap",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 4,
+      "listedRows": 4,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "New York City"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 4
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "5e2ea37b-2369-474e-b717-c24c60976e96",
+          "title": "Quant Developer / Quant Research Intern - 2026/2027",
+          "location": "New York City"
+        }
+      ]
+    }
+  ]
+}

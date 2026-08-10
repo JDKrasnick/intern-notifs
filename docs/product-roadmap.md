@@ -51,10 +51,10 @@
 - [x] Add the SQS-backed Lever shadow/published runner with hourly active polling, adaptive inactive polling, bounded concurrency, isolated retries, alarms, and quiet promotion.
 - [x] Standardize Greenhouse, Lever, general Markdown, and Quant Markdown behind neutral complete snapshots, shared processing, stable source occurrences, two-success closure reconciliation, deterministic outbox IDs, and durable source health.
 - [x] Complete Lever monitoring with shadow and published health, regional metrics, freshness incidents, bounded backoff, shared operator controls, dashboards, and recovery runbooks.
-- [x] Add Ashby URL-derived discovery, metadata-only public probing, first-party ownership evidence, deterministic admission/re-verification gates, weekly candidate-ledger upload, and 21 reviewed shadow boards.
+- [x] Add Ashby URL-derived discovery, metadata-only public probing, first-party ownership evidence, deterministic admission/re-verification gates, weekly candidate-ledger upload, and 35 reviewed shadow boards.
 - [x] Implement the Ashby public posting adapter with listed-only complete snapshots, strict identity/schema/link gates, provider-neutral processing, deterministic fixtures, and a nightly live contract for every reviewed board.
-- [ ] Complete Ashby production shadow verification and per-board promotion: the scheduler, queues, persistence, alarms, shared dashboard fields, quarantine/recovery controls, and enforced promotion-evidence gate are deployed; link evidence was backfilled for all 21 healthy boards on 2026-08-09, so three clean snapshots spanning at least 24 hours and owner approval are still required before the first cohort is promoted.
-- [x] Add Ashby application-assistance route detection and headed-browser workflows after runtime promotion; this remains separate from source ingestion. Published reviewed boards are eligible automatically, while all current shadow boards remain unavailable.
+- [ ] Close the Ashby emergency-promotion follow-up: all 35 healthy boards were published on 2026-08-09 under an explicit owner-approved observation-window override with quiet baselines; after 2026-08-10 19:32 America/New_York, confirm three clean snapshots spanning at least 24 hours, link and host stability, zero notification burst, queue health, and catalog quality, then retire the override record or quarantine any failing board.
+- [x] Add Ashby application-assistance route detection and headed-browser workflows after runtime promotion; this remains separate from source ingestion. Published reviewed boards are eligible automatically.
 - [x] Add human-readable source tags to default internship notifications for community job boards, Greenhouse, and Lever.
 - [ ] Add job freshness/source labels and notification deep links to the mobile product.
 - [ ] Add user-facing settings, account deletion, and data export surface.
@@ -80,7 +80,7 @@
 
 | Metric | Initial target |
 | --- | --- |
-| Source freshness | 95% of listed open roles checked within 30 minutes |
+| Source freshness | 95% of listed open roles checked within 90 minutes |
 | Duplicate alert rate | Under 2% |
 | Alert relevance | At least 70% of surveyed alerts rated relevant |
 | Alert-to-detail open rate | At least 30% |

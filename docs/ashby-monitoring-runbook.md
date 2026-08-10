@@ -1,7 +1,7 @@
 # Ashby monitoring runbook
 
 The `InternNotifsAshby` stack is an independently deployable polling plane over
-the retained internship and user tables. It owns a staggered ten-minute
+the retained internship and user tables. It owns a staggered hourly
 scheduler, dispatcher, encrypted FIFO work queue, worker, work DLQ, scheduler
 DLQ, four alarms, a dashboard, and operations-discovery parameters.
 
@@ -48,6 +48,14 @@ approval. Then change only that individually qualified source from `shadow` to
 deploy `InternNotifsAshby`. The manifest rejects publication when this evidence
 is absent or incomplete. A single deployment may contain several independently
 approved promotions.
+
+An owner may explicitly authorize publication before the normal observation
+window completes. Record that exceptional decision as
+`observationWindowOverride`, retain at least one clean link-checked snapshot,
+name a follow-up time after the skipped window would have completed, and create
+a tracked follow-up review. This override changes timing only; it does not
+bypass identity, schema, application-host, link, quiet-baseline, or named-owner
+approval checks.
 
 Verify that the first published run creates the source checkpoint as a quiet
 baseline and creates no notification event. A later genuine addition follows

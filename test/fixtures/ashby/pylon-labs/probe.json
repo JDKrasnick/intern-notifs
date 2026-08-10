@@ -1,0 +1,39 @@
+{
+  "probedAt": "2026-08-09T23:02:24.286Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "pylon-labs",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/pylon-labs",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 20,
+      "listedRows": 20,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "London, UK",
+        "New York",
+        "San Francisco"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 20
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "38814ce7-217b-40f2-9ba5-8a7733a5691d",
+          "title": "Software Engineer, New Grad",
+          "location": "San Francisco"
+        },
+        {
+          "id": "fcea8b52-81f1-4b0c-b575-d7b180faec4d",
+          "title": "Software Engineer, Intern",
+          "location": "San Francisco"
+        }
+      ]
+    }
+  ]
+}

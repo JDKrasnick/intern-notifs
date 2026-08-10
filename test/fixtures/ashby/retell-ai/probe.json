@@ -1,0 +1,33 @@
+{
+  "probedAt": "2026-08-09T23:02:24.286Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "retell-ai",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/retell-ai",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 31,
+      "listedRows": 31,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Remote",
+        "San Francisco Bay Area"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 31
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "ea775189-0496-43d8-a386-df8148265463",
+          "title": "Software Engineer (New Grad)",
+          "location": "San Francisco Bay Area"
+        }
+      ]
+    }
+  ]
+}
