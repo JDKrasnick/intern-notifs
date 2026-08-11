@@ -8,9 +8,19 @@ import { api } from './api';
 Notifications.setNotificationHandler({ handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false }) });
 
 function alertsAllowed(value: unknown) {
-  const permission = value as { granted?: boolean; status?: string; ios?: { allowsAlert?: boolean | null } };
-  return permission.granted === true || permission.status === 'granted' || permission.ios?.allowsAlert === true;
+  const permission = value as Notifications.NotificationPermissionsStatus;
+  if (Platform.OS === 'ios') {
+    return permission.ios?.status === Notifications.IosAuthorizationStatus.AUTHORIZED
+      || permission.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL
+      || permission.ios?.status === Notifications.IosAuthorizationStatus.EPHEMERAL;
+  }
+  return permission.granted === true || permission.status === 'granted';
 }
+
+export type JobAlertRegistration =
+  | { status: 'registered'; token: string }
+  | { status: 'denied' }
+  | { status: 'unsupported' };
 
 const reminderStorageKey = (applicationId: string) => `internnotifs.follow-up.${applicationId}`;
 
@@ -59,15 +69,22 @@ export async function clearApplicationFollowUp(applicationId: string) {
   await AsyncStorage.removeItem(key);
 }
 
-export async function registerForJobAlerts(idToken: string) {
-  if (!Device.isDevice) return undefined;
+export async function registerForJobAlerts(idToken: string): Promise<JobAlertRegistration> {
+  if (!Device.isDevice) return { status: 'unsupported' } as const;
+  // Expo requires an Android channel before requesting a push token. Creating
+  // an existing channel is safe and preserves any choices the user made for it.
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('job-alerts', {
+      name: 'Job alerts',
+      importance: Notifications.AndroidImportance.HIGH,
+    });
+  }
   const existing = await Notifications.getPermissionsAsync();
   const permission = alertsAllowed(existing) ? existing : await Notifications.requestPermissionsAsync();
-  if (!alertsAllowed(permission)) return undefined;
-  if (Platform.OS === 'android') await Notifications.setNotificationChannelAsync('job-alerts', { name: 'Job alerts', importance: Notifications.AndroidImportance.HIGH });
+  if (!alertsAllowed(permission)) return { status: 'denied' } as const;
   const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
   if (!projectId) throw new Error('Push notifications are not configured for this build yet.');
   const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
   await api('/me/devices', idToken, { method: 'POST', body: JSON.stringify({ token, platform: Platform.OS }) });
-  return token;
+  return { status: 'registered', token } as const;
 }

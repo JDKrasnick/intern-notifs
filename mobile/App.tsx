@@ -234,6 +234,23 @@ async function openOfficialApplication(url: string) {
   }
 }
 
+function openAppSettings() {
+  void Linking.openSettings().catch(() => {
+    Alert.alert("Could not open Settings", "Open your device settings and select InternNotifs.");
+  });
+}
+
+function showNotificationPermissionHelp() {
+  Alert.alert(
+    "Notifications are off",
+    "Enable notifications for InternNotifs in your device settings, then try again.",
+    [
+      { text: "Not now", style: "cancel" },
+      { text: "Open Settings", onPress: openAppSettings },
+    ],
+  );
+}
+
 function hasGreenhouseQuickApply(url: string) {
   try {
     const host = new URL(url).hostname.toLowerCase();
@@ -1753,17 +1770,22 @@ function AppContent() {
     setJobRouteState("idle");
   };
   useEffect(() => {
-    const notificationSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+    const handleNotificationResponse = (response: Notifications.NotificationResponse) => {
       const destination = destinationFromNotification(response.notification.request.content.data);
       openDestination(destination);
-    });
+      // Expo retains the last response across launches until it is cleared.
+      // Once routed (or intentionally ignored), it must not reopen later.
+      void Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
+    };
+    const notificationSubscription = Notifications.addNotificationResponseReceivedListener(handleNotificationResponse);
     const urlSubscription = Linking.addEventListener("url", ({ url }) => openDestination(destinationFromUrl(url)));
-    void Promise.all([Notifications.getLastNotificationResponseAsync(), Linking.getInitialURL()]).then(([response, url]) => {
-      if (response) {
-        openDestination(destinationFromNotification(response.notification.request.content.data));
-        void Notifications.clearLastNotificationResponseAsync();
+    void Promise.allSettled([Notifications.getLastNotificationResponseAsync(), Linking.getInitialURL()]).then(([responseResult, urlResult]) => {
+      if (responseResult.status === "fulfilled" && responseResult.value) {
+        handleNotificationResponse(responseResult.value);
       }
-      if (url) openDestination(destinationFromUrl(url));
+      if (urlResult.status === "fulfilled" && urlResult.value) {
+        openDestination(destinationFromUrl(urlResult.value));
+      }
     });
     return () => {
       notificationSubscription.remove();
@@ -2367,7 +2389,7 @@ function Onboarding({
     setSaving(true);
     setFeedback({ kind: "saving", message: "Saving your alert settings…" });
     try {
-      const pushToken = alertsRequested
+      const registration = alertsRequested
         ? await registerForJobAlerts(token)
         : undefined;
       const preferences = await api<Preference>("/me/preferences", token, {
@@ -2380,7 +2402,7 @@ function Onboarding({
               .map((item) => item.trim())
               .filter(Boolean),
           },
-          alertsEnabled: alertsRequested && Boolean(pushToken),
+          alertsEnabled: registration?.status === "registered",
           alertSettings: defaultAlertSettings,
           onboardingComplete: true,
         }),
@@ -2388,6 +2410,13 @@ function Onboarding({
       // The saved response is sufficient to leave onboarding. Avoid waiting
       // for another request before showing the main app.
       onDone(preferences);
+      if (registration?.status === "denied") showNotificationPermissionHelp();
+      if (registration?.status === "unsupported") {
+        Alert.alert(
+          "Physical device required",
+          "Finish setup without alerts here, then enable them from Profile on your iPhone or Android device.",
+        );
+      }
     } catch (error) {
       setFeedback({
         kind: "error",
@@ -2657,6 +2686,7 @@ function Profile({
     (preferences.filter.excludeKeywords ?? []).join(", "),
   );
   const [alertsEnabled, setAlertsEnabled] = useState(preferences.alertsEnabled);
+  const [notificationsBlocked, setNotificationsBlocked] = useState(false);
   const [includeEmployerCategories, setIncludeEmployerCategories] = useState<EmployerCategory[]>(
     preferences.filter.includeEmployerCategories ?? [],
   );
@@ -2825,16 +2855,19 @@ function Profile({
     setAlertFeedback({ kind: "saving", message: "Saving alert settings…" });
     try {
       if (alertsEnabled) {
-        const deviceToken = await registerForJobAlerts(token);
-        if (!deviceToken) {
+        const registration = await registerForJobAlerts(token);
+        if (registration.status !== "registered") {
+          setNotificationsBlocked(registration.status === "denied");
           setAlertFeedback({
             kind: "error",
-            message:
-              "Notifications are off. Enable them in iPhone Settings, then try again on this device.",
+            message: registration.status === "denied"
+              ? "Notifications are off for InternNotifs. Enable them in your device settings, then try again."
+              : "Push alerts require a physical iPhone or Android device.",
           });
           return;
         }
       }
+      setNotificationsBlocked(false);
       const parsedFollowUpDays = Number(followUpDays);
       if (!Number.isInteger(parsedFollowUpDays) || parsedFollowUpDays < 1 || parsedFollowUpDays > 30) {
         throw new Error("Follow-up reminders must be scheduled 1 to 30 days after an update.");
@@ -3320,6 +3353,12 @@ function Profile({
         state={alertFeedback}
         onRetry={() => void saveAlertPreferences()}
       />
+      {notificationsBlocked ? (
+        <>
+          <View style={styles.buttonGap} />
+          <ActionButton label="Open notification settings" variant="secondary" onPress={openAppSettings} />
+        </>
+      ) : null}
       <View style={styles.spacer} />
       <Text style={styles.profileSectionLabel}>Account</Text>
       <Text style={styles.sectionTitle}>Account and support</Text>
