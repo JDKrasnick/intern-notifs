@@ -1,5 +1,7 @@
 import type { ReviewedSourceRecord } from './reviewed-source.js';
-import { ashbyEmergencyPromotionEvidence } from './ashby-promotion-evidence.js';
+import { ashbyFollowUpPromotionEvidence, ashbyFollowUpQuarantinedSourceIds } from './ashby-promotion-evidence.js';
+
+export { ashbyFollowUpQuarantinedSourceIds } from './ashby-promotion-evidence.js';
 
 export type ReviewedAshbySource = ReviewedSourceRecord & {
   identity: ReviewedSourceRecord['identity'] & { provider: 'ashby'; apiRegion: 'global' };
@@ -184,9 +186,15 @@ const admittedAshbySources: ReviewedAshbySource[] = [
   },
 ];
 
-/** All currently admitted boards were explicitly owner-approved for immediate publication. */
+/**
+ * Employer-page re-verification did not prove these exact boards during the
+ * 2026-08-10 promotion follow-up. Keep them in shadow until a reviewer
+ * refreshes the first-party evidence and recovers the runtime quarantine.
+ * All remaining admitted boards have normal promotion evidence.
+ */
 export const reviewedAshbySources: ReviewedAshbySource[] = admittedAshbySources.map((source) => {
-  const promotionEvidence = ashbyEmergencyPromotionEvidence[source.id];
+  if (ashbyFollowUpQuarantinedSourceIds.has(source.id)) return source;
+  const promotionEvidence = ashbyFollowUpPromotionEvidence[source.id];
   if (!promotionEvidence) throw new Error(`Missing Ashby promotion evidence for ${source.id}`);
   return { ...source, status: 'published', promotionEvidence };
 });
