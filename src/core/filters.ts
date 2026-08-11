@@ -24,6 +24,20 @@ export interface JobFilter {
   excludeAdvancedDegreeRequired?: boolean;
 }
 
+export type FilterMatchReasonKind = 'category' | 'keyword' | 'company-type' | 'default-all-technical';
+export interface FilterMatchReason { kind: FilterMatchReasonKind; label: string; }
+export interface JobFilterEvaluation {
+  matches: boolean;
+  reasons: FilterMatchReason[];
+  /** Exclusion details stay private; users only need to know they were enforced. */
+  exclusionsApplied: boolean;
+}
+
+const categoryLabels: Record<JobCategory, string> = {
+  'ai-ml': 'AI/ML', grad: 'Graduate roles', swe: 'Software engineering', quant: 'Quantitative', product: 'Product', design: 'Design'
+};
+const employerCategoryLabels: Record<EmployerCategory, string> = { faang: 'FAANG', startup: 'Startups', normal: 'Other companies' };
+
 const patterns: Record<JobCategory, RegExp> = {
   'ai-ml': /\b(ai|artificial intelligence|machine learning|ml|data scien(?:ce|tist)|deep learning|nlp|computer vision|generative ai|llm)\b/i,
   grad: /\b(graduate|grad|master'?s|ph\.?d\.?|mba)\b/i,
@@ -198,20 +212,32 @@ export function inferJobFocuses(listing: Pick<RawListing, 'title'>): JobFocus[] 
   return matched.length ? matched : /\b(software|swe|engineer|developer)\b/i.test(value) ? ['SWE'] : [];
 }
 
-export function matchesJobFilter(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season' | 'requirements'>, filter?: JobFilter) {
-  if (!filter) return true;
+export function evaluateJobFilter(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season' | 'requirements'>, filter?: JobFilter): JobFilterEvaluation {
   const value = terms(listing);
   const categories = classifyJob(listing);
   const companyCategory = employerCategory(listing.company);
+  const activeFilter = filter ?? {};
   const requirements = listing.requirements ?? {
     requiresUsCitizenship: /🇺🇸|\b(?:requires?|must be)\s+(?:a\s+)?(?:u\.?s\.?|united states)\s+citizen(?:ship)?\b/i.test(value),
     advancedDegreeRequired: /🎓|\b(?:advanced degree|master'?s|ph\.?d\.?|mba)\b/i.test(value)
   };
-  const excluded = [...(filter.excludeKeywords ?? []).map((keyword) => matchesKeyword(value, keyword)), ...(filter.excludeCategories ?? []).map((category) => categories.includes(category)), ...(filter.excludeEmployerCategories ?? []).map((category) => companyCategory === category), Boolean(filter.excludeUsCitizenshipRequired && requirements.requiresUsCitizenship), Boolean(filter.excludeAdvancedDegreeRequired && requirements.advancedDegreeRequired)].some(Boolean);
-  if (excluded) return false;
-  const roleInclusions = [...(filter.includeKeywords ?? []).map((keyword) => matchesKeyword(value, keyword)), ...(filter.includeCategories ?? []).map((category) => categories.includes(category))];
-  const employerInclusions = (filter.includeEmployerCategories ?? []).map((category) => companyCategory === category);
-  return (roleInclusions.length === 0 || roleInclusions.some(Boolean)) && (employerInclusions.length === 0 || employerInclusions.some(Boolean));
+  const exclusionsApplied = Boolean(activeFilter.excludeKeywords?.length || activeFilter.excludeCategories?.length || activeFilter.excludeEmployerCategories?.length || activeFilter.excludeUsCitizenshipRequired || activeFilter.excludeAdvancedDegreeRequired);
+  const excluded = [...(activeFilter.excludeKeywords ?? []).map((keyword) => matchesKeyword(value, keyword)), ...(activeFilter.excludeCategories ?? []).map((category) => categories.includes(category)), ...(activeFilter.excludeEmployerCategories ?? []).map((category) => companyCategory === category), Boolean(activeFilter.excludeUsCitizenshipRequired && requirements.requiresUsCitizenship), Boolean(activeFilter.excludeAdvancedDegreeRequired && requirements.advancedDegreeRequired)].some(Boolean);
+  if (excluded) return { matches: false, reasons: [], exclusionsApplied };
+  const keywordReasons = (activeFilter.includeKeywords ?? []).filter((keyword) => matchesKeyword(value, keyword)).map((keyword) => ({ kind: 'keyword' as const, label: keyword.trim() }));
+  const categoryReasons = (activeFilter.includeCategories ?? []).filter((category) => categories.includes(category)).map((category) => ({ kind: 'category' as const, label: categoryLabels[category] }));
+  const companyReasons = (activeFilter.includeEmployerCategories ?? []).filter((category) => companyCategory === category).map((category) => ({ kind: 'company-type' as const, label: employerCategoryLabels[category] }));
+  const hasRoleInclusions = Boolean(activeFilter.includeKeywords?.length || activeFilter.includeCategories?.length);
+  const hasCompanyInclusions = Boolean(activeFilter.includeEmployerCategories?.length);
+  const matches = (!hasRoleInclusions || categoryReasons.length + keywordReasons.length > 0) && (!hasCompanyInclusions || companyReasons.length > 0);
+  if (!matches) return { matches: false, reasons: [], exclusionsApplied };
+  const reasons: FilterMatchReason[] = [...categoryReasons, ...keywordReasons, ...companyReasons];
+  if (!hasRoleInclusions) reasons.unshift({ kind: 'default-all-technical', label: 'All technical roles' });
+  return { matches: true, reasons: reasons.filter((reason, index) => reasons.findIndex((candidate) => candidate.kind === reason.kind && candidate.label.toLowerCase() === reason.label.toLowerCase()) === index), exclusionsApplied };
+}
+
+export function matchesJobFilter(listing: Pick<RawListing, 'company' | 'title' | 'location' | 'season' | 'requirements'>, filter?: JobFilter) {
+  return evaluateJobFilter(listing, filter).matches;
 }
 
 function stringList(value: unknown, name: string) {

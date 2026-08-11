@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inferJobFocuses, isTechnicalJob, matchesJobFilter, parseJobFilter } from '../src/core/filters.js';
+import { evaluateJobFilter, inferJobFocuses, isTechnicalJob, matchesJobFilter, parseJobFilter } from '../src/core/filters.js';
 import { employerCategory } from '../src/core/employers.js';
 import { MemoryInternshipStore } from '../src/store.js';
 import { Poller } from '../src/poll.js';
@@ -30,6 +30,34 @@ describe('job filters', () => {
     expect(matchesJobFilter(listing('Senior Machine Learning Intern', 'https://example.com/senior'), filter)).toBe(false);
     expect(matchesJobFilter(listing('Finance Intern', 'https://example.com/finance'), filter)).toBe(false);
     expect(() => parseJobFilter({ excludeCategories: ['not-a-category'] })).toThrow('unsupported category');
+  });
+  it('returns distinct user-facing match reasons without diverging from eligibility', () => {
+    const filter = parseJobFilter({ includeCategories: ['ai-ml', 'swe'], includeKeywords: ['machine', 'machine'], includeEmployerCategories: ['startup'], excludeKeywords: ['senior'] });
+    const role = listing('Machine Learning Software Intern', 'https://example.com/ml', 'Vercel');
+    const evaluation = evaluateJobFilter(role, filter);
+    expect(evaluation).toEqual({
+      matches: true,
+      reasons: [
+        { kind: 'category', label: 'AI/ML' },
+        { kind: 'category', label: 'Software engineering' },
+        { kind: 'keyword', label: 'machine' },
+        { kind: 'company-type', label: 'Startups' },
+      ],
+      exclusionsApplied: true,
+    });
+    expect(matchesJobFilter(role, filter)).toBe(evaluation.matches);
+    expect(evaluateJobFilter({ ...role, title: `Senior ${role.title}` }, filter)).toMatchObject({ matches: false, reasons: [], exclusionsApplied: true });
+  });
+  it('explains the default technical-role filter and company-only filters', () => {
+    expect(evaluateJobFilter(listing('Software Engineering Intern', 'https://example.com/default'))).toEqual({
+      matches: true,
+      reasons: [{ kind: 'default-all-technical', label: 'All technical roles' }],
+      exclusionsApplied: false,
+    });
+    expect(evaluateJobFilter(listing('Software Engineering Intern', 'https://example.com/google', 'Google'), { includeEmployerCategories: ['faang'] }).reasons).toEqual([
+      { kind: 'default-all-technical', label: 'All technical roles' },
+      { kind: 'company-type', label: 'FAANG' },
+    ]);
   });
   it('classifies FAANG and reviewed YC startups while keeping every other employer normal', () => {
     expect(employerCategory('Google LLC')).toBe('faang');

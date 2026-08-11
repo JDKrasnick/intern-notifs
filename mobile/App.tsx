@@ -35,6 +35,20 @@ import {
   registerForJobAlerts,
   scheduleApplicationFollowUp,
 } from "./src/notifications";
+import {
+  destinationFromNotification,
+  destinationFromUrl,
+  freshnessLabel,
+  isNewJob,
+  isDuplicateJobOpen,
+  jobDetailPresentation,
+  routeFailureState,
+  sourcePresentation,
+  validatedOfficialUrl,
+  type AppDestination,
+  type FilterMatchReason,
+  type JobRouteState,
+} from "./src/job-detail";
 
 type Job = {
   jobId: string;
@@ -48,6 +62,10 @@ type Job = {
   requirements?: { requiresUsCitizenship: boolean; advancedDegreeRequired: boolean };
   open: boolean;
   firstSeenAt: string;
+  lastSeenAt: string;
+  applicationUrlValidatedAt?: string;
+  invalidApplicationUrl?: string;
+  sourceReferences: Array<{ sourceId: string; sourceUrl: string }>;
 };
 type EmployerCategory = "faang" | "startup" | "normal";
 type CatalogSource = "all" | "direct" | "community" | "corroborated";
@@ -214,6 +232,23 @@ async function openOfficialApplication(url: string) {
       "Please try again or open the employer's site from another device.",
     );
   }
+}
+
+function openAppSettings() {
+  void Linking.openSettings().catch(() => {
+    Alert.alert("Could not open Settings", "Open your device settings and select InternNotifs.");
+  });
+}
+
+function showNotificationPermissionHelp() {
+  Alert.alert(
+    "Notifications are off",
+    "Enable notifications for InternNotifs in your device settings, then try again.",
+    [
+      { text: "Not now", style: "cancel" },
+      { text: "Open Settings", onPress: openAppSettings },
+    ],
+  );
 }
 
 function hasGreenhouseQuickApply(url: string) {
@@ -461,13 +496,21 @@ function NewRoleCard({
 function JobDetailSheet({
   job,
   signedIn,
+  matchedReasons = [],
+  exclusionsApplied = false,
+  routeState = "idle",
   onDismiss,
+  onRetry = () => undefined,
   onApply,
   onOpenListing,
 }: {
   job: Job | null;
   signedIn: boolean;
+  matchedReasons?: FilterMatchReason[];
+  exclusionsApplied?: boolean;
+  routeState?: JobRouteState;
   onDismiss: () => void;
+  onRetry?: () => void;
   onApply: (job: Job) => void;
   onOpenListing: (job: Job) => void;
 }) {
@@ -476,7 +519,8 @@ function JobDetailSheet({
   const displayedJob = useRef<Job | null>(null);
   const pendingAction = useRef<{ job: Job; kind: "apply" | "listing" } | null>(null);
   const [handoffPending, setHandoffPending] = useState(false);
-  const visible = Boolean(job);
+  const presentation = jobDetailPresentation(Boolean(job), routeState);
+  const visible = presentation.visible;
 
   if (job) displayedJob.current = job;
 
@@ -503,16 +547,18 @@ function JobDetailSheet({
   }, [motionAllowed, sheetOffset, visible]);
 
   const role = job ?? displayedJob.current;
-  if (!role) return null;
-  const details = [role.location, role.season, role.compensation.raw]
+  if (!role && presentation.content === "hidden") return null;
+  const details = [role?.location, role?.season, role?.compensation.raw]
     .filter(Boolean)
     .join(" · ");
-  const actionLabel = !role.open
+  const actionLabel = !role?.open
     ? "View official listing"
     : signedIn
       ? "Apply on official site"
       : "Open official application";
-  const greenhouseQuickApply = hasGreenhouseQuickApply(role.applyUrl);
+  const greenhouseQuickApply = role ? hasGreenhouseQuickApply(role.applyUrl) : false;
+  const source = sourcePresentation(role?.sourceReferences ?? []);
+  const closedListingUrl = role && !role.open ? validatedOfficialUrl(role) : undefined;
   return (
     <Modal
       animationType="none"
@@ -543,52 +589,74 @@ function JobDetailSheet({
           style={[styles.jobSheet, { transform: [{ translateY: sheetOffset }] }]}
         >
           <View style={styles.sheetHandle} />
-          <Text style={styles.sheetEyebrow}>Official application</Text>
-          <Text style={styles.sheetTitle}>{role.title}</Text>
-          <Text style={styles.sheetCompany}>{role.company}</Text>
-          <Text style={styles.sheetDetail}>{details}</Text>
-          {!role.open ? (
-            <View style={styles.sheetClosedNotice}>
-              <Text style={styles.sheetClosedText}>This listing is marked closed.</Text>
-            </View>
+          {presentation.content === "route" ? (
+            <JobRouteStatusContent state={routeState} onDismiss={onDismiss} onRetry={onRetry} />
+          ) : role ? (
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetContent}>
+              <Text style={styles.sheetEyebrow}>{role.open ? "Role details" : "Closed role"}</Text>
+              <Text style={styles.sheetTitle}>{role.title}</Text>
+              <Text style={styles.sheetCompany}>{role.company}</Text>
+              <Text style={styles.sheetDetail}>{details}</Text>
+              <View style={styles.sheetTrustBlock}>
+                <Text style={styles.sheetTrustPrimary}>{source.primary}</Text>
+                {source.corroboration ? <Text style={styles.sheetTrustSecondary}>{source.corroboration}</Text> : null}
+                <Text style={styles.sheetTrustSecondary}>{freshnessLabel(role.lastSeenAt)}</Text>
+              </View>
+              {matchedReasons.length ? (
+                <View style={styles.sheetMatchBlock} accessibilityLabel={`Matched filters: ${matchedReasons.map((reason) => reason.label).join(", ")}${exclusionsApplied ? ". Your exclusions were also applied." : ""}`}>
+                  <Text style={styles.sheetMatchTitle}>Why you received this alert</Text>
+                  <Text style={styles.sheetMatchText}>{matchedReasons.map((reason) => reason.label).join(" · ")}</Text>
+                  {exclusionsApplied ? <Text style={styles.sheetMatchHelper}>Your exclusions were also applied.</Text> : null}
+                </View>
+              ) : null}
+              {!role.open ? (
+                <View style={styles.sheetClosedNotice}>
+                  <Text style={styles.sheetClosedText}>Applications for this role are closed.</Text>
+                </View>
+              ) : null}
+              <View style={styles.sheetActions}>
+                {role.open ? (
+                  <ApplyNowButton
+                    disabled={handoffPending}
+                    label={greenhouseQuickApply ? "Open Greenhouse Quick Apply" : actionLabel}
+                    hint={
+                      greenhouseQuickApply
+                        ? "Opens the official Greenhouse application. If this employer enables Quick Apply, MyGreenhouse can fill details you have saved there."
+                        : "Opens the official employer form and saves this role to To Apply."
+                    }
+                    onPress={() => startRoleAction("apply")}
+                  />
+                ) : null}
+                {role.open || closedListingUrl ? (
+                  <ActionButton
+                    label={role.open ? "Read the official listing first" : "View official listing"}
+                    variant="secondary"
+                    disabled={handoffPending}
+                    onPress={() => startRoleAction("listing")}
+                  />
+                ) : null}
+                <ActionButton label="Not now" variant="secondary" onPress={onDismiss} />
+              </View>
+              <Text style={styles.sheetHelper}>
+                {!role.open
+                  ? closedListingUrl
+                    ? "The last validated official listing remains available for reference."
+                    : "The official listing link is no longer verified, so it has been removed."
+                  : greenhouseQuickApply
+                  ? "If this employer enables Quick Apply, MyGreenhouse can fill the details you have saved there. Review every answer before submitting."
+                  : signedIn
+                  ? "Apply now opens the employer form and saves this role to To Apply."
+                  : "You’ll complete the employer’s application in your browser."}
+              </Text>
+            </ScrollView>
           ) : null}
-          <View style={styles.sheetActions}>
-            {role.open ? (
-              <ApplyNowButton
-                disabled={handoffPending}
-                label={greenhouseQuickApply ? "Open Greenhouse Quick Apply" : actionLabel}
-                hint={
-                  greenhouseQuickApply
-                    ? "Opens the official Greenhouse application. If this employer enables Quick Apply, MyGreenhouse can fill details you have saved there."
-                    : "Opens the official employer form and saves this role to To Apply."
-                }
-                onPress={() => startRoleAction("apply")}
-              />
-            ) : null}
-            <ActionButton
-              label={role.open ? "Read the official listing first" : actionLabel}
-              variant={role.open ? "secondary" : "primary"}
-              disabled={handoffPending}
-              onPress={() => startRoleAction("listing")}
-            />
-            <ActionButton label="Not now" variant="secondary" onPress={onDismiss} />
-          </View>
-          <Text style={styles.sheetHelper}>
-            {!role.open
-              ? "This opportunity is shown for reference. Confirm its availability on the employer’s site."
-              : greenhouseQuickApply
-              ? "If this employer enables Quick Apply, MyGreenhouse can fill the details you have saved there. Review every answer before submitting."
-              : signedIn
-              ? "Apply now opens the employer form and saves this role to To Apply."
-              : "You’ll complete the employer’s application in your browser."}
-          </Text>
         </Animated.View>
       </View>
     </Modal>
   );
 
   function startRoleAction(kind: "apply" | "listing") {
-    if (pendingAction.current) return;
+    if (!role || pendingAction.current) return;
     pendingAction.current = { job: role, kind };
     setHandoffPending(true);
     onDismiss();
@@ -633,6 +701,44 @@ function ApplyNowButton({
       <Text style={styles.applyNowTitle}>{label}</Text>
       <Ionicons name="open-outline" size={19} color={colors.onDark} style={styles.applyNowArrow} />
     </TouchableOpacity>
+  );
+}
+
+function JobRouteStatusContent({
+  state,
+  onDismiss,
+  onRetry,
+}: {
+  state: JobRouteState;
+  onDismiss: () => void;
+  onRetry: () => void;
+}) {
+  if (state === "idle") return null;
+  const loading = state === "loading";
+  const missing = state === "missing";
+  return (
+    <View style={styles.sheetContent}>
+      {loading ? (
+        <View accessibilityRole="progressbar" accessibilityLabel="Loading role details">
+          <Text style={styles.sheetEyebrow}>Role details</Text>
+          <Skeleton width={250} height={24} />
+          <View style={styles.skeletonGap12} />
+          <Skeleton width={180} />
+          <View style={styles.skeletonGap8} />
+          <Skeleton width={220} />
+        </View>
+      ) : (
+        <>
+          <Text style={styles.sheetEyebrow}>{missing ? "Role unavailable" : "Couldn’t load role"}</Text>
+          <Text style={styles.sheetTitle}>{missing ? "This role is no longer available." : "Check your connection and try again."}</Text>
+          <Text style={styles.sheetHelper}>{missing ? "It may have been removed from the catalog." : "Your alert and saved filters are unchanged."}</Text>
+          <View style={styles.sheetActions}>
+            {!missing ? <ActionButton label="Try again" onPress={onRetry} /> : null}
+            <ActionButton label="Back to roles" variant="secondary" onPress={onDismiss} />
+          </View>
+        </>
+      )}
+      </View>
   );
 }
 
@@ -1446,6 +1552,10 @@ function AppContent() {
   const [hideAdvancedDegreeRequired, setHideAdvancedDegreeRequired] = useState(false);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [selectedMatchReasons, setSelectedMatchReasons] = useState<FilterMatchReason[]>([]);
+  const [selectedExclusionsApplied, setSelectedExclusionsApplied] = useState(false);
+  const [jobRouteState, setJobRouteState] = useState<JobRouteState>("idle");
+  const routedJobId = useRef<string | undefined>(undefined);
   const [launchInbox, setLaunchInbox] = useState<LaunchInbox>();
   const [showLaunchInbox, setShowLaunchInbox] = useState(false);
   const [launchLoaded, setLaunchLoaded] = useState(false);
@@ -1620,34 +1730,67 @@ function AppContent() {
         if (launchRequestId.current === requestId) setLaunchLoaded(true);
       });
   }, [launchLoaded, launchToken, preferences?.onboardingComplete, token]);
-  useEffect(() => {
-    const subscription = Notifications.addNotificationResponseReceivedListener(
-      (response) => {
-        const jobId = response.notification.request.content.data.jobId as
-          | string
-          | undefined;
-        const applicationId = response.notification.request.content.data
-          .applicationId as string | undefined;
-        if (applicationId) {
-          setTab("saved");
-          return;
-        }
-        if (jobId) {
-          setTab("feed");
-          void api<Job>(`/jobs/${jobId}`, "")
-            .then((job) =>
-              Alert.alert(job.title, `${job.company}\n${job.location}`, [
-                {
-                  text: "Open job",
-                  onPress: () => void openOfficialApplication(job.applyUrl),
-                },
-              ]),
-            )
-            .catch(() => undefined);
-        }
-      },
+  const openDestination = (destination: AppDestination | undefined, options: { allowActiveJob?: boolean } = {}) => {
+    if (!destination) return;
+    if (destination.kind === "job" && isDuplicateJobOpen(routedJobId.current, destination.jobId, options.allowActiveJob)) return;
+    if (destination.kind === "saved") {
+      setTab("saved");
+      return;
+    }
+    routedJobId.current = destination.jobId;
+    setTab("feed");
+    setSelectedJob(null);
+    setSelectedMatchReasons(destination.reasons);
+    setSelectedExclusionsApplied(destination.exclusionsApplied);
+    setJobRouteState("loading");
+    void api<Job>(`/jobs/${encodeURIComponent(destination.jobId)}`, "")
+      .then((job) => {
+        if (routedJobId.current !== destination.jobId) return;
+        setSelectedJob(job);
+        setJobRouteState("idle");
+      })
+      .catch((error) => {
+        if (routedJobId.current !== destination.jobId) return;
+        setJobRouteState(routeFailureState(error));
+      });
+  };
+  const retryRoutedJob = () => {
+    const jobId = routedJobId.current;
+    if (!jobId) return;
+    openDestination(
+      { kind: "job", jobId, reasons: selectedMatchReasons, exclusionsApplied: selectedExclusionsApplied },
+      { allowActiveJob: true },
     );
-    return () => subscription.remove();
+  };
+  const dismissRoutedJob = () => {
+    routedJobId.current = undefined;
+    setSelectedJob(null);
+    setSelectedMatchReasons([]);
+    setSelectedExclusionsApplied(false);
+    setJobRouteState("idle");
+  };
+  useEffect(() => {
+    const handleNotificationResponse = (response: Notifications.NotificationResponse) => {
+      const destination = destinationFromNotification(response.notification.request.content.data);
+      openDestination(destination);
+      // Expo retains the last response across launches until it is cleared.
+      // Once routed (or intentionally ignored), it must not reopen later.
+      void Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
+    };
+    const notificationSubscription = Notifications.addNotificationResponseReceivedListener(handleNotificationResponse);
+    const urlSubscription = Linking.addEventListener("url", ({ url }) => openDestination(destinationFromUrl(url)));
+    void Promise.allSettled([Notifications.getLastNotificationResponseAsync(), Linking.getInitialURL()]).then(([responseResult, urlResult]) => {
+      if (responseResult.status === "fulfilled" && responseResult.value) {
+        handleNotificationResponse(responseResult.value);
+      }
+      if (urlResult.status === "fulfilled" && urlResult.value) {
+        openDestination(destinationFromUrl(urlResult.value));
+      }
+    });
+    return () => {
+      notificationSubscription.remove();
+      urlSubscription.remove();
+    };
   }, []);
   const catalogJobs = useMemo(() => {
     const newJobs = jobStatus === "open" ? launchInbox?.jobs ?? [] : [];
@@ -1720,6 +1863,12 @@ function AppContent() {
     return (
       <GuestExperience
         jobs={jobs}
+        routedJob={selectedJob}
+        routedMatchReasons={selectedMatchReasons}
+        routedExclusionsApplied={selectedExclusionsApplied}
+        routeState={jobRouteState}
+        onDismissRoute={dismissRoutedJob}
+        onRetryRoute={retryRoutedJob}
         jobStatus={jobStatus}
         onJobStatusChange={setJobStatus}
         onSearchQueryChange={setGuestSearchQuery}
@@ -1971,7 +2120,11 @@ function AppContent() {
       <JobDetailSheet
         job={selectedJob}
         signedIn
-        onDismiss={() => setSelectedJob(null)}
+        matchedReasons={selectedMatchReasons}
+        exclusionsApplied={selectedExclusionsApplied}
+        routeState={jobRouteState}
+        onDismiss={dismissRoutedJob}
+        onRetry={retryRoutedJob}
         onApply={(job) => {
           if (job.open) void apply(job);
           else void openOfficialApplication(job.applyUrl);
@@ -1995,6 +2148,12 @@ export default function App() {
 
 function GuestExperience({
   jobs,
+  routedJob,
+  routedMatchReasons,
+  routedExclusionsApplied,
+  routeState,
+  onDismissRoute,
+  onRetryRoute,
   jobStatus,
   onJobStatusChange,
   onSearchQueryChange,
@@ -2015,6 +2174,12 @@ function GuestExperience({
   onSession,
 }: {
   jobs: Job[];
+  routedJob: Job | null;
+  routedMatchReasons: FilterMatchReason[];
+  routedExclusionsApplied: boolean;
+  routeState: JobRouteState;
+  onDismissRoute: () => void;
+  onRetryRoute: () => void;
   jobStatus: "open" | "closed";
   onJobStatusChange: (status: "open" | "closed") => void;
   onSearchQueryChange: (query: string) => void;
@@ -2044,6 +2209,7 @@ function GuestExperience({
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const visibleJob = routedJob ?? selectedJob;
   const filtered = useMemo(
     () =>
       jobs
@@ -2109,6 +2275,7 @@ function GuestExperience({
                     <JobCard
                       job={item}
                       onOpen={() => setSelectedJob(item)}
+                      isNew={isNewJob(item.firstSeenAt, { signedIn: false })}
                       onHideLocally={() => onHideLocally(item)}
                     />
                   )}
@@ -2153,9 +2320,16 @@ function GuestExperience({
         {!usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} /> : null}
       </View>
       <JobDetailSheet
-        job={selectedJob}
+        job={visibleJob}
         signedIn={false}
-        onDismiss={() => setSelectedJob(null)}
+        matchedReasons={routedJob ? routedMatchReasons : []}
+        exclusionsApplied={routedJob ? routedExclusionsApplied : false}
+        routeState={routeState}
+        onDismiss={() => {
+          setSelectedJob(null);
+          if (routedJob || routeState !== "idle") onDismissRoute();
+        }}
+        onRetry={onRetryRoute}
         onApply={(job) => {
           void openOfficialApplication(job.applyUrl);
         }}
@@ -2215,7 +2389,7 @@ function Onboarding({
     setSaving(true);
     setFeedback({ kind: "saving", message: "Saving your alert settings…" });
     try {
-      const pushToken = alertsRequested
+      const registration = alertsRequested
         ? await registerForJobAlerts(token)
         : undefined;
       const preferences = await api<Preference>("/me/preferences", token, {
@@ -2228,7 +2402,7 @@ function Onboarding({
               .map((item) => item.trim())
               .filter(Boolean),
           },
-          alertsEnabled: alertsRequested && Boolean(pushToken),
+          alertsEnabled: registration?.status === "registered",
           alertSettings: defaultAlertSettings,
           onboardingComplete: true,
         }),
@@ -2236,6 +2410,13 @@ function Onboarding({
       // The saved response is sufficient to leave onboarding. Avoid waiting
       // for another request before showing the main app.
       onDone(preferences);
+      if (registration?.status === "denied") showNotificationPermissionHelp();
+      if (registration?.status === "unsupported") {
+        Alert.alert(
+          "Physical device required",
+          "Finish setup without alerts here, then enable them from Profile on your iPhone or Android device.",
+        );
+      }
     } catch (error) {
       setFeedback({
         kind: "error",
@@ -2505,6 +2686,7 @@ function Profile({
     (preferences.filter.excludeKeywords ?? []).join(", "),
   );
   const [alertsEnabled, setAlertsEnabled] = useState(preferences.alertsEnabled);
+  const [notificationsBlocked, setNotificationsBlocked] = useState(false);
   const [includeEmployerCategories, setIncludeEmployerCategories] = useState<EmployerCategory[]>(
     preferences.filter.includeEmployerCategories ?? [],
   );
@@ -2673,16 +2855,19 @@ function Profile({
     setAlertFeedback({ kind: "saving", message: "Saving alert settings…" });
     try {
       if (alertsEnabled) {
-        const deviceToken = await registerForJobAlerts(token);
-        if (!deviceToken) {
+        const registration = await registerForJobAlerts(token);
+        if (registration.status !== "registered") {
+          setNotificationsBlocked(registration.status === "denied");
           setAlertFeedback({
             kind: "error",
-            message:
-              "Notifications are off. Enable them in iPhone Settings, then try again on this device.",
+            message: registration.status === "denied"
+              ? "Notifications are off for InternNotifs. Enable them in your device settings, then try again."
+              : "Push alerts require a physical iPhone or Android device.",
           });
           return;
         }
       }
+      setNotificationsBlocked(false);
       const parsedFollowUpDays = Number(followUpDays);
       if (!Number.isInteger(parsedFollowUpDays) || parsedFollowUpDays < 1 || parsedFollowUpDays > 30) {
         throw new Error("Follow-up reminders must be scheduled 1 to 30 days after an update.");
@@ -3168,6 +3353,12 @@ function Profile({
         state={alertFeedback}
         onRetry={() => void saveAlertPreferences()}
       />
+      {notificationsBlocked ? (
+        <>
+          <View style={styles.buttonGap} />
+          <ActionButton label="Open notification settings" variant="secondary" onPress={openAppSettings} />
+        </>
+      ) : null}
       <View style={styles.spacer} />
       <Text style={styles.profileSectionLabel}>Account</Text>
       <Text style={styles.sectionTitle}>Account and support</Text>
@@ -3606,7 +3797,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 32,
+    maxHeight: "92%",
   },
+  sheetContent: { paddingBottom: 4 },
   sheetHandle: {
     alignSelf: "center",
     backgroundColor: colors.border,
@@ -3642,6 +3835,18 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     marginTop: 4,
   },
+  sheetTrustBlock: { gap: 3, marginTop: 16 },
+  sheetTrustPrimary: { color: colors.body, fontSize: 14, fontWeight: "700", lineHeight: 20 },
+  sheetTrustSecondary: { color: colors.muted, fontSize: 13, lineHeight: 19 },
+  sheetMatchBlock: {
+    backgroundColor: colors.signalSoft,
+    borderRadius: 12,
+    marginTop: 18,
+    padding: 14,
+  },
+  sheetMatchTitle: { color: colors.ink, fontSize: 14, fontWeight: "700", lineHeight: 20 },
+  sheetMatchText: { color: colors.body, fontSize: 14, lineHeight: 20, marginTop: 3 },
+  sheetMatchHelper: { color: colors.muted, fontSize: 13, lineHeight: 19, marginTop: 3 },
   sheetClosedNotice: {
     backgroundColor: colors.dangerSoft,
     borderColor: colors.dangerBorder,

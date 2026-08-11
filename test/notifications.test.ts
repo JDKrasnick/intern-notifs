@@ -68,6 +68,15 @@ describe('notifications', () => {
     await users.putDevice({ userId: 'user-1', token: 'ExponentPushToken[test]', platform: 'ios', active: true, createdAt: '2026-07-19T00:00:00Z', updatedAt: '2026-07-19T00:00:00Z' });
     const publisher = new ExpoPushPublisher('https://push.example.test', async (_url, init) => { calls.push(init ?? {}); return new Response(JSON.stringify({ data: { id: 'ticket-1', status: 'ok' } }), { status: 200 }); });
     await sendNewJobNotifications([internship], users, publisher);
-    expect(JSON.parse(String(calls[0]?.body))).toMatchObject({ title: 'OpenAI: Role 1', body: 'summer-2027 | Greenhouse | https://apply.example.com/1', data: { jobId: 'j1' } });
+    expect(JSON.parse(String(calls[0]?.body))).toMatchObject({
+      title: 'OpenAI: Role 1',
+      body: 'summer-2027 | Greenhouse | https://apply.example.com/1',
+      data: {
+        destination: 'job',
+        jobId: 'j1',
+        url: 'internnotifs://jobs/j1',
+        matchedFilters: { reasons: [{ kind: 'default-all-technical', label: 'All technical roles' }], exclusionsApplied: false },
+      },
+    });
   });
 });
