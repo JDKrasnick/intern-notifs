@@ -49,6 +49,7 @@ import {
   type FilterMatchReason,
   type JobRouteState,
 } from "./src/job-detail";
+import { resolveApplicationJob, type ApplicationJobSummary } from "./src/application";
 
 type Job = {
   jobId: string;
@@ -74,6 +75,7 @@ type Application = {
   jobId: string;
   status: string;
   notes?: string;
+  job?: ApplicationJobSummary;
 };
 type LaunchInbox = {
   jobs: Job[];
@@ -2099,7 +2101,7 @@ function AppContent() {
               alertSettings={preferences.alertSettings ?? defaultAlertSettings}
               alertsEnabled={preferences.alertsEnabled}
               onChanged={() => void load()}
-              onOpenOfficialApplication={(job) => void openOfficialApplication(job.applyUrl)}
+              onOpenOfficialApplication={(applyUrl) => void openOfficialApplication(applyUrl)}
             />
           ) : (
             <Profile
@@ -2532,7 +2534,7 @@ function Applications({
   alertSettings: AlertSettings;
   alertsEnabled: boolean;
   onChanged: () => void;
-  onOpenOfficialApplication: (job: Job) => void;
+  onOpenOfficialApplication: (applyUrl: string) => void;
 }) {
   return (
     <FlatList
@@ -2548,13 +2550,15 @@ function Applications({
         />
       }
       renderItem={({ item }) => {
-        const job = jobs.find((candidate) => candidate.jobId === item.jobId);
+        const job = resolveApplicationJob(item, jobs);
         const nextStatus = nextApplicationStatuses[item.status] ?? "interview";
-        const roleName = `${job?.title ?? "Internship"} at ${job?.company ?? "InternNotifs"}`;
+        const roleName = job
+          ? `${job.title} at ${job.company}`
+          : "Saved role";
         return (
           <View style={styles.card}>
-            <Text style={styles.company}>{job?.company ?? "Internship"}</Text>
-            <Text style={styles.title}>{job?.title ?? item.jobId}</Text>
+            <Text style={styles.company}>{job?.company ?? "Saved role"}</Text>
+            <Text style={styles.title}>{job?.title ?? "Role details unavailable"}</Text>
             <View style={styles.statusPill}>
               <Text style={styles.statusPillText}>{item.status.toUpperCase()}</Text>
             </View>
@@ -2563,7 +2567,7 @@ function Applications({
                 <ApplyNowButton
                   label="Open official application"
                   hint="Opens the employer's official application in your browser."
-                  onPress={() => onOpenOfficialApplication(job)}
+                  onPress={() => onOpenOfficialApplication(job.applyUrl)}
                 />
               </View>
             ) : null}
