@@ -5,9 +5,9 @@
   "careersUrl": "https://circleback.ai/jobs",
   "firstPartyEvidenceUrl": "https://circleback.ai/jobs",
   "exactBoardUrl": "https://jobs.ashbyhq.com/circleback",
-  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/circleback\">Careers</a>",
+  "evidenceExcerpt": "First-party loader maps https://api.ashbyhq.com/posting-api/job-board/circleback to https://jobs.ashbyhq.com/circleback",
   "observedJobUrl": "https://jobs.ashbyhq.com/circleback/2bb6be67-d1a8-42f7-bb1b-64ee36bf613f",
-  "verifiedAt": "2026-08-09T23:02:24.286Z",
+  "verifiedAt": "2026-08-14T04:04:00Z",
   "state": "ownership-verified",
   "initialTechnicalEarlyCareerRoles": 1,
   "allowedApplicationHosts": [

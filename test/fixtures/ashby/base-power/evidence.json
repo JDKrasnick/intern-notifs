@@ -4,10 +4,10 @@
   "apiRegion": "global",
   "careersUrl": "https://www.basepowercompany.com/open-roles",
   "firstPartyEvidenceUrl": "https://www.basepowercompany.com/open-roles",
-  "exactBoardUrl": "https://jobs.ashbyhq.com/base-power?embed=js",
-  "evidenceExcerpt": "<a href=\"https://jobs.ashbyhq.com/base-power?embed=js\">Careers</a>",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/base-power",
+  "evidenceExcerpt": "jobBoardUrl: \"https://jobs.ashbyhq.com/base-power\"",
   "observedJobUrl": "https://jobs.ashbyhq.com/base-power/7ba325d9-4256-4567-83a4-8dd9c72a0d10",
-  "verifiedAt": "2026-08-09T15:55:23Z",
+  "verifiedAt": "2026-08-14T04:04:00Z",
   "state": "ownership-verified",
   "initialTechnicalEarlyCareerRoles": 7,
   "allowedApplicationHosts": [
