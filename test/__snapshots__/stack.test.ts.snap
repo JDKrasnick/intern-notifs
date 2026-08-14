@@ -981,7 +981,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         "FlexibleTimeWindow": {
           "Mode": "OFF",
         },
-        "ScheduleExpression": "cron(2 * * * ? *)",
+        "ScheduleExpression": "cron(7/10 * * * ? *)",
         "ScheduleExpressionTimezone": "UTC",
         "State": "ENABLED",
         "Target": {
@@ -2175,7 +2175,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
 }
 `;
 
-exports[`CDK stack > queues Greenhouse boards hourly with bounded worker concurrency 1`] = `
+exports[`CDK stack > queues Greenhouse boards every half hour with bounded worker concurrency 1`] = `
 {
   "Outputs": {
     "GreenhouseDispatcherFunctionName": {
@@ -3247,7 +3247,7 @@ exports[`CDK stack > queues Greenhouse boards hourly with bounded worker concurr
         "FlexibleTimeWindow": {
           "Mode": "OFF",
         },
-        "ScheduleExpression": "cron(12 * * * ? *)",
+        "ScheduleExpression": "cron(12,42 * * * ? *)",
         "ScheduleExpressionTimezone": "UTC",
         "State": "ENABLED",
         "Target": {
@@ -3970,7 +3970,7 @@ exports[`CDK stack > queues Greenhouse boards hourly with bounded worker concurr
 }
 `;
 
-exports[`CDK stack > queues Lever boards hourly with bounded worker concurrency 1`] = `
+exports[`CDK stack > queues Lever boards every half hour with bounded worker concurrency 1`] = `
 {
   "Outputs": {
     "LeverDispatcherFunctionName": {
@@ -4323,7 +4323,7 @@ exports[`CDK stack > queues Lever boards hourly with bounded worker concurrency 
         "FlexibleTimeWindow": {
           "Mode": "OFF",
         },
-        "ScheduleExpression": "cron(22 * * * ? *)",
+        "ScheduleExpression": "cron(22,52 * * * ? *)",
         "ScheduleExpressionTimezone": "UTC",
         "State": "ENABLED",
         "Target": {

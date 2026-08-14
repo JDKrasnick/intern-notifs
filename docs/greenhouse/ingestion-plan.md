@@ -86,10 +86,11 @@ Official reference: [Greenhouse Job Board API](https://developers.greenhouse.io/
 
 ## Queued fetch and update cycle
 
-EventBridge dispatches active boards hourly. Reviewed boards with no
-eligible roles automatically move to a staggered six-hour check until roles
-appear. Each board is one FIFO SQS message; Lambda receives batches of ten and
-scales to at most four concurrent workers.
+EventBridge dispatches published boards every thirty minutes, including boards
+with no currently eligible roles. Shadow boards run every three hours. Each
+board is one FIFO SQS message; Lambda receives batches of ten, processes up to
+four independent board groups per invocation, and scales to at most four
+concurrent workers.
 
 1. Load the board's last successful hash, row count, success time, and active role IDs.
 2. Build the request from the stored provider and board token only. Use the fixed `boards-api.greenhouse.io` host, encode the token as one path segment, and reject configuration that contains a URL, slash, query string, or unknown provider.

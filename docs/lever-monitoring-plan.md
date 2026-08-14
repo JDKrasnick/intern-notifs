@@ -189,17 +189,17 @@ health records.
 
 ### Freshness
 
-The dedicated FIFO runner checks active published and shadow Lever boards every
-hourly, with stable empty boards staggered across six-hour checks:
+The dedicated FIFO runner checks every published Lever board each half hour,
+whether its current snapshot is active or quiet. Shadow boards run every three
+hours:
 
-- warning/review event after 15 minutes without a trusted success;
 - high-severity freshness incident at 90 minutes;
 - suppress duplicate notifications while one incident remains open;
 - record provider backoff explicitly, but do not call a backed-off source
   healthy.
 
-A stable empty board can move to a quiet cadence. A board that supports an open
-catalog role must stay on a cadence capable of meeting the 30-minute target.
+Active and quiet remain monitoring classifications, not cadence controls. Every
+published board stays on a cadence capable of meeting the 30-minute target.
 
 ### Fetch failures
 

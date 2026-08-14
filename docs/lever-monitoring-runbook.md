@@ -11,11 +11,11 @@ Each Lever source exposes these safe controls:
 
 - **Pause / resume** — stop or restore scheduled work without a deployment.
 - **Replay now** — enqueue one FIFO task for the selected source.
-- **Set active / quiet** — switch between hourly and staggered six-hour
-  polling.
+- **Set active / quiet** — update the source's monitoring classification;
+  published boards remain on the thirty-minute cadence.
 - **Acknowledge / resolve** — record incident ownership and resolution.
 
-Pause, cadence, and incident changes are versioned in the source health record.
+Pause, tier, and incident changes are versioned in the source health record.
 Promotion between shadow and published remains a reviewed configuration change.
 
 ## Monthly monitoring review
@@ -83,8 +83,8 @@ the month; the next month resets automatically.
 - Compare against the last trusted raw count and the public board.
 - Do not accept the empty snapshot after a previously non-empty board until the
   board closure is confirmed.
-- A valid non-empty board with zero eligible internships is normal and may use
-  quiet cadence.
+- A valid non-empty board with zero eligible internships is normal. It remains
+  on the published cadence while being classified as quiet.
 
 ### Application-host mismatch or broken links
 

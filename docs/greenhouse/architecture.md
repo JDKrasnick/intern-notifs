@@ -20,14 +20,21 @@ deploy the main stack as a substitute for a Greenhouse-only change.
 
 ## Runtime flow
 
-EventBridge invokes a small dispatcher hourly. The dispatcher
+EventBridge invokes a small dispatcher every thirty minutes. The dispatcher
 creates one FIFO message for every reviewed Greenhouse board. Each board ID is
 its own message group, which prevents overlapping work for the same board while
 allowing different boards to run concurrently.
 
 Lambda automatically scales with queue backlog up to four worker invocations.
-Each invocation receives at most ten messages and processes them sequentially.
-Partial-batch responses return only failed board IDs to SQS.
+Each invocation receives at most ten messages and processes up to four board
+groups concurrently. Records within one board group remain sequential, and
+partial-batch responses return the failed record plus later records from that
+same board to SQS.
+
+Published boards run every thirty minutes whether their current snapshot is
+active or quiet. Shadow boards run every three hours; their first checks are
+staggered across dispatcher windows. A pause or provider backoff overrides both
+cadences.
 
 Shadow and published boards deliberately use different DynamoDB checkpoint
 keys. Shadow polling validates API shape, role mapping, source quality, and
@@ -42,7 +49,7 @@ reconcile push receipts and the optional ntfy fallback.
 
 ## Capacity and failure boundaries
 
-- Schedule: hourly.
+- Schedule: every thirty minutes for published boards; every three hours for shadow boards.
 - Queue batch size: ten boards.
 - Worker maximum concurrency: four.
 - Worker timeout: two minutes.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ashbyAdmissionViolations } from '../src/sources/ashby-admission.js';
-import { ashbyExpansionFallbacks, reviewedAshbySources } from '../src/sources/ashby-config.js';
+import { ashbyExpansionFallbacks, ashbyFollowUpQuarantinedSourceIds, reviewedAshbySources } from '../src/sources/ashby-config.js';
 import { ashbyEvidenceViolations, reviewedAshbySourceFromEvidence, type AshbyOwnershipEvidence } from '../src/sources/ashby-evidence.js';
 import { ashbyBoardNameFromUrl, buildAshbyCandidateLedger } from '../src/sources/ashby-ledger.js';
 import { collectAshbyManifestViolations, nodeAshbyManifestFs, type AshbyManifestFs } from '../src/sources/ashby-manifest.js';
@@ -169,7 +169,9 @@ describe('Ashby offline manifest and reverification', () => {
       'Circleback', 'Eragon', 'Modal', 'Yotta Labs', 'Anthelion Capital', 'Saronic', 'First Order Effects',
       'Junior', 'Airwallex', 'Netic', 'Retell AI', 'Quadrillion', 'Pylon', 'NationGraph',
     ]);
-    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-09T23:30:00Z') })).toEqual([]);
+    expect(reviewedAshbySources.filter(({ status }) => status === 'shadow').map(({ id }) => id).sort())
+      .toEqual([...ashbyFollowUpQuarantinedSourceIds].sort());
+    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-11T00:03:00Z') })).toEqual([]);
   });
 
   it('keeps any expansion replacements ordered and unadmitted', () => {
