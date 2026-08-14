@@ -1,7 +1,5 @@
 import type { ReviewedSourceRecord } from './reviewed-source.js';
-import { ashbyFollowUpPromotionEvidence, ashbyFollowUpQuarantinedSourceIds } from './ashby-promotion-evidence.js';
-
-export { ashbyFollowUpQuarantinedSourceIds } from './ashby-promotion-evidence.js';
+import { ashbyFollowUpPromotionEvidence } from './ashby-promotion-evidence.js';
 
 export type ReviewedAshbySource = ReviewedSourceRecord & {
   identity: ReviewedSourceRecord['identity'] & { provider: 'ashby'; apiRegion: 'global' };
@@ -46,7 +44,7 @@ const admittedAshbySources: ReviewedAshbySource[] = [
   },
   {
     id: 'ashby-base-power', company: 'Base Power', identity: { provider: 'ashby', boardKey: 'base-power', apiRegion: 'global' },
-    careersUrl: 'https://www.basepowercompany.com/open-roles', admittedAt: '2026-08-09T15:55:23Z', evidenceState: 'ownership-verified',
+    careersUrl: 'https://www.basepowercompany.com/open-roles', admittedAt: '2026-08-14T04:04:00Z', evidenceState: 'ownership-verified',
     allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
   },
   {
@@ -76,7 +74,7 @@ const admittedAshbySources: ReviewedAshbySource[] = [
   },
   {
     id: 'ashby-opusclip', company: 'OpusClip', identity: { provider: 'ashby', boardKey: 'opusclip', apiRegion: 'global' },
-    careersUrl: 'https://www.opus.pro/careers', admittedAt: '2026-08-09T15:55:23Z', evidenceState: 'ownership-verified',
+    careersUrl: 'https://www.opus.pro/careers', admittedAt: '2026-08-14T04:04:00Z', evidenceState: 'ownership-verified',
     allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
   },
   {
@@ -96,7 +94,7 @@ const admittedAshbySources: ReviewedAshbySource[] = [
   },
   {
     id: 'ashby-heliux', company: 'Heliux', identity: { provider: 'ashby', boardKey: 'heliux', apiRegion: 'global' },
-    careersUrl: 'https://www.heliux.com/careers', admittedAt: '2026-08-09T15:55:23Z', evidenceState: 'ownership-verified',
+    careersUrl: 'https://www.heliux.com/careers', admittedAt: '2026-08-14T04:04:00Z', evidenceState: 'ownership-verified',
     allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
   },
   {
@@ -116,7 +114,7 @@ const admittedAshbySources: ReviewedAshbySource[] = [
   },
   {
     id: 'ashby-circleback', company: 'Circleback', identity: { provider: 'ashby', boardKey: 'circleback', apiRegion: 'global' },
-    careersUrl: 'https://circleback.ai/jobs', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    careersUrl: 'https://circleback.ai/jobs', admittedAt: '2026-08-14T04:04:00Z', evidenceState: 'ownership-verified',
     allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
   },
   {
@@ -131,7 +129,7 @@ const admittedAshbySources: ReviewedAshbySource[] = [
   },
   {
     id: 'ashby-yotta', company: 'Yotta Labs', identity: { provider: 'ashby', boardKey: 'yotta', apiRegion: 'global' },
-    careersUrl: 'https://yottalabs.ai/', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    careersUrl: 'https://yottalabs.ai/', admittedAt: '2026-08-14T04:04:00Z', evidenceState: 'ownership-verified',
     allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
   },
   {
@@ -171,12 +169,12 @@ const admittedAshbySources: ReviewedAshbySource[] = [
   },
   {
     id: 'ashby-quadrillion-labs', company: 'Quadrillion', identity: { provider: 'ashby', boardKey: 'quadrillion-labs', apiRegion: 'global' },
-    careersUrl: 'https://careers.quadrillion.io/', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    careersUrl: 'https://careers.quadrillion.io/', admittedAt: '2026-08-14T04:04:00Z', evidenceState: 'ownership-verified',
     allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
   },
   {
     id: 'ashby-pylon-labs', company: 'Pylon', identity: { provider: 'ashby', boardKey: 'pylon-labs', apiRegion: 'global' },
-    careersUrl: 'https://usepylon.com/careers', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
+    careersUrl: 'https://usepylon.com/careers', admittedAt: '2026-08-14T04:04:00Z', evidenceState: 'ownership-verified',
     allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
   },
   {
@@ -187,13 +185,10 @@ const admittedAshbySources: ReviewedAshbySource[] = [
 ];
 
 /**
- * Employer-page re-verification did not prove these exact boards during the
- * 2026-08-10 promotion follow-up. Keep them in shadow until a reviewer
- * refreshes the first-party evidence and recovers the runtime quarantine.
- * All remaining admitted boards have normal promotion evidence.
+ * Every admitted board has completed ownership re-verification, a clean
+ * runtime recovery where required, and the normal promotion evidence window.
  */
 export const reviewedAshbySources: ReviewedAshbySource[] = admittedAshbySources.map((source) => {
-  if (ashbyFollowUpQuarantinedSourceIds.has(source.id)) return source;
   const promotionEvidence = ashbyFollowUpPromotionEvidence[source.id];
   if (!promotionEvidence) throw new Error(`Missing Ashby promotion evidence for ${source.id}`);
   return { ...source, status: 'published', promotionEvidence };

@@ -917,11 +917,6 @@ export const ashbyEmergencyPromotionEvidence: Readonly<Record<string, SourceProm
   }
 };
 
-export const ashbyFollowUpQuarantinedSourceIds = new Set([
-  'ashby-base-power', 'ashby-circleback', 'ashby-heliux', 'ashby-opusclip',
-  'ashby-pylon-labs', 'ashby-quadrillion-labs', 'ashby-yotta',
-]);
-
 type FollowUpRun = readonly [string, string, 'success_changed' | 'success_unchanged_hash', number, number, number];
 const followUpRuns: Readonly<Record<string, readonly [FollowUpRun, FollowUpRun]>> = {
   'ashby-airwallex': [['78b8af8e-2945-47bc-b984-4a6232625240','2026-08-09T23:31:03.352Z','success_changed',631,1,0],['786a7a5f-7058-486c-a525-e082684d96ee','2026-08-10T23:34:06.869Z','success_unchanged_hash',629,1,0]],
@@ -952,6 +947,13 @@ const followUpRuns: Readonly<Record<string, readonly [FollowUpRun, FollowUpRun]>
   'ashby-skydio': [['78b8af8e-2945-47bc-b984-4a6232625240','2026-08-09T23:30:30.570Z','success_changed',114,5,0],['786a7a5f-7058-486c-a525-e082684d96ee','2026-08-10T23:33:32.071Z','success_unchanged_hash',114,5,0]],
   'ashby-terranova': [['78b8af8e-2945-47bc-b984-4a6232625240','2026-08-09T23:30:57.403Z','success_changed',15,5,0],['786a7a5f-7058-486c-a525-e082684d96ee','2026-08-10T23:33:56.024Z','success_unchanged_hash',15,5,0]],
   'ashby-windborne-systems': [['78b8af8e-2945-47bc-b984-4a6232625240','2026-08-09T23:30:16.009Z','success_changed',20,1,0],['786a7a5f-7058-486c-a525-e082684d96ee','2026-08-10T23:33:17.511Z','success_unchanged_hash',22,1,0]],
+  'ashby-base-power': [['786a7a5f-7058-486c-a525-e082684d96ee','2026-08-10T23:33:41.643Z','success_changed',171,7,0],['recovery-93512702-9764-4898-8bde-f87640b1f343','2026-08-14T04:05:46.925Z','success_changed',171,6,0]],
+  'ashby-circleback': [['786a7a5f-7058-486c-a525-e082684d96ee','2026-08-10T23:33:05.588Z','success_unchanged_hash',11,1,0],['recovery-f158afb3-485d-42ef-9878-a55c7a948ca6','2026-08-14T04:05:49.533Z','success_unchanged_hash',11,1,0]],
+  'ashby-heliux': [['786a7a5f-7058-486c-a525-e082684d96ee','2026-08-10T23:33:38.992Z','success_unchanged_hash',3,2,0],['recovery-4645007f-cc31-4df4-8f8f-bc6cf872966f','2026-08-14T04:05:52.798Z','success_unchanged_hash',3,2,0]],
+  'ashby-opusclip': [['786a7a5f-7058-486c-a525-e082684d96ee','2026-08-10T23:33:10.410Z','success_unchanged_hash',8,1,0],['recovery-acfc9020-c8cc-4190-8f30-d20bb3f6de23','2026-08-14T04:05:56.177Z','success_changed',9,2,0]],
+  'ashby-pylon-labs': [['786a7a5f-7058-486c-a525-e082684d96ee','2026-08-10T23:33:21.051Z','success_unchanged_hash',20,2,0],['recovery-103df562-64cf-4393-8016-771d6d1beb18','2026-08-14T04:05:58.333Z','success_changed',21,2,0]],
+  'ashby-quadrillion-labs': [['786a7a5f-7058-486c-a525-e082684d96ee','2026-08-10T23:33:13.891Z','success_unchanged_hash',6,2,0],['recovery-f0a8d695-5214-4e5d-984a-60aa776560bc','2026-08-14T04:06:01.798Z','success_changed',6,2,0]],
+  'ashby-yotta': [['786a7a5f-7058-486c-a525-e082684d96ee','2026-08-10T23:33:27.708Z','success_unchanged_hash',4,1,0],['recovery-8de4bd9c-f45c-41ac-a97a-5e9f3ef800da','2026-08-14T04:06:04.583Z','success_unchanged_hash',4,1,0]],
 };
 
 function snapshot([runId, completedAt, outcome, rawRows, eligibleRows, withheldRows]: FollowUpRun) {
@@ -961,10 +963,9 @@ function snapshot([runId, completedAt, outcome, rawRows, eligibleRows, withheldR
 /** Normal promotion evidence captured during the completed 24-hour follow-up. */
 export const ashbyFollowUpPromotionEvidence: Readonly<Record<string, SourcePromotionEvidence>> = Object.fromEntries(
   Object.entries(ashbyEmergencyPromotionEvidence)
-    .filter(([id]) => !ashbyFollowUpQuarantinedSourceIds.has(id))
     .map(([id, evidence]) => [id, {
       ...evidence,
-      approvedAt: '2026-08-11T00:02:00Z',
+      approvedAt: '2026-08-14T04:07:30Z',
       snapshots: [evidence.snapshots[0]!, ...followUpRuns[id].map(snapshot)],
       observationWindowOverride: undefined,
     }]),

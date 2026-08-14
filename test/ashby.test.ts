@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ashbyAdmissionViolations } from '../src/sources/ashby-admission.js';
-import { ashbyExpansionFallbacks, ashbyFollowUpQuarantinedSourceIds, reviewedAshbySources } from '../src/sources/ashby-config.js';
+import { ashbyExpansionFallbacks, reviewedAshbySources } from '../src/sources/ashby-config.js';
 import { ashbyEvidenceViolations, reviewedAshbySourceFromEvidence, type AshbyOwnershipEvidence } from '../src/sources/ashby-evidence.js';
 import { ashbyBoardNameFromUrl, buildAshbyCandidateLedger } from '../src/sources/ashby-ledger.js';
 import { collectAshbyManifestViolations, nodeAshbyManifestFs, type AshbyManifestFs } from '../src/sources/ashby-manifest.js';
@@ -169,9 +169,8 @@ describe('Ashby offline manifest and reverification', () => {
       'Circleback', 'Eragon', 'Modal', 'Yotta Labs', 'Anthelion Capital', 'Saronic', 'First Order Effects',
       'Junior', 'Airwallex', 'Netic', 'Retell AI', 'Quadrillion', 'Pylon', 'NationGraph',
     ]);
-    expect(reviewedAshbySources.filter(({ status }) => status === 'shadow').map(({ id }) => id).sort())
-      .toEqual([...ashbyFollowUpQuarantinedSourceIds].sort());
-    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-11T00:03:00Z') })).toEqual([]);
+    expect(reviewedAshbySources.filter(({ status }) => status === 'shadow')).toEqual([]);
+    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-14T04:08:00Z') })).toEqual([]);
   });
 
   it('keeps any expansion replacements ordered and unadmitted', () => {
@@ -325,5 +324,37 @@ describe('Ashby offline manifest and reverification', () => {
     expect(await recheckAshbyEvidence(evidence(), fetchImpl)).toMatchObject({ state: 'ok', stillProven: true });
     const missing = (async () => new Response('<p>No board here</p>', { status: 200 })) as typeof fetch;
     expect(await recheckAshbyEvidence(evidence(), missing)).toMatchObject({ state: 'ok', stillProven: false });
+  });
+
+  it('accepts an employer careers redirect only when it lands on the exact reviewed board', async () => {
+    const exact = (async () => {
+      const response = new Response('', { status: 200 });
+      Object.defineProperty(response, 'url', { value: 'https://jobs.ashbyhq.com/acme.io' });
+      return response;
+    }) as typeof fetch;
+    expect(await recheckAshbyEvidence(evidence(), exact)).toMatchObject({ state: 'ok', stillProven: true });
+
+    const wrong = (async () => {
+      const response = new Response('', { status: 200 });
+      Object.defineProperty(response, 'url', { value: 'https://jobs.ashbyhq.com/other' });
+      return response;
+    }) as typeof fetch;
+    expect((await recheckAshbyEvidence(evidence(), wrong)).state).toBe('redirect-error');
+  });
+
+  it('follows bounded same-origin script references but ignores third-party scripts', async () => {
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === 'https://www.acme.io/careers') return new Response(
+        '<script src="/assets/jobs.js"></script><script src="https://cdn.example.test/untrusted.js"></script>',
+        { status: 200 },
+      );
+      if (url === 'https://www.acme.io/assets/jobs.js') return new Response('import("./chunk.js")', { status: 200 });
+      if (url === 'https://www.acme.io/assets/chunk.js') return new Response(
+        'const board = "https://jobs.ashbyhq.com/acme.io";', { status: 200 },
+      );
+      throw new Error(`Unexpected fetch ${url}`);
+    }) as typeof fetch;
+    expect(await recheckAshbyEvidence(evidence(), fetchImpl)).toMatchObject({ state: 'ok', stillProven: true });
   });
 });
