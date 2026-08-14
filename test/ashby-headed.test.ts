@@ -19,7 +19,9 @@ const page = (overrides: Record<string, unknown> = {}) => ({
 
 describe('Ashby headed assistant', () => {
   it('derives its exact case-sensitive allowlist only from published reviewed boards', () => {
-    expect(publishedAshbyBoardKeys()).toEqual(new Set(reviewedAshbySources.map((source) => source.identity.boardKey)));
+    expect(publishedAshbyBoardKeys()).toEqual(new Set(reviewedAshbySources
+      .filter((source) => source.status === 'published')
+      .map((source) => source.identity.boardKey)));
     expect(publishedAshbyBoardKeys(published)).toEqual(new Set(['etched']));
     expect(publishedAshbyBoardKeys(shadow)).toEqual(new Set());
     expect(isAshbyApplicationUrl(page().url)).toBe(true);
