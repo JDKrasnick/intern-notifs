@@ -86,7 +86,11 @@ export interface DeliveryReceipt {
   jobId: string;
   token: string;
   ticketId?: string;
-  status: 'pending' | 'ok' | 'error';
+  status: 'pending' | 'retryable' | 'ok' | 'error';
+  attempts?: number;
+  lastErrorCode?: string;
+  lastErrorMessage?: string;
+  lastErrorAt?: string;
   createdAt: string;
   updatedAt: string;
 }

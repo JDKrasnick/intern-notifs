@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ExpoPushPublisher, inspectExpoPushReceipts, sendNewJobNotifications } from '../src/notifications.js';
-import { MemoryUserStore } from '../src/store.js';
+import { ExpoPushPublisher, inspectExpoPushReceipts, retryExpoPushNotifications, sendNewJobNotifications } from '../src/notifications.js';
+import { MemoryInternshipStore, MemoryUserStore } from '../src/store.js';
 import type { Internship } from '../src/types.js';
 
 const job: Internship = {
@@ -28,18 +28,51 @@ describe('Expo delivery lifecycle', () => {
     expect(await sendNewJobNotifications([job], users, publisher)).toEqual({ sent: 1, skipped: 2, failed: 0 });
     expect(await sendNewJobNotifications([job], users, publisher)).toEqual({ sent: 0, skipped: 3, failed: 0 });
     expect(calls.filter((url) => url === 'https://push.example.test')).toHaveLength(1);
-    expect(await inspectExpoPushReceipts(users, publisher)).toEqual({ ok: 0, invalid: 1, pending: 0 });
+    expect(await inspectExpoPushReceipts(users, publisher)).toEqual({ ok: 0, invalid: 1, retryable: 0, pending: 0 });
     expect((await users.activeDevices()).find((device) => device.userId === 'eligible')).toBeUndefined();
+    expect(await users.getReceipt('eligible', 'job-1', 'ExponentPushToken[eligible]')).toMatchObject({ status: 'error', attempts: 1, lastErrorCode: 'DeviceNotRegistered' });
   });
 
-  it('records a transport failure as retryable error instead of leaving a receipt pending forever', async () => {
+  it('retries a transient receipt failure and preserves its diagnostic', async () => {
+    const jobs = new MemoryInternshipStore();
+    await jobs.putInternship(job);
+    const users = new MemoryUserStore();
+    await users.putPreferences({ userId: 'eligible', filter: {}, alertsEnabled: true, onboardingComplete: true, updatedAt: '2026-07-19T00:00:00.000Z' });
+    await users.putDevice({ userId: 'eligible', token: 'ExponentPushToken[eligible]', platform: 'ios', active: true, createdAt: '2026-07-19T00:00:00.000Z', updatedAt: '2026-07-19T00:00:00.000Z' });
+    let ticket = 0;
+    const publisher = new ExpoPushPublisher('https://push.example.test', async (url) => {
+      if (String(url).endsWith('/getReceipts')) {
+        const result = ticket === 1
+          ? { 'ticket-1': { status: 'error', details: { error: 'MessageRateExceeded' }, message: 'Try again later' } }
+          : { 'ticket-2': { status: 'ok' } };
+        return new Response(JSON.stringify({ data: result }), { status: 200 });
+      }
+      ticket += 1;
+      return new Response(JSON.stringify({ data: { id: `ticket-${ticket}`, status: 'ok' } }), { status: 200 });
+    });
+
+    expect(await sendNewJobNotifications([job], users, publisher)).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(await inspectExpoPushReceipts(users, publisher)).toEqual({ ok: 0, invalid: 0, retryable: 1, pending: 0 });
+    expect(await retryExpoPushNotifications(jobs, users, publisher)).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(await users.getReceipt('eligible', 'job-1', 'ExponentPushToken[eligible]')).toMatchObject({ status: 'pending', attempts: 2, ticketId: 'ticket-2', lastErrorCode: 'MessageRateExceeded', lastErrorMessage: 'Try again later' });
+    expect(await inspectExpoPushReceipts(users, publisher)).toEqual({ ok: 1, invalid: 0, retryable: 0, pending: 0 });
+    expect(await users.getReceipt('eligible', 'job-1', 'ExponentPushToken[eligible]')).toMatchObject({ status: 'ok', attempts: 2, lastErrorCode: 'MessageRateExceeded' });
+  });
+
+  it('queues a transport failure for bounded retry instead of leaving a receipt pending forever', async () => {
+    const jobs = new MemoryInternshipStore();
+    await jobs.putInternship(job);
     const users = new MemoryUserStore();
     await users.putPreferences({ userId: 'eligible', filter: {}, alertsEnabled: true, onboardingComplete: true, updatedAt: '2026-07-19T00:00:00.000Z' });
     await users.putDevice({ userId: 'eligible', token: 'ExponentPushToken[eligible]', platform: 'android', active: true, createdAt: '2026-07-19T00:00:00.000Z', updatedAt: '2026-07-19T00:00:00.000Z' });
     const publisher = new ExpoPushPublisher('https://push.example.test', async () => new Response('unavailable', { status: 503 }));
     expect(await sendNewJobNotifications([job], users, publisher)).toEqual({ sent: 0, skipped: 0, failed: 1 });
     expect(await users.pendingReceipts()).toEqual([]);
-    expect((await users.getReceipt('eligible', 'job-1', 'ExponentPushToken[eligible]'))?.status).toBe('error');
+    expect(await users.getReceipt('eligible', 'job-1', 'ExponentPushToken[eligible]')).toMatchObject({ status: 'retryable', attempts: 1, lastErrorCode: 'TransportError' });
+    expect(await retryExpoPushNotifications(jobs, users, publisher)).toEqual({ sent: 0, skipped: 0, failed: 1 });
+    expect(await retryExpoPushNotifications(jobs, users, publisher)).toEqual({ sent: 0, skipped: 0, failed: 1 });
+    expect(await retryExpoPushNotifications(jobs, users, publisher)).toEqual({ sent: 0, skipped: 0, failed: 0 });
+    expect(await users.getReceipt('eligible', 'job-1', 'ExponentPushToken[eligible]')).toMatchObject({ status: 'error', attempts: 3, lastErrorCode: 'TransportError' });
   });
 
   it('treats an Expo success response without a ticket ID as retryable instead of permanently suppressing the alert', async () => {
@@ -48,6 +81,6 @@ describe('Expo delivery lifecycle', () => {
     await users.putDevice({ userId: 'eligible', token: 'ExponentPushToken[eligible]', platform: 'ios', active: true, createdAt: '2026-07-19T00:00:00.000Z', updatedAt: '2026-07-19T00:00:00.000Z' });
     const publisher = new ExpoPushPublisher('https://push.example.test', async () => new Response(JSON.stringify({ data: { status: 'ok' } }), { status: 200 }));
     expect(await sendNewJobNotifications([job], users, publisher)).toEqual({ sent: 0, skipped: 0, failed: 1 });
-    expect((await users.getReceipt('eligible', 'job-1', 'ExponentPushToken[eligible]'))?.status).toBe('error');
+    expect(await users.getReceipt('eligible', 'job-1', 'ExponentPushToken[eligible]')).toMatchObject({ status: 'retryable', attempts: 1, lastErrorCode: 'ExpoRejected' });
   });
 });

@@ -332,6 +332,7 @@ export interface UserStore {
   getReceipt(userId: string, jobId: string, token: string): Promise<DeliveryReceipt | undefined>;
   putReceipt(value: DeliveryReceipt): Promise<void>;
   pendingReceipts(): Promise<DeliveryReceipt[]>;
+  retryableReceipts(): Promise<DeliveryReceipt[]>;
   deleteUser(userId: string): Promise<UserDocument[]>;
 }
 
@@ -350,6 +351,7 @@ export class MemoryUserStore implements UserStore {
   async listDocuments(userId: string) { return [...this.documents.values()].filter((d) => d.userId === userId).map((d) => structuredClone(d)); } async putDocument(value: UserDocument) { this.documents.set(`${value.userId}#${value.documentId}`, structuredClone(value)); } async deleteDocument(userId: string, documentId: string) { this.documents.delete(`${userId}#${documentId}`); }
   async getReceipt(userId: string, jobId: string, token: string) { return this.receipts.get(`${userId}#${jobId}#${token}`); } async putReceipt(value: DeliveryReceipt) { this.receipts.set(`${value.userId}#${value.jobId}#${value.token}`, structuredClone(value)); }
   async pendingReceipts() { return [...this.receipts.values()].filter((receipt) => receipt.status === 'pending' && receipt.ticketId).map((receipt) => structuredClone(receipt)); }
+  async retryableReceipts() { return [...this.receipts.values()].filter((receipt) => receipt.status === 'retryable').map((receipt) => structuredClone(receipt)); }
   async deleteUser(userId: string) { const docs = await this.listDocuments(userId); for (const map of [this.preferences, this.profiles]) map.delete(userId); for (const [key] of this.devices) if (key.startsWith(`${userId}#`)) this.devices.delete(key); for (const [key] of this.applications) if (key.startsWith(`${userId}#`)) this.applications.delete(key); for (const [key] of this.sessions) if (key.startsWith(`${userId}#`)) this.sessions.delete(key); for (const [key] of this.documents) if (key.startsWith(`${userId}#`)) this.documents.delete(key); for (const [key] of this.receipts) if (key.startsWith(`${userId}#`)) this.receipts.delete(key); return docs; }
 }
 
@@ -398,7 +400,8 @@ export class DynamoUserStore implements UserStore {
   }
   async listApplicationSessions(userId: string, applicationId?: string) { return (await this.queryAll({ TableName: this.tableName, KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)', ExpressionAttributeValues: { ':pk': `USER#${userId}`, ':prefix': 'APPLICATION_SESSION#' } })).map((item) => item.value as ApplicationSession).filter((session) => !applicationId || session.applicationId === applicationId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
   async listDocuments(userId: string) { return (await this.queryAll({ TableName: this.tableName, KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)', ExpressionAttributeValues: { ':pk': `USER#${userId}`, ':prefix': 'DOCUMENT#' } })).map((item) => item.value as UserDocument); } putDocument(value: UserDocument) { return this.put(value.userId, `DOCUMENT#${value.documentId}`, 'document', value); } async deleteDocument(userId: string, documentId: string) { await this.client.send(new DeleteCommand({ TableName: this.tableName, Key: { pk: `USER#${userId}`, sk: `DOCUMENT#${documentId}` } })); }
-  getReceipt(userId: string, jobId: string, token: string) { return this.get<DeliveryReceipt>(userId, `RECEIPT#${jobId}#${token}`); } putReceipt(value: DeliveryReceipt) { return this.put(value.userId, `RECEIPT#${value.jobId}#${value.token}`, 'receipt', value, value.status === 'pending' ? { receiptPk: 'PENDING' } : {}); }
+  getReceipt(userId: string, jobId: string, token: string) { return this.get<DeliveryReceipt>(userId, `RECEIPT#${jobId}#${token}`); } putReceipt(value: DeliveryReceipt) { return this.put(value.userId, `RECEIPT#${value.jobId}#${value.token}`, 'receipt', value, value.status === 'pending' ? { receiptPk: 'PENDING' } : value.status === 'retryable' ? { receiptPk: 'RETRYABLE' } : {}); }
   async pendingReceipts() { return (await this.queryAll({ TableName: this.tableName, IndexName: 'pendingReceiptsIndex', KeyConditionExpression: 'receiptPk = :pending', ExpressionAttributeValues: { ':pending': 'PENDING' } })).map((item) => item.value as DeliveryReceipt); }
+  async retryableReceipts() { return (await this.queryAll({ TableName: this.tableName, IndexName: 'pendingReceiptsIndex', KeyConditionExpression: 'receiptPk = :retryable', ExpressionAttributeValues: { ':retryable': 'RETRYABLE' } })).map((item) => item.value as DeliveryReceipt); }
   async deleteUser(userId: string) { const documents = await this.listDocuments(userId); const items = await this.queryAll({ TableName: this.tableName, KeyConditionExpression: 'pk = :pk', ExpressionAttributeValues: { ':pk': `USER#${userId}` } }); await Promise.all(items.map((item) => this.client.send(new DeleteCommand({ TableName: this.tableName, Key: { pk: item.pk, sk: item.sk } })))); return documents; }
 }
