@@ -21,6 +21,7 @@ const PUSH_REQUEST_TIMEOUT_MS = 5_000;
 export const MAX_LEGACY_PUSH_JOBS_PER_RUN = 10;
 
 export interface ExpoPushTicket { id?: string; status: 'ok' | 'error'; details?: { error?: string }; message?: string; }
+export const MAX_EXPO_PUSH_ATTEMPTS = 3;
 /** Minimal Expo Push Service client: Expo handles APNs/FCM credential delivery. */
 export class ExpoPushPublisher {
   constructor(private readonly endpoint = 'https://exp.host/--/api/v2/push/send', private readonly fetcher: typeof fetch = fetch) {}
@@ -69,36 +70,90 @@ export async function sendNewJobNotifications(jobs: Internship[], users: UserSto
     if (!preference) { preference = await users.getPreferences(device.userId); preferences.set(device.userId, preference); }
     if (!preference?.alertsEnabled || !preference.onboardingComplete || !matchesJobFilter(job, preference.filter)) { skipped += 1; continue; }
     const existing = await users.getReceipt(device.userId, job.jobId, device.token);
-    if (existing?.status === 'ok' || existing?.status === 'pending') { skipped += 1; continue; }
-    const timestamp = now().toISOString(); const receipt: DeliveryReceipt = { userId: device.userId, jobId: job.jobId, token: device.token, status: 'pending', createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp };
+    if (existing?.status === 'ok' || existing?.status === 'pending' || existing?.status === 'retryable') { skipped += 1; continue; }
+    const timestamp = now().toISOString(); const receipt: DeliveryReceipt = { userId: device.userId, jobId: job.jobId, token: device.token, status: 'pending', attempts: (existing?.attempts ?? 0) + 1, createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp };
     await users.putReceipt(receipt);
     try {
       const ticket = await publisher.publish(device.token, nativePushMessage(job, preference.filter, preference.push));
       // A successful Expo response without a ticket cannot be reconciled; leave it retryable.
       const status = ticket.status === 'ok' && ticket.id ? 'pending' : 'error';
-      await users.putReceipt({ ...receipt, ticketId: ticket.id, status, updatedAt: now().toISOString() });
+      const respondedAt = now().toISOString();
+      await users.putReceipt({
+        ...receipt,
+        ticketId: ticket.id,
+        status: status === 'error' && ticket.details?.error !== 'DeviceNotRegistered' ? 'retryable' : status,
+        ...(status === 'error' ? { lastErrorCode: ticket.details?.error ?? 'ExpoRejected', lastErrorMessage: ticket.message?.slice(0, 500), lastErrorAt: respondedAt } : {}),
+        updatedAt: respondedAt,
+      });
       if (status === 'pending') sent += 1;
       else { failed += 1; if (ticket.details?.error === 'DeviceNotRegistered') await users.putDevice({ ...device, active: false, updatedAt: now().toISOString() }); }
-    } catch { await users.putReceipt({ ...receipt, status: 'error', updatedAt: now().toISOString() }); failed += 1; }
+    } catch (error) {
+      const failedAt = now().toISOString();
+      await users.putReceipt({ ...receipt, status: 'retryable', lastErrorCode: 'TransportError', lastErrorMessage: (error instanceof Error ? error.message : String(error)).slice(0, 500), lastErrorAt: failedAt, updatedAt: failedAt });
+      failed += 1;
+    }
   }
   return { sent, skipped, failed };
 }
 
 /** Expo tickets are accepted asynchronously; this reconciliation deactivates invalid tokens. */
-export async function inspectExpoPushReceipts(users: UserStore, publisher: ExpoPushPublisher, now: () => Date = () => new Date()): Promise<{ ok: number; invalid: number; pending: number }> {
+export async function inspectExpoPushReceipts(users: UserStore, publisher: ExpoPushPublisher, now: () => Date = () => new Date()): Promise<{ ok: number; invalid: number; retryable: number; pending: number }> {
   const receipts = await users.pendingReceipts(); const byId = await publisher.receipts(receipts.map((receipt) => receipt.ticketId).filter((id): id is string => Boolean(id))); let ok = 0; let invalid = 0; let pending = 0;
+  let retryable = 0;
   for (const receipt of receipts) {
     const result = receipt.ticketId ? byId[receipt.ticketId] : undefined;
     if (!result) { pending += 1; continue; }
     if (result.status === 'ok') { await users.putReceipt({ ...receipt, status: 'ok', updatedAt: now().toISOString() }); ok += 1; continue; }
-    await users.putReceipt({ ...receipt, status: 'error', updatedAt: now().toISOString() });
+    const failedAt = now().toISOString();
+    const terminal = result.details?.error === 'DeviceNotRegistered' || (receipt.attempts ?? 1) >= MAX_EXPO_PUSH_ATTEMPTS;
+    await users.putReceipt({ ...receipt, status: terminal ? 'error' : 'retryable', lastErrorCode: result.details?.error ?? 'ExpoReceiptError', lastErrorMessage: result.message?.slice(0, 500), lastErrorAt: failedAt, updatedAt: failedAt });
     if (result.details?.error === 'DeviceNotRegistered') {
       const device = (await users.activeDevices()).find((candidate) => candidate.userId === receipt.userId && candidate.token === receipt.token);
       if (device) await users.putDevice({ ...device, active: false, updatedAt: now().toISOString() });
       invalid += 1;
+    } else if (!terminal) retryable += 1;
+  }
+  return { ok, invalid, retryable, pending };
+}
+
+export async function retryExpoPushNotifications(jobs: InternshipStore, users: UserStore, publisher: ExpoPushPublisher, now: () => Date = () => new Date()): Promise<{ sent: number; skipped: number; failed: number }> {
+  let sent = 0; let skipped = 0; let failed = 0;
+  const devices = new Map((await users.activeDevices()).map((device) => [`${device.userId}\u0000${device.token}`, device]));
+  for (const receipt of await users.retryableReceipts()) {
+    const attempts = receipt.attempts ?? 1;
+    const job = await jobs.getJob(receipt.jobId);
+    const preference = await users.getPreferences(receipt.userId);
+    const device = devices.get(`${receipt.userId}\u0000${receipt.token}`);
+    if (attempts >= MAX_EXPO_PUSH_ATTEMPTS || !job || !device
+      || !preference?.alertsEnabled || !preference.onboardingComplete || !matchesJobFilter(job, preference.filter)) {
+      await users.putReceipt({ ...receipt, status: 'error', updatedAt: now().toISOString() });
+      skipped += 1;
+      continue;
+    }
+    const attemptedAt = now().toISOString();
+    try {
+      const ticket = await publisher.publish(receipt.token, nativePushMessage(job, preference.filter, preference.push));
+      const accepted = ticket.status === 'ok' && Boolean(ticket.id);
+      const invalid = ticket.details?.error === 'DeviceNotRegistered';
+      await users.putReceipt({
+        ...receipt,
+        ticketId: ticket.id,
+        attempts: attempts + 1,
+        status: accepted ? 'pending' : invalid || attempts + 1 >= MAX_EXPO_PUSH_ATTEMPTS ? 'error' : 'retryable',
+        ...(!accepted ? { lastErrorCode: ticket.details?.error ?? 'ExpoRejected', lastErrorMessage: ticket.message?.slice(0, 500), lastErrorAt: attemptedAt } : {}),
+        updatedAt: attemptedAt,
+      });
+      if (accepted) sent += 1;
+      else {
+        if (invalid) await users.putDevice({ ...device, active: false, updatedAt: attemptedAt });
+        failed += 1;
+      }
+    } catch (error) {
+      await users.putReceipt({ ...receipt, attempts: attempts + 1, status: attempts + 1 >= MAX_EXPO_PUSH_ATTEMPTS ? 'error' : 'retryable', lastErrorCode: 'TransportError', lastErrorMessage: (error instanceof Error ? error.message : String(error)).slice(0, 500), lastErrorAt: attemptedAt, updatedAt: attemptedAt });
+      failed += 1;
     }
   }
-  return { ok, invalid, pending };
+  return { sent, skipped, failed };
 }
 
 export class NtfyPublisher implements PushPublisher {

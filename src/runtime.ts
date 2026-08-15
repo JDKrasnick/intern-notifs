@@ -3,7 +3,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { auditCatalogIndexes, emitCatalogIndexAuditMetric } from './catalog-index-audit.js';
 import { validateApplicationUrlWithEvidence, type ApplicationUrlValidator } from './core/application-url.js';
-import { defaultPushTemplates, ExpoPushPublisher, inspectExpoPushReceipts, NtfyPublisher, sendDigest, sendNewJobNotifications, sendPendingNotifications, SesEmailSender, type EmailSender, type PushPublisher } from './notifications.js';
+import { defaultPushTemplates, ExpoPushPublisher, inspectExpoPushReceipts, NtfyPublisher, retryExpoPushNotifications, sendDigest, sendNewJobNotifications, sendPendingNotifications, SesEmailSender, type EmailSender, type PushPublisher } from './notifications.js';
 import { Poller } from './poll.js';
 import { DynamoInternshipStore, DynamoUserStore, type InternshipStore, type UserStore } from './store.js';
 import { defaultSources } from './sources/index.js';
@@ -56,7 +56,10 @@ export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies
       const ntfy = dependencies.config.ntfyTopic
         ? await sendPendingNotifications(dependencies.store, dependencies.ntfyPublisher ?? new NtfyPublisher(dependencies.config.ntfyTopic, dependencies.config.ntfyEndpoint), templates)
         : { sent: 0, failed: 0 };
-      return { poll, notifications: await sendNewJobNotifications(poll.newJobs.filter((job) => job.technical !== false), dependencies.userStore, publisher), ntfy, receipts: await inspectExpoPushReceipts(dependencies.userStore, publisher) };
+      const notifications = await sendNewJobNotifications(poll.newJobs.filter((job) => job.technical !== false), dependencies.userStore, publisher);
+      const receipts = await inspectExpoPushReceipts(dependencies.userStore, publisher);
+      const pushRetries = await retryExpoPushNotifications(dependencies.store, dependencies.userStore, publisher);
+      return { poll, notifications, ntfy, receipts, pushRetries };
     }
     if (dependencies.notificationPublisher) {
       const { sendPendingNotifications } = await import('./notifications.js');
