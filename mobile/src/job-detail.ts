@@ -63,6 +63,16 @@ export function isDuplicateJobOpen(activeJobId: string | undefined, nextJobId: s
   return !allowActiveJob && activeJobId === nextJobId;
 }
 
+export function jobOpenDisposition(
+  activeJobId: string | undefined,
+  nextJobId: string,
+  dismissalPending = false,
+) {
+  if (!dismissalPending && activeJobId === nextJobId) return 'ignore' as const;
+  if (dismissalPending || activeJobId) return 'replace' as const;
+  return 'open' as const;
+}
+
 type SourceReference = { sourceId: string; sourceUrl?: string };
 const officialProvider = (sourceId: string) => {
   const normalized = sourceId.toLowerCase();
