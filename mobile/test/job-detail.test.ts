@@ -5,6 +5,7 @@ import {
   freshnessLabel,
   isNewJob,
   isDuplicateJobOpen,
+  jobOpenDisposition,
   jobDetailPresentation,
   jobDeepLink,
   routeFailureState,
@@ -33,6 +34,13 @@ describe('mobile job routes', () => {
     expect(isDuplicateJobOpen('role-1', 'role-1')).toBe(true);
     expect(isDuplicateJobOpen('role-1', 'role-2')).toBe(false);
     expect(isDuplicateJobOpen('role-1', 'role-1', true)).toBe(false);
+  });
+
+  it('serializes role replacement through native sheet dismissal', () => {
+    expect(jobOpenDisposition(undefined, 'role-1')).toBe('open');
+    expect(jobOpenDisposition('role-1', 'role-1')).toBe('ignore');
+    expect(jobOpenDisposition('role-1', 'role-2')).toBe('replace');
+    expect(jobOpenDisposition(undefined, 'role-2', true)).toBe('replace');
   });
 
   it('keeps one sheet mounted while a routed role changes from loading to detail', () => {

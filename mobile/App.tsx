@@ -40,8 +40,8 @@ import {
   destinationFromUrl,
   freshnessLabel,
   isNewJob,
-  isDuplicateJobOpen,
   jobDetailPresentation,
+  jobOpenDisposition,
   routeFailureState,
   sourcePresentation,
   validatedOfficialUrl,
@@ -502,6 +502,7 @@ function JobDetailSheet({
   exclusionsApplied = false,
   routeState = "idle",
   onDismiss,
+  onModalDismissed = () => undefined,
   onRetry = () => undefined,
   onApply,
   onOpenListing,
@@ -512,6 +513,7 @@ function JobDetailSheet({
   exclusionsApplied?: boolean;
   routeState?: JobRouteState;
   onDismiss: () => void;
+  onModalDismissed?: () => void;
   onRetry?: () => void;
   onApply: (job: Job) => void;
   onOpenListing: (job: Job) => void;
@@ -549,7 +551,6 @@ function JobDetailSheet({
   }, [motionAllowed, sheetOffset, visible]);
 
   const role = job ?? displayedJob.current;
-  if (!role && presentation.content === "hidden") return null;
   const details = [role?.location, role?.season, role?.compensation.raw]
     .filter(Boolean)
     .join(" · ");
@@ -576,6 +577,7 @@ function JobDetailSheet({
           if (action.kind === "apply") onApply(action.job);
           else onOpenListing(action.job);
         }
+        onModalDismissed();
       }}
       statusBarTranslucent
     >
@@ -1558,6 +1560,9 @@ function AppContent() {
   const [selectedExclusionsApplied, setSelectedExclusionsApplied] = useState(false);
   const [jobRouteState, setJobRouteState] = useState<JobRouteState>("idle");
   const routedJobId = useRef<string | undefined>(undefined);
+  const detailVisible = useRef(false);
+  const detailDismissalPending = useRef(false);
+  const pendingDestination = useRef<AppDestination | undefined>(undefined);
   const [launchInbox, setLaunchInbox] = useState<LaunchInbox>();
   const [showLaunchInbox, setShowLaunchInbox] = useState(false);
   const [launchLoaded, setLaunchLoaded] = useState(false);
@@ -1732,14 +1737,13 @@ function AppContent() {
         if (launchRequestId.current === requestId) setLaunchLoaded(true);
       });
   }, [launchLoaded, launchToken, preferences?.onboardingComplete, token]);
-  const openDestination = (destination: AppDestination | undefined, options: { allowActiveJob?: boolean } = {}) => {
-    if (!destination) return;
-    if (destination.kind === "job" && isDuplicateJobOpen(routedJobId.current, destination.jobId, options.allowActiveJob)) return;
+  const presentDestination = (destination: AppDestination) => {
     if (destination.kind === "saved") {
       setTab("saved");
       return;
     }
     routedJobId.current = destination.jobId;
+    detailVisible.current = true;
     setTab("feed");
     setSelectedJob(null);
     setSelectedMatchReasons(destination.reasons);
@@ -1756,6 +1760,69 @@ function AppContent() {
         setJobRouteState(routeFailureState(error));
       });
   };
+  const finishDetailDismissal = () => {
+    if (!detailDismissalPending.current) return;
+    detailDismissalPending.current = false;
+    const destination = pendingDestination.current;
+    pendingDestination.current = undefined;
+    if (destination) presentDestination(destination);
+  };
+  const dismissRoutedJob = () => {
+    const wasVisible = detailVisible.current;
+    routedJobId.current = undefined;
+    detailVisible.current = false;
+    setSelectedJob(null);
+    setSelectedMatchReasons([]);
+    setSelectedExclusionsApplied(false);
+    setJobRouteState("idle");
+    if (!wasVisible) return;
+    detailDismissalPending.current = true;
+    // React Native does not emit Modal.onDismiss on Android. Waiting for
+    // interactions still gives the native modal time to release its window
+    // before a queued notification presents the next role.
+    if (Platform.OS !== "ios") {
+      InteractionManager.runAfterInteractions(finishDetailDismissal);
+    }
+  };
+  const openDestination = (destination: AppDestination | undefined, options: { allowActiveJob?: boolean } = {}) => {
+    if (!destination) return;
+    if (destination.kind === "saved") {
+      if (detailVisible.current || detailDismissalPending.current) {
+        pendingDestination.current = destination;
+        if (detailVisible.current) dismissRoutedJob();
+        return;
+      }
+      presentDestination(destination);
+      return;
+    }
+    const disposition = options.allowActiveJob
+      ? "open"
+      : jobOpenDisposition(routedJobId.current, destination.jobId, detailDismissalPending.current);
+    if (disposition === "ignore") return;
+    if (disposition === "replace") {
+      pendingDestination.current = destination;
+      if (detailVisible.current) dismissRoutedJob();
+      return;
+    }
+    presentDestination(destination);
+  };
+  const openCatalogJob = (job: Job) => {
+    if (detailDismissalPending.current) {
+      pendingDestination.current = {
+        kind: "job",
+        jobId: job.jobId,
+        reasons: [],
+        exclusionsApplied: false,
+      };
+      return;
+    }
+    routedJobId.current = job.jobId;
+    detailVisible.current = true;
+    setSelectedMatchReasons([]);
+    setSelectedExclusionsApplied(false);
+    setJobRouteState("idle");
+    setSelectedJob(job);
+  };
   const retryRoutedJob = () => {
     const jobId = routedJobId.current;
     if (!jobId) return;
@@ -1763,13 +1830,6 @@ function AppContent() {
       { kind: "job", jobId, reasons: selectedMatchReasons, exclusionsApplied: selectedExclusionsApplied },
       { allowActiveJob: true },
     );
-  };
-  const dismissRoutedJob = () => {
-    routedJobId.current = undefined;
-    setSelectedJob(null);
-    setSelectedMatchReasons([]);
-    setSelectedExclusionsApplied(false);
-    setJobRouteState("idle");
   };
   useEffect(() => {
     const handleNotificationResponse = (response: Notifications.NotificationResponse) => {
@@ -1870,6 +1930,7 @@ function AppContent() {
         routedExclusionsApplied={selectedExclusionsApplied}
         routeState={jobRouteState}
         onDismissRoute={dismissRoutedJob}
+        onModalDismissedRoute={finishDetailDismissal}
         onRetryRoute={retryRoutedJob}
         jobStatus={jobStatus}
         onJobStatusChange={setJobStatus}
@@ -1888,6 +1949,7 @@ function AppContent() {
         hiddenFeedbackJob={hiddenFeedbackJob}
         onHideLocally={hideLocally}
         onUndoHide={undoHideLocally}
+        onOpenJob={openCatalogJob}
         onSession={async (idToken) => {
           await sessionStorage.set(idToken);
           setToken(idToken);
@@ -1988,7 +2050,7 @@ function AppContent() {
             launchInbox && showLaunchInbox ? (
               <LaunchInbox
                 inbox={launchInbox}
-                onOpen={setSelectedJob}
+                onOpen={openCatalogJob}
                 onViewAll={() => setShowLaunchInbox(false)}
                 applicationStatuses={applicationStatuses}
                 onSaveForWeb={saveForWeb}
@@ -2055,7 +2117,7 @@ function AppContent() {
                       <NewRoleCard
                         job={item}
                         index={index}
-                        onOpen={() => setSelectedJob(item)}
+                        onOpen={() => openCatalogJob(item)}
                         applicationStatus={applicationStatuses.get(item.jobId)}
                         onSaveForWeb={() => saveForWeb(item)}
                         isSavingForWeb={savingJobIds.has(item.jobId)}
@@ -2064,7 +2126,7 @@ function AppContent() {
                     ) : (
                       <JobCard
                         job={item}
-                        onOpen={() => setSelectedJob(item)}
+                        onOpen={() => openCatalogJob(item)}
                         applicationStatus={applicationStatuses.get(item.jobId)}
                         onSaveForWeb={() => saveForWeb(item)}
                         isSavingForWeb={savingJobIds.has(item.jobId)}
@@ -2126,6 +2188,7 @@ function AppContent() {
         exclusionsApplied={selectedExclusionsApplied}
         routeState={jobRouteState}
         onDismiss={dismissRoutedJob}
+        onModalDismissed={finishDetailDismissal}
         onRetry={retryRoutedJob}
         onApply={(job) => {
           if (job.open) void apply(job);
@@ -2155,6 +2218,7 @@ function GuestExperience({
   routedExclusionsApplied,
   routeState,
   onDismissRoute,
+  onModalDismissedRoute,
   onRetryRoute,
   jobStatus,
   onJobStatusChange,
@@ -2173,6 +2237,7 @@ function GuestExperience({
   hiddenFeedbackJob,
   onHideLocally,
   onUndoHide,
+  onOpenJob,
   onSession,
 }: {
   jobs: Job[];
@@ -2181,6 +2246,7 @@ function GuestExperience({
   routedExclusionsApplied: boolean;
   routeState: JobRouteState;
   onDismissRoute: () => void;
+  onModalDismissedRoute: () => void;
   onRetryRoute: () => void;
   jobStatus: "open" | "closed";
   onJobStatusChange: (status: "open" | "closed") => void;
@@ -2199,6 +2265,7 @@ function GuestExperience({
   hiddenFeedbackJob?: Job;
   onHideLocally: (job: Job) => void;
   onUndoHide: () => void;
+  onOpenJob: (job: Job) => void;
   onSession: (token: string) => void;
 }) {
   const { width } = useWindowDimensions();
@@ -2210,8 +2277,6 @@ function GuestExperience({
   const [hideAdvancedDegreeRequired, setHideAdvancedDegreeRequired] = useState(false);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
-  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
-  const visibleJob = routedJob ?? selectedJob;
   const filtered = useMemo(
     () =>
       jobs
@@ -2276,7 +2341,7 @@ function GuestExperience({
                   ) : (
                     <JobCard
                       job={item}
-                      onOpen={() => setSelectedJob(item)}
+                      onOpen={() => onOpenJob(item)}
                       isNew={isNewJob(item.firstSeenAt, { signedIn: false })}
                       onHideLocally={() => onHideLocally(item)}
                     />
@@ -2322,15 +2387,13 @@ function GuestExperience({
         {!usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} /> : null}
       </View>
       <JobDetailSheet
-        job={visibleJob}
+        job={routedJob}
         signedIn={false}
         matchedReasons={routedJob ? routedMatchReasons : []}
         exclusionsApplied={routedJob ? routedExclusionsApplied : false}
         routeState={routeState}
-        onDismiss={() => {
-          setSelectedJob(null);
-          if (routedJob || routeState !== "idle") onDismissRoute();
-        }}
+        onDismiss={onDismissRoute}
+        onModalDismissed={onModalDismissedRoute}
         onRetry={onRetryRoute}
         onApply={(job) => {
           void openOfficialApplication(job.applyUrl);
