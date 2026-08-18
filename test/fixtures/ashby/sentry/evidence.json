@@ -1,0 +1,20 @@
+{
+  "provider": "ashby",
+  "boardKey": "sentry",
+  "apiRegion": "global",
+  "careersUrl": "https://sentry.io/careers/",
+  "firstPartyEvidenceUrl": "https://sentry.io/careers/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/sentry/01e24f35-a936-4dd1-a700-31e872c50da8",
+  "evidenceExcerpt": "Sentry's careers page embeds https://jobs.ashbyhq.com/sentry/01e24f35-a936-4dd1-a700-31e872c50da8",
+  "observedJobUrl": "https://jobs.ashbyhq.com/sentry/672e2a76-d8e1-49c1-b227-4a189c4e49a1",
+  "verifiedAt": "2026-08-18T01:16:13.703Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 0,
+  "initialRoleRequirementOverride": {
+    "approvedBy": "JDKrasnick",
+    "approvedAt": "2026-08-18T01:18:19Z",
+    "reason": "Owner approved immediate expansion because the known public technical internship is currently unlisted in the board API."
+  },
+  "allowedApplicationHosts": [{ "host": "jobs.ashbyhq.com" }],
+  "notes": "The public internship page reports isListed=false, so it is intentionally absent from the listed-only board snapshot."
+}

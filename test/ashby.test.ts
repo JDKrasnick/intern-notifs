@@ -158,19 +158,34 @@ describe('Ashby ownership and admission evidence', () => {
     expect(ashbyAdmissionViolations({ reviewerApprovedOwnership: true, reviewerApprovedAdmission: true, company: 'Acme', evidence: evidence(), probe, proposedSource: proposed }))
       .toContain('initial admission requires a current technical early-career role');
   });
+
+  it('allows an owner-approved board expansion when the known early-career role is unlisted', async () => {
+    const probe = await okProbe([]);
+    const overridden = evidence({
+      initialTechnicalEarlyCareerRoles: 0,
+      initialRoleRequirementOverride: {
+        approvedBy: 'JDKrasnick', approvedAt: '2026-08-18T01:18:19Z',
+        reason: 'Known public internship is currently unlisted in the board API.',
+      },
+    });
+    expect(ashbyAdmissionViolations({
+      reviewerApprovedOwnership: true, reviewerApprovedAdmission: true, company: 'Acme',
+      evidence: overridden, probe, proposedSource: source(),
+    })).toEqual([]);
+  });
 });
 
 describe('Ashby offline manifest and reverification', () => {
   it('passes all committed published sources, including the owner-approved expansion', () => {
     expect(reviewedAshbySources.map(({ company }) => company)).toEqual([
       'Etched', 'Deepgram', 'Cohere', 'Mistral AI', 'Partly',
-      'Notion', 'Alan', 'Base Power', 'Reonic', 'Terranova', 'Melius', 'Rho', 'CTGT', 'OpusClip',
+      'Notion', 'Sentry', 'Alan', 'Base Power', 'Reonic', 'Terranova', 'Melius', 'Rho', 'CTGT', 'OpusClip',
       'WindBorne Systems', 'Persona AI', 'Skydio', 'Heliux', 'Beacon Software', 'Centerfield', 'RV Tech',
       'Circleback', 'Eragon', 'Modal', 'Yotta Labs', 'Anthelion Capital', 'Saronic', 'First Order Effects',
       'Junior', 'Airwallex', 'Netic', 'Retell AI', 'Quadrillion', 'Pylon', 'NationGraph',
     ]);
     expect(reviewedAshbySources.filter(({ status }) => status === 'shadow')).toEqual([]);
-    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-14T04:08:00Z') })).toEqual([]);
+    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-18T01:19:00Z') })).toEqual([]);
   });
 
   it('keeps any expansion replacements ordered and unadmitted', () => {

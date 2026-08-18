@@ -12,6 +12,13 @@ fixtures, pass `npm run ashby:manifest`, and enter `reviewedAshbySources` in
 `shadow`. Admission is a reviewed code change. There is no mutable runtime
 admission endpoint.
 
+The owner may explicitly approve expansion when an employer-proven board has a
+known public technical early-career page that Ashby marks unlisted. Record the
+decision as `initialRoleRequirementOverride`; it waives only the requirement
+for a qualifying listed role at admission. The runtime remains listed-only and
+will not ingest the unlisted page, but it will monitor future listed roles from
+that board.
+
 The owner must confirm that the employer-controlled careers page contains the
 exact `jobs.ashbyhq.com/{board}` URL, the observed company is unambiguous, every
 application host is expected, and the qualifying role samples are in product

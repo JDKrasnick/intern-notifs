@@ -1,5 +1,5 @@
 import type { ReviewedSourceRecord } from './reviewed-source.js';
-import { ashbyFollowUpPromotionEvidence } from './ashby-promotion-evidence.js';
+import { ashbyPromotionEvidence } from './ashby-promotion-evidence.js';
 
 export type ReviewedAshbySource = ReviewedSourceRecord & {
   identity: ReviewedSourceRecord['identity'] & { provider: 'ashby'; apiRegion: 'global' };
@@ -35,6 +35,11 @@ const admittedAshbySources: ReviewedAshbySource[] = [
   {
     id: 'ashby-notion', company: 'Notion', identity: { provider: 'ashby', boardKey: 'notion', apiRegion: 'global' },
     careersUrl: 'https://www.notion.com/careers', admittedAt: '2026-08-09T15:55:23Z', evidenceState: 'ownership-verified',
+    allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
+  },
+  {
+    id: 'ashby-sentry', company: 'Sentry', identity: { provider: 'ashby', boardKey: 'sentry', apiRegion: 'global' },
+    careersUrl: 'https://sentry.io/careers/', admittedAt: '2026-08-18T01:16:13.703Z', evidenceState: 'ownership-verified',
     allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
   },
   {
@@ -185,11 +190,11 @@ const admittedAshbySources: ReviewedAshbySource[] = [
 ];
 
 /**
- * Every admitted board has completed ownership re-verification, a clean
- * runtime recovery where required, and the normal promotion evidence window.
+ * Every admitted board has verified ownership and clean promotion evidence;
+ * explicitly approved timing overrides remain visible until follow-up closes.
  */
 export const reviewedAshbySources: ReviewedAshbySource[] = admittedAshbySources.map((source) => {
-  const promotionEvidence = ashbyFollowUpPromotionEvidence[source.id];
+  const promotionEvidence = ashbyPromotionEvidence[source.id];
   if (!promotionEvidence) throw new Error(`Missing Ashby promotion evidence for ${source.id}`);
   return { ...source, status: 'published', promotionEvidence };
 });

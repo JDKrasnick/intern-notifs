@@ -970,3 +970,32 @@ export const ashbyFollowUpPromotionEvidence: Readonly<Record<string, SourcePromo
       observationWindowOverride: undefined,
     }]),
 );
+
+/** Current promotion records, including owner-approved sources still in their follow-up window. */
+export const ashbyPromotionEvidence: Readonly<Record<string, SourcePromotionEvidence>> = {
+  ...ashbyFollowUpPromotionEvidence,
+  'ashby-sentry': {
+    approvedAt: '2026-08-18T01:18:19Z',
+    approvedBy: 'JDKrasnick',
+    quietBaselineApproved: true,
+    stableIdentity: true,
+    stableApplicationHosts: true,
+    snapshots: [{
+      runId: 'sentry-admission-2026-08-18',
+      completedAt: '2026-08-18T01:17:50.761Z',
+      outcome: 'success_changed',
+      rawRows: 42,
+      eligibleRows: 0,
+      withheldRows: 0,
+      applicationLinksChecked: 0,
+      applicationLinkFailures: 0,
+      complete: true,
+      identityVerified: true,
+      schemaValid: true,
+    }],
+    observationWindowOverride: {
+      reason: 'Owner directed immediate publication after reviewing the first-party board and known unlisted internship.',
+      followUpAfter: '2026-08-19T01:18:19Z',
+    },
+  },
+};
