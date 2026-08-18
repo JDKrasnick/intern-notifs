@@ -1,0 +1,33 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "kastle",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/kastle",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 12,
+      "listedRows": 12,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Remote",
+        "San Francisco"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 12
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "6f32db51-de45-472f-a9c8-d9419d3634ee",
+          "title": "Software Engineer - Intern",
+          "location": "San Francisco"
+        }
+      ]
+    }
+  ]
+}

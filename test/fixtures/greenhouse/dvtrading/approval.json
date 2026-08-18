@@ -1,0 +1,11 @@
+{
+  "sourceId": "greenhouse-dvtrading",
+  "runAt": "2026-08-18T11:55:00.000Z",
+  "commitSha": "pending-owner-approved-expansion-commit",
+  "counts": {
+    "raw": 61,
+    "eligible": 6,
+    "withheld": 55
+  },
+  "hostSummary": "job-boards.greenhouse.io"
+}

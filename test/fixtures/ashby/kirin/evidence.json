@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "kirin",
+  "apiRegion": "global",
+  "careersUrl": "https://kirin.com/",
+  "firstPartyEvidenceUrl": "https://kirin.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/kirin",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://kirin.com/ identifies Kirin and links to https://jobs.ashbyhq.com/kirin (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/kirin/93648515-7e6c-43f4-bdcb-0c072f22a15a/application",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

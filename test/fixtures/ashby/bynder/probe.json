@@ -1,0 +1,48 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "bynder",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/bynder",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 25,
+      "listedRows": 25,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 3,
+      "geographicCoverage": [
+        "Amsterdam",
+        "Barcelona",
+        "Boston",
+        "Dusseldorf",
+        "London",
+        "Remote",
+        "Rotterdam"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 25
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "f80ec6d0-3c38-4ca3-b924-8f1af4589fa1",
+          "title": "AI Research Intern",
+          "location": "Rotterdam"
+        },
+        {
+          "id": "a65c45dd-cd41-4c06-a920-fe0d143ea049",
+          "title": "IT Engineering Intern",
+          "location": "Amsterdam"
+        },
+        {
+          "id": "24955a72-0dc7-495c-8ffd-d48f18ff986b",
+          "title": "Customer Analytics Internship",
+          "location": "Amsterdam"
+        }
+      ]
+    }
+  ]
+}

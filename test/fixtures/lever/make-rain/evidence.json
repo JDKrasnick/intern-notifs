@@ -1,0 +1,15 @@
+{
+  "site": "make-rain",
+  "displayName": "Rainmaker",
+  "careersUrl": "https://www.rainmaker.com/",
+  "firstPartyEvidenceUrl": "https://www.rainmaker.com/",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.rainmaker.com/ identifies Rainmaker and links to https://jobs.lever.co/make-rain.",
+  "observedJobUrl": "https://jobs.lever.co/make-rain/b45f954e-19df-45b1-8748-c8ae442a2e8b",
+  "initialHosts": [
+    "jobs.lever.co"
+  ],
+  "region": "global",
+  "state": "ownership-verified",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "notes": "Owner-approved mapping, independently checked against the exact live Lever tenant and hiringOrganization identity."
+}

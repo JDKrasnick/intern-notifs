@@ -1,0 +1,48 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "zuru",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/zuru",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 73,
+      "listedRows": 73,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "Ahmedabad | India",
+        "Auckland | New Zealand",
+        "Bentonville | United States",
+        "Kolkata | India",
+        "Los Angeles | United States",
+        "Mexico, Mexico City",
+        "Milan | Italy",
+        "Minneapolis | United States",
+        "Modena | Italy",
+        "Paris | France",
+        "Remote | Germany",
+        "Sydney | Australia"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 73
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "750dea66-6f5a-4622-80d6-b6289954d3d0",
+          "title": "Data Analyst Intern",
+          "location": "Los Angeles | United States"
+        },
+        {
+          "id": "16d4cc04-a913-495f-a835-f6dd1275384c",
+          "title": "AI Integration Summer Internship 2026/2027",
+          "location": "Auckland | New Zealand"
+        }
+      ]
+    }
+  ]
+}

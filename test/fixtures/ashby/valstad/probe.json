@@ -1,0 +1,37 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "valstad",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/valstad",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 9,
+      "listedRows": 9,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "Austin"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 9
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "7ff6d452-969f-43a6-9127-d153025e6aea",
+          "title": "Software Engineering Intern, 3D & Manufacturing Applications",
+          "location": "Austin"
+        },
+        {
+          "id": "8478558b-c5b5-43d2-b9c0-eae7a1fb30d8",
+          "title": "Robotics Software Intern, Manipulation & Simulation",
+          "location": "Austin"
+        }
+      ]
+    }
+  ]
+}

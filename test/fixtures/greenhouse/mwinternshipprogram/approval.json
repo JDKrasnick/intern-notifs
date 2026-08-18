@@ -1,0 +1,11 @@
+{
+  "sourceId": "greenhouse-mwinternshipprogram",
+  "runAt": "2026-08-18T11:55:00.000Z",
+  "commitSha": "pending-owner-approved-expansion-commit",
+  "counts": {
+    "raw": 5,
+    "eligible": 4,
+    "withheld": 1
+  },
+  "hostSummary": "job-boards.greenhouse.io"
+}

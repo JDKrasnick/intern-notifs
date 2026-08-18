@@ -1,6 +1,7 @@
 import type { ReviewedSourceRecord } from './reviewed-source.js';
 import { ashbyPromotionEvidence } from './ashby-promotion-evidence.js';
 import { reviewedAshbyExpansionSources } from './ashby-expansion-data.js';
+import { reviewedAshbyOwnerApprovedExpansionSources } from './ashby-owner-approved-expansion-data.js';
 
 export type ReviewedAshbySource = ReviewedSourceRecord & {
   identity: ReviewedSourceRecord['identity'] & { provider: 'ashby'; apiRegion: 'global' };
@@ -189,6 +190,7 @@ const admittedAshbySources: ReviewedAshbySource[] = [
     allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
   },
   ...reviewedAshbyExpansionSources as ReviewedAshbySource[],
+  ...reviewedAshbyOwnerApprovedExpansionSources as ReviewedAshbySource[],
 ];
 
 /**

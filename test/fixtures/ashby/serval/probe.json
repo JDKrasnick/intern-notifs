@@ -1,0 +1,34 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "serval",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/serval",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 41,
+      "listedRows": 41,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "New York",
+        "Remote",
+        "San Francisco"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 41
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "d7fb089c-db8a-4877-a5f3-73a09e67f54b",
+          "title": "Software Engineer Intern",
+          "location": "San Francisco"
+        }
+      ]
+    }
+  ]
+}

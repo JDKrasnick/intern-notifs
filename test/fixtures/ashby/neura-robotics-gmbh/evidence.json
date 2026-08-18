@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "neura-robotics-gmbh",
+  "apiRegion": "global",
+  "careersUrl": "https://neura-robotics.com/",
+  "firstPartyEvidenceUrl": "https://neura-robotics.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/neura-robotics-gmbh",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://neura-robotics.com/ identifies Neura Robotics and links to https://jobs.ashbyhq.com/neura-robotics-gmbh (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/neura-robotics-gmbh/07e05805-85f8-4f94-b968-08bb1595ad20",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 5,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "constellationspace",
+  "apiRegion": "global",
+  "careersUrl": "https://www.constellationspace.ai/",
+  "firstPartyEvidenceUrl": "https://www.constellationspace.ai/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/constellationspace",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.constellationspace.ai/ identifies Constellation Space and links to https://jobs.ashbyhq.com/constellationspace (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/constellationspace/b763d4ba-7b77-479b-89a0-f632d9d02f4a",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

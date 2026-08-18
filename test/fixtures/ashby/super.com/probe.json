@@ -1,0 +1,34 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "super.com",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/super.com",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 14,
+      "listedRows": 14,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Canada",
+        "Canada/United States",
+        "United States"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 14
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "8179b5ad-9074-4d96-aa92-366cf12ab5d5",
+          "title": "Software Engineering Intern - Product (Full-Stack)",
+          "location": "Canada"
+        }
+      ]
+    }
+  ]
+}

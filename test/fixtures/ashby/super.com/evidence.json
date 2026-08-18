@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "super.com",
+  "apiRegion": "global",
+  "careersUrl": "https://www.super.com/careers",
+  "firstPartyEvidenceUrl": "https://www.super.com/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/super.com",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.super.com/careers identifies Super.com and links to https://jobs.ashbyhq.com/super.com (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/super.com/8179b5ad-9074-4d96-aa92-366cf12ab5d5",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

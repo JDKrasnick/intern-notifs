@@ -1,0 +1,15 @@
+{
+  "site": "diversified-automation",
+  "displayName": "Diversified Automation",
+  "careersUrl": "https://diversified-automation.com/careers/",
+  "firstPartyEvidenceUrl": "https://diversified-automation.com/careers/",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://diversified-automation.com/careers/ identifies Diversified Automation and links to https://jobs.lever.co/diversified-automation.",
+  "observedJobUrl": "https://jobs.lever.co/diversified-automation/827a092d-b8a3-4ca9-a84a-e8c236d1aabc/apply",
+  "initialHosts": [
+    "jobs.lever.co"
+  ],
+  "region": "global",
+  "state": "ownership-verified",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "notes": "Owner-approved mapping, independently checked against the exact live Lever tenant and hiringOrganization identity."
+}

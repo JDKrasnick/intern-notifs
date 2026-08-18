@@ -1,0 +1,36 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "k-id",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/k-id",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 9,
+      "listedRows": 9,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Japan",
+        "Remote or Hybrid",
+        "Singapore",
+        "United Kingdom",
+        "United States"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 9
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "18619df2-45d8-4732-8815-9a340d498d48",
+          "title": "Engineering Internship Program 2026",
+          "location": "Singapore"
+        }
+      ]
+    }
+  ]
+}

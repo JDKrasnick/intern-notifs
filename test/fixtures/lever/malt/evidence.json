@@ -1,0 +1,15 @@
+{
+  "site": "malt",
+  "displayName": "Malt",
+  "careersUrl": "https://www.malt.com/careers",
+  "firstPartyEvidenceUrl": "https://www.malt.com/careers",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.malt.com/careers identifies Malt and links to https://jobs.lever.co/malt.",
+  "observedJobUrl": "https://jobs.lever.co/malt/473946fd-c520-4892-a851-c486af9ed851",
+  "initialHosts": [
+    "jobs.lever.co"
+  ],
+  "region": "global",
+  "state": "ownership-verified",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "notes": "Owner-approved mapping, independently checked against the exact live Lever tenant and hiringOrganization identity."
+}

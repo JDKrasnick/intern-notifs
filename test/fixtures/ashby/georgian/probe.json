@@ -1,0 +1,32 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "georgian",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/georgian",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 4,
+      "listedRows": 4,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Toronto Headquarters"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 4
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "2ae71a4b-dd9d-4068-8ef2-81351ee74cab",
+          "title": "AI/ML Engineer Intern (2027)",
+          "location": "Toronto Headquarters"
+        }
+      ]
+    }
+  ]
+}

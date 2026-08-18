@@ -1,0 +1,33 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "ntt-data-aivista",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/ntt-data-aivista",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 8,
+      "listedRows": 8,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Bellevue, WA",
+        "San Francisco Bay Area"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 8
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "75f9f312-1cf9-4141-b352-60cb2fac8fe9",
+          "title": "AI Scientist - Intern ",
+          "location": "San Francisco Bay Area"
+        }
+      ]
+    }
+  ]
+}

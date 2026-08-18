@@ -1,0 +1,11 @@
+{
+  "sourceId": "greenhouse-olsson",
+  "runAt": "2026-08-18T11:55:00.000Z",
+  "commitSha": "pending-owner-approved-expansion-commit",
+  "counts": {
+    "raw": 335,
+    "eligible": 8,
+    "withheld": 327
+  },
+  "hostSummary": "job-boards.greenhouse.io"
+}

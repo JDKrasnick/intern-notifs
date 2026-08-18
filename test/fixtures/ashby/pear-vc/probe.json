@@ -1,0 +1,50 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "pear-vc",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/pear-vc",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 93,
+      "listedRows": 93,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "Bangalore",
+        "Boston",
+        "Chicago",
+        "Greater Seattle Area",
+        "Lehi, UT",
+        "London",
+        "Los Angeles (Remote Accepted)",
+        "Menlo Park",
+        "Mountain View, CA",
+        "New York City",
+        "Orange County",
+        "Remote",
+        "San Francisco",
+        "San Francisco Bay Area"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 93
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "781a43c0-a13a-4e27-95a8-0dde6279d33f",
+          "title": "Software Engineering Intern",
+          "location": "London"
+        },
+        {
+          "id": "ec6028da-190c-4cf3-949c-e130e8ba099a",
+          "title": "AI Research Intern - Optexity (USA)",
+          "location": "San Francisco"
+        }
+      ]
+    }
+  ]
+}

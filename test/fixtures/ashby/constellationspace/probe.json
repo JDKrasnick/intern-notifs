@@ -1,0 +1,32 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "constellationspace",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/constellationspace",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 4,
+      "listedRows": 4,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Seattle"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 4
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "b763d4ba-7b77-479b-89a0-f632d9d02f4a",
+          "title": "Graduate/PhD Research Intern, Machine Learning",
+          "location": "Seattle"
+        }
+      ]
+    }
+  ]
+}

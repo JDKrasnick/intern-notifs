@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "enpal",
+  "apiRegion": "global",
+  "careersUrl": "https://www.enpal.com",
+  "firstPartyEvidenceUrl": "https://www.enpal.com",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/enpal",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.enpal.com identifies Enpal and links to https://jobs.ashbyhq.com/enpal (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/enpal/24ebfa69-5689-49f1-bf69-f7224d6b2ff4",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 3,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

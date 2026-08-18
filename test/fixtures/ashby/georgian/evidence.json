@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "georgian",
+  "apiRegion": "global",
+  "careersUrl": "https://georgian.io/",
+  "firstPartyEvidenceUrl": "https://georgian.io/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/georgian",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://georgian.io/ identifies Georgian Partners Growth and links to https://jobs.ashbyhq.com/georgian (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/georgian/2ae71a4b-dd9d-4068-8ef2-81351ee74cab/",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

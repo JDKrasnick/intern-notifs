@@ -4,9 +4,8 @@
  * Greenhouse can admit a board on the strength of a name the API returned.
  * Lever has no such field, so admission here rests on one thing only: a page the
  * employer controls that links to `jobs.lever.co/{site}`. `evidenceExcerpt`
- * records the markup that proved it, which is the difference between an audit
- * trail and a claim — a reviewer confirms the conclusion without repeating the
- * search.
+ * records either the markup that proved it or an explicit owner attestation
+ * after a browser review, preserving the human approval trail.
  *
  * The states below are the agent's whole vocabulary. `api-live-unattributed` is
  * deliberately absent from the admissible set: a live API response is never
@@ -79,7 +78,7 @@ export interface LeverOwnershipEvidence {
   careersUrl: string;
   /** The employer-controlled page that carried the link. Often the same as `careersUrl`. */
   firstPartyEvidenceUrl: string;
-  /** The actual markup containing `jobs.lever.co/{site}`. */
+  /** The proving markup or explicit owner-browser attestation containing `jobs.lever.co/{site}`. */
   evidenceExcerpt: string;
   observedJobUrl: string;
   initialHosts: string[];

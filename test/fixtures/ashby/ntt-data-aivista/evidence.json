@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "ntt-data-aivista",
+  "apiRegion": "global",
+  "careersUrl": "https://nttdata-aivista.com/",
+  "firstPartyEvidenceUrl": "https://nttdata-aivista.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/ntt-data-aivista",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://nttdata-aivista.com/ identifies NTT DATA AIVista and links to https://jobs.ashbyhq.com/ntt-data-aivista (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/ntt-data-aivista/75f9f312-1cf9-4141-b352-60cb2fac8fe9/application",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

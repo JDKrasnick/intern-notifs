@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "zuru",
+  "apiRegion": "global",
+  "careersUrl": "https://zuru.com/",
+  "firstPartyEvidenceUrl": "https://zuru.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/zuru",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://zuru.com/ identifies ZURU and links to https://jobs.ashbyhq.com/zuru (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/zuru/16d4cc04-a913-495f-a835-f6dd1275384c",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

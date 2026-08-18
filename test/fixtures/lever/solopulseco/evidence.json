@@ -1,0 +1,15 @@
+{
+  "site": "solopulseco",
+  "displayName": "SoloPulse",
+  "careersUrl": "https://solopulse.com/",
+  "firstPartyEvidenceUrl": "https://solopulse.com/",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://solopulse.com/ identifies SoloPulse and links to https://jobs.lever.co/solopulseco.",
+  "observedJobUrl": "https://jobs.lever.co/solopulseco/00fbde18-a387-4c9f-97d4-77059aec7b56",
+  "initialHosts": [
+    "jobs.lever.co"
+  ],
+  "region": "global",
+  "state": "ownership-verified",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "notes": "Owner-approved mapping, independently checked against the exact live Lever tenant and hiringOrganization identity."
+}

@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "bree",
+  "apiRegion": "global",
+  "careersUrl": "https://www.trybree.com/",
+  "firstPartyEvidenceUrl": "https://www.trybree.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/bree",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.trybree.com/ identifies Bree and links to https://jobs.ashbyhq.com/bree (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/bree/5e79b2fd-164c-4e72-91ef-1b8fd1c5518a",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

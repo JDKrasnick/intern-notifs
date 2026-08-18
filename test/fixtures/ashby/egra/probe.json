@@ -1,0 +1,32 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "egra",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/egra",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 1,
+      "listedRows": 1,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "New York City"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 1
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "6f295102-6330-4a9e-9fc4-9b414e620003",
+          "title": "AI Researcher / Engineer / Intern",
+          "location": "New York City"
+        }
+      ]
+    }
+  ]
+}

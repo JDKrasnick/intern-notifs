@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "valstad",
+  "apiRegion": "global",
+  "careersUrl": "https://valstad.com/",
+  "firstPartyEvidenceUrl": "https://valstad.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/valstad",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://valstad.com/ identifies Valstad and links to https://jobs.ashbyhq.com/valstad (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/valstad/8478558b-c5b5-43d2-b9c0-eae7a1fb30d8/application",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

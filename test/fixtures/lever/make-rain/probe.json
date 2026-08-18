@@ -1,0 +1,36 @@
+{
+  "probedAt": "2026-08-18T11:54:21.223Z",
+  "attribution": "unattributed",
+  "results": [
+    {
+      "state": "ok",
+      "site": "make-rain",
+      "endpoint": "https://api.lever.co/v0/postings/make-rain?mode=json",
+      "region": "global",
+      "attribution": "unattributed",
+      "pagesRead": 1,
+      "rawPostings": 33,
+      "eligibleEarlyCareerRoles": 3,
+      "malformedRows": 0,
+      "urlContractViolations": 0,
+      "applicationHostSummary": {
+        "jobs.lever.co": 33
+      },
+      "etagPresent": true,
+      "eligibleRoleSamples": [
+        {
+          "postingId": "3d4f859f-f2dd-4f2d-b15b-675e0d62a37b",
+          "title": "Electrical Engineering Intern - Fall"
+        },
+        {
+          "postingId": "87613e64-cc8f-47ab-a053-0b2c3ee93ebd",
+          "title": "Mechanical Engineering Intern - Fall"
+        },
+        {
+          "postingId": "b45f954e-19df-45b1-8748-c8ae442a2e8b",
+          "title": "Software Engineering Intern"
+        }
+      ]
+    }
+  ]
+}

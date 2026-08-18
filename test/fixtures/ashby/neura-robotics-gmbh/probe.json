@@ -1,0 +1,56 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "neura-robotics-gmbh",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/neura-robotics-gmbh",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 391,
+      "listedRows": 391,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 5,
+      "geographicCoverage": [
+        "Aachen",
+        "Detroit",
+        "Metzingen / Riederich",
+        "Munich",
+        "Zurich"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 391
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "622b2195-a51c-4fef-949d-8156855cfd25",
+          "title": "Working Student - Production Engineering (Human) ",
+          "location": "Metzingen / Riederich"
+        },
+        {
+          "id": "f8297f12-04d0-4416-b672-2b0debf69ebd",
+          "title": "AI Engineering Intern (Mensch)",
+          "location": "Metzingen / Riederich"
+        },
+        {
+          "id": "570a45d8-ef96-4728-a95e-5909472da55e",
+          "title": "AI Engineering Intern (human)",
+          "location": "Metzingen / Riederich"
+        },
+        {
+          "id": "07e05805-85f8-4f94-b968-08bb1595ad20",
+          "title": "AI Infrastructure & Robotics DevOps Intern (Mensch)",
+          "location": "Metzingen / Riederich"
+        },
+        {
+          "id": "4bf6db79-b175-44df-9fbe-c3c94aa37694",
+          "title": "AI Infrastructure & Robotics DevOps Intern (human)",
+          "location": "Metzingen / Riederich"
+        }
+      ]
+    }
+  ]
+}

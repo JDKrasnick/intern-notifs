@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "k-id",
+  "apiRegion": "global",
+  "careersUrl": "https://www.k-id.com/",
+  "firstPartyEvidenceUrl": "https://www.k-id.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/k-id",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.k-id.com/ identifies k-ID and links to https://jobs.ashbyhq.com/k-id (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/k-id/18619df2-45d8-4732-8815-9a340d498d48/application",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

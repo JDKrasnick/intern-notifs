@@ -1,0 +1,35 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "tessera-labs",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/tessera-labs",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 11,
+      "listedRows": 11,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "New York City Office",
+        "Remote in the U.S.",
+        "San Francisco Office",
+        "San Jose Office (HQ)"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 11
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "3b2d45b8-9881-41fe-b103-7bbc400e1544",
+          "title": "Product Manager, Intern",
+          "location": "San Jose Office (HQ)"
+        }
+      ]
+    }
+  ]
+}

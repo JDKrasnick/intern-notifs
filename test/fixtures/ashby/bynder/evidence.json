@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "bynder",
+  "apiRegion": "global",
+  "careersUrl": "https://www.bynder.com",
+  "firstPartyEvidenceUrl": "https://www.bynder.com",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/bynder",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.bynder.com identifies Bynder and links to https://jobs.ashbyhq.com/bynder (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/bynder/f80ec6d0-3c38-4ca3-b924-8f1af4589fa1",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 3,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}
