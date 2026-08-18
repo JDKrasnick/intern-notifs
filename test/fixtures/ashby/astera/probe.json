@@ -1,0 +1,41 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "astera",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/astera",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 51,
+      "listedRows": 51,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "Emeryville HQ",
+        "Hybrid",
+        "Ithaca, NY (Cornell University)",
+        "New York or San Francisco",
+        "Washington, DC"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 51
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "c2a48c1b-c4c4-4333-addf-313c47e26066",
+          "title": "Software Engineering Intern – Distributed Simulation Systems",
+          "location": "Hybrid"
+        },
+        {
+          "id": "d20c0641-1b3e-4666-bc08-4f90ee813261",
+          "title": "Computational Neuroscience Intern - Data Analysis and Modeling",
+          "location": "Hybrid"
+        }
+      ]
+    }
+  ]
+}

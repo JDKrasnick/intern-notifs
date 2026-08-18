@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "unify",
+  "apiRegion": "global",
+  "careersUrl": "https://www.unifygtm.com/careers",
+  "firstPartyEvidenceUrl": "https://www.unifygtm.com/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/unify",
+  "evidenceExcerpt": "    }))\n              : [],\n            isListed: true,\n            workplaceType: posting.workplaceType || \"\",\n            jobUrl: posting.id\n              ? \"https://jobs.ashbyhq.com/unify/\" + posting.id\n              : \"\",\n            applyUrl: posting.id\n              ? \"https://jobs.ashbyhq.com/unify/\" + posting.id + \"/application\"\n              : \"\",\n          };\n        });\n        return jobs.filter((job) => job && job.isListed);\n      });\n  }\n\n  function setLoadingState(container) {\n    container",
+  "observedJobUrl": "https://jobs.ashbyhq.com/unify/6a5b351f-8893-435f-951f-2458b24b6d3c/application",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

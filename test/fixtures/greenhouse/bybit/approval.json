@@ -1,0 +1,11 @@
+{
+  "sourceId": "greenhouse-bybit",
+  "runAt": "2026-08-18T11:55:00.000Z",
+  "commitSha": "pending-owner-approved-expansion-commit",
+  "counts": {
+    "raw": 142,
+    "eligible": 1,
+    "withheld": 141
+  },
+  "hostSummary": "job-boards.eu.greenhouse.io"
+}

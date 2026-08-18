@@ -1,0 +1,35 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "42dot",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/42dot",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 115,
+      "listedRows": 115,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Ho Chi Minh, Vietnam",
+        "Pangyo (Software Dream Center), South Korea",
+        "Sunnyvale, United States",
+        "Warsaw, Poland"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 115
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "c4af7536-c24f-4754-9fe9-d92d237403f3",
+          "title": "[MS/PhD Intern] AI Engineer (정규직 전환형)",
+          "location": "Pangyo (Software Dream Center), South Korea"
+        }
+      ]
+    }
+  ]
+}

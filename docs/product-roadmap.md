@@ -46,7 +46,7 @@
 - [x] Add a provider-neutral company-coverage snapshot, public search API, and responsive web disclosure seeded from live internship evidence and reviewed ATS registries.
 - [x] Implement the Greenhouse source adapter, admission gates, deterministic fixtures, and live contract tests.
 - [x] Add the SQS-backed Greenhouse shadow/published runner with thirty-minute published polling, three-hour shadow polling, bounded per-board concurrency, isolated retries, alarms, and a quiet promotion baseline.
-- [x] Publish the 166-board API-responsive Greenhouse inventory with current board identities, observed host allowlists, per-source quiet baselines, and ownership-review status.
+- [x] Publish the 166-board API-responsive Greenhouse inventory and admit 20 additional ownership-verified boards to production shadow monitoring, with current board identities, observed host allowlists, and per-source quiet baselines.
 - [x] Add a private operations dashboard for all official Greenhouse sources with per-run volume, withheld rows, redacted diagnostics, queue/DLQ and alarm status, plus deterministic quarantine and recovery.
 - [ ] Add the Greenhouse batch re-probe and post-publication ownership-review workflow described in [`greenhouse/registry-expansion-plan.md`](greenhouse/registry-expansion-plan.md).
 - [x] Implement Lever source adapter, ETag checkpoints, technical-role mapping, and deterministic fixtures for Palantir, PlusAI, Hermeus, and Xsolla.
@@ -55,7 +55,10 @@
 - [x] Complete Lever monitoring with shadow and published health, regional metrics, freshness incidents, bounded backoff, shared operator controls, dashboards, and recovery runbooks.
 - [x] Add Ashby URL-derived discovery, metadata-only public probing, first-party ownership evidence, deterministic admission/re-verification gates, weekly candidate-ledger upload, and 35 reviewed shadow boards.
 - [x] Implement the Ashby public posting adapter with listed-only complete snapshots, strict identity/schema/link gates, provider-neutral processing, deterministic fixtures, and a nightly live contract for every reviewed board.
-- [x] Close the Ashby emergency-promotion follow-up: all 35 boards now have refreshed first-party ownership evidence, normal 24-hour promotion evidence without overrides, and healthy production validation. The seven previously quarantined boards completed forced recovery on 2026-08-14 and resumed with empty work and dead-letter queues.
+- [x] Close the original Ashby emergency-promotion follow-up: all 35 original boards have refreshed first-party ownership evidence, normal 24-hour promotion evidence without overrides, and healthy production validation. The seven previously quarantined boards completed forced recovery on 2026-08-14 and resumed with empty work and dead-letter queues.
+- [x] Admit and immediately publish Sentry as the 36th reviewed Ashby board on 2026-08-18 with explicit owner approval; its known internship was public but unlisted in the board API, so the direct monitor covers future listed roles while community sources retain the current occurrence.
+- [x] Scan the live community catalog and deploy 109 newly ownership-verified sources to production shadow monitoring on 2026-08-18: 61 Ashby, 28 Lever, and 20 Greenhouse boards. The first batch admitted 44 sources through static evidence, and owner-reviewed browser verification admitted the remaining 65 exact ATS tenants.
+- [ ] Complete Sentry's normal promotion observation follow-up after 2026-08-19T01:18:19Z and remove the temporary observation-window override.
 - [x] Add Ashby application-assistance route detection and headed-browser workflows after runtime promotion; this remains separate from source ingestion. Published reviewed boards are eligible automatically.
 - [x] Add human-readable source tags to default internship notifications for community job boards and published Greenhouse, Lever, and Ashby sources.
 - [x] Add job freshness and official/community provenance labels, filter-match explanations, hybrid New status, and duplicate-safe notification deep links to in-app role details, including closed and unavailable states.

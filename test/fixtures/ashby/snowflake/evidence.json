@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "snowflake",
+  "apiRegion": "global",
+  "careersUrl": "https://www.snowflake.com/",
+  "firstPartyEvidenceUrl": "https://www.snowflake.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/snowflake",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.snowflake.com/ identifies Snowflake and links to https://jobs.ashbyhq.com/snowflake (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/snowflake/fc1923c1-b151-4458-a792-40d58331a5be",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 3,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

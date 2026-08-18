@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "frontcareers",
+  "apiRegion": "global",
+  "careersUrl": "https://front.com/jobs",
+  "firstPartyEvidenceUrl": "https://front.com/jobs",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/frontcareers",
+  "evidenceExcerpt": "es & Success</option></select></div><div class=\"sc-33514d89-31 kmxHOy\"><h3 class=\"sc-33514d89-32 gyxlqr\">EPD</h3><ul><li class=\"sc-33514d89-33 dLVwoK\"><a href=\"https://jobs.ashbyhq.com/frontcareers/4999a5ba-a795-4170-bb1f-3e949a9bab8e\"><p>Senior Software Engineer - Front End Architecture / React Native</p><p>Remote, Argentina</p></a></li><li class=\"sc-33514d89-33 dLVwoK\"><a href=\"https://jobs.ashbyhq.com/frontcareers/2e65945d-7791-414a-b42a-9d3b5faa03eb\"><p>Senior Software Engineer - Front End Architecture / Rea",
+  "observedJobUrl": "https://jobs.ashbyhq.com/frontcareers/1026a32c-f8cc-4eee-992b-bacdf771d9fc",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

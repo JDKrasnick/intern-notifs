@@ -1,0 +1,36 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "taktile",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/taktile",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 45,
+      "listedRows": 45,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Berlin Office",
+        "Iasi Office",
+        "London Office",
+        "New York Office",
+        "São Paulo"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 45
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "bce11078-1da2-4826-a70e-7eccfd702dd1",
+          "title": "Software Engineer Intern",
+          "location": "Iasi Office"
+        }
+      ]
+    }
+  ]
+}

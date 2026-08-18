@@ -1,0 +1,32 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "contoro",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/contoro",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 7,
+      "listedRows": 7,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Austin, TX"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 7
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "7de98745-6a26-4a96-b82c-0cecf4900eb1",
+          "title": "Robotics Test & Validation Intern",
+          "location": "Austin, TX"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "kirin",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/kirin",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 39,
+      "listedRows": 39,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Buenos Aires",
+        "Hangzhou",
+        "Hong Kong",
+        "Manila",
+        "New York City",
+        "Provo",
+        "Seoul",
+        "Shenzhen"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 39
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "93648515-7e6c-43f4-bdcb-0c072f22a15a",
+          "title": "Quantitative Research Intern - Prediction Markets",
+          "location": "New York City"
+        }
+      ]
+    }
+  ]
+}

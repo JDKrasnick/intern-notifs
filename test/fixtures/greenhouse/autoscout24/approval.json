@@ -1,0 +1,11 @@
+{
+  "sourceId": "greenhouse-autoscout24",
+  "runAt": "2026-08-18T11:55:00.000Z",
+  "commitSha": "pending-owner-approved-expansion-commit",
+  "counts": {
+    "raw": 51,
+    "eligible": 1,
+    "withheld": 50
+  },
+  "hostSummary": "job-boards.greenhouse.io"
+}

@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "pear-vc",
+  "apiRegion": "global",
+  "careersUrl": "https://pear.vc",
+  "firstPartyEvidenceUrl": "https://pear.vc",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/pear-vc",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://pear.vc identifies Pear VC and links to https://jobs.ashbyhq.com/pear-vc (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/pear-vc/ec6028da-190c-4cf3-949c-e130e8ba099a",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

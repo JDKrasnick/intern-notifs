@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "hypercubic",
+  "apiRegion": "global",
+  "careersUrl": "https://www.hypercubic.ai/",
+  "firstPartyEvidenceUrl": "https://www.hypercubic.ai/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/hypercubic",
+  "evidenceExcerpt": "=\"/security\">Security</a></li><li><a class=\"block py-2 text-sm text-ivory/80 hover:text-ivory transition-colors\" href=\"/newsroom\">Newsroom</a></li><li><a href=\"https://jobs.ashbyhq.com/hypercubic\" class=\"block py-2 text-sm text-ivory/80 hover:text-ivory transition-colors\" rel=\"noopener noreferrer\">Careers</a></li><li><a class=\"block py-2 text-sm text-ivory/80 hover:text-ivory transition-colors\" href=\"/contact\">Contact</a></li></ul></div><div><h4 class=\"footer-section-heading font-sans mb-3 text-xs uppercase tr",
+  "observedJobUrl": "https://jobs.ashbyhq.com/hypercubic/ab7a23f9-7280-4443-b442-2813dc39d490/application",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

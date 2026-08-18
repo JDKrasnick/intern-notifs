@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "vital-lyfe",
+  "apiRegion": "global",
+  "careersUrl": "https://www.vital-lyfe.com/careers",
+  "firstPartyEvidenceUrl": "https://www.vital-lyfe.com/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/vital-lyfe",
+  "evidenceExcerpt": "e(e) {\n    return e ? (-1 != e.indexOf(\":\") ? e.split(\":\")[1] : e) : \"\";\n}\n\n</script>\n<!-- Add any other page-specific scripts below this line -->\n<script src=\"https://jobs.ashbyhq.com/vital-lyfe/embed?version=2\"></script>\n\n<!------- CHROME IOS SCROLL FIX ------->\n<script>\n(function() {\n  // Only run on Chrome iOS and mobile viewport\n  const isChromeIOS = /CriOS/.test(navigator.userAgent);\n  const isMobile = window.innerWidth < 992;\n  \n  if (!isChromeIOS || !isMobile) return;\n  \n  document.addEventListener('DO",
+  "observedJobUrl": "https://jobs.ashbyhq.com/vital-lyfe/43a79d8f-a8bb-4c57-a411-1bac946128af",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 3,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

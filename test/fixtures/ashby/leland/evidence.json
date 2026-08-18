@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "leland",
+  "apiRegion": "global",
+  "careersUrl": "https://careers.joinleland.com/",
+  "firstPartyEvidenceUrl": "https://careers.joinleland.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/leland",
+  "evidenceExcerpt": "a-astro-cid-j7pv25f6> <h2 class=\"careers-section-heading\" data-astro-cid-j7pv25f6>Open Positions</h2> <div class=\"roles-list\" data-astro-cid-j7pv25f6> <a href=\"https://jobs.ashbyhq.com/leland/15520cfa-2271-452f-9ab5-a07506c6bcb8\" class=\"role-row\" target=\"_blank\" rel=\"noopener noreferrer\" data-astro-cid-j7pv25f6> <div class=\"role-info\" data-astro-cid-j7pv25f6> <span class=\"role-title\" data-astro-cid-j7pv25f6>Growth Manager, Organic</span> <span class=\"role-dept\" data-astro-cid-j7pv25f6>Marketing</span> </di",
+  "observedJobUrl": "https://jobs.ashbyhq.com/leland/94347c0b-273b-4c17-9987-563912629633",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

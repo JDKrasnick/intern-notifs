@@ -1,0 +1,33 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "bestow",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/bestow",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 19,
+      "listedRows": 19,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Dallas, TX",
+        "Remote, US"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 19
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "df5ebc0c-435d-430b-b0e3-23f36cb0389d",
+          "title": "Business Operations and AI Intern",
+          "location": "Dallas, TX"
+        }
+      ]
+    }
+  ]
+}

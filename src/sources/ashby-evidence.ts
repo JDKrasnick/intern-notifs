@@ -13,6 +13,12 @@ export interface AshbyOwnershipEvidence extends EmployerCareersEvidence {
   provider: 'ashby';
   apiRegion: 'global';
   initialTechnicalEarlyCareerRoles: number;
+  /** Explicit owner approval for a proven board whose known role is currently unlisted in the board API. */
+  initialRoleRequirementOverride?: {
+    approvedBy: string;
+    approvedAt: string;
+    reason: string;
+  };
   allowedApplicationHosts: ReviewedApplicationHost[];
 }
 
@@ -41,8 +47,16 @@ export function ashbyEvidenceViolations(evidence: AshbyOwnershipEvidence): strin
   if (evidence.provider !== 'ashby') violations.push('provider is not ashby');
   if (!validateAshbyBoardName(evidence.boardKey)) violations.push(`boardKey ${JSON.stringify(evidence.boardKey)} is invalid`);
   if (evidence.apiRegion !== 'global') violations.push('apiRegion must be global');
-  if (!Number.isInteger(evidence.initialTechnicalEarlyCareerRoles) || evidence.initialTechnicalEarlyCareerRoles < 1) {
+  const roleOverride = evidence.initialRoleRequirementOverride;
+  if (!Number.isInteger(evidence.initialTechnicalEarlyCareerRoles) || evidence.initialTechnicalEarlyCareerRoles < 0) {
+    violations.push('initial technical early-career role count must be a non-negative integer');
+  } else if (evidence.initialTechnicalEarlyCareerRoles < 1 && !roleOverride) {
     violations.push('initial admission requires at least one technical early-career role');
+  }
+  if (roleOverride) {
+    if (!roleOverride.approvedBy.trim()) violations.push('initial-role override lacks approver');
+    if (Number.isNaN(Date.parse(roleOverride.approvedAt))) violations.push('initial-role override approvedAt is invalid');
+    if (!roleOverride.reason.trim()) violations.push('initial-role override lacks a reason');
   }
   if (Number.isNaN(Date.parse(evidence.verifiedAt))) violations.push('verifiedAt is not a parseable timestamp');
   const careersHost = httpsHost(evidence.careersUrl);

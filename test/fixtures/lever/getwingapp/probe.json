@@ -1,5 +1,5 @@
 {
-  "probedAt": "2026-07-30T04:06:16.414Z",
+  "probedAt": "2026-08-18T11:54:21.223Z",
   "attribution": "unattributed",
   "results": [
     {
@@ -8,13 +8,13 @@
       "endpoint": "https://api.lever.co/v0/postings/getwingapp?mode=json",
       "region": "global",
       "attribution": "unattributed",
-      "pagesRead": 6,
-      "rawPostings": 505,
-      "eligibleEarlyCareerRoles": 4,
+      "pagesRead": 5,
+      "rawPostings": 451,
+      "eligibleEarlyCareerRoles": 5,
       "malformedRows": 0,
       "urlContractViolations": 0,
       "applicationHostSummary": {
-        "jobs.lever.co": 505
+        "jobs.lever.co": 451
       },
       "etagPresent": true,
       "eligibleRoleSamples": [

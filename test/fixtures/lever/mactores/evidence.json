@@ -1,0 +1,14 @@
+{
+  "site": "mactores",
+  "displayName": "Mactores",
+  "careersUrl": "https://mactores.com/careers",
+  "firstPartyEvidenceUrl": "https://mactores.com/careers",
+  "evidenceExcerpt": "           {\n                  \"@type\": \"ListItem\",\n                  \"position\": 1,\n                  \"name\": \"Open roles on Lever\",\n                  \"url\": \"https://jobs.lever.co/mactores\"\n                }\n              ]\n            },\n            \"significantLink\": \"https://jobs.lever.co/mactores\"\n          },\n          {\n            \"@type\": \"BreadcrumbList\",\n            \"@id\": \"https://mactores.com/careers#breadcrumb\",\n            \"itemListElement\": [\n              {\n                \"@type\": \"List",
+  "observedJobUrl": "https://jobs.lever.co/mactores/598c935b-f408-4491-93b6-94c95396bd5c",
+  "initialHosts": [
+    "jobs.lever.co"
+  ],
+  "region": "global",
+  "state": "ownership-verified",
+  "verifiedAt": "2026-08-18T01:40:08.842Z"
+}

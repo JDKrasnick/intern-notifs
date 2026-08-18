@@ -1,0 +1,48 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "perplexity",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/perplexity",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 101,
+      "listedRows": 101,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 3,
+      "geographicCoverage": [
+        "Belgrade",
+        "London",
+        "Los Angeles",
+        "New York City",
+        "Palo Alto",
+        "San Francisco",
+        "Tokyo"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 101
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "9246cf02-26fd-4ae8-90c5-639c6e85e9e2",
+          "title": "Internship - Search Machine Learning Engineer",
+          "location": "Belgrade"
+        },
+        {
+          "id": "be94e89b-89d5-4f2a-a58b-7929c8d97f92",
+          "title": "Internship - Search Backend Infra Engineer",
+          "location": "Belgrade"
+        },
+        {
+          "id": "71168628-1998-47d3-87a9-be7bc56a430d",
+          "title": "Internship - Search Machine Learning Engineer",
+          "location": "London"
+        }
+      ]
+    }
+  ]
+}

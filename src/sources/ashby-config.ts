@@ -1,5 +1,7 @@
 import type { ReviewedSourceRecord } from './reviewed-source.js';
-import { ashbyFollowUpPromotionEvidence } from './ashby-promotion-evidence.js';
+import { ashbyPromotionEvidence } from './ashby-promotion-evidence.js';
+import { reviewedAshbyExpansionSources } from './ashby-expansion-data.js';
+import { reviewedAshbyOwnerApprovedExpansionSources } from './ashby-owner-approved-expansion-data.js';
 
 export type ReviewedAshbySource = ReviewedSourceRecord & {
   identity: ReviewedSourceRecord['identity'] & { provider: 'ashby'; apiRegion: 'global' };
@@ -35,6 +37,11 @@ const admittedAshbySources: ReviewedAshbySource[] = [
   {
     id: 'ashby-notion', company: 'Notion', identity: { provider: 'ashby', boardKey: 'notion', apiRegion: 'global' },
     careersUrl: 'https://www.notion.com/careers', admittedAt: '2026-08-09T15:55:23Z', evidenceState: 'ownership-verified',
+    allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
+  },
+  {
+    id: 'ashby-sentry', company: 'Sentry', identity: { provider: 'ashby', boardKey: 'sentry', apiRegion: 'global' },
+    careersUrl: 'https://sentry.io/careers/', admittedAt: '2026-08-18T01:16:13.703Z', evidenceState: 'ownership-verified',
     allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
   },
   {
@@ -182,16 +189,17 @@ const admittedAshbySources: ReviewedAshbySource[] = [
     careersUrl: 'https://www.nationgraph.com/about-us', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
     allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
   },
+  ...reviewedAshbyExpansionSources as ReviewedAshbySource[],
+  ...reviewedAshbyOwnerApprovedExpansionSources as ReviewedAshbySource[],
 ];
 
 /**
- * Every admitted board has completed ownership re-verification, a clean
- * runtime recovery where required, and the normal promotion evidence window.
+ * Promotion evidence upgrades a reviewed source to published. Newly admitted
+ * sources remain shadow-only until their observation window is complete.
  */
 export const reviewedAshbySources: ReviewedAshbySource[] = admittedAshbySources.map((source) => {
-  const promotionEvidence = ashbyFollowUpPromotionEvidence[source.id];
-  if (!promotionEvidence) throw new Error(`Missing Ashby promotion evidence for ${source.id}`);
-  return { ...source, status: 'published', promotionEvidence };
+  const promotionEvidence = ashbyPromotionEvidence[source.id];
+  return promotionEvidence ? { ...source, status: 'published', promotionEvidence } : source;
 });
 
 /** Ordered expansion replacements not yet reviewed or admitted. */

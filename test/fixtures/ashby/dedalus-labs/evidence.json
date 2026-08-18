@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "dedalus-labs",
+  "apiRegion": "global",
+  "careersUrl": "https://www.dedaluslabs.ai/careers",
+  "firstPartyEvidenceUrl": "https://www.dedaluslabs.ai/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/dedalus-labs",
+  "evidenceExcerpt": "eer\\\",\\\"department\\\":\\\"Engineering\\\",\\\"location\\\":\\\"San Francisco\\\",\\\"employmentType\\\":\\\"FullTime\\\",\\\"workplaceType\\\":\\\"OnSite\\\",\\\"isListed\\\":true,\\\"jobUrl\\\":\\\"https://jobs.ashbyhq.com/dedalus-labs/e71ec106-a376-42cb-88de-264c95d423ed\\\",\\\"shouldDisplayCompensationOnJobPostings\\\":true,\\\"compensation\\\":{\\\"compensationTierSummary\\\":\\\"$$170K – $250K • 0.5% – 1% • Offers Bonus\\\"}},{\\\"id\\\":\\\"cc865f1c-3c3a-4e89-ab55-0021b0c34970\\\",\\\"title\\\":\\\"Systems Engineer\\\",\\\"department\\\":\\\"Engineering\\\",\\\"location\\\":\\\"San Francisc",
+  "observedJobUrl": "https://jobs.ashbyhq.com/dedalus-labs/bcd6db2e-400b-4ffa-aef3-0948a7b558c2/application",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 3,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "frontcareers",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/frontcareers",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 23,
+      "listedRows": 23,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Chicago, IL",
+        "Dublin, Ireland",
+        "Paris, France",
+        "Remote, Argentina",
+        "San Francisco, CA",
+        "Santiago, Chile"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 23
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "1026a32c-f8cc-4eee-992b-bacdf771d9fc",
+          "title": "Software Engineering Intern - Spring/Summer 2027",
+          "location": "Paris, France"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "pluralis-research",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/pluralis-research",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 11,
+      "listedRows": 11,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "Melbourne",
+        "San Francisco",
+        "Sydney"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 11
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "d9e983f3-4a59-43c5-a7e5-d7ab8cabb591",
+          "title": "Research Scientist Intern",
+          "location": "Melbourne"
+        },
+        {
+          "id": "8ddb03b2-c00f-4157-919c-515ea02739ef",
+          "title": "Machine Learning Engineer - Intern",
+          "location": "Melbourne"
+        }
+      ]
+    }
+  ]
+}

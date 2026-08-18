@@ -1,0 +1,71 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "enpal",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/enpal",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 151,
+      "listedRows": 151,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 3,
+      "geographicCoverage": [
+        "Berlin",
+        "Bonn",
+        "Bremen",
+        "DE Remote",
+        "Dortmund",
+        "Dresden",
+        "Düsseldorf",
+        "Erfurt",
+        "Essen",
+        "Frankfurt am Main",
+        "Hamburg",
+        "Hannover",
+        "Ingolstadt",
+        "Karlsruhe",
+        "Kiel",
+        "Köln",
+        "Magdeburg",
+        "Mainz",
+        "Milan",
+        "München",
+        "Nürnberg",
+        "Potsdam",
+        "Remote",
+        "Saarbrücken",
+        "Schwerin",
+        "Stuttgart",
+        "Tirana",
+        "Troisdorf",
+        "Tunis",
+        "Ulm"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 151
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "04a4eabe-88f2-4e0a-aa2f-7e4d6081c98b",
+          "title": "AI Agents & Automations Internship (f/m/x)",
+          "location": "Berlin"
+        },
+        {
+          "id": "24ebfa69-5689-49f1-bf69-f7224d6b2ff4",
+          "title": "Automation & Software Developer Intern (f/m/x)",
+          "location": "Milan"
+        },
+        {
+          "id": "cd4009d8-593b-4d48-bed8-3c1870d5a93f",
+          "title": "Business Analytics Internship (f/m/x)",
+          "location": "Berlin"
+        }
+      ]
+    }
+  ]
+}

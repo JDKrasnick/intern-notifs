@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "contoro",
+  "apiRegion": "global",
+  "careersUrl": "https://contoro.com/",
+  "firstPartyEvidenceUrl": "https://contoro.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/contoro",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://contoro.com/ identifies Contoro Robotics and links to https://jobs.ashbyhq.com/contoro (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/contoro/7de98745-6a26-4a96-b82c-0cecf4900eb1",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

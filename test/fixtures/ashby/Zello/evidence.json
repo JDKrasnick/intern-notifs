@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "Zello",
+  "apiRegion": "global",
+  "careersUrl": "https://zello.com/careers",
+  "firstPartyEvidenceUrl": "https://zello.com/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/Zello",
+  "evidenceExcerpt": " the Zello Talent Community and we’ll reach out if a future opportunity arises.</p><span class=\"btn-group btn--align-left\"><a class=\"body-1 section-link\" href=\"https://jobs.ashbyhq.com/Zello/form/zello-talent-community\" data-classify-external-anchor=\"true\" target=\"_blank\" rel=\"external noopener\" title=\"Opens in a new window\">Join the community</a></span></div></div></div></div></div></div></section><section class=\"z__container section-block--learn-more-about-zello section-block--learn-more\"><div class=\"se",
+  "observedJobUrl": "https://jobs.ashbyhq.com/Zello/3453d476-7b75-4938-8cff-502d1575859b/application",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

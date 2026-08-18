@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "pluralis-research",
+  "apiRegion": "global",
+  "careersUrl": "https://pluralis.ai/",
+  "firstPartyEvidenceUrl": "https://pluralis.ai/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/pluralis-research",
+  "evidenceExcerpt": "opener noreferrer\">Docs</a><a href=\"https://github.com/PluralisResearch\" class=\"site-banner__link\" target=\"_blank\" rel=\"noopener noreferrer\">GitHub</a><a href=\"https://jobs.ashbyhq.com/pluralis-research\" class=\"site-banner__link\" target=\"_blank\" rel=\"noopener noreferrer\">Jobs</a><a href=\"https://x.com/Pluralis\" class=\"site-banner__link\" target=\"_blank\" rel=\"noopener noreferrer\">X</a></nav></header><main id=\"main\" class=\"homepage\"><script type=\"application/ld+json\">{\"@context\":\"https://schema.org\",\"@type\":\"Organizatio",
+  "observedJobUrl": "https://jobs.ashbyhq.com/pluralis-research/8ddb03b2-c00f-4157-919c-515ea02739ef",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

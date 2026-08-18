@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "perplexity",
+  "apiRegion": "global",
+  "careersUrl": "https://www.perplexity.ai/",
+  "firstPartyEvidenceUrl": "https://www.perplexity.ai/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/perplexity",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.perplexity.ai/ identifies Perplexity and links to https://jobs.ashbyhq.com/perplexity (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/perplexity/be94e89b-89d5-4f2a-a58b-7929c8d97f92",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 3,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

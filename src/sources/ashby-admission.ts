@@ -26,7 +26,9 @@ export function ashbyAdmissionViolations(review: AshbyAdmissionReview): string[]
     if (review.probe.boardName !== review.evidence.boardKey) violations.push('probe board does not match evidence board');
     if (review.probe.apiVersion !== '1' || review.probe.apiRegion !== 'global') violations.push('probe API identity is unsupported');
     if (review.probe.malformedRows || review.probe.boardPathViolations) violations.push('probe reports schema or board-path violations');
-    if (review.probe.technicalEarlyCareerRoles < 1) violations.push('initial admission requires a current technical early-career role');
+    if (review.probe.technicalEarlyCareerRoles < 1 && !review.evidence.initialRoleRequirementOverride) {
+      violations.push('initial admission requires a current technical early-career role');
+    }
     if (review.probe.technicalEarlyCareerRoles !== review.evidence.initialTechnicalEarlyCareerRoles) {
       violations.push('recorded initial technical-role count does not match the probe');
     }

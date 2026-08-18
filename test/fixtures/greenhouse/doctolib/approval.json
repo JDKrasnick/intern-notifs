@@ -1,0 +1,11 @@
+{
+  "sourceId": "greenhouse-doctolib",
+  "runAt": "2026-08-18T11:55:00.000Z",
+  "commitSha": "pending-owner-approved-expansion-commit",
+  "counts": {
+    "raw": 141,
+    "eligible": 2,
+    "withheld": 139
+  },
+  "hostSummary": "job-boards.greenhouse.io"
+}

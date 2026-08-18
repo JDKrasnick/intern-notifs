@@ -1,0 +1,15 @@
+{
+  "site": "wintermute-trading",
+  "displayName": "Wintermute",
+  "careersUrl": "https://www.wintermute.com/careers",
+  "firstPartyEvidenceUrl": "https://www.wintermute.com/careers",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.wintermute.com/careers identifies Wintermute and links to https://jobs.lever.co/wintermute-trading.",
+  "observedJobUrl": "https://jobs.lever.co/wintermute-trading/f512e856-a6e8-4aac-bae1-430b2ed0ea57",
+  "initialHosts": [
+    "jobs.lever.co"
+  ],
+  "region": "global",
+  "state": "ownership-verified",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "notes": "Owner-approved mapping. Tenant is healthy but currently has no matching technical early-career role; admit as dormant shadow."
+}

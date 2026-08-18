@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "binance.us",
+  "apiRegion": "global",
+  "careersUrl": "https://www.binance.us/",
+  "firstPartyEvidenceUrl": "https://www.binance.us/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/binance.us",
+  "evidenceExcerpt": "ollections/10384537-announcements\" class=\"sc-aXZVg cfXyhR\">Announcements</a></li><li class=\"sc-aXZVg kJdZlh\"><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"https://jobs.ashbyhq.com/binance.us\" class=\"sc-aXZVg cfXyhR\">Careers</a></li><li class=\"sc-aXZVg kJdZlh\"><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"https://www.binance.us/terms-of-use\" class=\"sc-aXZVg cfXyhR\">Terms of Use</a></li><li class=\"sc-aXZVg kJdZlh\"><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"https://www.binance.us/privacy-policy\"",
+  "observedJobUrl": "https://jobs.ashbyhq.com/binance.us/c23e9aa3-0daa-4170-a5a7-b03aaa031895",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "probedAt": "2026-08-18T01:26:30.803Z",
+  "attribution": "unattributed",
+  "results": [
+    {
+      "state": "ok",
+      "site": "bigblue",
+      "endpoint": "https://api.lever.co/v0/postings/bigblue?mode=json",
+      "region": "global",
+      "attribution": "unattributed",
+      "pagesRead": 1,
+      "rawPostings": 34,
+      "eligibleEarlyCareerRoles": 3,
+      "malformedRows": 0,
+      "urlContractViolations": 0,
+      "applicationHostSummary": {
+        "jobs.lever.co": 34
+      },
+      "etagPresent": true,
+      "eligibleRoleSamples": [
+        {
+          "postingId": "8dfc4051-e37b-416c-a034-3b783d13325d",
+          "title": "Business Intelligence Engineer Intern — Ops Excellence"
+        },
+        {
+          "postingId": "9c276113-679e-47c6-90fa-7cd805b7a667",
+          "title": "Data Analyst Intern — Ops Excellence"
+        },
+        {
+          "postingId": "e1b64777-c220-4e9d-b5cc-32ce4863a0b2",
+          "title": "Software Engineer Intern"
+        }
+      ]
+    }
+  ]
+}

@@ -1,13 +1,15 @@
 {
   "site": "getwingapp",
   "displayName": "Wing Assistant",
-  "careersUrl": "https://wingassistant.com/careers/",
-  "firstPartyEvidenceUrl": "https://wingassistant.com/careers/",
-  "evidenceExcerpt": "",
-  "observedJobUrl": "https://jobs.lever.co/getwingapp/6280db51-b402-4c94-8b10-90875af8c0c3/apply",
-  "initialHosts": ["jobs.lever.co"],
+  "careersUrl": "https://wingassistant.com/careers",
+  "firstPartyEvidenceUrl": "https://wingassistant.com/careers",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://wingassistant.com/careers identifies Wing Assistant and links to https://jobs.lever.co/getwingapp.",
+  "observedJobUrl": "https://jobs.lever.co/getwingapp/98e9d5d7-cfe4-4646-8a1d-19589148b7b0",
+  "initialHosts": [
+    "jobs.lever.co"
+  ],
   "region": "global",
-  "state": "api-live-unattributed",
-  "verifiedAt": "2026-07-30T00:00:00Z",
-  "notes": "Lever board is live with correct company branding and 4 eligible early career roles, but wingassistant.com/careers/ does not link to jobs.lever.co/getwingapp"
+  "state": "ownership-verified",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "notes": "Owner-approved mapping, independently checked against the exact live Lever tenant and hiringOrganization identity."
 }

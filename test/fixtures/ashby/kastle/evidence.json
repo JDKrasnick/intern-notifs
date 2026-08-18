@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "kastle",
+  "apiRegion": "global",
+  "careersUrl": "https://kastle.ai",
+  "firstPartyEvidenceUrl": "https://kastle.ai",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/kastle",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://kastle.ai identifies Kastle and links to https://jobs.ashbyhq.com/kastle (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/kastle/6f32db51-de45-472f-a9c8-d9419d3634ee",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

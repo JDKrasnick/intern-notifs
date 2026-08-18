@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "wincent",
+  "apiRegion": "global",
+  "careersUrl": "https://www.wincent.com/careers/#open-roles",
+  "firstPartyEvidenceUrl": "https://www.wincent.com/careers/#open-roles",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/wincent",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.wincent.com/careers/#open-roles identifies Wincent and links to https://jobs.ashbyhq.com/wincent (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/wincent/984bf12c-8d80-431f-9789-04a9739cfc99",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

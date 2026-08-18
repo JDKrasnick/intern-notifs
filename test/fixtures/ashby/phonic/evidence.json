@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "phonic",
+  "apiRegion": "global",
+  "careersUrl": "https://phonic.ai/",
+  "firstPartyEvidenceUrl": "https://phonic.ai/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/phonic",
+  "evidenceExcerpt": "ss=\"space-y-6\"><p class=\"font-bold\">Company</p><ul class=\"text-sm space-y-2\"><li><a href=\"/company\">About</a></li><li><a href=\"/blog\">Blog</a></li><li><a href=\"https://jobs.ashbyhq.com/phonic\" target=\"_blank\" rel=\"noreferrer noopener\">Careers</a></li></ul></div><div class=\"space-y-6\"><p class=\"font-bold\">Legal</p><ul class=\"text-sm space-y-2\"><li><a href=\"/legal/privacy-policy\">Privacy Policy</a></li><li><a href=\"/legal/terms-of-service\">Terms of Service</a></li><li><a href=\"/legal/subprocessors\">Subproces",
+  "observedJobUrl": "https://jobs.ashbyhq.com/phonic/a6c8c3d2-250a-4c2f-8a20-e4667ca38e41",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

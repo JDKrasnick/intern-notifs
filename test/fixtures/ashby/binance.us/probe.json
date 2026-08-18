@@ -1,0 +1,36 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "binance.us",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/binance.us",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 9,
+      "listedRows": 9,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Canada",
+        "Dubai",
+        "Europe & U.K.",
+        "Shanghai",
+        "U.S."
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 9
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "c23e9aa3-0daa-4170-a5a7-b03aaa031895",
+          "title": "Software Engineering Intern",
+          "location": "U.S. "
+        }
+      ]
+    }
+  ]
+}

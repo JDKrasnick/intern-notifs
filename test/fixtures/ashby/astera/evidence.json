@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "astera",
+  "apiRegion": "global",
+  "careersUrl": "https://astera.org/",
+  "firstPartyEvidenceUrl": "https://astera.org/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/astera",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://astera.org/ identifies Astera and links to https://jobs.ashbyhq.com/astera (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/astera/c2a48c1b-c4c4-4333-addf-313c47e26066",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

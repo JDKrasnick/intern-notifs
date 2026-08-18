@@ -1,0 +1,40 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "limetax",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/limetax",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 11,
+      "listedRows": 11,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "Berlin",
+        "Berlin (HQ)",
+        "Ludwigshafen am Rhein",
+        "Würzburg"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 11
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "ce5d3381-1b66-4bcd-9fae-fd1789054819",
+          "title": "Product Engineering Intern ",
+          "location": "Berlin (HQ)"
+        },
+        {
+          "id": "87f6edc7-c60f-4bd5-9991-75bca022d43e",
+          "title": "Applied AI Engineering Intern  ",
+          "location": "Berlin (HQ)"
+        }
+      ]
+    }
+  ]
+}

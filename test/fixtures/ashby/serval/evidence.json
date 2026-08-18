@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "serval",
+  "apiRegion": "global",
+  "careersUrl": "https://www.serval.com/",
+  "firstPartyEvidenceUrl": "https://www.serval.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/serval",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.serval.com/ identifies Serval and links to https://jobs.ashbyhq.com/serval (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/serval/d7fb089c-db8a-4877-a5f3-73a09e67f54b",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

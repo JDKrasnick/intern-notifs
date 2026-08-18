@@ -1,5 +1,7 @@
 import type { SourceClass } from './quality.js';
 import { apiProbedGreenhouseSources } from './greenhouse-registry-data.js';
+import { reviewedGreenhouseExpansionSources } from './greenhouse-expansion-data.js';
+import { reviewedGreenhouseOwnerApprovedExpansionSources } from './greenhouse-owner-approved-expansion-data.js';
 
 /** The only Greenhouse board host we ever read identity/jobs from. */
 export const GREENHOUSE_BOARD_API_HOST = 'boards-api.greenhouse.io';
@@ -73,6 +75,8 @@ const manuallyReviewedGreenhouseSources: ReviewedGreenhouseSource[] = [
 export const reviewedGreenhouseSources: ReviewedGreenhouseSource[] = [
   ...manuallyReviewedGreenhouseSources,
   ...apiProbedGreenhouseSources,
+  ...reviewedGreenhouseExpansionSources,
+  ...reviewedGreenhouseOwnerApprovedExpansionSources,
 ];
 
 /** Greenhouse board tokens are lowercase slugs; anything URL-shaped is rejected. */

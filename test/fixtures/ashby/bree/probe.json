@@ -1,0 +1,34 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "bree",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/bree",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 11,
+      "listedRows": 11,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Canada",
+        "Remote",
+        "Toronto"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 11
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "5e79b2fd-164c-4e72-91ef-1b8fd1c5518a",
+          "title": "Machine Learning Engineering, Intern",
+          "location": "Toronto"
+        }
+      ]
+    }
+  ]
+}

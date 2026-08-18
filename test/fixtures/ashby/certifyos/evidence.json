@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "certifyos",
+  "apiRegion": "global",
+  "careersUrl": "https://www.certifyos.com/company/careers",
+  "firstPartyEvidenceUrl": "https://www.certifyos.com/company/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/certifyos",
+  "evidenceExcerpt": " class=\"sans-body-big styles_description__qZRFn styles_hero-section-description__EBswv\"></p></div><a class=\"styles_btn___O2Yf styles_btn-primary__SQU0M \" href=\"https://jobs.ashbyhq.com/certifyos\"><span class=\"sans-body-small styles_span__oEF7r \">See Career Opportunities</span><img alt=\"\" loading=\"lazy\" width=\"8\" height=\"12\" decoding=\"async\" data-nimg=\"1\" class=\"styles_icon__LRwuW \" style=\"color:transparent\" src=\"/arrow-right12x6.svg\"/></a></div><div class=\"styles_container__B8PPH\"><div class=\"styles_title__xf",
+  "observedJobUrl": "https://jobs.ashbyhq.com/certifyos/4bcdec99-9f2e-416c-8e26-498c94c5898a",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

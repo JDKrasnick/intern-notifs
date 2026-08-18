@@ -1,0 +1,42 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "vital-lyfe",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/vital-lyfe",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 12,
+      "listedRows": 12,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 3,
+      "geographicCoverage": [
+        "Los Angeles - Greater Area"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 12
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "eac10f4f-e891-4ae9-86e1-8650afbb7899",
+          "title": "Mechanical Engineering Internship - Fall 2026",
+          "location": "Los Angeles - Greater Area"
+        },
+        {
+          "id": "7e280fc1-52fd-4798-8790-2d1f1c935994",
+          "title": "Electrical Engineering Internship - Fall 2026",
+          "location": "Los Angeles - Greater Area"
+        },
+        {
+          "id": "43a79d8f-a8bb-4c57-a411-1bac946128af",
+          "title": "Software Engineering Internship - Fall 2026",
+          "location": "Los Angeles - Greater Area"
+        }
+      ]
+    }
+  ]
+}

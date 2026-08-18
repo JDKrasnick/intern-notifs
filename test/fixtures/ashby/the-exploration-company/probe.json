@@ -1,0 +1,38 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "the-exploration-company",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/the-exploration-company",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 111,
+      "listedRows": 111,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Bordeaux, France",
+        "California",
+        "Dubai",
+        "Düsseldorf",
+        "Houston, Texas",
+        "Munich, Germany",
+        "Turin, Italy"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 111
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "88861ad4-8273-4e58-a4fe-ad3957cac3e2",
+          "title": "GNC Software Intern",
+          "location": "Munich, Germany"
+        }
+      ]
+    }
+  ]
+}

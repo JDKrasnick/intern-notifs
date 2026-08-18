@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "the-exploration-company",
+  "apiRegion": "global",
+  "careersUrl": "https://www.exploration.space/careers",
+  "firstPartyEvidenceUrl": "https://www.exploration.space/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/the-exploration-company",
+  "evidenceExcerpt": "\"https://a.plerdy.com/public/js/click/main.js?v=\"+Math.random();\n  d.head.appendChild(s);\n})(window,document);\n</script>\n<!-- END PLERDY CODE -->\n\n\n<script src=https://jobs.ashbyhq.com/the-exploration-company/embed></script></body></html>",
+  "observedJobUrl": "https://jobs.ashbyhq.com/the-exploration-company/88861ad4-8273-4e58-a4fe-ad3957cac3e2",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

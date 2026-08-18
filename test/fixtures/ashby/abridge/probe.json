@@ -1,0 +1,42 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "abridge",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/abridge",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 46,
+      "listedRows": 46,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "California",
+        "NYC Office",
+        "Remote - Tier 1",
+        "Remote - Tier 2",
+        "SF Office",
+        "United States - Remote"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 46
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "7d6ae2be-cd53-466c-8151-2dae2e87aace",
+          "title": "Software Engineer, Early Career",
+          "location": "SF Office"
+        },
+        {
+          "id": "3f07a457-dc14-4238-bf4e-5c33b5c1f883",
+          "title": "Software Engineer, Intern",
+          "location": "SF Office"
+        }
+      ]
+    }
+  ]
+}

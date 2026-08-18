@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "gritt",
+  "apiRegion": "global",
+  "careersUrl": "https://gritt.ai",
+  "firstPartyEvidenceUrl": "https://gritt.ai",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/gritt",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://gritt.ai identifies Gritt Robotics and links to https://jobs.ashbyhq.com/gritt (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/gritt/46af6e69-40fc-4e53-940e-a99757137523",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

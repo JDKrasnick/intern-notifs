@@ -1,0 +1,32 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "kos.ai",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/kos.ai",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 5,
+      "listedRows": 5,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "San Francisco"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 5
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "efab6ffb-9658-47f7-8b5f-a295c55957d3",
+          "title": "Software Engineer Intern",
+          "location": "San Francisco"
+        }
+      ]
+    }
+  ]
+}

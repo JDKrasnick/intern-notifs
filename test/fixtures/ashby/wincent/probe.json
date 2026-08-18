@@ -1,0 +1,39 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "wincent",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/wincent",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 16,
+      "listedRows": 16,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Bratislava",
+        "Czechia",
+        "European Union",
+        "Gibraltar",
+        "Hong Kong",
+        "Prague, Czechia",
+        "Slovakia, Czech Republic",
+        "Slovakia, Czechia, Poland, UK, Gibraltar"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 16
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "984bf12c-8d80-431f-9789-04a9739cfc99",
+          "title": "Quantitative Research Internship - Quant Research/Trading - Starting Summer 2027",
+          "location": "Bratislava"
+        }
+      ]
+    }
+  ]
+}

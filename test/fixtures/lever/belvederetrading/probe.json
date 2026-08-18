@@ -1,0 +1,36 @@
+{
+  "probedAt": "2026-08-18T01:26:30.803Z",
+  "attribution": "unattributed",
+  "results": [
+    {
+      "state": "ok",
+      "site": "belvederetrading",
+      "endpoint": "https://api.lever.co/v0/postings/belvederetrading?mode=json",
+      "region": "global",
+      "attribution": "unattributed",
+      "pagesRead": 1,
+      "rawPostings": 14,
+      "eligibleEarlyCareerRoles": 5,
+      "malformedRows": 0,
+      "urlContractViolations": 0,
+      "applicationHostSummary": {
+        "jobs.lever.co": 14
+      },
+      "etagPresent": true,
+      "eligibleRoleSamples": [
+        {
+          "postingId": "34369a5c-55c0-4e9f-9d2e-4f21b9418bee",
+          "title": "Quantitative Trader - Entry Level 2027"
+        },
+        {
+          "postingId": "cbde47db-c60b-4339-a8f4-a8e4f30505ab",
+          "title": "Quantitative Trading Intern - Summer 2027"
+        },
+        {
+          "postingId": "8f06f221-8777-4a4d-b035-40882db5f4a0",
+          "title": "Quantitative Trading Intern - Winter Quarter 2027"
+        }
+      ]
+    }
+  ]
+}

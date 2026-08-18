@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "Gumloop",
+  "apiRegion": "global",
+  "careersUrl": "https://www.gumloop.com/",
+  "firstPartyEvidenceUrl": "https://www.gumloop.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/Gumloop",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.gumloop.com/ identifies Gumloop and links to https://jobs.ashbyhq.com/Gumloop (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/Gumloop/dcdc0658-b3fd-44cd-b0cf-4016c9513d40/application",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

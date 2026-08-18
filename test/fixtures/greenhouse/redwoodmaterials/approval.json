@@ -1,0 +1,11 @@
+{
+  "sourceId": "greenhouse-redwoodmaterials",
+  "runAt": "2026-08-18T11:55:00.000Z",
+  "commitSha": "pending-owner-approved-expansion-commit",
+  "counts": {
+    "raw": 151,
+    "eligible": 2,
+    "withheld": 149
+  },
+  "hostSummary": "boards.greenhouse.io"
+}

@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "manex",
+  "apiRegion": "global",
+  "careersUrl": "https://www.manex.ai/en/careers",
+  "firstPartyEvidenceUrl": "https://www.manex.ai/en/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/manex",
+  "evidenceExcerpt": "ulture & fit\\n\\n 2. Leadership Session (30 min) – project, problem-solving and fit\\n\\n 3. Offer – typically within one week\",\"employmentType\":\"FullTime\",\"url\":\"https://jobs.ashbyhq.com/manex/2fa68731-6184-42cd-9870-86fb8eb9797e\",\"datePosted\":\"2026-06-22T16:52:24.337+00:00\",\"hiringOrganization\":{\"@type\":\"Organization\",\"name\":\"Manex AI\"},\"jobLocation\":{\"@type\":\"Place\",\"address\":{\"@type\":\"PostalAddress\",\"addressLocality\":\"Munich\",\"addressRegion\":\"Bavaria\",\"addressCountry\":\"Germany\"}}}</script><script type=\"a",
+  "observedJobUrl": "https://jobs.ashbyhq.com/manex/ba2e6b81-606f-4176-9919-2ee0157a8475",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

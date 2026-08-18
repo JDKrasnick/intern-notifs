@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "egra",
+  "apiRegion": "global",
+  "careersUrl": "https://www.egra.ai/",
+  "firstPartyEvidenceUrl": "https://www.egra.ai/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/egra",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.egra.ai/ identifies Egra and links to https://jobs.ashbyhq.com/egra (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/egra/6f295102-6330-4a9e-9fc4-9b414e620003",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

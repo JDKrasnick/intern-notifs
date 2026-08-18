@@ -1,5 +1,6 @@
 import type { SourceCheckpoint, SourceFetchResult } from '../types.js';
 import { reviewedGreenhouseSources, type ReviewedGreenhouseSource } from './greenhouse-config.js';
+import { reviewedLeverSources } from './lever-config.js';
 
 export type SourceClass = 'curated' | 'lever' | 'greenhouse' | 'ashby' | 'smartrecruiters';
 
@@ -171,12 +172,7 @@ export const sourceQualityPolicies: SourceQualityPolicy[] = [
   { id: 'speedyapply-2027-ai', sourceClass: 'curated' },
   { id: 'northwestern-fintech-2027-quant', sourceClass: 'curated' },
   { id: 'canadian-tech-2027', sourceClass: 'curated', dormant: true },
-  { id: 'lever-palantir', sourceClass: 'lever', leverSite: 'palantir' },
-  { id: 'lever-plusai', sourceClass: 'lever', leverSite: 'plus-2' },
-  { id: 'lever-hermeus', sourceClass: 'lever', leverSite: 'hermeus' },
-  { id: 'lever-xsolla', sourceClass: 'lever', leverSite: 'xsolla' },
-  { id: 'lever-acds', sourceClass: 'lever', leverSite: 'acds' },
-  { id: 'lever-shyftlabs', sourceClass: 'lever', leverSite: 'shyftlabs' }
+  ...reviewedLeverSources.map((source) => ({ id: source.id, sourceClass: 'lever' as const, leverSite: source.site })),
 ];
 
 export function qualityPolicyFor(sourceId: string): SourceQualityPolicy {

@@ -1,0 +1,11 @@
+{
+  "sourceId": "greenhouse-thenuclearcompany",
+  "runAt": "2026-08-18T11:55:00.000Z",
+  "commitSha": "pending-owner-approved-expansion-commit",
+  "counts": {
+    "raw": 79,
+    "eligible": 10,
+    "withheld": 69
+  },
+  "hostSummary": "job-boards.greenhouse.io"
+}

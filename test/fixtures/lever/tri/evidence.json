@@ -1,0 +1,15 @@
+{
+  "site": "tri",
+  "displayName": "Toyota Research Institute",
+  "careersUrl": "https://www.tri.global/careers",
+  "firstPartyEvidenceUrl": "https://www.tri.global/careers",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.tri.global/careers identifies Toyota Research Institute and links to https://jobs.lever.co/tri.",
+  "observedJobUrl": "https://jobs.lever.co/tri/186808f9-464c-4f22-9d7d-4372ef272ff0",
+  "initialHosts": [
+    "jobs.lever.co"
+  ],
+  "region": "global",
+  "state": "ownership-verified",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "notes": "Owner-approved mapping, independently checked against the exact live Lever tenant and hiringOrganization identity."
+}

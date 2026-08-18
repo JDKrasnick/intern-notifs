@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "kos.ai",
+  "apiRegion": "global",
+  "careersUrl": "https://www.kos.ai/careers",
+  "firstPartyEvidenceUrl": "https://www.kos.ai/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/kos.ai",
+  "evidenceExcerpt": "\"><div role=\"list\" class=\"careers-grid w-dyn-items\"><div role=\"listitem\" class=\"flex-item w-dyn-item\"><a data-w-id=\"ecb2c9f1-3a1b-dc81-aa93-8b9dd40b8b3d\" href=\"https://jobs.ashbyhq.com/kos.ai\" class=\"career-item w-inline-block\"><div><h3 class=\"display-4\">AI Research Scientist</h3><div class=\"mg-top-3x-extra-small\"><div class=\"career-item-details\"><div class=\"item-details\">New York, NY</div><div class=\"item-details-divider\">/</div><div class=\"item-details\">Full time</div></div></div></div><div class=\"button",
+  "observedJobUrl": "https://jobs.ashbyhq.com/kos.ai/efab6ffb-9658-47f7-8b5f-a295c55957d3",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "manex",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/manex",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 11,
+      "listedRows": 11,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "Munich"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 11
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "ba2e6b81-606f-4176-9919-2ee0157a8475",
+          "title": "AI Software Engineer - Internship (f/m/d)",
+          "location": "Munich"
+        },
+        {
+          "id": "7c7a9f91-8d59-4a75-a723-eadfe1e3f1bf",
+          "title": "AI Quality Engineer - Working Student (f/m/d)",
+          "location": "Munich"
+        }
+      ]
+    }
+  ]
+}

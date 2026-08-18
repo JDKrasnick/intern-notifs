@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "meshy",
+  "apiRegion": "global",
+  "careersUrl": "https://www.meshy.ai/careers",
+  "firstPartyEvidenceUrl": "https://www.meshy.ai/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/meshy",
+  "evidenceExcerpt": "-cols-2\"><a class=\"group flex items-center gap-6 px-8 py-6 transition-all duration-300 ease-out bg-bg-strong hover:bg-bg-sub rounded-3xl\" target=\"_blank\" href=\"https://jobs.ashbyhq.com/meshy/60206200-a633-493c-8bb5-4749593c4d58\"><div class=\"relative z-10 flex w-full flex-col gap-2\"><h4 class=\"text-label-title font-inter-tight font-bold sm:text-[18px] text-[18px] md:text-[18px]\">AI 3D Dataset Engineer </h4><div class=\"font-figtree transition duration-200 ease-out sm:text-sm text-label-soft text-sm\">Shangha",
+  "observedJobUrl": "https://jobs.ashbyhq.com/meshy/262d74c7-8aab-474e-9fc6-8c8c48ec6572",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 3,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

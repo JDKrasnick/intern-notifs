@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "42dot",
+  "apiRegion": "global",
+  "careersUrl": "https://42dot.ai/ko/careers/open-roles",
+  "firstPartyEvidenceUrl": "https://42dot.ai/ko/careers/open-roles",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/42dot",
+  "evidenceExcerpt": "egion\\\":\\\"Gyeonggi-do\\\",\\\"addressCountry\\\":\\\"South Korea\\\",\\\"datePosted\\\":\\\"2025-04-21T07:34:08.669+00:00\\\",\\\"isRemote\\\":false,\\\"company\\\":\\\"42dot\\\",\\\"link\\\":\\\"https://jobs.ashbyhq.com/42dot/aabd66da-8bb8-4c16-9d19-1ff1d4f83fe3\\\",\\\"linkApply\\\":\\\"https://jobs.ashbyhq.com/42dot/aabd66da-8bb8-4c16-9d19-1ff1d4f83fe3/application\\\",\\\"location\\\":\\\"Pangyo (Software Dream Center), South Korea\\\",\\\"tags\\\":[\\\"No Department\\\",\\\"FullTime\\\",\\\"42dot\\\"]},{\\\"id\\\":\\\"3228edad-8fb0-46e5-99b2-2b3c5b18f463\\\",\\\"title\\\":\\\"Privacy",
+  "observedJobUrl": "https://jobs.ashbyhq.com/42dot/c4af7536-c24f-4754-9fe9-d92d237403f3",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

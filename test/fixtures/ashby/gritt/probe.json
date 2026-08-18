@@ -1,0 +1,39 @@
+{
+  "probedAt": "2026-08-18T11:54:06.979Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "gritt",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/gritt",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 21,
+      "listedRows": 21,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "India",
+        "South San Francisco",
+        "US"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 21
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "26af4e71-339d-4aa3-9f22-91574c1166b9",
+          "title": "Robotics Perception Engineer Intern",
+          "location": "South San Francisco"
+        },
+        {
+          "id": "46af6e69-40fc-4e53-940e-a99757137523",
+          "title": "ML & Cloud Infrastructure Engineer Intern",
+          "location": "South San Francisco"
+        }
+      ]
+    }
+  ]
+}

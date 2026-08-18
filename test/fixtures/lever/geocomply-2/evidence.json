@@ -3,11 +3,13 @@
   "displayName": "GeoComply",
   "careersUrl": "https://www.geocomply.com/careers/",
   "firstPartyEvidenceUrl": "https://www.geocomply.com/careers/",
-  "evidenceExcerpt": "",
-  "observedJobUrl": "https://jobs.lever.co/geocomply-2/7b5cf819-341e-4980-be14-97b8a205ec1f",
-  "initialHosts": ["jobs.lever.co"],
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.geocomply.com/careers/ identifies GeoComply and links to https://jobs.lever.co/geocomply-2.",
+  "observedJobUrl": "https://jobs.lever.co/geocomply-2/4057ba13-28ca-440f-b4b4-ead0fdd93fd4",
+  "initialHosts": [
+    "jobs.lever.co"
+  ],
   "region": "global",
-  "state": "api-live-unattributed",
-  "verifiedAt": "2026-07-30T00:00:00Z",
-  "notes": "Site operates with 11 postings and 5 eligible early career roles. GeoComply official careers page confirmed at geocomply.com/careers, but Lever link not found in first-party markup despite comprehensive search; likely embedded via dynamic JavaScript."
+  "state": "ownership-verified",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "notes": "Owner-approved mapping, independently checked against the exact live Lever tenant and hiringOrganization identity."
 }

@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "limetax",
+  "apiRegion": "global",
+  "careersUrl": "https://www.limetax.de/en/company/about-us",
+  "firstPartyEvidenceUrl": "https://www.limetax.de/en/company/about-us",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/limetax",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.limetax.de/en/company/about-us identifies Limetax and links to https://jobs.ashbyhq.com/limetax (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/limetax/87f6edc7-c60f-4bd5-9991-75bca022d43e",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

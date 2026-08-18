@@ -1,0 +1,14 @@
+{
+  "site": "belvederetrading",
+  "displayName": "Belvedere Trading",
+  "careersUrl": "https://www.belvederetrading.com/",
+  "firstPartyEvidenceUrl": "https://www.belvederetrading.com/",
+  "evidenceExcerpt": "ader theme-col--primary\n    \"\n    data-section-theme=\"bright\"\n    data-controller=\"Header\"\n    data-current-styles=\"{\n\"layout\": \"navLeft\",\n\"action\": {\n\"href\": \"https://jobs.lever.co/belvederetrading\",\n\"buttonText\": \"Join Our Team\",\n\"newWindow\": true\n},\n\"showSocial\": true,\n\"socialOptions\": {\n\"socialBorderShape\": \"none\",\n\"socialBorderStyle\": \"outline\",\n\"socialBorderThickness\": {\n\"unit\": \"px\",\n\"value\": 1.0\n}\n},\n\"sectionTheme\": \"bright\",\n\"menuOverlayTheme\": \"white\",\n\"menuOverlayAnimation\": \"fade\",\n\"cartStyle\": \"cart\"",
+  "observedJobUrl": "https://jobs.lever.co/belvederetrading/cbde47db-c60b-4339-a8f4-a8e4f30505ab",
+  "initialHosts": [
+    "jobs.lever.co"
+  ],
+  "region": "global",
+  "state": "ownership-verified",
+  "verifiedAt": "2026-08-18T01:40:08.842Z"
+}

@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "phonely",
+  "apiRegion": "global",
+  "careersUrl": "https://www.phonely.ai/",
+  "firstPartyEvidenceUrl": "https://www.phonely.ai/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/phonely",
+  "evidenceExcerpt": "-variant-35c66dbf-72e1-aa62-d07d-b0bb5718e098\">About Us</a><a href=\"/blogs\" class=\"footer_link w-variant-35c66dbf-72e1-aa62-d07d-b0bb5718e098\">Blog</a><a href=\"https://jobs.ashbyhq.com/phonely\" target=\"_blank\" class=\"footer_link w-variant-35c66dbf-72e1-aa62-d07d-b0bb5718e098\">Careers</a></div></div><div class=\"footer_link-main\"><div class=\"text-size-small\">Company</div><div class=\"spacer-xsmall\"></div><div class=\"footer_link-wrap\"><a href=\"https://trust.delve.co/phonely\" target=\"_blank\" class=\"footer_link w",
+  "observedJobUrl": "https://jobs.ashbyhq.com/phonely/c83696cb-ca3a-4a9d-9e87-bfcf4f79fef5",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

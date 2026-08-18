@@ -16,7 +16,7 @@ const response = (jobs = acmeJobsResponse) => new Response(JSON.stringify(jobs),
 describe('Greenhouse queue dispatch', () => {
   it('creates one versioned work item per reviewed board', () => {
     expect(greenhouseWorkMessages([acmeSource], new Date(scheduledAt))).toEqual([message()]);
-    expect(greenhouseWorkMessages()).toHaveLength(166);
+    expect(greenhouseWorkMessages()).toHaveLength(reviewedGreenhouseSources.length);
     expect(greenhouseWorkMessages().map((item) => item.sourceId)).toEqual(
       reviewedGreenhouseSources.map((source) => source.id),
     );

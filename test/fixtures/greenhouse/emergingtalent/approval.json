@@ -1,0 +1,11 @@
+{
+  "sourceId": "greenhouse-emergingtalent",
+  "runAt": "2026-08-18T11:55:00.000Z",
+  "commitSha": "pending-owner-approved-expansion-commit",
+  "counts": {
+    "raw": 2,
+    "eligible": 1,
+    "withheld": 1
+  },
+  "hostSummary": "job-boards.greenhouse.io"
+}

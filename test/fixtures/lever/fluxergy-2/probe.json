@@ -1,0 +1,28 @@
+{
+  "probedAt": "2026-08-18T01:26:30.803Z",
+  "attribution": "unattributed",
+  "results": [
+    {
+      "state": "ok",
+      "site": "fluxergy-2",
+      "endpoint": "https://api.lever.co/v0/postings/fluxergy-2?mode=json",
+      "region": "global",
+      "attribution": "unattributed",
+      "pagesRead": 1,
+      "rawPostings": 11,
+      "eligibleEarlyCareerRoles": 1,
+      "malformedRows": 0,
+      "urlContractViolations": 0,
+      "applicationHostSummary": {
+        "jobs.lever.co": 11
+      },
+      "etagPresent": true,
+      "eligibleRoleSamples": [
+        {
+          "postingId": "c592763e-56ba-4d20-b751-3a4574470eec",
+          "title": "Firmware Engineer Intern"
+        }
+      ]
+    }
+  ]
+}

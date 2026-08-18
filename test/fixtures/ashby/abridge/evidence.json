@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "abridge",
+  "apiRegion": "global",
+  "careersUrl": "https://www.abridge.com/",
+  "firstPartyEvidenceUrl": "https://www.abridge.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/abridge",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.abridge.com/ identifies Abridge and links to https://jobs.ashbyhq.com/abridge (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/abridge/3f07a457-dc14-4238-bf4e-5c33b5c1f883/application",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "finmid.com",
+  "apiRegion": "global",
+  "careersUrl": "https://finmid.com/",
+  "firstPartyEvidenceUrl": "https://finmid.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/finmid.com",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://finmid.com/ identifies Finmid and links to https://jobs.ashbyhq.com/finmid.com (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/finmid.com/279b1d76-e50d-4fe7-991b-2dc904f3c141",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "site": "shopback-2",
+  "displayName": "ShopBack",
+  "careersUrl": "https://corporate.shopback.com/careers",
+  "firstPartyEvidenceUrl": "https://corporate.shopback.com/careers",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://corporate.shopback.com/careers identifies ShopBack and links to https://jobs.lever.co/shopback-2.",
+  "observedJobUrl": "https://jobs.lever.co/shopback-2/1804a30e-2d2e-4631-9e85-614c91806ddf",
+  "initialHosts": [
+    "jobs.lever.co"
+  ],
+  "region": "global",
+  "state": "ownership-verified",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "notes": "Owner-approved mapping, independently checked against the exact live Lever tenant and hiringOrganization identity."
+}

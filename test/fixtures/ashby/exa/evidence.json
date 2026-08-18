@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "exa",
+  "apiRegion": "global",
+  "careersUrl": "https://exa.ai/careers",
+  "firstPartyEvidenceUrl": "https://exa.ai/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/exa",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://exa.ai/careers identifies Exa and links to https://jobs.ashbyhq.com/exa (exact tenant).",
+  "observedJobUrl": "https://jobs.ashbyhq.com/exa/a9e01521-66f1-481b-89da-ec01d4620f16",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

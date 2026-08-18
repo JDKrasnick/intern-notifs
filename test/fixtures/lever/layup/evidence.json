@@ -1,0 +1,15 @@
+{
+  "site": "layup",
+  "displayName": "Layup Parts",
+  "careersUrl": "https://www.layupparts.com/careers",
+  "firstPartyEvidenceUrl": "https://www.layupparts.com/careers",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.layupparts.com/careers identifies Layup Parts and links to https://jobs.lever.co/layup.",
+  "observedJobUrl": "https://jobs.lever.co/layup/0b42f7ad-ebdc-4b4a-8fe6-47640f6dba53",
+  "initialHosts": [
+    "jobs.lever.co"
+  ],
+  "region": "global",
+  "state": "ownership-verified",
+  "verifiedAt": "2026-08-18T11:55:00.000Z",
+  "notes": "Owner-approved mapping, independently checked against the exact live Lever tenant and hiringOrganization identity."
+}
