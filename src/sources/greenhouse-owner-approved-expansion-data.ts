@@ -10,7 +10,7 @@ export const reviewedGreenhouseOwnerApprovedExpansionSources: ReviewedGreenhouse
       "AutoScout24"
     ],
     "boardToken": "autoscout24",
-    "careersUrl": "https://www.autoscout24.com/company/careers/",
+    "careersUrl": "https://www.autoscout24.com/as24-career-pages/",
     "expectedBoardNames": [
       "AutoScout24"
     ],
@@ -132,7 +132,7 @@ export const reviewedGreenhouseOwnerApprovedExpansionSources: ReviewedGreenhouse
       "DV Trading"
     ],
     "boardToken": "dvtrading",
-    "careersUrl": "https://dvtrading.co/careers/",
+    "careersUrl": "https://dvtrading.co/join-dv/",
     "expectedBoardNames": [
       "DV Trading"
     ],
@@ -157,7 +157,7 @@ export const reviewedGreenhouseOwnerApprovedExpansionSources: ReviewedGreenhouse
       "Maven - Emerging Talent"
     ],
     "boardToken": "emergingtalent",
-    "careersUrl": "https://www.mavensecurities.com/careers/",
+    "careersUrl": "https://www.mavensecurities.com/jobs/",
     "expectedBoardNames": [
       "Maven - Emerging Talent"
     ],
@@ -206,7 +206,7 @@ export const reviewedGreenhouseOwnerApprovedExpansionSources: ReviewedGreenhouse
       "Maven"
     ],
     "boardToken": "mavensecuritiesholdingltd",
-    "careersUrl": "https://www.mavensecurities.com/careers/",
+    "careersUrl": "https://www.mavensecurities.com/jobs/",
     "expectedBoardNames": [
       "Maven"
     ],
@@ -231,7 +231,7 @@ export const reviewedGreenhouseOwnerApprovedExpansionSources: ReviewedGreenhouse
       "Marshall Wace Internship Programmes"
     ],
     "boardToken": "mwinternshipprogram",
-    "careersUrl": "https://www.mwam.com/people-and-careers/",
+    "careersUrl": "https://www.mwam.com/join-us/internships/",
     "expectedBoardNames": [
       "Marshall Wace Internship Programmes"
     ],

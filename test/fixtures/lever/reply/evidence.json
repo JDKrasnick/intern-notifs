@@ -1,9 +1,9 @@
 {
   "site": "reply",
   "displayName": "Reply",
-  "careersUrl": "https://www.reply.com/en/jobs",
-  "firstPartyEvidenceUrl": "https://www.reply.com/en/jobs",
-  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.reply.com/en/jobs identifies Reply and links to https://jobs.lever.co/reply.",
+  "careersUrl": "https://www.reply.com/en/about/careers/",
+  "firstPartyEvidenceUrl": "https://www.reply.com/en/about/careers/",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.reply.com/en/about/careers/ identifies Reply and links to https://jobs.lever.co/reply.",
   "observedJobUrl": "https://jobs.lever.co/reply/0fb458db-7cb9-4bfd-b9b6-c1c681316061",
   "initialHosts": [
     "jobs.lever.co"

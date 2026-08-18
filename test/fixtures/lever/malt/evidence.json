@@ -1,9 +1,9 @@
 {
   "site": "malt",
   "displayName": "Malt",
-  "careersUrl": "https://www.malt.com/careers",
-  "firstPartyEvidenceUrl": "https://www.malt.com/careers",
-  "evidenceExcerpt": "Owner JDKrasnick verified that https://www.malt.com/careers identifies Malt and links to https://jobs.lever.co/malt.",
+  "careersUrl": "https://careers.malt.com/",
+  "firstPartyEvidenceUrl": "https://careers.malt.com/",
+  "evidenceExcerpt": "Owner JDKrasnick verified that https://careers.malt.com/ identifies Malt and links to https://jobs.lever.co/malt.",
   "observedJobUrl": "https://jobs.lever.co/malt/473946fd-c520-4892-a851-c486af9ed851",
   "initialHosts": [
     "jobs.lever.co"
