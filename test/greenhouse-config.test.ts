@@ -51,11 +51,12 @@ function jsonResponse(body: unknown, url: string, status = 200): Response {
 }
 
 describe('reviewed Greenhouse registry', () => {
-  it('publishes the full API-responsive board inventory', () => {
-    expect(reviewedGreenhouseSources).toHaveLength(166);
+  it('keeps the published inventory plus reviewed shadow additions', () => {
+    expect(reviewedGreenhouseSources).toHaveLength(170);
     expect(reviewedGreenhouseSources.slice(0, 3).map((source) => source.id)).toEqual(['greenhouse-figma', 'greenhouse-datadog', 'greenhouse-cloudflare']);
-    expect(reviewedGreenhouseSources.every((source) => source.status === 'published')).toBe(true);
-    expect(reviewedGreenhouseSources.filter((source) => source.evidenceStatus === 'reviewed')).toHaveLength(3);
+    expect(reviewedGreenhouseSources.filter((source) => source.status === 'published')).toHaveLength(166);
+    expect(reviewedGreenhouseSources.filter((source) => source.status === 'shadow')).toHaveLength(4);
+    expect(reviewedGreenhouseSources.filter((source) => source.evidenceStatus === 'reviewed')).toHaveLength(7);
     expect(reviewedGreenhouseSources.filter((source) => source.evidenceStatus === 'api-probed')).toHaveLength(163);
   });
 

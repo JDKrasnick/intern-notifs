@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "tacit",
+  "apiRegion": "global",
+  "careersUrl": "https://tacit.ai/",
+  "firstPartyEvidenceUrl": "https://tacit.ai/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/tacit",
+  "evidenceExcerpt": "g class=\"fullscreen\" src=\"assets/sunlight-on-face.jpg\" alt=\"Your Voice Unbound\">\n    <div class=\"tagline\" aria-hidden=\"true\"></div>\n    <a class=\"hiring\" href=\"https://jobs.ashbyhq.com/tacit\" target=\"_blank\" rel=\"noopener\">We're Hiring</a>\n\n    <div class=\"waitlist\">\n        <form id=\"wl-form\" novalidate>\n            <div class=\"wl-label\">Request an invitation</div>\n            <div class=\"wl-row\">\n                <input class=\"wl-input\" type=\"email\" id=\"wl-email\" name=\"email\"\n                       requi",
+  "observedJobUrl": "https://jobs.ashbyhq.com/tacit/d001e2d9-90af-4d0b-bc97-fd6fa149ad19/application",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

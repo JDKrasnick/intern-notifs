@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "blockhouse",
+  "apiRegion": "global",
+  "careersUrl": "https://www.blockhouse.app/careers",
+  "firstPartyEvidenceUrl": "https://www.blockhouse.app/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/blockhouse",
+  "evidenceExcerpt": "amer-1judqfy-container\"><!--$--><a class=\"framer-QZi9q framer-13hj9qr framer-v-13hj9qr framer-18e0qzu\" data-framer-name=\"Fit Width\" data-highlight=\"true\" href=\"https://jobs.ashbyhq.com/blockhouse/42a3066f-683c-4b32-b097-5047e89dd12c\" target=\"_blank\" rel=\"noopener\" tabindex=\"0\"><div class=\"framer-igsiop-container\"><div class=\"framer-uytny framer-WQd5e framer-9dio7l framer-v-1rqfyck\" data-framer-name=\"Black Small\" data-highlight=\"true\" tabindex=\"0\" style=\"background-color:var(--token-2271d07f-36c6-44e5-9636-e1cc",
+  "observedJobUrl": "https://jobs.ashbyhq.com/blockhouse/42a3066f-683c-4b32-b097-5047e89dd12c",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

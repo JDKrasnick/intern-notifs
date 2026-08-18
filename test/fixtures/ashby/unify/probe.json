@@ -1,0 +1,33 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "unify",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/unify",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 7,
+      "listedRows": 7,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "New York Office",
+        "San Francisco Office"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 7
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "6a5b351f-8893-435f-951f-2458b24b6d3c",
+          "title": "GTM Engineering Intern",
+          "location": "San Francisco Office"
+        }
+      ]
+    }
+  ]
+}

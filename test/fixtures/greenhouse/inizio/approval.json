@@ -1,0 +1,11 @@
+{
+  "sourceId": "greenhouse-inizio",
+  "runAt": "2026-08-18T01:40:08.842Z",
+  "commitSha": "pending-expansion-commit",
+  "counts": {
+    "raw": 28,
+    "eligible": 1,
+    "withheld": 27
+  },
+  "hostSummary": "job-boards.greenhouse.io"
+}

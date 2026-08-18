@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "replit",
+  "apiRegion": "global",
+  "careersUrl": "https://replit.com/careers",
+  "firstPartyEvidenceUrl": "https://replit.com/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/replit",
+  "evidenceExcerpt": "re accessible, immediate, and real.</p><div class=\"cta-block gap-2 800:gap-4 my-2 800:my-4 inline-flex flex-wrap 600:justify-center\"><div class=\"flex\"><a href=\"https://jobs.ashbyhq.com/replit\" class=\"py-2 px-4 rounded duration-500 font-400 ease-in-out transition-[background-color] button-c310e31350c6 text-sans-14 800:text-sans-20 py-2 px-4 800:py-3 800:px-6 bg-red text-white 800:hover:bg-dark-red button-primary\">View open roles</a></div></div></div></div></section><section class=\"CTAModule\"><div class=\"my-",
+  "observedJobUrl": "https://jobs.ashbyhq.com/replit/7e0dafe8-3eec-442e-aa76-a4d84d779fb1/application",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

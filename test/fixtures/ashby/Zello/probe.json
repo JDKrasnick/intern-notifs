@@ -1,0 +1,32 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "Zello",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/Zello",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 10,
+      "listedRows": 10,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Austin, Texas"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 10
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "3453d476-7b75-4938-8cff-502d1575859b",
+          "title": "Analytics Intern",
+          "location": "Austin, Texas"
+        }
+      ]
+    }
+  ]
+}

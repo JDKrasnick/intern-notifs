@@ -1,0 +1,11 @@
+{
+  "sourceId": "greenhouse-hyannisportresearch",
+  "runAt": "2026-08-18T01:40:08.842Z",
+  "commitSha": "pending-expansion-commit",
+  "counts": {
+    "raw": 10,
+    "eligible": 2,
+    "withheld": 8
+  },
+  "hostSummary": "job-boards.greenhouse.io"
+}

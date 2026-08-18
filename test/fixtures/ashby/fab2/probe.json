@@ -1,0 +1,44 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "fab2",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/fab2",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 37,
+      "listedRows": 37,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 3,
+      "geographicCoverage": [
+        "Austin",
+        "Lockhart",
+        "San Francisco Office"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 37
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "48923113-b51e-4c3a-ade9-47ac08313447",
+          "title": "Mechanical Engineering Intern - Fall",
+          "location": "Austin"
+        },
+        {
+          "id": "615feebf-d9e3-4583-9c85-ba16af44e65c",
+          "title": "Automation Software Engineering Intern - Fall",
+          "location": "Austin"
+        },
+        {
+          "id": "907766af-a3c0-49a3-b01e-246baa437d10",
+          "title": "Rust Software Engineering Intern (Chip Design Tools) - Fall 2026",
+          "location": "San Francisco Office"
+        }
+      ]
+    }
+  ]
+}

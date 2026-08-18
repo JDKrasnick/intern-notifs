@@ -1,5 +1,6 @@
 import type { ReviewedSourceRecord } from './reviewed-source.js';
 import { ashbyPromotionEvidence } from './ashby-promotion-evidence.js';
+import { reviewedAshbyExpansionSources } from './ashby-expansion-data.js';
 
 export type ReviewedAshbySource = ReviewedSourceRecord & {
   identity: ReviewedSourceRecord['identity'] & { provider: 'ashby'; apiRegion: 'global' };
@@ -187,16 +188,16 @@ const admittedAshbySources: ReviewedAshbySource[] = [
     careersUrl: 'https://www.nationgraph.com/about-us', admittedAt: '2026-08-09T23:02:24.286Z', evidenceState: 'ownership-verified',
     allowedApplicationHosts: [{ host: 'jobs.ashbyhq.com' }], status: 'shadow',
   },
+  ...reviewedAshbyExpansionSources as ReviewedAshbySource[],
 ];
 
 /**
- * Every admitted board has verified ownership and clean promotion evidence;
- * explicitly approved timing overrides remain visible until follow-up closes.
+ * Promotion evidence upgrades a reviewed source to published. Newly admitted
+ * sources remain shadow-only until their observation window is complete.
  */
 export const reviewedAshbySources: ReviewedAshbySource[] = admittedAshbySources.map((source) => {
   const promotionEvidence = ashbyPromotionEvidence[source.id];
-  if (!promotionEvidence) throw new Error(`Missing Ashby promotion evidence for ${source.id}`);
-  return { ...source, status: 'published', promotionEvidence };
+  return promotionEvidence ? { ...source, status: 'published', promotionEvidence } : source;
 });
 
 /** Ordered expansion replacements not yet reviewed or admitted. */

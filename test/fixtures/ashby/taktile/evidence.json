@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "taktile",
+  "apiRegion": "global",
+  "careersUrl": "https://www.taktile.com/careers",
+  "firstPartyEvidenceUrl": "https://www.taktile.com/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/taktile",
+  "evidenceExcerpt": " at scale.</p>      </div>\n    \n          <div class=\"flex relative flex-col gap-4 mt-12 lg:flex-row lg:items-center\">\n        <a class=\" btn btn-purple\" href=\"https://jobs.ashbyhq.com/taktile\" rel=\"noopener noreferrer\" target=\"_blank\">View open roles</a>      </div>\n      </div>\n\n  </div>        <div class=\"pb-16 md:pb-32 bg-white\">\n  <div class=\"container \">\n    <img alt=\"\" class=\"rounded-lg\" height=\"3405\" loading=\"lazy\" sizes=\"(min-width: 1200px) 1200px, 100vw\" src=\"/media/pages/careers/60ae9c1929-177806",
+  "observedJobUrl": "https://jobs.ashbyhq.com/taktile/bce11078-1da2-4826-a70e-7eccfd702dd1",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

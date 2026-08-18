@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "epianeuro",
+  "apiRegion": "global",
+  "careersUrl": "https://epianeuro.com/",
+  "firstPartyEvidenceUrl": "https://epianeuro.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/epianeuro",
+  "evidenceExcerpt": "wrap\"><div data-wf--clickable--variant=\"focus-ring-inside\" class=\"clickable_wrap u-cover-absolute\"><a target=\"_blank\" aria-label=\"Explore Open Positions\" href=\"https://jobs.ashbyhq.com/epianeuro\" class=\"clickable_link w-variant-b793638f-e9bb-2cea-c2d9-27bf5a1f754a w-inline-block\"></a></div><div class=\"button_main_element\"><div aria-hidden=\"true\" class=\"button_main_text u-text-style-main\">Explore Open Positions</div><div class=\"button_main_icon u-hide-if-empty\"><div data-wf--button-arrow--variant=\"primary-medi",
+  "observedJobUrl": "https://jobs.ashbyhq.com/epianeuro/62d296e8-16c4-4403-8af5-629e97f7f7fe/application",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

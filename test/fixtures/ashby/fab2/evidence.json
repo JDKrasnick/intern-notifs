@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "fab2",
+  "apiRegion": "global",
+  "careersUrl": "https://fab2.com/careers/",
+  "firstPartyEvidenceUrl": "https://fab2.com/careers/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/fab2",
+  "evidenceExcerpt": " are a fallback shown\n           only if that fetch fails. -->\n      <ul class=\"roles\" id=\"ashby-roles\" data-interactive>\n        <li><a class=\"role-row\" href=\"https://jobs.ashbyhq.com/fab2\" target=\"_blank\" rel=\"noopener\"><span class=\"role-main\"><span class=\"role-title\">Electrical Design Engineer</span><span class=\"role-star\" aria-hidden=\"true\">•</span><span class=\"role-team\" style=\"--team-c:var(--green)\">Engineering</span></span><span class=\"role-site\"><span class=\"role-location\">ATX</span></span><span ",
+  "observedJobUrl": "https://jobs.ashbyhq.com/fab2/867c67f7-20b5-4726-b9da-85a760d3851e",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 3,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

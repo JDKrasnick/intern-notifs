@@ -1,3 +1,5 @@
+import { reviewedLeverExpansionSources } from './lever-expansion-data.js';
+
 /**
  * Reviewed Lever employers.
  *
@@ -106,6 +108,7 @@ export const reviewedLeverSources: ReviewedLeverSource[] = [
     region: 'global',
     evidenceStatus: 'agent-verified',
   },
+  ...reviewedLeverExpansionSources,
 ];
 
 export function publishedLeverSources(sources = reviewedLeverSources): ReviewedLeverSource[] {

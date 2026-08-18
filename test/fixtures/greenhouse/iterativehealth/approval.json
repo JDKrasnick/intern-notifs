@@ -1,0 +1,11 @@
+{
+  "sourceId": "greenhouse-iterativehealth",
+  "runAt": "2026-08-18T01:40:08.842Z",
+  "commitSha": "pending-expansion-commit",
+  "counts": {
+    "raw": 56,
+    "eligible": 1,
+    "withheld": 55
+  },
+  "hostSummary": "job-boards.greenhouse.io"
+}

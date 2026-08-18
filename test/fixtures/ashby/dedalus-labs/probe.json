@@ -1,0 +1,42 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "dedalus-labs",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/dedalus-labs",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 7,
+      "listedRows": 7,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 3,
+      "geographicCoverage": [
+        "San Francisco"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 7
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "bcd6db2e-400b-4ffa-aef3-0948a7b558c2",
+          "title": "Design Engineer Intern",
+          "location": "San Francisco"
+        },
+        {
+          "id": "fab1accf-2b21-453b-869f-a08759fa605c",
+          "title": "Infrastructure Engineer Intern",
+          "location": "San Francisco"
+        },
+        {
+          "id": "ca4245ff-0dee-4f16-80ca-24912d72079c",
+          "title": "Product Manager Intern",
+          "location": "San Francisco"
+        }
+      ]
+    }
+  ]
+}

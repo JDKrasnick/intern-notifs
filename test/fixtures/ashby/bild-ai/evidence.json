@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "bild-ai",
+  "apiRegion": "global",
+  "careersUrl": "https://www.bild.ai/jobs",
+  "firstPartyEvidenceUrl": "https://www.bild.ai/jobs",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/bild-ai",
+  "evidenceExcerpt": "https://jobs.ashbyhq.com/bild-ai\n<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, shrink-to-fit=no\">\n    <meta name=\"theme-color\" content=\"#473BCE\">\n    <meta name=\"csp-nonce\" id=\"csp-nonce\" content=\"aDlV7ro-6PS64Dapj0VrsJ9tkoecj_hjeURaijc1zSw\">\n    <link rel=",
+  "observedJobUrl": "https://jobs.ashbyhq.com/bild-ai/b333f0f7-0ca6-4509-8697-9303396b5364/application",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

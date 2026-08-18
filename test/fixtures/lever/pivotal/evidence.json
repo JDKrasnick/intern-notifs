@@ -1,0 +1,14 @@
+{
+  "site": "pivotal",
+  "displayName": "Pivotal Software",
+  "careersUrl": "https://www.pivotal.aero/careers",
+  "firstPartyEvidenceUrl": "https://www.pivotal.aero/careers",
+  "evidenceExcerpt": "span class=\"absolute z-0 size-full rounded-3xl group-hover:-inset-x-10 group-hover:w-[calc(100%+5rem)] group-hover:bg-white\" aria-hidden=\"true\"></span><a href=\"https://jobs.lever.co/pivotal/a62654cf-3669-44ed-b3ac-25b87dafb584\" target=\"_blank\" class=\"relative z-10 flex w-full flex-wrap gap-6 py-4 lg:grid lg:grid-cols-12 lg:pb-12 lg:pt-6\"><p class=\"body-medium md:body-large lg:col-span-2 lg:flex lg:h-12 lg:items-center\">Palo Alto, CA</p><p class=\"body-medium lg:hidden\">Aeromechanical Engineering</p><p cla",
+  "observedJobUrl": "https://jobs.lever.co/pivotal/b05be1f0-20ff-4264-8839-4f18f97cbfb7",
+  "initialHosts": [
+    "jobs.lever.co"
+  ],
+  "region": "global",
+  "state": "ownership-verified",
+  "verifiedAt": "2026-08-18T01:40:08.842Z"
+}

@@ -1,0 +1,28 @@
+{
+  "probedAt": "2026-08-18T01:26:30.803Z",
+  "attribution": "unattributed",
+  "results": [
+    {
+      "state": "ok",
+      "site": "deuna",
+      "endpoint": "https://api.lever.co/v0/postings/deuna?mode=json",
+      "region": "global",
+      "attribution": "unattributed",
+      "pagesRead": 1,
+      "rawPostings": 14,
+      "eligibleEarlyCareerRoles": 1,
+      "malformedRows": 0,
+      "urlContractViolations": 0,
+      "applicationHostSummary": {
+        "jobs.lever.co": 14
+      },
+      "etagPresent": true,
+      "eligibleRoleSamples": [
+        {
+          "postingId": "060457fb-42c4-4150-a8fa-e2c312a88e6a",
+          "title": "Data Science intern"
+        }
+      ]
+    }
+  ]
+}

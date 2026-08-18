@@ -1,0 +1,36 @@
+{
+  "probedAt": "2026-08-18T01:26:30.803Z",
+  "attribution": "unattributed",
+  "results": [
+    {
+      "state": "ok",
+      "site": "mactores",
+      "endpoint": "https://api.lever.co/v0/postings/mactores?mode=json",
+      "region": "global",
+      "attribution": "unattributed",
+      "pagesRead": 1,
+      "rawPostings": 31,
+      "eligibleEarlyCareerRoles": 4,
+      "malformedRows": 0,
+      "urlContractViolations": 0,
+      "applicationHostSummary": {
+        "jobs.lever.co": 31
+      },
+      "etagPresent": true,
+      "eligibleRoleSamples": [
+        {
+          "postingId": "1cdd600a-1289-4c4d-b245-9a23df9bd17c",
+          "title": "DevOps Engineer (Intern)"
+        },
+        {
+          "postingId": "598c935b-f408-4491-93b6-94c95396bd5c",
+          "title": "Full Stack Product Engineer Intern, Agent Native"
+        },
+        {
+          "postingId": "df4d227b-652f-47c9-8c6b-a6262d47ba57",
+          "title": "Product Engineer Intern, Agent Systems"
+        }
+      ]
+    }
+  ]
+}

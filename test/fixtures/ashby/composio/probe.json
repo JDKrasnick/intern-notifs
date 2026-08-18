@@ -1,0 +1,44 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "composio",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/composio",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 32,
+      "listedRows": 32,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 3,
+      "geographicCoverage": [
+        "Bangalore",
+        "Remote (US: PST or EST)",
+        "sf"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 32
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "eea3c0be-8589-4e3d-a684-de29a9eada0d",
+          "title": "Fullstack Engineering Internship, Product Team (Fall 2026 & Winter 2027)",
+          "location": "sf"
+        },
+        {
+          "id": "6b742321-a1e6-46d7-88d1-103bae44df23",
+          "title": "Forward Deployed Engineering Internship (Fall 2026 & Winter 2027)",
+          "location": "sf"
+        },
+        {
+          "id": "01e0e7ad-44a2-44e8-9340-64ca70eff491",
+          "title": "Fullstack Engineer, Product Team (New Grad)",
+          "location": "sf"
+        }
+      ]
+    }
+  ]
+}

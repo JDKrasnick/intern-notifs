@@ -1,0 +1,32 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "odin-dynamics",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/odin-dynamics",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 12,
+      "listedRows": 12,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Los Angeles"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 12
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "db6fe6ed-3517-423d-a757-3b6edea4b51d",
+          "title": "Fall Engineering Intern",
+          "location": "Los Angeles"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "dexmate",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/dexmate",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 36,
+      "listedRows": 36,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "Fremont Office",
+        "Singapore Office"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 36
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "9361af41-d1e4-4b27-be37-683685bf48dc",
+          "title": "Research Intern, PhD (AI, Robotics)",
+          "location": "Fremont Office"
+        },
+        {
+          "id": "eac26b6f-1a53-441f-8e52-ee0a0b1bc119",
+          "title": "Frontend Engineer Intern",
+          "location": "Fremont Office"
+        }
+      ]
+    }
+  ]
+}

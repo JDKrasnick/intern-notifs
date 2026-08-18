@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "prior-labs",
+  "apiRegion": "global",
+  "careersUrl": "https://priorlabs.ai/careers",
+  "firstPartyEvidenceUrl": "https://priorlabs.ai/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/prior-labs",
+  "evidenceExcerpt": "t\"><div id=\"ashby_embed\" class=\"ashby_embed\"><div class=\"code-embed w-embed w-script\"><div id=\"ashby_embed\"></div>\n\n<script>\n  window.__ashbyBaseJobBoardUrl = \"https://jobs.ashbyhq.com/prior-labs\";\n</script>\n\n<script id=\"ashby-script\" src=\"https://jobs.ashbyhq.com/ashby-embed-demo-org/embed?version=2\"></script></div></div></div></div></div></div></section><section class=\"section-cta-pfn\"><div class=\"padding-global\"><div class=\"container-large\"><div id=\"grain-cta\" class=\"cta-pfn_component\"><div data-poster-url=",
+  "observedJobUrl": "https://jobs.ashbyhq.com/prior-labs/09410424-8e94-4747-8155-bbcd0b1d4f6e",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

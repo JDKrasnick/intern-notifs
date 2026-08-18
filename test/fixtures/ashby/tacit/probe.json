@@ -1,0 +1,37 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "tacit",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/tacit",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 17,
+      "listedRows": 17,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "San Francisco"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 17
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "9d8cf04c-4033-40ff-9af4-91dd8e4f02c6",
+          "title": "Antenna Engineering Intern (Fall 2026)",
+          "location": "San Francisco"
+        },
+        {
+          "id": "d001e2d9-90af-4d0b-bc97-fd6fa149ad19",
+          "title": "RF Hardware Intern (Fall 2026)",
+          "location": "San Francisco"
+        }
+      ]
+    }
+  ]
+}

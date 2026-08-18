@@ -1,0 +1,32 @@
+{
+  "probedAt": "2026-08-18T01:26:30.803Z",
+  "attribution": "unattributed",
+  "results": [
+    {
+      "state": "ok",
+      "site": "pivotal",
+      "endpoint": "https://api.lever.co/v0/postings/pivotal?mode=json",
+      "region": "global",
+      "attribution": "unattributed",
+      "pagesRead": 1,
+      "rawPostings": 25,
+      "eligibleEarlyCareerRoles": 2,
+      "malformedRows": 0,
+      "urlContractViolations": 0,
+      "applicationHostSummary": {
+        "jobs.lever.co": 25
+      },
+      "etagPresent": true,
+      "eligibleRoleSamples": [
+        {
+          "postingId": "b05be1f0-20ff-4264-8839-4f18f97cbfb7",
+          "title": "Internship, GNC Engineering (Fall)"
+        },
+        {
+          "postingId": "370cafec-79df-4875-b6ea-317b5b0ed97a",
+          "title": "Internship, Maintenance, Repair & Overhaul Engineering (Fall 2026)"
+        }
+      ]
+    }
+  ]
+}

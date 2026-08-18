@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "droyd",
+  "apiRegion": "global",
+  "careersUrl": "https://droydrobotics.com/",
+  "firstPartyEvidenceUrl": "https://droydrobotics.com/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/droyd",
+  "evidenceExcerpt": " <script>\n    window.__Ashby = {\n      settings: {\n        customCssUrl: 'https://droydrobotics.com/assets/ashby.css'\n      }\n    };\n  </script>\n  <script src=\"https://jobs.ashbyhq.com/droyd/embed?version=2\"></script>\n\n  <!-- Unify GTM Website Tag for visitor identification -->\n  <script>!function(){var e=[\"identify\",\"page\",\"startAutoPage\",\"stopAutoPage\",\"startAutoIdentify\",\"stopAutoIdentify\"];function t(o){return Object.assign([],e.reduce(function(r,n){return r[n]=function(){return o.push([n,[].slice.cal",
+  "observedJobUrl": "https://jobs.ashbyhq.com/droyd/8d46ed05-1b38-4c68-938e-f10b4c7d4694/application",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

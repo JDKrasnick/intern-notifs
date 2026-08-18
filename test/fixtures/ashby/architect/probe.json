@@ -1,0 +1,33 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "architect",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/architect",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 13,
+      "listedRows": 13,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Bangalore, India",
+        "Palo Alto"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 13
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "1999377b-b23b-461f-b79a-d4edce0d46b1",
+          "title": "Member of Technical Staff - Research Intern ",
+          "location": "Palo Alto"
+        }
+      ]
+    }
+  ]
+}

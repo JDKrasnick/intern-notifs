@@ -1,0 +1,45 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "meshy",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/meshy",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 23,
+      "listedRows": 23,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 3,
+      "geographicCoverage": [
+        "Bay Area Office",
+        "Beijing",
+        "Shanghai",
+        "Shenzhen"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 23
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "00b6328d-8c32-4b91-aafa-51434e965f37",
+          "title": "Generative AI Researcher Intern",
+          "location": "Shanghai"
+        },
+        {
+          "id": "262d74c7-8aab-474e-9fc6-8c8c48ec6572",
+          "title": "Fullstack Engineer Intern",
+          "location": "Bay Area Office"
+        },
+        {
+          "id": "c2f596a3-378c-4a57-b2cd-0bccd88866d7",
+          "title": "Infrastructure Intern",
+          "location": "Bay Area Office"
+        }
+      ]
+    }
+  ]
+}

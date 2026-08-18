@@ -1,0 +1,28 @@
+{
+  "probedAt": "2026-08-18T01:26:30.803Z",
+  "attribution": "unattributed",
+  "results": [
+    {
+      "state": "ok",
+      "site": "shieldai",
+      "endpoint": "https://api.lever.co/v0/postings/shieldai?mode=json",
+      "region": "global",
+      "attribution": "unattributed",
+      "pagesRead": 5,
+      "rawPostings": 434,
+      "eligibleEarlyCareerRoles": 1,
+      "malformedRows": 0,
+      "urlContractViolations": 0,
+      "applicationHostSummary": {
+        "jobs.lever.co": 434
+      },
+      "etagPresent": true,
+      "eligibleRoleSamples": [
+        {
+          "postingId": "87d982f2-8b2b-4c73-9a19-71e461c7b724",
+          "title": "Electrical Engineering Spring Co-op (January 2027) (R4475)"
+        }
+      ]
+    }
+  ]
+}

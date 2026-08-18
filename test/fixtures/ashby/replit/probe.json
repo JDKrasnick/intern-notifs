@@ -1,0 +1,39 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "replit",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/replit",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 78,
+      "listedRows": 78,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Brazil",
+        "Foster City, CA",
+        "India",
+        "NYC (SoHo)",
+        "Remote - Europe",
+        "Remote - Japan",
+        "Remote - United Kingdom",
+        "Salt Lake City, UT"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 78
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "7e0dafe8-3eec-442e-aa76-a4d84d779fb1",
+          "title": "Software Engineering Intern (Summer 2027)",
+          "location": "Foster City, CA"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "architect",
+  "apiRegion": "global",
+  "careersUrl": "https://architectlabs.com/careers",
+  "firstPartyEvidenceUrl": "https://architectlabs.com/careers",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/architect",
+  "evidenceExcerpt": "ound/30 px-7 py-3.5 text-[15px] leading-none tracking-[-0.01em] text-foreground/70 transition hover:border-[#275EF3] hover:bg-[#275EF3] hover:text-white\" href=\"https://jobs.ashbyhq.com/architect\">See open positions<span aria-hidden=\"true\">→</span></a></div></section><hr class=\"my-12 max-w-[820px] border-t border-foreground/15 sm:my-14\"/><section aria-labelledby=\"why-heading\" class=\"max-w-[820px]\"><h2 id=\"why-heading\" class=\"text-foreground\">Our Values</h2><p class=\"mt-8 text-justify text-foreground/80\">We are",
+  "observedJobUrl": "https://jobs.ashbyhq.com/architect/1999377b-b23b-461f-b79a-d4edce0d46b1/application",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 1,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

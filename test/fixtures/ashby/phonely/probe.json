@@ -1,0 +1,33 @@
+{
+  "probedAt": "2026-08-18T01:26:23.278Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "phonely",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/phonely",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 18,
+      "listedRows": 18,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 1,
+      "geographicCoverage": [
+        "Australia",
+        "San Francisco, California"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 18
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "c83696cb-ca3a-4a9d-9e87-bfcf4f79fef5",
+          "title": "Software Engineer Intern",
+          "location": "San Francisco, California"
+        }
+      ]
+    }
+  ]
+}

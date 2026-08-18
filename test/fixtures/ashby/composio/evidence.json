@@ -1,0 +1,18 @@
+{
+  "provider": "ashby",
+  "boardKey": "composio",
+  "apiRegion": "global",
+  "careersUrl": "https://composio.dev/",
+  "firstPartyEvidenceUrl": "https://composio.dev/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/composio",
+  "evidenceExcerpt": "x flex-col gap-4\"><div class=\"flex flex-col gap-2.5\"><a class=\"flex items-center gap-2 font-mono text-sm text-white tracking-default hover:text-white/80\" href=\"https://jobs.ashbyhq.com/composio\">CAREERS</a><a class=\"flex items-center gap-2 font-mono text-sm text-white tracking-default hover:text-white/80\" data-utm-placement=\"footer-trust\" href=\"https://trust.composio.dev/?cta_placement=footer-trust\">TRUST</a><a class=\"flex items-center gap-2 font-mono text-sm text-white tracking-default hover:text-white/80\" ",
+  "observedJobUrl": "https://jobs.ashbyhq.com/composio/eea3c0be-8589-4e3d-a684-de29a9eada0d/application",
+  "verifiedAt": "2026-08-18T01:40:08.842Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 3,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ]
+}

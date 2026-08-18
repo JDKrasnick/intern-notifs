@@ -46,7 +46,7 @@
 - [x] Add a provider-neutral company-coverage snapshot, public search API, and responsive web disclosure seeded from live internship evidence and reviewed ATS registries.
 - [x] Implement the Greenhouse source adapter, admission gates, deterministic fixtures, and live contract tests.
 - [x] Add the SQS-backed Greenhouse shadow/published runner with thirty-minute published polling, three-hour shadow polling, bounded per-board concurrency, isolated retries, alarms, and a quiet promotion baseline.
-- [x] Publish the 166-board API-responsive Greenhouse inventory with current board identities, observed host allowlists, per-source quiet baselines, and ownership-review status.
+- [x] Publish the 166-board API-responsive Greenhouse inventory and admit four additional ownership-verified boards to production shadow monitoring, with current board identities, observed host allowlists, and per-source quiet baselines.
 - [x] Add a private operations dashboard for all official Greenhouse sources with per-run volume, withheld rows, redacted diagnostics, queue/DLQ and alarm status, plus deterministic quarantine and recovery.
 - [ ] Add the Greenhouse batch re-probe and post-publication ownership-review workflow described in [`greenhouse/registry-expansion-plan.md`](greenhouse/registry-expansion-plan.md).
 - [x] Implement Lever source adapter, ETag checkpoints, technical-role mapping, and deterministic fixtures for Palantir, PlusAI, Hermeus, and Xsolla.
@@ -57,6 +57,7 @@
 - [x] Implement the Ashby public posting adapter with listed-only complete snapshots, strict identity/schema/link gates, provider-neutral processing, deterministic fixtures, and a nightly live contract for every reviewed board.
 - [x] Close the original Ashby emergency-promotion follow-up: all 35 original boards have refreshed first-party ownership evidence, normal 24-hour promotion evidence without overrides, and healthy production validation. The seven previously quarantined boards completed forced recovery on 2026-08-14 and resumed with empty work and dead-letter queues.
 - [x] Admit and immediately publish Sentry as the 36th reviewed Ashby board on 2026-08-18 with explicit owner approval; its known internship was public but unlisted in the board API, so the direct monitor covers future listed roles while community sources retain the current occurrence.
+- [x] Scan the live community catalog and deploy 44 newly ownership-verified sources to production shadow monitoring on 2026-08-18: 32 Ashby, eight Lever, and four Greenhouse boards. Keep the remaining 65 clean candidates in manual first-party verification rather than admitting an unproven tenant.
 - [ ] Complete Sentry's normal promotion observation follow-up after 2026-08-19T01:18:19Z and remove the temporary observation-window override.
 - [x] Add Ashby application-assistance route detection and headed-browser workflows after runtime promotion; this remains separate from source ingestion. Published reviewed boards are eligible automatically.
 - [x] Add human-readable source tags to default internship notifications for community job boards and published Greenhouse, Lever, and Ashby sources.

@@ -1,0 +1,11 @@
+{
+  "sourceId": "greenhouse-instalilyai",
+  "runAt": "2026-08-18T01:40:08.842Z",
+  "commitSha": "pending-expansion-commit",
+  "counts": {
+    "raw": 18,
+    "eligible": 1,
+    "withheld": 17
+  },
+  "hostSummary": "job-boards.greenhouse.io"
+}
