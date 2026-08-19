@@ -60,6 +60,7 @@ describe('mobile job trust and freshness', () => {
     expect(sourcePresentation([{ sourceId: 'lever-acme' }, { sourceId: 'community-list', sourceUrl: 'https://raw.githubusercontent.com/example/jobs/main/README.md' }])).toEqual({ primary: 'Official employer source · Lever', corroboration: 'Also corroborated by a community listing' });
     expect(sourcePresentation([{ sourceId: 'community-list', sourceUrl: 'https://github.com/example/jobs' }])).toEqual({ primary: 'Community listing', corroboration: undefined });
     expect(sourcePresentation([{ sourceId: 'ashby-acme' }, { sourceId: 'greenhouse-acme' }]).primary).toBe('Official employer source · Ashby + Greenhouse');
+    expect(sourcePresentation([])).toEqual({ primary: 'Source unavailable', corroboration: undefined });
   });
 
   it('uses relative confirmation times for recent checks and dates for older checks', () => {
