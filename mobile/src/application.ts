@@ -4,6 +4,7 @@ export type ApplicationJobSummary = {
   title: string;
   applyUrl: string;
   open: boolean;
+  sourceReferences?: Array<{ sourceId: string; sourceUrl: string }>;
 };
 
 export function resolveApplicationJob<T extends ApplicationJobSummary>(
