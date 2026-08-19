@@ -3048,7 +3048,7 @@ function Profile({
       .replace(/\{compensationDetail\}/g, " · $52/hr")
       .replace(/\{focus\}/g, "Focus: Backend/API")
       .replace(/\{posted\}/g, "Today")
-      .replace(/\{postedDetail\}/g, " · Posted: Today")
+      .replace(/\{postedDetail\}/g, " · Employer posted: Today")
       .replace(/\{source\}/g, "Job board")
       .replace(/\{url\}/g, "internnotifs.app/roles/northstar");
   const previewDescription = (template: string, fallback: string) => {

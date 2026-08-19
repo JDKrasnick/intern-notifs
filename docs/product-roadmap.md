@@ -61,7 +61,7 @@
 - [ ] Complete Sentry's normal promotion observation follow-up after 2026-08-19T01:18:19Z and remove the temporary observation-window override.
 - [x] Add Ashby application-assistance route detection and headed-browser workflows after runtime promotion; this remains separate from source ingestion. Published reviewed boards are eligible automatically.
 - [x] Add human-readable source tags to default internship notifications for community job boards and published Greenhouse, Lever, and Ashby sources.
-- [x] Add job freshness, trustworthy employer-posted versus InternNotifs-found timing across mobile, web, and alerts, official/community provenance labels, filter-match explanations, hybrid New/New here status, and duplicate-safe notification deep links to role details, including closed and unavailable states.
+- [x] Add job freshness, verified employer-posted versus unverified source-reported versus InternNotifs-found timing across mobile, web, and alerts, official/community provenance labels, filter-match explanations, hybrid New/New here status, and duplicate-safe notification deep links to role details, including closed and unavailable states.
 - [ ] Add user-facing settings, account deletion, and data export surface.
 - [x] Add source-quality reports, drift gates, nightly live probing, source-candidate review artifacts, and Firecrawl discovery-only workflow.
 - [x] Define the shared headed/headless application-session state machine and trust boundaries.

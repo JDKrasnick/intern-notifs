@@ -24,6 +24,17 @@ describe('canonical posting time', () => {
       reference('community-list', '2026-08-19T15:00:00Z'),
       reference('ashby-acme', '2025-09-22T20:57:32Z'),
     ])).toBe('2025-09-22T20:57:32Z');
+    expect(canonicalPostingTiming({
+      firstSeenAt: '2026-08-19T15:18:03Z',
+      sourceReferences: [reference('community-list', '2026-08-19T15:00:00Z'), reference('ashby-acme', '2025-09-22T20:57:32Z')],
+    })).toEqual({ kind: 'employer-posted', timestamp: '2025-09-22T20:57:32Z' });
+  });
+
+  it('keeps an absolute community date explicitly unverified', () => {
+    expect(canonicalPostingTiming({
+      firstSeenAt: '2026-08-19T15:18:03Z',
+      sourceReferences: [reference('community-list', '2026-08-19T15:00:00Z')],
+    })).toEqual({ kind: 'source-reported', timestamp: '2026-08-19T15:00:00Z' });
   });
 
   it('falls back to when InternNotifs found the role for relative or updated values', () => {

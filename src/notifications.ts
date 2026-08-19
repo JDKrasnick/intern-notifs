@@ -203,7 +203,13 @@ export function renderPushTemplate(template: string, job: Internship, roleAbbrev
   const compensation = displayValue(job.compensation.raw) || (job.compensation.maxHourlyUSD ? `$${job.compensation.maxHourlyUSD.toFixed(0)}/hr` : '');
   const timing = canonicalPostingTiming(job);
   const posted = timing.timestamp ? formatPostingDate(timing.timestamp) : '';
-  const timingLabel = timing.kind === 'posted' ? 'Posted' : timing.kind === 'found' ? 'Found' : '';
+  const timingLabel = timing.kind === 'employer-posted'
+    ? 'Employer posted'
+    : timing.kind === 'source-reported'
+      ? 'Source reported'
+      : timing.kind === 'found'
+        ? 'Found by InternNotifs'
+        : '';
   const focus = inferJobFocuses(job).join(' · ');
   const values: Record<string, string> = {
     title: displayValue(job.title), shortTitle: compactRoleTitle(job.title, roleAbbreviations), company: displayValue(job.company), location: displayValue(job.location), season: displayValue(job.season), compensation, compensationDetail: compensation ? ` · ${compensation}` : '', focus: focus ? `Focus: ${focus}` : '', posted, postedDetail: posted ? `${focus ? ' · ' : ''}${timingLabel}: ${posted}` : '', source: notificationSourceLabel(job), url: safeClick(job.applyUrl) ?? ''

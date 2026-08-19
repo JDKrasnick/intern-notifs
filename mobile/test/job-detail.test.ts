@@ -79,8 +79,9 @@ describe('mobile job trust and freshness', () => {
       '2026-08-19T15:18:03.421Z',
       new Date('2026-08-19T17:18:03.421Z'),
     );
-    expect(timing.summary).toMatch(/^Posted Sep 22, 2025$/);
-    expect(timing.detail).toMatch(/^Posted Sep 22, 2025 · Found by InternNotifs Aug 19, 2026$/);
+    expect(timing).toMatchObject({ kind: 'employer-posted', verified: true });
+    expect(timing.summary).toMatch(/^Employer posted Sep 22, 2025$/);
+    expect(timing.detail).toMatch(/^Employer posted Sep 22, 2025 · Verified employer date · Found by InternNotifs Aug 19, 2026$/);
     expect(postingRecencyBadge(true, timing, new Date('2026-08-19T17:18:03.421Z'))).toBeUndefined();
   });
 
@@ -94,8 +95,24 @@ describe('mobile job trust and freshness', () => {
       '2026-08-19T15:18:03.421Z',
       new Date('2026-08-19T17:18:03.421Z'),
     );
-    expect(timing.summary).toBe('Found 2h ago');
+    expect(timing).toMatchObject({ kind: 'found', verified: false });
+    expect(timing.summary).toBe('Found by InternNotifs 2h ago');
     expect(timing.detail).toMatch(/^Original posting date unavailable · Found by InternNotifs Aug 19, 2026$/);
+    expect(postingRecencyBadge(true, timing, new Date('2026-08-19T17:18:03.421Z'))).toBe('New here');
+  });
+
+  it('marks an absolute community date as reported but not employer-verified', () => {
+    const timing = postingTimingPresentation(
+      [{
+        sourceId: 'community-list',
+        providerTimestamp: { value: '2026-08-19T16:00:00.000Z', semantics: 'published' },
+      }],
+      '2026-08-19T16:05:00.000Z',
+      new Date('2026-08-19T17:18:03.421Z'),
+    );
+    expect(timing).toMatchObject({ kind: 'source-reported', verified: false });
+    expect(timing.summary).toBe('Source reported 1h ago');
+    expect(timing.detail).toMatch(/^Source reported Aug 19, 2026 · Not employer-verified/);
     expect(postingRecencyBadge(true, timing, new Date('2026-08-19T17:18:03.421Z'))).toBe('New here');
   });
 
@@ -121,7 +138,7 @@ describe('mobile job trust and freshness', () => {
       '2026-08-19T15:18:03.421Z',
       new Date('2026-08-19T17:18:03.421Z'),
     );
-    expect(timing.summary).toBe('Found 2h ago');
+    expect(timing.summary).toBe('Found by InternNotifs 2h ago');
   });
 
   it('uses the previous visit for signed-in users and 72 hours for guests', () => {

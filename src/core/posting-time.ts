@@ -3,7 +3,7 @@ import type { Internship, SourceOccurrence } from '../types.js';
 type TimingReference = Pick<SourceOccurrence, 'sourceId' | 'postedAt' | 'providerTimestamp'>;
 
 export type CanonicalPostingTiming = {
-  kind: 'posted' | 'found' | 'unknown';
+  kind: 'employer-posted' | 'source-reported' | 'found' | 'unknown';
   timestamp?: string;
 };
 
@@ -18,7 +18,7 @@ function officialProvider(sourceId: string) {
   return /^(?:ashby|greenhouse|lever)-/i.test(sourceId);
 }
 
-export function publishedTimestamp(references: TimingReference[]) {
+function publicationTiming(references: TimingReference[]): CanonicalPostingTiming | undefined {
   const candidates = references.flatMap((reference) => {
     const value = reference.providerTimestamp?.semantics === 'published'
       ? reference.providerTimestamp.value
@@ -29,15 +29,22 @@ export function publishedTimestamp(references: TimingReference[]) {
     return timestamp ? [{ timestamp, official: officialProvider(reference.sourceId) }] : [];
   });
   const official = candidates.filter((candidate) => candidate.official);
-  return (official.length ? official : candidates)
-    .sort((left, right) => left.timestamp.localeCompare(right.timestamp))[0]?.timestamp;
+  const selected = (official.length ? official : candidates)
+    .sort((left, right) => left.timestamp.localeCompare(right.timestamp))[0];
+  return selected
+    ? { kind: selected.official ? 'employer-posted' : 'source-reported', timestamp: selected.timestamp }
+    : undefined;
+}
+
+export function publishedTimestamp(references: TimingReference[]) {
+  return publicationTiming(references)?.timestamp;
 }
 
 export function canonicalPostingTiming(
   job: Pick<Internship, 'sourceReferences' | 'firstSeenAt'>,
 ): CanonicalPostingTiming {
-  const posted = publishedTimestamp(job.sourceReferences);
-  if (posted) return { kind: 'posted', timestamp: posted };
+  const publication = publicationTiming(job.sourceReferences);
+  if (publication) return publication;
   const found = absoluteTimestamp(job.firstSeenAt);
   return found ? { kind: 'found', timestamp: found } : { kind: 'unknown' };
 }

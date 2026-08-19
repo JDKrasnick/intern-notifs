@@ -115,7 +115,7 @@ function parsedAbsoluteDate(value: string | undefined) {
   return Number.isNaN(date.valueOf()) ? undefined : date;
 }
 
-function publishedDate(references: SourceReference[]) {
+function publicationDate(references: SourceReference[]) {
   const candidates = references.flatMap((reference) => {
     const providerValue = reference.providerTimestamp?.semantics === 'published'
       ? reference.providerTimestamp.value
@@ -126,8 +126,11 @@ function publishedDate(references: SourceReference[]) {
     return date ? [{ date, official: Boolean(officialProvider(reference.sourceId)) }] : [];
   });
   const official = candidates.filter((candidate) => candidate.official);
-  return (official.length ? official : candidates)
+  const selected = (official.length ? official : candidates)
     .sort((left, right) => left.date.valueOf() - right.date.valueOf())[0]?.date;
+  return selected
+    ? { date: selected, verified: official.length > 0 }
+    : undefined;
 }
 
 function compactAge(date: Date, now: Date) {
@@ -148,22 +151,25 @@ export function postingTimingPresentation(
   firstSeenAt: string,
   now = new Date(),
 ) {
-  const posted = publishedDate(references);
+  const publication = publicationDate(references);
   const found = parsedAbsoluteDate(firstSeenAt);
-  if (posted) {
+  if (publication) {
+    const label = publication.verified ? 'Employer posted' : 'Source reported';
     return {
-      kind: 'posted' as const,
-      timestamp: posted,
-      summary: `Posted ${compactAge(posted, now)}`,
+      kind: publication.verified ? 'employer-posted' as const : 'source-reported' as const,
+      timestamp: publication.date,
+      verified: publication.verified,
+      summary: `${label} ${compactAge(publication.date, now)}`,
       detail: found
-        ? `Posted ${fullDate(posted)} · Found by InternNotifs ${fullDate(found)}`
-        : `Posted ${fullDate(posted)}`,
+        ? `${label} ${fullDate(publication.date)}${publication.verified ? ' · Verified employer date' : ' · Not employer-verified'} · Found by InternNotifs ${fullDate(found)}`
+        : `${label} ${fullDate(publication.date)}${publication.verified ? ' · Verified employer date' : ' · Not employer-verified'}`,
     };
   }
   return {
     kind: found ? 'found' as const : 'unknown' as const,
     ...(found ? { timestamp: found } : {}),
-    summary: found ? `Found ${compactAge(found, now)}` : 'Posting time unavailable',
+    verified: false,
+    summary: found ? `Found by InternNotifs ${compactAge(found, now)}` : 'Posting time unavailable',
     detail: found
       ? `Original posting date unavailable · Found by InternNotifs ${fullDate(found)}`
       : 'Original posting date unavailable',
@@ -176,8 +182,8 @@ export function postingRecencyBadge(
   now = new Date(),
 ) {
   if (!isNewToCatalog) return undefined;
-  if (timing.kind === 'found') return 'New here';
-  if (timing.kind !== 'posted' || !timing.timestamp) return undefined;
+  if (timing.kind === 'found' || timing.kind === 'source-reported') return 'New here';
+  if (timing.kind !== 'employer-posted' || !timing.timestamp) return undefined;
   const elapsed = now.valueOf() - timing.timestamp.valueOf();
   return elapsed >= 0 && elapsed <= 72 * 60 * 60 * 1000 ? 'New' : undefined;
 }
