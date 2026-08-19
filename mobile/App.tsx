@@ -42,6 +42,8 @@ import {
   isNewJob,
   jobDetailPresentation,
   jobOpenDisposition,
+  postingTimingPresentation,
+  postingRecencyBadge,
   routeFailureState,
   sourcePresentation,
   validatedOfficialUrl,
@@ -66,7 +68,12 @@ type Job = {
   lastSeenAt: string;
   applicationUrlValidatedAt?: string;
   invalidApplicationUrl?: string;
-  sourceReferences: Array<{ sourceId: string; sourceUrl: string }>;
+  sourceReferences: Array<{
+    sourceId: string;
+    sourceUrl: string;
+    postedAt?: string;
+    providerTimestamp?: { value: string; semantics: "published" | "updated" };
+  }>;
 };
 type EmployerCategory = "faang" | "startup" | "normal";
 type CatalogSource = "all" | "direct" | "community" | "corroborated";
@@ -287,6 +294,8 @@ function JobCard({
   const translateX = useRef(new Animated.Value(0)).current;
   const canSaveForWeb = Boolean(onSaveForWeb) && !applicationStatus && !isSavingForWeb;
   const canHideLocally = Boolean(onHideLocally);
+  const postingTiming = postingTimingPresentation(job.sourceReferences, job.firstSeenAt);
+  const recencyBadge = postingRecencyBadge(isNew, postingTiming);
   const resetPosition = () => {
     if (!motionAllowed) {
       translateX.setValue(0);
@@ -377,7 +386,7 @@ function JobCard({
       >
         <TouchableOpacity
           accessibilityRole="button"
-          accessibilityLabel={`${isNew ? "New role, " : ""}${job.title} at ${job.company}, ${job.location}${applicationStatus ? `, ${applicationStatus}` : ""}`}
+          accessibilityLabel={`${recencyBadge ? `${recencyBadge} role, ` : ""}${job.title} at ${job.company}, ${job.location}, ${postingTiming.summary}${applicationStatus ? `, ${applicationStatus}` : ""}`}
           accessibilityHint={
             canSaveForWeb && canHideLocally
               ? "Swipe left to save this role for the web app, or swipe right to hide it on this device."
@@ -402,10 +411,10 @@ function JobCard({
         >
           <View style={styles.jobCompanyRow}>
             <Text style={styles.company}>{job.company}</Text>
-            {isNew ? (
-              <View style={styles.newSpark} accessibilityLabel="New role">
+            {recencyBadge ? (
+              <View style={styles.newSpark} accessibilityLabel={`${recencyBadge} role`}>
                 <Ionicons name="sparkles-outline" size={13} color={colors.signal} />
-                <Text style={styles.newSparkText}>New</Text>
+                <Text style={styles.newSparkText}>{recencyBadge}</Text>
               </View>
             ) : null}
           </View>
@@ -413,6 +422,7 @@ function JobCard({
           <Text style={styles.muted}>
             {job.location} · {job.season}
           </Text>
+          <Text style={styles.postingTiming}>{postingTiming.summary}</Text>
           {!job.open ? <Text style={styles.closedStatus}>Closed</Text> : null}
           {job.compensation.raw ? (
             <Text style={styles.pay}>{job.compensation.raw}</Text>
@@ -561,6 +571,9 @@ function JobDetailSheet({
       : "Open official application";
   const greenhouseQuickApply = role ? hasGreenhouseQuickApply(role.applyUrl) : false;
   const source = sourcePresentation(role?.sourceReferences ?? []);
+  const postingTiming = role
+    ? postingTimingPresentation(role.sourceReferences, role.firstSeenAt)
+    : undefined;
   const closedListingUrl = role && !role.open ? validatedOfficialUrl(role) : undefined;
   return (
     <Modal
@@ -604,6 +617,7 @@ function JobDetailSheet({
               <View style={styles.sheetTrustBlock}>
                 <Text style={styles.sheetTrustPrimary}>{source.primary}</Text>
                 {source.corroboration ? <Text style={styles.sheetTrustSecondary}>{source.corroboration}</Text> : null}
+                {postingTiming ? <Text style={styles.sheetTrustSecondary}>{postingTiming.detail}</Text> : null}
                 <Text style={styles.sheetTrustSecondary}>{freshnessLabel(role.lastSeenAt)}</Text>
               </View>
               {matchedReasons.length ? (
@@ -3975,6 +3989,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.3,
   },
   muted: { color: colors.muted, marginTop: 4, lineHeight: 21 },
+  postingTiming: { color: colors.muted, fontSize: 13, lineHeight: 19, marginTop: 2 },
   pay: { marginTop: 8, color: colors.signal, fontSize: 14, fontWeight: "600" },
   closedStatus: { marginTop: 8, color: colors.danger, fontWeight: "700" },
   jobCardAction: { alignItems: "center", flexDirection: "row", marginTop: 14 },

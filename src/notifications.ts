@@ -5,8 +5,9 @@ import type { DeliveryReceipt, Internship } from './types.js';
 import type { InternshipStore, UserStore } from './store.js';
 import { matchesJobFilter } from './core/filters.js';
 import { notificationSourceLabelFor } from './sources/source-label.js';
+import { canonicalPostingTiming, formatPostingDate } from './core/posting-time.js';
 
-export const rankInternships = (jobs: Internship[]) => [...jobs].sort((a, b) => score(b.company, b.compensation) - score(a.company, a.compensation) || (b.sourceReferences[0]?.postedAt ?? '').localeCompare(a.sourceReferences[0]?.postedAt ?? '') || b.firstSeenAt.localeCompare(a.firstSeenAt));
+export const rankInternships = (jobs: Internship[]) => [...jobs].sort((a, b) => score(b.company, b.compensation) - score(a.company, a.compensation) || (canonicalPostingTiming(b).timestamp ?? '').localeCompare(canonicalPostingTiming(a).timestamp ?? '') || b.firstSeenAt.localeCompare(a.firstSeenAt));
 
 export interface PushMessage {
   title: string;
@@ -200,10 +201,12 @@ export function compactRoleTitle(title: string, roleAbbreviations: Record<string
 }
 export function renderPushTemplate(template: string, job: Internship, roleAbbreviations: Record<string, string> = defaultRoleAbbreviations) {
   const compensation = displayValue(job.compensation.raw) || (job.compensation.maxHourlyUSD ? `$${job.compensation.maxHourlyUSD.toFixed(0)}/hr` : '');
-  const posted = displayValue(job.sourceReferences[0]?.postedAt);
+  const timing = canonicalPostingTiming(job);
+  const posted = timing.timestamp ? formatPostingDate(timing.timestamp) : '';
+  const timingLabel = timing.kind === 'posted' ? 'Posted' : timing.kind === 'found' ? 'Found' : '';
   const focus = inferJobFocuses(job).join(' · ');
   const values: Record<string, string> = {
-    title: displayValue(job.title), shortTitle: compactRoleTitle(job.title, roleAbbreviations), company: displayValue(job.company), location: displayValue(job.location), season: displayValue(job.season), compensation, compensationDetail: compensation ? ` · ${compensation}` : '', focus: focus ? `Focus: ${focus}` : '', posted, postedDetail: posted ? `${focus ? ' · ' : ''}Posted: ${posted}` : '', source: notificationSourceLabel(job), url: safeClick(job.applyUrl) ?? ''
+    title: displayValue(job.title), shortTitle: compactRoleTitle(job.title, roleAbbreviations), company: displayValue(job.company), location: displayValue(job.location), season: displayValue(job.season), compensation, compensationDetail: compensation ? ` · ${compensation}` : '', focus: focus ? `Focus: ${focus}` : '', posted, postedDetail: posted ? `${focus ? ' · ' : ''}${timingLabel}: ${posted}` : '', source: notificationSourceLabel(job), url: safeClick(job.applyUrl) ?? ''
   };
   return template.replace(/\{(title|shortTitle|company|location|season|compensation|compensationDetail|focus|posted|postedDetail|source|url)\}/g, (_, key: string) => values[key] ?? '').replace(/\n[ \t]*\n+/g, '\n').trim();
 }
