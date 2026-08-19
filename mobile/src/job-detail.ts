@@ -87,7 +87,11 @@ export function sourcePresentation(references: SourceReference[]) {
   const hasCommunity = references.some((reference) => /^github-/i.test(reference.sourceId)
     || /(?:^|\/\/)(?:raw\.)?github(?:usercontent)?\.com(?:[/:]|$)/i.test(reference.sourceUrl ?? ''));
   return {
-    primary: official.length ? `Official employer source · ${official.join(' + ')}` : 'Community listing',
+    primary: official.length
+      ? `Official employer source · ${official.join(' + ')}`
+      : references.length
+        ? 'Community listing'
+        : 'Source unavailable',
     corroboration: official.length && hasCommunity ? 'Also corroborated by a community listing' : undefined,
   };
 }

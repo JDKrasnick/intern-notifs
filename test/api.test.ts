@@ -26,7 +26,8 @@ describe('public API ownership boundary', () => {
     });
   });
   it('makes the feed public while keeping applications private to their Cognito subject', async () => {
-    const jobs = new MemoryInternshipStore(); await jobs.putInternship(job); await jobs.putInternship({ ...job, jobId: 'closed-job', open: false }); const users = new MemoryUserStore(); const handler = createApiHandler({ jobs, users });
+    const sourcedJob = { ...job, sourceReferences: [{ sourceId: 'greenhouse-acme', document: 'role', sourceUrl: 'https://boards.greenhouse.io/acme/jobs/1', row: 1, company: 'Acme', title: 'Software Intern', location: 'Remote', season: 'summer-2027', applyUrl: job.applyUrl, compensation: { raw: '' }, state: 'open' as const }] };
+    const jobs = new MemoryInternshipStore(); await jobs.putInternship(sourcedJob); await jobs.putInternship({ ...job, jobId: 'closed-job', open: false }); const users = new MemoryUserStore(); const handler = createApiHandler({ jobs, users });
     expect(JSON.parse((await handler(event(undefined, 'GET', '/jobs'))).body).jobs).toHaveLength(1);
     expect(JSON.parse((await handler(event(undefined, 'GET', '/jobs', undefined, { status: 'closed' }))).body).jobs).toMatchObject([{ jobId: 'closed-job', open: false }]);
     expect((await handler(event(undefined, 'GET', '/me/applications'))).statusCode).toBe(401);
@@ -38,7 +39,7 @@ describe('public API ownership boundary', () => {
     expect(JSON.parse((await handler(event('user-a', 'GET', '/me/applications'))).body).applications[0]).toMatchObject({
       jobId: 'job-1',
       applyMode: 'official-form',
-      job: { jobId: 'job-1', company: 'Acme', title: 'Software Intern', open: true },
+      job: { jobId: 'job-1', company: 'Acme', title: 'Software Intern', open: true, sourceReferences: [{ sourceId: 'greenhouse-acme', sourceUrl: 'https://boards.greenhouse.io/acme/jobs/1' }] },
     });
   });
   it('persists per-user alert templates without resetting existing alert preferences', async () => {

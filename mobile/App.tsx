@@ -236,6 +236,21 @@ async function openOfficialApplication(url: string) {
   }
 }
 
+function JobSource({ source }: { source: ReturnType<typeof sourcePresentation> }) {
+  const icon = source.primary.startsWith("Official")
+    ? "shield-checkmark-outline"
+    : source.primary === "Community listing"
+      ? "people-outline"
+      : "help-circle-outline";
+  return (
+    <View style={styles.jobSourceRow}>
+      <Ionicons name={icon} size={14} color={colors.muted} />
+      <Text style={styles.jobSourceText}>{source.primary}</Text>
+      {source.corroboration ? <Text style={styles.jobSourceCorroboration}>Community corroborated</Text> : null}
+    </View>
+  );
+}
+
 function openAppSettings() {
   void Linking.openSettings().catch(() => {
     Alert.alert("Could not open Settings", "Open your device settings and select InternNotifs.");
@@ -284,6 +299,7 @@ function JobCard({
   onHideLocally?: () => void;
 }) {
   const motionAllowed = useContext(MotionAllowedContext);
+  const source = sourcePresentation(job.sourceReferences);
   const translateX = useRef(new Animated.Value(0)).current;
   const canSaveForWeb = Boolean(onSaveForWeb) && !applicationStatus && !isSavingForWeb;
   const canHideLocally = Boolean(onHideLocally);
@@ -377,7 +393,7 @@ function JobCard({
       >
         <TouchableOpacity
           accessibilityRole="button"
-          accessibilityLabel={`${isNew ? "New role, " : ""}${job.title} at ${job.company}, ${job.location}${applicationStatus ? `, ${applicationStatus}` : ""}`}
+          accessibilityLabel={`${isNew ? "New role, " : ""}${job.title} at ${job.company}, ${job.location}, ${source.primary}${source.corroboration ? ", corroborated by a community listing" : ""}${applicationStatus ? `, ${applicationStatus}` : ""}`}
           accessibilityHint={
             canSaveForWeb && canHideLocally
               ? "Swipe left to save this role for the web app, or swipe right to hide it on this device."
@@ -413,6 +429,7 @@ function JobCard({
           <Text style={styles.muted}>
             {job.location} · {job.season}
           </Text>
+          <JobSource source={source} />
           {!job.open ? <Text style={styles.closedStatus}>Closed</Text> : null}
           {job.compensation.raw ? (
             <Text style={styles.pay}>{job.compensation.raw}</Text>
@@ -2614,6 +2631,7 @@ function Applications({
       }
       renderItem={({ item }) => {
         const job = resolveApplicationJob(item, jobs);
+        const source = sourcePresentation(job?.sourceReferences ?? []);
         const nextStatus = nextApplicationStatuses[item.status] ?? "interview";
         const roleName = job
           ? `${job.title} at ${job.company}`
@@ -2622,6 +2640,7 @@ function Applications({
           <View style={styles.card}>
             <Text style={styles.company}>{job?.company ?? "Saved role"}</Text>
             <Text style={styles.title}>{job?.title ?? "Role details unavailable"}</Text>
+            {job ? <JobSource source={source} /> : null}
             <View style={styles.statusPill}>
               <Text style={styles.statusPillText}>{item.status.toUpperCase()}</Text>
             </View>
@@ -3975,6 +3994,9 @@ const styles = StyleSheet.create({
     letterSpacing: -0.3,
   },
   muted: { color: colors.muted, marginTop: 4, lineHeight: 21 },
+  jobSourceRow: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 7 },
+  jobSourceText: { color: colors.muted, flexShrink: 1, fontSize: 13, fontWeight: "600", lineHeight: 18 },
+  jobSourceCorroboration: { color: colors.signal, fontSize: 12, fontWeight: "700", lineHeight: 18 },
   pay: { marginTop: 8, color: colors.signal, fontSize: 14, fontWeight: "600" },
   closedStatus: { marginTop: 8, color: colors.danger, fontWeight: "700" },
   jobCardAction: { alignItems: "center", flexDirection: "row", marginTop: 14 },

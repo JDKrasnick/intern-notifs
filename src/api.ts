@@ -42,6 +42,7 @@ function applicationSummary(application: ApplicationRecord, job: Awaited<ReturnT
         season: job.season,
         applyUrl: job.applyUrl,
         open: job.open,
+        sourceReferences: job.sourceReferences.map(({ sourceId, sourceUrl }) => ({ sourceId, sourceUrl })),
         assistance: assistanceAvailability(job, application.applyMode),
       },
     } : {}),
