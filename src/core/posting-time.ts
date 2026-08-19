@@ -20,13 +20,16 @@ function officialProvider(sourceId: string) {
 
 function publicationTiming(references: TimingReference[]): CanonicalPostingTiming | undefined {
   const candidates = references.flatMap((reference) => {
-    const value = reference.providerTimestamp?.semantics === 'published'
-      ? reference.providerTimestamp.value
-      : reference.providerTimestamp
-        ? undefined
-        : reference.postedAt;
+    const official = officialProvider(reference.sourceId);
+    const providerTimestamp = reference.providerTimestamp;
+    const explicitlyPublished = providerTimestamp?.semantics === 'published';
+    const value = explicitlyPublished
+      ? providerTimestamp.value
+      : !providerTimestamp && !official
+        ? reference.postedAt
+        : undefined;
     const timestamp = absoluteTimestamp(value);
-    return timestamp ? [{ timestamp, official: officialProvider(reference.sourceId) }] : [];
+    return timestamp ? [{ timestamp, official: explicitlyPublished && official }] : [];
   });
   const official = candidates.filter((candidate) => candidate.official);
   const selected = (official.length ? official : candidates)

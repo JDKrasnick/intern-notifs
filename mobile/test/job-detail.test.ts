@@ -116,6 +116,19 @@ describe('mobile job trust and freshness', () => {
     expect(postingRecencyBadge(true, timing, new Date('2026-08-19T17:18:03.421Z'))).toBe('New here');
   });
 
+  it('preserves date-only source dates across device time zones', () => {
+    const timing = postingTimingPresentation(
+      [{
+        sourceId: 'community-list',
+        providerTimestamp: { value: '2026-07-19', semantics: 'published' },
+      }],
+      '2026-07-20T16:05:00.000Z',
+      new Date('2026-08-19T17:18:03.421Z'),
+    );
+    expect(timing.summary).toBe('Source reported Jul 19, 2026');
+    expect(timing.detail).toBe('Source reported Jul 19, 2026 · Not employer-verified · Found by InternNotifs Jul 20, 2026');
+  });
+
   it('keeps the New badge for a recently published internship', () => {
     const timing = postingTimingPresentation(
       [{
@@ -138,6 +151,16 @@ describe('mobile job trust and freshness', () => {
       '2026-08-19T15:18:03.421Z',
       new Date('2026-08-19T17:18:03.421Z'),
     );
+    expect(timing.summary).toBe('Found by InternNotifs 2h ago');
+  });
+
+  it('does not verify legacy official timestamps without publication semantics', () => {
+    const timing = postingTimingPresentation(
+      [{ sourceId: 'greenhouse-acme', postedAt: '2026-08-19T16:00:00.000Z' }],
+      '2026-08-19T15:18:03.421Z',
+      new Date('2026-08-19T17:18:03.421Z'),
+    );
+    expect(timing).toMatchObject({ kind: 'found', verified: false });
     expect(timing.summary).toBe('Found by InternNotifs 2h ago');
   });
 

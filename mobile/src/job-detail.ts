@@ -117,13 +117,16 @@ function parsedAbsoluteDate(value: string | undefined) {
 
 function publicationDate(references: SourceReference[]) {
   const candidates = references.flatMap((reference) => {
-    const providerValue = reference.providerTimestamp?.semantics === 'published'
-      ? reference.providerTimestamp.value
-      : reference.providerTimestamp
-        ? undefined
-        : reference.postedAt;
+    const official = Boolean(officialProvider(reference.sourceId));
+    const providerTimestamp = reference.providerTimestamp;
+    const explicitlyPublished = providerTimestamp?.semantics === 'published';
+    const providerValue = explicitlyPublished
+      ? providerTimestamp.value
+      : !providerTimestamp && !official
+        ? reference.postedAt
+        : undefined;
     const date = parsedAbsoluteDate(providerValue);
-    return date ? [{ date, official: Boolean(officialProvider(reference.sourceId)) }] : [];
+    return date ? [{ date, official: explicitlyPublished && official }] : [];
   });
   const official = candidates.filter((candidate) => candidate.official);
   const selected = (official.length ? official : candidates)
@@ -139,11 +142,11 @@ function compactAge(date: Date, now: Date) {
   if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)}m ago`;
   if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)}h ago`;
   if (elapsed < 7 * 86_400_000) return `${Math.floor(elapsed / 86_400_000)}d ago`;
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(date);
 }
 
 function fullDate(date: Date) {
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(date);
 }
 
 export function postingTimingPresentation(

@@ -37,6 +37,19 @@ describe('canonical posting time', () => {
     })).toEqual({ kind: 'source-reported', timestamp: '2026-08-19T15:00:00Z' });
   });
 
+  it('keeps legacy community dates but does not verify legacy official timestamps without semantics', () => {
+    const legacyCommunity = { ...reference('community-list', '2026-08-19'), providerTimestamp: undefined };
+    const legacyOfficial = { ...reference('greenhouse-acme', '2026-08-19T16:00:00Z'), providerTimestamp: undefined };
+    expect(canonicalPostingTiming({
+      firstSeenAt: '2026-08-20T15:18:03Z',
+      sourceReferences: [legacyCommunity],
+    })).toEqual({ kind: 'source-reported', timestamp: '2026-08-19' });
+    expect(canonicalPostingTiming({
+      firstSeenAt: '2026-08-20T15:18:03Z',
+      sourceReferences: [legacyOfficial],
+    })).toEqual({ kind: 'found', timestamp: '2026-08-20T15:18:03Z' });
+  });
+
   it('falls back to when InternNotifs found the role for relative or updated values', () => {
     const job = {
       firstSeenAt: '2026-08-19T15:18:03Z',
