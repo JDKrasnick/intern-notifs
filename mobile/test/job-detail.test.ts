@@ -8,6 +8,8 @@ import {
   jobOpenDisposition,
   jobDetailPresentation,
   jobDeepLink,
+  postingTimingPresentation,
+  postingRecencyBadge,
   routeFailureState,
   sourcePresentation,
   validatedOfficialUrl,
@@ -66,6 +68,101 @@ describe('mobile job trust and freshness', () => {
     expect(freshnessLabel('2026-08-10T08:00:00Z', now)).toBe('Confirmed today');
     expect(freshnessLabel('2026-08-08T08:00:00Z', now)).toBe('Confirmed 2 days ago');
     expect(freshnessLabel('2026-08-01T08:00:00Z', now)).toMatch(/^Confirmed Aug 1, 2026$/);
+  });
+
+  it('shows an employer publication time separately from InternNotifs discovery', () => {
+    const timing = postingTimingPresentation(
+      [{
+        sourceId: 'ashby-acme',
+        postedAt: '2025-09-22T20:57:32.244Z',
+        providerTimestamp: { value: '2025-09-22T20:57:32.244Z', semantics: 'published' },
+      }],
+      '2026-08-19T15:18:03.421Z',
+      new Date('2026-08-19T17:18:03.421Z'),
+    );
+    expect(timing).toMatchObject({ kind: 'employer-posted', verified: true });
+    expect(timing.summary).toMatch(/^Employer posted Sep 22, 2025$/);
+    expect(timing.detail).toMatch(/^Employer posted Sep 22, 2025 · Verified employer date · Found by InternNotifs Aug 19, 2026$/);
+    expect(postingRecencyBadge(true, timing, new Date('2026-08-19T17:18:03.421Z'))).toBeUndefined();
+  });
+
+  it('labels discovery honestly when a community feed only supplies a relative age', () => {
+    const timing = postingTimingPresentation(
+      [{
+        sourceId: 'zapply-2027',
+        postedAt: '21m',
+        providerTimestamp: { value: '21m', semantics: 'published' },
+      }],
+      '2026-08-19T15:18:03.421Z',
+      new Date('2026-08-19T17:18:03.421Z'),
+    );
+    expect(timing).toMatchObject({ kind: 'found', verified: false });
+    expect(timing.summary).toBe('Found by InternNotifs 2h ago');
+    expect(timing.detail).toMatch(/^Original posting date unavailable · Found by InternNotifs Aug 19, 2026$/);
+    expect(postingRecencyBadge(true, timing, new Date('2026-08-19T17:18:03.421Z'))).toBe('New here');
+  });
+
+  it('marks an absolute community date as reported but not employer-verified', () => {
+    const timing = postingTimingPresentation(
+      [{
+        sourceId: 'community-list',
+        providerTimestamp: { value: '2026-08-19T16:00:00.000Z', semantics: 'published' },
+      }],
+      '2026-08-19T16:05:00.000Z',
+      new Date('2026-08-19T17:18:03.421Z'),
+    );
+    expect(timing).toMatchObject({ kind: 'source-reported', verified: false });
+    expect(timing.summary).toBe('Source reported 1h ago');
+    expect(timing.detail).toMatch(/^Source reported Aug 19, 2026 · Not employer-verified/);
+    expect(postingRecencyBadge(true, timing, new Date('2026-08-19T17:18:03.421Z'))).toBe('New here');
+  });
+
+  it('preserves date-only source dates across device time zones', () => {
+    const timing = postingTimingPresentation(
+      [{
+        sourceId: 'community-list',
+        providerTimestamp: { value: '2026-07-19', semantics: 'published' },
+      }],
+      '2026-07-20T16:05:00.000Z',
+      new Date('2026-08-19T17:18:03.421Z'),
+    );
+    expect(timing.summary).toBe('Source reported Jul 19, 2026');
+    expect(timing.detail).toBe('Source reported Jul 19, 2026 · Not employer-verified · Found by InternNotifs Jul 20, 2026');
+  });
+
+  it('keeps the New badge for a recently published internship', () => {
+    const timing = postingTimingPresentation(
+      [{
+        sourceId: 'lever-acme',
+        providerTimestamp: { value: '2026-08-19T16:00:00.000Z', semantics: 'published' },
+      }],
+      '2026-08-19T16:05:00.000Z',
+      new Date('2026-08-19T17:18:03.421Z'),
+    );
+    expect(postingRecencyBadge(true, timing, new Date('2026-08-19T17:18:03.421Z'))).toBe('New');
+  });
+
+  it('does not mislabel an official provider update as the posting date', () => {
+    const timing = postingTimingPresentation(
+      [{
+        sourceId: 'greenhouse-acme',
+        postedAt: '2026-08-19T16:00:00.000Z',
+        providerTimestamp: { value: '2026-08-19T16:00:00.000Z', semantics: 'updated' },
+      }],
+      '2026-08-19T15:18:03.421Z',
+      new Date('2026-08-19T17:18:03.421Z'),
+    );
+    expect(timing.summary).toBe('Found by InternNotifs 2h ago');
+  });
+
+  it('does not verify legacy official timestamps without publication semantics', () => {
+    const timing = postingTimingPresentation(
+      [{ sourceId: 'greenhouse-acme', postedAt: '2026-08-19T16:00:00.000Z' }],
+      '2026-08-19T15:18:03.421Z',
+      new Date('2026-08-19T17:18:03.421Z'),
+    );
+    expect(timing).toMatchObject({ kind: 'found', verified: false });
+    expect(timing.summary).toBe('Found by InternNotifs 2h ago');
   });
 
   it('uses the previous visit for signed-in users and 72 hours for guests', () => {

@@ -38,8 +38,8 @@ describe('rendered native job alerts', () => {
     expect(await sendNewJobNotifications(polled.newJobs, users, publisher)).toEqual({ sent: 3, skipped: 0, failed: 0 });
     const messages = new Map(payloads.map((payload) => [payload.data.jobId, payload]));
     const byTitle = new Map(polled.newJobs.map((job) => [job.title, messages.get(job.jobId)]));
-    expect(byTitle.get('Software Engineering Intern')).toMatchObject({ title: 'SWE — Acme', body: 'New York, NY · summer-2027 · $50/hr\nFocus: SWE · Posted: 2026-07-19\nSource: Job board\nhttps://careers.example.test/1' });
-    expect(byTitle.get('Machine Learning Intern')).toMatchObject({ title: 'ML — Acme', body: 'Remote (US) · summer-2027 · $50/hr\nFocus: AI/ML · Posted: 2026-07-19\nSource: Job board\nhttps://careers.example.test/2' });
-    expect(byTitle.get('Backend Engineering Intern')).toMatchObject({ title: 'Backend Engineering — Acme', body: 'Austin, TX · summer-2027 · $50/hr\nFocus: Backend/API · Posted: 2026-07-19\nSource: Job board\nhttps://careers.example.test/3' });
+    expect(byTitle.get('Software Engineering Intern')).toMatchObject({ title: 'SWE — Acme', body: 'New York, NY · summer-2027 · $50/hr\nFocus: SWE · Source reported: Jul 19, 2026\nSource: Job board\nhttps://careers.example.test/1' });
+    expect(byTitle.get('Machine Learning Intern')).toMatchObject({ title: 'ML — Acme', body: 'Remote (US) · summer-2027 · $50/hr\nFocus: AI/ML · Source reported: Jul 19, 2026\nSource: Job board\nhttps://careers.example.test/2' });
+    expect(byTitle.get('Backend Engineering Intern')).toMatchObject({ title: 'Backend Engineering — Acme', body: 'Austin, TX · summer-2027 · $50/hr\nFocus: Backend/API · Source reported: Jul 19, 2026\nSource: Job board\nhttps://careers.example.test/3' });
   });
 });

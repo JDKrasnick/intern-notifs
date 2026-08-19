@@ -73,7 +73,12 @@ export function jobOpenDisposition(
   return 'open' as const;
 }
 
-type SourceReference = { sourceId: string; sourceUrl?: string };
+type SourceReference = {
+  sourceId: string;
+  sourceUrl?: string;
+  postedAt?: string;
+  providerTimestamp?: { value: string; semantics: 'published' | 'updated' };
+};
 const officialProvider = (sourceId: string) => {
   const normalized = sourceId.toLowerCase();
   if (normalized.startsWith('greenhouse-')) return 'Greenhouse';
@@ -104,6 +109,90 @@ export function freshnessLabel(lastSeenAt: string, now = new Date()) {
   if (elapsedDays === 1) return 'Confirmed yesterday';
   if (elapsedDays < 7) return `Confirmed ${elapsedDays} days ago`;
   return `Confirmed ${new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(date)}`;
+}
+
+const absoluteDatePattern = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))?$/;
+
+function parsedAbsoluteDate(value: string | undefined) {
+  if (!value || !absoluteDatePattern.test(value)) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? undefined : date;
+}
+
+function publicationDate(references: SourceReference[]) {
+  const candidates = references.flatMap((reference) => {
+    const official = Boolean(officialProvider(reference.sourceId));
+    const providerTimestamp = reference.providerTimestamp;
+    const explicitlyPublished = providerTimestamp?.semantics === 'published';
+    const providerValue = explicitlyPublished
+      ? providerTimestamp.value
+      : !providerTimestamp && !official
+        ? reference.postedAt
+        : undefined;
+    const date = parsedAbsoluteDate(providerValue);
+    return date ? [{ date, official: explicitlyPublished && official }] : [];
+  });
+  const official = candidates.filter((candidate) => candidate.official);
+  const selected = (official.length ? official : candidates)
+    .sort((left, right) => left.date.valueOf() - right.date.valueOf())[0]?.date;
+  return selected
+    ? { date: selected, verified: official.length > 0 }
+    : undefined;
+}
+
+function compactAge(date: Date, now: Date) {
+  const elapsed = Math.max(0, now.valueOf() - date.valueOf());
+  if (elapsed < 60_000) return 'just now';
+  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)}m ago`;
+  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)}h ago`;
+  if (elapsed < 7 * 86_400_000) return `${Math.floor(elapsed / 86_400_000)}d ago`;
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(date);
+}
+
+function fullDate(date: Date) {
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(date);
+}
+
+export function postingTimingPresentation(
+  references: SourceReference[],
+  firstSeenAt: string,
+  now = new Date(),
+) {
+  const publication = publicationDate(references);
+  const found = parsedAbsoluteDate(firstSeenAt);
+  if (publication) {
+    const label = publication.verified ? 'Employer posted' : 'Source reported';
+    return {
+      kind: publication.verified ? 'employer-posted' as const : 'source-reported' as const,
+      timestamp: publication.date,
+      verified: publication.verified,
+      summary: `${label} ${compactAge(publication.date, now)}`,
+      detail: found
+        ? `${label} ${fullDate(publication.date)}${publication.verified ? ' · Verified employer date' : ' · Not employer-verified'} · Found by InternNotifs ${fullDate(found)}`
+        : `${label} ${fullDate(publication.date)}${publication.verified ? ' · Verified employer date' : ' · Not employer-verified'}`,
+    };
+  }
+  return {
+    kind: found ? 'found' as const : 'unknown' as const,
+    ...(found ? { timestamp: found } : {}),
+    verified: false,
+    summary: found ? `Found by InternNotifs ${compactAge(found, now)}` : 'Posting time unavailable',
+    detail: found
+      ? `Original posting date unavailable · Found by InternNotifs ${fullDate(found)}`
+      : 'Original posting date unavailable',
+  };
+}
+
+export function postingRecencyBadge(
+  isNewToCatalog: boolean,
+  timing: ReturnType<typeof postingTimingPresentation>,
+  now = new Date(),
+) {
+  if (!isNewToCatalog) return undefined;
+  if (timing.kind === 'found' || timing.kind === 'source-reported') return 'New here';
+  if (timing.kind !== 'employer-posted' || !timing.timestamp) return undefined;
+  const elapsed = now.valueOf() - timing.timestamp.valueOf();
+  return elapsed >= 0 && elapsed <= 72 * 60 * 60 * 1000 ? 'New' : undefined;
 }
 
 export function isNewJob(firstSeenAt: string, options: { signedIn: boolean; previousCatalogOpenedAt?: string | null; now?: Date }) {
