@@ -81,6 +81,7 @@ function emitSuccessMetric(
   outcome: 'success_changed' | 'success_unchanged_304' | 'success_unchanged_hash',
   counts: ProcessedSnapshot['counts'],
   durationMs: number,
+  conditionalRequest?: SourceFetchResult['conditionalRequest'],
   runId?: string,
 ) {
   const region = regionFor(provider);
@@ -96,6 +97,13 @@ function emitSuccessMetric(
           { Name: 'RawListingCount', Unit: 'Count' },
           { Name: 'EligibleListingCount', Unit: 'Count' },
           { Name: 'ListingWithheld', Unit: 'Count' },
+          ...(conditionalRequest ? [
+            { Name: 'ConditionalRequestAttempted', Unit: 'Count' },
+            { Name: 'ConditionalRequestNotModified', Unit: 'Count' },
+            ...(conditionalRequest.validatorChanged !== undefined
+              ? [{ Name: 'ValidatorChanged', Unit: 'Count' }]
+              : []),
+          ] : []),
         ],
       }],
     },
@@ -110,6 +118,18 @@ function emitSuccessMetric(
     RawListingCount: counts.raw,
     EligibleListingCount: counts.eligible,
     ListingWithheld: counts.withheld,
+    ...(conditionalRequest ? {
+      conditionalRequestAttempted: conditionalRequest.attempted,
+      conditionalRequestNotModified: conditionalRequest.notModified,
+      ...(conditionalRequest.validatorChanged !== undefined
+        ? { validatorChanged: conditionalRequest.validatorChanged }
+        : {}),
+      ConditionalRequestAttempted: Number(conditionalRequest.attempted),
+      ConditionalRequestNotModified: Number(conditionalRequest.notModified),
+      ...(conditionalRequest.validatorChanged !== undefined
+        ? { ValidatorChanged: Number(conditionalRequest.validatorChanged) }
+        : {}),
+    } : {}),
     counts,
   }));
 }
@@ -529,6 +549,7 @@ export class IngestionRunner {
             : 'success_changed',
           metricCounts,
           Date.now() - started,
+          result.conditionalRequest,
           options.runId,
         );
       } catch (error) {

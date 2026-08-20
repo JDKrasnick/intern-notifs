@@ -83,9 +83,19 @@ describe('GreenhouseBoardAdapter', () => {
     });
     const result = await adapter.fetch({ sourceId: acmeSource.id, etag: 'W/"acme-1"', successfulFetches: 4, lastRowCount: 1 });
     expect(result.notModified).toBe(true);
+    expect(result.unchangedReason).toBe('not_modified');
+    expect(result.conditionalRequest).toEqual({ attempted: true, notModified: true, validatorChanged: false });
     expect(result.listings).toEqual([]);
     expect(result.checkpoint).toMatchObject({ successfulFetches: 4 });
     expect((calls[0]?.headers as Record<string, string>)['If-None-Match']).toBe('W/"acme-1"');
+  });
+  it('reports sanitized validator changes without exposing validator values', async () => {
+    const adapter = new GreenhouseBoardAdapter({
+      source: acmeSource,
+      fetchImpl: async () => jsonResponse(acmeJobsResponse, { etag: 'W/"acme-2"' }),
+    });
+    const result = await adapter.fetch({ sourceId: acmeSource.id, etag: 'W/"acme-1"', successfulFetches: 1 });
+    expect(result.conditionalRequest).toEqual({ attempted: true, notModified: false, validatorChanged: true });
   });
   it('produces a stable content hash regardless of job order', async () => {
     const forward = await new GreenhouseBoardAdapter({ source: acmeSource, fetchImpl: async () => jsonResponse(acmeJobsResponse) }).fetch();

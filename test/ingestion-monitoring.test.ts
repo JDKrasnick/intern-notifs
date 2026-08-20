@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { evaluateSourceFreshness } from '../src/ingestion/monitoring.js';
 import { IngestionRunner } from '../src/poll.js';
 import { GitHubMarkdownAdapter } from '../src/sources/github.js';
@@ -7,6 +7,36 @@ import { MemoryInternshipStore } from '../src/store.js';
 import type { SourceAdapter } from '../src/types.js';
 
 describe('ingestion health and retry policy', () => {
+  it('emits sanitized conditional-request metrics without validator values', async () => {
+    const logs: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((value) => logs.push(String(value)));
+    try {
+      await new IngestionRunner([{
+        id: 'greenhouse-acme',
+        async fetch() {
+          return {
+            sourceId: 'greenhouse-acme', rawRowCount: 0, listings: [], notModified: true,
+            unchangedReason: 'not_modified' as const,
+            conditionalRequest: { attempted: true, notModified: true, validatorChanged: false },
+            checkpoint: { sourceId: 'greenhouse-acme', successfulFetches: 1, lastRowCount: 0 },
+          };
+        },
+      }], new MemoryInternshipStore()).run();
+    } finally {
+      log.mockRestore();
+    }
+    const event = logs.map((line) => JSON.parse(line)).find((entry) => entry.event === 'source_fetch_completed');
+    expect(event).toMatchObject({
+      conditionalRequestAttempted: true,
+      conditionalRequestNotModified: true,
+      validatorChanged: false,
+      ConditionalRequestAttempted: 1,
+      ConditionalRequestNotModified: 1,
+      ValidatorChanged: 0,
+    });
+    expect(JSON.stringify(event)).not.toContain('If-None-Match');
+  });
+
   it('retries transport, 429, and 5xx failures up to three bounded attempts', async () => {
     const store = new MemoryInternshipStore();
     let attempts = 0;
