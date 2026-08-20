@@ -191,20 +191,19 @@ describe('Lever queue worker', () => {
     expect(await store.getSourceHealth(published.id)).toMatchObject({ outcome: 'rate_limited', backoffUntil: expect.any(String) });
   });
 
-  it('treats a 304 as healthy without erasing the last trusted counts', async () => {
+  it('treats a hash-identical response as healthy without erasing the last trusted counts', async () => {
     const store = new MemoryInternshipStore();
-    let attempts = 0;
     const dependencies = {
       store,
       sources: [shadowSource],
-      fetchImpl: async () => attempts++ === 0 ? response() : new Response(null, { status: 304 }),
+      fetchImpl: async () => response(),
       linkValidator: async (url: string) => url,
     };
     await runLeverBoard(message(), dependencies);
     await runLeverBoard(message(), dependencies);
 
     expect(await store.getSourceHealth(shadowSource.id)).toMatchObject({
-      outcome: 'success_unchanged_304',
+      outcome: 'success_unchanged_hash',
       rawRows: 1,
       eligibleRows: 1,
       pollTier: 'active',

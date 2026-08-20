@@ -186,35 +186,17 @@ export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
   async fetch(previous?: SourceCheckpoint): Promise<TransitionalLeverResult> {
     const sourceUrl = `https://api.lever.co/v0/postings/${this.options.site}?mode=json`;
     const postings: LeverPosting[] = [];
-    let etag: string | undefined;
-    // Lever's ETag covers one page, and its postings are not ordered by date, so
-    // a board that needed more than one page must refetch every page: a 304 on
-    // the first page says nothing about the rest. Boards that fit in one page
-    // keep the cheap conditional request.
-    const conditional = (previous?.lastRawCount ?? Number.POSITIVE_INFINITY) < LEVER_PAGE_SIZE;
+    // Lever returns weak ETags but does not honor If-None-Match on this public
+    // endpoint. Always fetch every page and use the stable content hash to
+    // detect unchanged boards.
     for (let page = 0; page < LEVER_MAX_PAGES; page += 1) {
       const skip = page * LEVER_PAGE_SIZE;
       const pageUrl = `${sourceUrl}&skip=${skip}&limit=${LEVER_PAGE_SIZE}`;
       const response = await this.fetchImpl(pageUrl, {
         headers: {
           Accept: 'application/json',
-          ...(page === 0 && conditional && previous?.etag ? { 'If-None-Match': previous.etag } : {}),
         },
       });
-      if (page === 0 && response.status === 304) {
-        return {
-          sourceId: this.id,
-          outcome: 'unchanged',
-          complete: true,
-          postings: [],
-          rawCount: previous?.lastRawCount ?? previous?.lastRowCount ?? 0,
-          contentHash: previous?.contentHash ?? '',
-          listings: [],
-          notModified: true,
-          unchangedReason: 'not_modified',
-          checkpoint: { ...previous, sourceId: this.id, lastSuccessAt: this.now().toISOString(), successfulFetches: previous?.successfulFetches ?? 0 },
-        };
-      }
       if (!response.ok) {
         throw new SourceFetchError(
           `${this.id}: Lever fetch failed (${response.status})`,
@@ -226,7 +208,6 @@ export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
       let payload: unknown;
       try { payload = await response.json(); } catch { throw new SourceFetchError(`${this.id}: Lever returned malformed JSON`, 'json'); }
       if (!Array.isArray(payload)) throw new SourceFetchError(`${this.id}: Lever response was not an array`, 'json');
-      if (page === 0) etag = response.headers.get('etag') ?? previous?.etag;
       postings.push(...payload as LeverPosting[]);
       if (payload.length < LEVER_PAGE_SIZE) break;
       if (page === LEVER_MAX_PAGES - 1) {
@@ -248,7 +229,6 @@ export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
       contentHash,
       checkpoint: {
         sourceId: this.id,
-        etag,
         contentHash,
         lastSuccessAt: fetchedAt,
         successfulFetches: (previous?.successfulFetches ?? 0) + 1,
@@ -267,6 +247,7 @@ export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
       listings: eligible,
       notModified: neutral.outcome === 'unchanged',
       ...(neutral.outcome === 'unchanged' ? { unchangedReason: 'content_hash' as const } : {}),
+      conditionalRequest: { attempted: false, notModified: false },
     };
   }
 }

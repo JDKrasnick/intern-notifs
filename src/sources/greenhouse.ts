@@ -296,6 +296,7 @@ export class GreenhouseBoardAdapter implements SourceAdapter, SourceConnector {
 
   async fetch(previous?: SourceCheckpoint): Promise<TransitionalGreenhouseResult> {
     const url = greenhouseJobsUrl(this.options.source.boardToken);
+    const conditionalRequestAttempted = Boolean(previous?.etag);
     const response = await this.fetchImpl(url, {
       headers: { Accept: 'application/json', ...(previous?.etag ? { 'If-None-Match': previous.etag } : {}) },
       signal: AbortSignal.timeout(8_000),
@@ -310,6 +311,8 @@ export class GreenhouseBoardAdapter implements SourceAdapter, SourceConnector {
         contentHash: previous?.contentHash ?? '',
         listings: [],
         notModified: true,
+        unchangedReason: 'not_modified',
+        conditionalRequest: { attempted: conditionalRequestAttempted, notModified: true, validatorChanged: false },
         checkpoint: { ...previous, sourceId: this.id, lastSuccessAt: this.now().toISOString(), successfulFetches: previous?.successfulFetches ?? 0 },
       };
     }
@@ -320,6 +323,7 @@ export class GreenhouseBoardAdapter implements SourceAdapter, SourceConnector {
       throw new SourceFetchError(`${this.id}: Greenhouse response shape was invalid`, 'json');
     }
     const jobs = (payload as GreenhouseJobsResponse).jobs ?? [];
+    const returnedEtag = response.headers.get('etag');
     const fetchedAt = this.now().toISOString();
     const postings: SourcedPosting[] = [];
     const rejectedApplicationUrls: Array<{ row: number; url: string; reason: string }> = [];
@@ -341,7 +345,7 @@ export class GreenhouseBoardAdapter implements SourceAdapter, SourceConnector {
       contentHash,
       checkpoint: {
         sourceId: this.id,
-        etag: response.headers.get('etag') ?? previous?.etag,
+        etag: returnedEtag ?? previous?.etag,
         contentHash,
         lastSuccessAt: fetchedAt,
         successfulFetches: (previous?.successfulFetches ?? 0) + 1,
@@ -362,6 +366,14 @@ export class GreenhouseBoardAdapter implements SourceAdapter, SourceConnector {
       listings,
       ...(rejectedApplicationUrls.length ? { rejectedApplicationUrls } : {}),
       notModified: neutral.outcome === 'unchanged',
+      ...(neutral.outcome === 'unchanged' ? { unchangedReason: 'content_hash' as const } : {}),
+      conditionalRequest: {
+        attempted: conditionalRequestAttempted,
+        notModified: false,
+        ...(conditionalRequestAttempted && returnedEtag
+          ? { validatorChanged: returnedEtag !== previous?.etag }
+          : {}),
+      },
     };
   }
 }

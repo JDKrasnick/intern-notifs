@@ -462,4 +462,10 @@ export interface SourceFetchResult {
   checkpoint: SourceCheckpoint;
   notModified: boolean;
   unchangedReason?: 'not_modified' | 'content_hash';
+  /** Sanitized conditional-request diagnostics; validator values are never exposed. */
+  conditionalRequest?: {
+    attempted: boolean;
+    notModified: boolean;
+    validatorChanged?: boolean;
+  };
 }

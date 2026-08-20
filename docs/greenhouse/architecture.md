@@ -42,7 +42,9 @@ eligible application links but never writes jobs or sends alerts. When a board
 is promoted, it has no published checkpoint, so its first catalog run becomes a
 quiet baseline instead of alerting every role already open.
 
-ETags make unchanged checks cheap. A changed published snapshot passes through
+Greenhouse ETags make unchanged checks cheap; Lever always retrieves the full
+paginated board and uses a stable content hash because its public endpoint does
+not honor conditional requests. A changed published snapshot passes through
 canonicalization, deduplication, official-link validation, DynamoDB storage,
 and notification matching. The existing general notifier continues to
 reconcile push receipts and the optional ntfy fallback.

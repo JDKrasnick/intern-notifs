@@ -41,13 +41,16 @@ describe('LeverPostingsAdapter', () => {
     expect(leverRequirements('Applicants must be U.S. citizens. A Ph.D. is required.')).toEqual({ requiresUsCitizenship: true, advancedDegreeRequired: true });
     expect(leverRequirements('We welcome all citizenships; our founders have master\'s degrees.')).toEqual({ requiresUsCitizenship: false, advancedDegreeRequired: false });
   });
-  it('uses ETags and returns no-change without parsing for a single-page board', async () => {
+  it('ignores stored ETags and uses the content hash for unchanged boards', async () => {
     const calls: RequestInit[] = [];
-    const adapter = new LeverPostingsAdapter({ ...options, fetchImpl: async (_url, init) => { calls.push(init ?? {}); return new Response(null, { status: 304 }); } });
-    const result = await adapter.fetch({ sourceId: options.id, etag: '"lever-etag"', successfulFetches: 2, lastRowCount: 1, lastRawCount: 1 });
+    const first = await new LeverPostingsAdapter({ ...options, fetchImpl: async () => new Response(JSON.stringify([posting]), { status: 200 }) }).fetch();
+    const adapter = new LeverPostingsAdapter({ ...options, fetchImpl: async (_url, init) => { calls.push(init ?? {}); return new Response(JSON.stringify([posting]), { status: 200, headers: { ETag: 'W/"lever-etag"' } }); } });
+    const result = await adapter.fetch({ ...first.checkpoint, etag: 'W/"lever-etag"' });
     expect(result.notModified).toBe(true);
-    expect(result.listings).toEqual([]);
-    expect(calls[0]?.headers).toEqual({ Accept: 'application/json', 'If-None-Match': '"lever-etag"' });
+    expect(result.unchangedReason).toBe('content_hash');
+    expect(result.conditionalRequest).toEqual({ attempted: false, notModified: false });
+    expect(result.checkpoint.etag).toBeUndefined();
+    expect(calls[0]?.headers).toEqual({ Accept: 'application/json' });
   });
   it('refetches every page of a multi-page board because one ETag cannot prove the rest unchanged', async () => {
     const calls: RequestInit[] = [];
