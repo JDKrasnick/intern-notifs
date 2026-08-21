@@ -2,13 +2,14 @@ import type { SourceCheckpoint, SourceHealth } from './types.js';
 
 /** The single cadence contract used by provider dispatchers and their stacks. */
 export const SOURCE_POLL_CADENCE = {
-  publishedIntervalMs: 30 * 60 * 1000,
-  shadowIntervalMs: 3 * 60 * 60 * 1000,
+  publishedIntervalMs: 90 * 60 * 1000,
+  shadowIntervalMs: 9 * 60 * 60 * 1000,
+  publishedFreshnessIncidentMinutes: 270,
   schedules: {
-    github: 'cron(7/10 * * * ? *)',
-    greenhouse: 'cron(12,42 * * * ? *)',
-    lever: 'cron(22,52 * * * ? *)',
-    ashby: 'cron(2,32 * * * ? *)',
+    github: 'rate(30 minutes)',
+    greenhouse: 'rate(90 minutes)',
+    lever: 'rate(90 minutes)',
+    ashby: 'rate(90 minutes)',
   },
 } as const;
 
@@ -44,7 +45,7 @@ function isShadowSourceDue(
   if (lastPollAt !== undefined) {
     // Workers record completion slightly after the dispatcher invocation.
     // Compare scheduler windows so normal processing latency does not defer a
-    // three-hour poll to the following half-hour run.
+    // nine-hour poll to the following 90-minute run.
     const elapsedWindows = Math.floor(now.getTime() / SOURCE_POLL_CADENCE.publishedIntervalMs)
       - Math.floor(lastPollAt / SOURCE_POLL_CADENCE.publishedIntervalMs);
     return elapsedWindows >= SOURCE_POLL_CADENCE.shadowIntervalMs / SOURCE_POLL_CADENCE.publishedIntervalMs;

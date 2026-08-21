@@ -34,7 +34,7 @@ describe('Ashby queue dispatch', () => {
     });
   });
 
-  it('polls shadow boards every three hours on the deployed half-hour schedule', () => {
+  it('polls shadow boards every nine hours on the deployed 90-minute schedule', () => {
     const firstScheduledAt = Date.parse('2026-08-09T00:32:00.000Z');
     const lastSuccessAt = new Date(firstScheduledAt + 60_000).toISOString();
     const checkpoint = { sourceId: `shadow-${shadowSource.id}`, successfulFetches: 1, lastRowCount: 0, lastSuccessAt };
@@ -44,7 +44,7 @@ describe('Ashby queue dispatch', () => {
     expect(isAshbySourceDue(shadowSource, checkpoint, new Date(firstScheduledAt + 10 * ASHBY_POLL_INTERVAL_MS))).toBe(true);
   });
 
-  it('polls published boards every half hour even when they are quiet', () => {
+  it('polls published boards every 90 minutes even when they are quiet', () => {
     const published: ReviewedAshbySource = { ...shadowSource, status: 'published' };
     const checkpoint = { sourceId: published.id, successfulFetches: 1, lastRowCount: 0, lastSuccessAt: scheduledAt };
     expect(isAshbySourceDue(published, checkpoint, new Date(Date.parse(scheduledAt) + ASHBY_POLL_INTERVAL_MS))).toBe(true);

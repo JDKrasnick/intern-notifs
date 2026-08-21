@@ -17,8 +17,8 @@ token or application host.
 
 - The independently deployable `InternNotifsGreenhouse` stack imports the
   retained DynamoDB tables and does not own the main application resources.
-- EventBridge dispatches reviewed boards every thirty minutes. Published boards
-  run on every dispatch; shadow boards run on staggered three-hour checks.
+- EventBridge dispatches reviewed boards every ninety minutes. Published boards
+  run on every dispatch; shadow boards run on staggered nine-hour checks.
 - A FIFO SQS queue preserves ordering per board and deduplicates a board within
   the dispatch window.
 - Lambda consumes batches of ten with maximum concurrency four.

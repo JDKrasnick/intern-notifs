@@ -1,4 +1,5 @@
 import type { SourceCheckpoint, SourceHealth, SourceOccurrenceState, SourceOccurrenceStatus } from '../types.js';
+import { SOURCE_POLL_CADENCE } from '../source-poll-cadence.js';
 
 export interface SourceFreshness {
   staleCount: number;
@@ -33,7 +34,10 @@ export function evaluateSourceFreshness(
   staleAfterMinutes?: number,
 ): SourceFreshness {
   const stale = records.filter((record) => {
-    const allowedMinutes = staleAfterMinutes ?? (record.provider === 'lever' || record.provider === 'greenhouse' ? 90 : 30);
+    const defaultAllowedMinutes = record.provider === 'github'
+      ? 90
+      : SOURCE_POLL_CADENCE.publishedFreshnessIncidentMinutes;
+    const allowedMinutes = staleAfterMinutes ?? defaultAllowedMinutes;
     const cutoff = now.getTime() - allowedMinutes * 60_000;
     return !record.lastSuccessAt || Date.parse(record.lastSuccessAt) < cutoff;
   });

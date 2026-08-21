@@ -54,7 +54,7 @@ describe('Greenhouse queue dispatch', () => {
     })).rejects.toThrow('throttled');
   });
 
-  it('polls shadow boards every three hours on the deployed half-hour schedule', () => {
+  it('polls shadow boards every nine hours on the deployed 90-minute schedule', () => {
     const firstScheduledAt = Date.parse('2026-07-29T00:12:00.000Z');
     const lastSuccessAt = new Date(firstScheduledAt + 60_000).toISOString();
     const checkpoint = { sourceId: `shadow-${acmeSource.id}`, successfulFetches: 1, lastRowCount: 0, lastSuccessAt };
@@ -64,7 +64,7 @@ describe('Greenhouse queue dispatch', () => {
     expect(isGreenhouseSourceDue(acmeSource, checkpoint, new Date(firstScheduledAt + 10 * GREENHOUSE_POLL_INTERVAL_MS))).toBe(true);
   });
 
-  it('polls published boards every half hour even when they are quiet', () => {
+  it('polls published boards every 90 minutes even when they are quiet', () => {
     const published: ReviewedGreenhouseSource = { ...acmeSource, status: 'published' };
     const checkpoint = { sourceId: published.id, successfulFetches: 1, lastRowCount: 0, lastSuccessAt: scheduledAt };
     expect(isGreenhouseSourceDue(published, checkpoint, new Date(Date.parse(scheduledAt) + GREENHOUSE_POLL_INTERVAL_MS))).toBe(true);

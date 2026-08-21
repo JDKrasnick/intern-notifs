@@ -1,7 +1,7 @@
 # Ashby monitoring runbook
 
 The `InternNotifsAshby` stack is an independently deployable polling plane over
-the retained internship and user tables. It owns a staggered half-hour
+the retained internship and user tables. It owns a reduced 90-minute
 scheduler, dispatcher, encrypted FIFO work queue, worker, work DLQ, scheduler
 DLQ, four alarms, a dashboard, and operations-discovery parameters.
 
@@ -43,7 +43,7 @@ Also exercise the safe quarantine flow: provide a reason, recover the source
 through a forced clean validation while it remains paused, inspect the new
 trusted snapshot, and only then resume normal scheduling.
 Operator pause, backoff, and replay take precedence over normal scheduling.
-Published boards run every thirty minutes; shadow boards run every three hours.
+Published boards run every ninety minutes; shadow boards run every nine hours.
 Active and quiet tiers remain health classifications and do not alter cadence.
 
 ## Promotion

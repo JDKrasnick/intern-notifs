@@ -124,12 +124,12 @@ export class AshbyMonitoringStack extends cdk.Stack {
         metricName: 'SourceFreshnessMinutes',
         dimensionsMap: { provider: 'ashby', region: 'global' },
         statistic: 'Maximum',
-        period: cdk.Duration.hours(1),
+        period: cdk.Duration.hours(3),
       }),
-      threshold: 90,
+      threshold: SOURCE_POLL_CADENCE.publishedFreshnessIncidentMinutes,
       evaluationPeriods: 1,
       treatMissingData: cloudwatch.TreatMissingData.BREACHING,
-      alarmDescription: 'At least one active Ashby source has no trusted snapshot within ninety minutes.',
+      alarmDescription: 'At least one active Ashby source has no trusted snapshot within 270 minutes.',
     });
     new cloudwatch.Dashboard(this, 'AshbyMonitoringDashboard', {
       dashboardName: 'InternNotifs-Ashby',

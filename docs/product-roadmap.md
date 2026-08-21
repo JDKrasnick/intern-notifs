@@ -45,12 +45,12 @@
 - [x] Audit 25 representative employers through the GitHub Markdown ingestion and poller pipeline.
 - [x] Add a provider-neutral company-coverage snapshot, public search API, and responsive web disclosure seeded from live internship evidence and reviewed ATS registries.
 - [x] Implement the Greenhouse source adapter, admission gates, deterministic fixtures, and live contract tests.
-- [x] Add the SQS-backed Greenhouse shadow/published runner with thirty-minute published polling, three-hour shadow polling, bounded per-board concurrency, isolated retries, alarms, and a quiet promotion baseline.
+- [x] Add the SQS-backed Greenhouse shadow/published runner with temporarily reduced ninety-minute published polling, nine-hour shadow polling, bounded per-board concurrency, isolated retries, alarms, and a quiet promotion baseline.
 - [x] Publish the 166-board API-responsive Greenhouse inventory and admit 20 additional ownership-verified boards to production shadow monitoring, with current board identities, observed host allowlists, and per-source quiet baselines.
 - [x] Add a private operations dashboard for all official Greenhouse sources with per-run volume, withheld rows, redacted diagnostics, queue/DLQ and alarm status, plus deterministic quarantine and recovery.
 - [ ] Add the Greenhouse batch re-probe and post-publication ownership-review workflow described in [`greenhouse/registry-expansion-plan.md`](greenhouse/registry-expansion-plan.md).
 - [x] Implement Lever source adapter, ETag checkpoints, technical-role mapping, and deterministic fixtures for Palantir, PlusAI, Hermeus, and Xsolla.
-- [x] Add the SQS-backed Lever shadow/published runner with thirty-minute published polling, three-hour shadow polling, bounded per-board concurrency, isolated retries, alarms, and quiet promotion.
+- [x] Add the SQS-backed Lever shadow/published runner with temporarily reduced ninety-minute published polling, nine-hour shadow polling, bounded per-board concurrency, isolated retries, alarms, and quiet promotion.
 - [x] Standardize Greenhouse, Lever, general Markdown, and Quant Markdown behind neutral complete snapshots, shared processing, stable source occurrences, two-success closure reconciliation, deterministic outbox IDs, and durable source health.
 - [x] Complete Lever monitoring with shadow and published health, regional metrics, freshness incidents, bounded backoff, shared operator controls, dashboards, and recovery runbooks.
 - [x] Verify ETag behavior across representative Greenhouse and Lever boards, repair Greenhouse 304 classification, remove Lever's ineffective conditional path, and emit sanitized conditional-request metrics.

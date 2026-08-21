@@ -20,7 +20,7 @@ deploy the main stack as a substitute for a Greenhouse-only change.
 
 ## Runtime flow
 
-EventBridge invokes a small dispatcher every thirty minutes. The dispatcher
+EventBridge invokes a small dispatcher every ninety minutes. The dispatcher
 creates one FIFO message for every reviewed Greenhouse board. Each board ID is
 its own message group, which prevents overlapping work for the same board while
 allowing different boards to run concurrently.
@@ -31,8 +31,8 @@ groups concurrently. Records within one board group remain sequential, and
 partial-batch responses return the failed record plus later records from that
 same board to SQS.
 
-Published boards run every thirty minutes whether their current snapshot is
-active or quiet. Shadow boards run every three hours; their first checks are
+Published boards run every ninety minutes whether their current snapshot is
+active or quiet. Shadow boards run every nine hours; their first checks are
 staggered across dispatcher windows. A pause or provider backoff overrides both
 cadences.
 
@@ -51,7 +51,7 @@ reconcile push receipts and the optional ntfy fallback.
 
 ## Capacity and failure boundaries
 
-- Schedule: every thirty minutes for published boards; every three hours for shadow boards.
+- Schedule: every ninety minutes for published boards; every nine hours for shadow boards.
 - Queue batch size: ten boards.
 - Worker maximum concurrency: four.
 - Worker timeout: two minutes.

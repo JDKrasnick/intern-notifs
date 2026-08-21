@@ -98,11 +98,11 @@ async function recordFreshnessIncident(
   reader: CheckpointReader,
   now: Date,
 ) {
-  // Shadow boards intentionally run every three hours and are not held to the
+  // Shadow boards intentionally run every nine hours and are not held to the
   // published-source freshness objective.
   if (source.status === 'shadow' || health?.sourceStatus === 'paused') return;
   const freshnessMinutes = emitFreshness(source, health, checkpoint, now);
-  if (!health || freshnessMinutes < 90 || !reader.putSourceHealth) return;
+  if (!health || freshnessMinutes < SOURCE_POLL_CADENCE.publishedFreshnessIncidentMinutes || !reader.putSourceHealth) return;
   const severity = 'high' as const;
   const state = health.incidentState === 'acknowledged' ? 'acknowledged' as const : 'open' as const;
   if (health.incidentState === state && health.incidentSeverity === severity

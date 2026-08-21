@@ -54,7 +54,7 @@ describe('Lever queue dispatch', () => {
     });
   });
 
-  it('polls shadow boards every three hours on the deployed half-hour schedule', () => {
+  it('polls shadow boards every nine hours on the deployed 90-minute schedule', () => {
     const firstScheduledAt = Date.parse('2026-07-30T00:22:00.000Z');
     const lastSuccessAt = new Date(firstScheduledAt + 60_000).toISOString();
     const checkpoint = { sourceId: `shadow-${shadowSource.id}`, successfulFetches: 1, lastRowCount: 0, lastSuccessAt };
@@ -64,7 +64,7 @@ describe('Lever queue dispatch', () => {
     expect(isLeverSourceDue(shadowSource, checkpoint, new Date(firstScheduledAt + 10 * LEVER_POLL_INTERVAL_MS))).toBe(true);
   });
 
-  it('polls published boards every half hour even when they are quiet', () => {
+  it('polls published boards every 90 minutes even when they are quiet', () => {
     const published: ReviewedLeverSource = { ...shadowSource, status: 'published' };
     const checkpoint = { sourceId: published.id, successfulFetches: 1, lastRowCount: 0, lastSuccessAt: scheduledAt };
     expect(isLeverSourceDue(published, checkpoint, new Date(Date.parse(scheduledAt) + LEVER_POLL_INTERVAL_MS))).toBe(true);
@@ -109,7 +109,7 @@ describe('Lever queue dispatch', () => {
       queueUrl: 'https://sqs.us-east-1.amazonaws.com/123/lever.fifo',
       sources: [published],
       checkpointReader: store,
-      now: () => new Date('2026-07-30T13:00:00.000Z'),
+      now: () => new Date('2026-07-30T16:00:00.000Z'),
       client: { async send(command) { commands.push(command); return {}; } },
     })).toEqual({ queued: 1 });
     expect(await store.getSourceHealth(shadowSource.id)).toMatchObject({
