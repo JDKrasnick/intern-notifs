@@ -1783,6 +1783,11 @@ function AppContent() {
         pendingDestination.current = destination;
         return;
       }
+      // An explicit notification tap must win over the automatic launch
+      // inbox, including when that request already started during cold boot.
+      launchRequestId.current += 1;
+      launchRequestToken.current = currentToken;
+      setLaunchLoaded(true);
       void api<{ jobs: Job[]; total?: number }>(`/me/releases/${encodeURIComponent(destination.releaseId)}`, currentToken)
         .then((release) => {
           const openedAt = new Date().toISOString();
