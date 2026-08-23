@@ -223,7 +223,7 @@ function alertSettings(
 
 function requireProfile(value: Record<string, unknown>, userId: string): ApplicantProfile {
   const contact = value.contact as ApplicantProfile['contact'];
-  if (!contact?.name || !contact.email || typeof value.location !== 'string' || typeof value.workAuthorization !== 'string' || !Array.isArray(value.education) || !value.links || !value.reusableAnswers || typeof value.resumeDocumentId !== 'string') throw new Error('Profile needs contact name/email, location, work authorization, résumé, education, links, and reusable answers');
+  if (!contact?.name || !contact.email || typeof value.location !== 'string' || typeof value.workAuthorization !== 'string' || !Array.isArray(value.education) || !value.links || !value.reusableAnswers) throw new Error('Profile needs contact name/email, location, work authorization, education, links, and reusable answers');
   if ((contact.firstName !== undefined && typeof contact.firstName !== 'string') || (contact.lastName !== undefined && typeof contact.lastName !== 'string') || (contact.phone !== undefined && typeof contact.phone !== 'string')) throw new Error('Profile contact details must be text');
   return { userId, contact, location: value.location, workAuthorization: value.workAuthorization, links: value.links as Record<string, string>, education: value.education as ApplicantProfile['education'], reusableAnswers: value.reusableAnswers as Record<string, string>, ...(typeof value.resumeDocumentId === 'string' ? { resumeDocumentId: value.resumeDocumentId } : {}), ...(value.sensitive && typeof value.sensitive === 'object' ? { sensitive: value.sensitive as Record<string, unknown> } : {}), updatedAt: now() };
 }
