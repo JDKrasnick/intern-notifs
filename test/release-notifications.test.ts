@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createCandidateRelease, createNotificationIntents, isQuietTime, logicalTombstoneId, MemoryDeliveryClaimStore, naturalTruncate, personalizeRelease, renderReleasePush } from '../src/release-notifications.js';
-import type { Internship } from '../src/types.js';
+import type { Internship, InternshipIdentity } from '../src/types.js';
 
 function job(id: string, title: string, season = 'Summer 2027', education?: string[]): Internship {
   return {
@@ -41,6 +41,28 @@ describe('release notification pipeline domain', () => {
     const grouped = personalizeRelease(release, 'student', {})[0]!;
     expect(grouped.presentation).toBe('employer-release');
     expect(renderReleasePush(grouped)).toMatchObject({ title: 'Google posted 4 matching roles', data: { destination: 'release', url: `internnotifs://releases/${release.releaseId}` } });
+  });
+
+  it('uses the current structured education contract when forming cohorts', () => {
+    const identity = (level: 'undergraduate' | 'doctoral'): InternshipIdentity => ({
+      company: { canonicalId: 'google', displayName: { value: 'Google', provenance: [] } },
+      programType: { value: 'internship', provenance: [] },
+      season: { term: 'summer', year: 2027, evidenceStatus: 'explicit', provenance: [] },
+      education: { levels: [level], evidenceStatus: 'explicit', provenance: [] },
+      title: {
+        official: { value: 'Software Intern', provenance: [] },
+        display: { value: 'Software Intern', provenance: [] },
+        search: { value: 'software intern', provenance: [] },
+      },
+      disciplines: [],
+      locations: [],
+    });
+    const release = createCandidateRelease([
+      { ...job('undergrad', 'Software Intern'), internshipIdentity: identity('undergraduate') },
+      { ...job('doctoral', 'Research Intern'), internshipIdentity: identity('doctoral') },
+    ], new Date('2026-08-23T12:00:00.000Z'));
+
+    expect(personalizeRelease(release, 'student', {}).map((item) => item.education).sort()).toEqual(['doctoral', 'undergraduate']);
   });
 
   it('holds both channels during overnight quiet hours', () => {

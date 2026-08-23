@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { ExpoPushPublisher, inspectExpoPushReceipts, sendNewJobNotifications } from '../src/notifications.js';
+import { ExpoPushPublisher, inspectExpoPushReceipts, retryExpoPushNotifications, sendNewJobNotifications } from '../src/notifications.js';
 import { postingIdentityKey } from '../src/core/normalize.js';
-import { MemoryUserStore } from '../src/store.js';
+import { MemoryInternshipStore, MemoryUserStore } from '../src/store.js';
 import type { Internship } from '../src/types.js';
 
 const job: Internship = {
@@ -33,14 +33,32 @@ describe('Expo delivery lifecycle', () => {
     expect((await users.activeDevices()).find((device) => device.userId === 'eligible')).toBeUndefined();
   });
 
-  it('records an ambiguous transport failure as terminal unknown and never retries it', async () => {
+  it('retries an explicit transient HTTP rejection through the bounded retry path', async () => {
+    const jobs = new MemoryInternshipStore();
+    await jobs.putInternship(job);
     const users = new MemoryUserStore();
     await users.putPreferences({ userId: 'eligible', filter: {}, alertsEnabled: true, onboardingComplete: true, updatedAt: '2026-07-19T00:00:00.000Z' });
     await users.putDevice({ userId: 'eligible', token: 'ExponentPushToken[eligible]', platform: 'android', active: true, createdAt: '2026-07-19T00:00:00.000Z', updatedAt: '2026-07-19T00:00:00.000Z' });
-    const publisher = new ExpoPushPublisher('https://push.example.test', async () => new Response('unavailable', { status: 503 }));
+    let publishes = 0;
+    const publisher = new ExpoPushPublisher('https://push.example.test', async () => {
+      publishes += 1;
+      return publishes === 1
+        ? new Response('unavailable', { status: 503 })
+        : new Response(JSON.stringify({ data: { id: 'ticket-2', status: 'ok' } }), { status: 200 });
+    });
     expect(await sendNewJobNotifications([job], users, publisher)).toEqual({ sent: 0, skipped: 0, failed: 1 });
-    expect(await users.pendingReceipts()).toEqual([]);
-    expect(await users.getReceipt('eligible', postingIdentityKey(job.normalizedUrl), 'ExponentPushToken[eligible]')).toMatchObject({ status: 'pending', deliveryState: 'unknown' });
+    expect(await users.getReceipt('eligible', postingIdentityKey(job.normalizedUrl), 'ExponentPushToken[eligible]')).toMatchObject({ status: 'retryable', attempts: 1, lastErrorCode: 'ExpoHttp503' });
+    expect(await retryExpoPushNotifications(jobs, users, publisher)).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(await users.getReceipt('eligible', postingIdentityKey(job.normalizedUrl), 'ExponentPushToken[eligible]')).toMatchObject({ status: 'pending', deliveryState: 'accepted', attempts: 2, ticketId: 'ticket-2' });
+  });
+
+  it('records an ambiguous connection failure as terminal unknown and never retries it', async () => {
+    const users = new MemoryUserStore();
+    await users.putPreferences({ userId: 'eligible', filter: {}, alertsEnabled: true, onboardingComplete: true, updatedAt: '2026-07-19T00:00:00.000Z' });
+    await users.putDevice({ userId: 'eligible', token: 'ExponentPushToken[eligible]', platform: 'android', active: true, createdAt: '2026-07-19T00:00:00.000Z', updatedAt: '2026-07-19T00:00:00.000Z' });
+    const publisher = new ExpoPushPublisher('https://push.example.test', async () => { throw new TypeError('connection reset'); });
+    expect(await sendNewJobNotifications([job], users, publisher)).toEqual({ sent: 0, skipped: 0, failed: 1 });
+    expect(await users.getReceipt('eligible', postingIdentityKey(job.normalizedUrl), 'ExponentPushToken[eligible]')).toMatchObject({ status: 'pending', deliveryState: 'unknown', lastErrorCode: 'TransportAmbiguous' });
     expect(await sendNewJobNotifications([job], users, publisher)).toEqual({ sent: 0, skipped: 1, failed: 0 });
   });
 

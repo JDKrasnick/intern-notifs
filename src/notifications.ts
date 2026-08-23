@@ -24,6 +24,16 @@ export const MAX_LEGACY_PUSH_JOBS_PER_RUN = 10;
 
 export interface ExpoPushTicket { id?: string; status: 'ok' | 'error'; details?: { error?: string }; message?: string; }
 export const MAX_EXPO_PUSH_ATTEMPTS = 3;
+class ExpoPushHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`Expo Push Service rejected notification with HTTP ${status}`);
+    this.name = 'ExpoPushHttpError';
+  }
+}
+
+function retryableExpoHttpStatus(status: number) {
+  return status === 408 || status === 429 || status >= 500;
+}
 export type NotificationDeliveryEvent = {
   event: 'notification_sent' | 'notification_failed' | 'notification_skipped_duplicate' | 'push_receipt_confirmed' | 'push_receipt_failed';
   occurredAt: string;
@@ -67,7 +77,7 @@ export class ExpoPushPublisher {
   constructor(private readonly endpoint = 'https://exp.host/--/api/v2/push/send', private readonly fetcher: typeof fetch = fetch) {}
   async publish(token: string, message: PushMessage): Promise<ExpoPushTicket> {
     const response = await this.fetcher(this.endpoint, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ to: token, sound: 'default', priority: 'high', title: message.title, body: message.body, data: message.data ?? { jobId: message.click }, channelId: 'job-alerts' }), signal: AbortSignal.timeout(PUSH_REQUEST_TIMEOUT_MS) });
-    if (!response.ok) throw new Error(`Expo Push Service rejected notification with HTTP ${response.status}`);
+    if (!response.ok) throw new ExpoPushHttpError(response.status);
     const body = await response.json() as { data?: ExpoPushTicket | ExpoPushTicket[] };
     const ticket = Array.isArray(body.data) ? body.data[0] : body.data;
     if (!ticket) throw new Error('Expo Push Service returned no ticket');
@@ -116,11 +126,11 @@ export async function sendNewJobNotifications(jobs: Internship[], users: UserSto
     // delivered role is not resent merely because its receipt key was hardened.
     const existing = await users.getReceipt(device.userId, dedupeKey, device.token)
       ?? await users.getReceipt(device.userId, job.jobId, device.token);
-    if (existing?.status === 'ok' || existing?.status === 'pending') {
+    if (existing?.status === 'ok' || existing?.status === 'pending' || existing?.deliveryState === 'definitive-failure') {
       emitDeliveryEvent(logger, { event: 'notification_skipped_duplicate', occurredAt: now().toISOString(), ...context, reason: `existing_${existing.status}_receipt` });
       skipped += 1; continue;
     }
-    const timestamp = now().toISOString(); const receipt: DeliveryReceipt = { userId: device.userId, jobId: job.jobId, dedupeKey, token: device.token, status: 'pending', deliveryState: 'claimed', createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp };
+    const timestamp = now().toISOString(); const receipt: DeliveryReceipt = { userId: device.userId, jobId: job.jobId, dedupeKey, token: device.token, status: 'pending', attempts: (existing?.attempts ?? 0) + 1, deliveryState: 'claimed', createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp };
     if (!await users.claimReceipt(receipt)) {
       emitDeliveryEvent(logger, { event: 'notification_skipped_duplicate', occurredAt: now().toISOString(), ...context, reason: 'concurrent_delivery_claim' });
       skipped += 1; continue;
@@ -139,9 +149,20 @@ export async function sendNewJobNotifications(jobs: Internship[], users: UserSto
         failed += 1; if (ticket.details?.error === 'DeviceNotRegistered') await users.putDevice({ ...device, active: false, updatedAt: now().toISOString() });
       }
     } catch (error) {
-      // A transport timeout cannot prove whether Expo accepted the request.
-      // Keep the permanent claim and require operator reconciliation instead of retrying.
-      await users.putReceipt({ ...receipt, status: 'pending', deliveryState: 'unknown', updatedAt: now().toISOString() });
+      const explicitHttpFailure = error instanceof ExpoPushHttpError;
+      const retryable = explicitHttpFailure && retryableExpoHttpStatus(error.status) && (receipt.attempts ?? 1) < MAX_EXPO_PUSH_ATTEMPTS;
+      // Timeouts and connection failures cannot prove whether Expo accepted the
+      // request. Explicit HTTP responses did not yield a ticket and are safe to
+      // classify for bounded retry or permanent rejection.
+      await users.putReceipt({
+        ...receipt,
+        status: explicitHttpFailure ? retryable ? 'retryable' : 'error' : 'pending',
+        deliveryState: explicitHttpFailure ? retryable ? 'claimed' : 'definitive-failure' : 'unknown',
+        lastErrorCode: explicitHttpFailure ? `ExpoHttp${error.status}` : 'TransportAmbiguous',
+        lastErrorMessage: (error instanceof Error ? error.message : String(error)).slice(0, 500),
+        lastErrorAt: now().toISOString(),
+        updatedAt: now().toISOString(),
+      });
       emitDeliveryEvent(logger, { event: 'notification_failed', occurredAt: now().toISOString(), ...context, reason: error instanceof Error ? error.message.slice(0, 240) : 'unknown_transport_error' });
       failed += 1;
     }
@@ -192,6 +213,7 @@ export async function retryExpoPushNotifications(jobs: InternshipStore, users: U
         ticketId: ticket.id,
         attempts: attempts + 1,
         status: accepted ? 'pending' : invalid || attempts + 1 >= MAX_EXPO_PUSH_ATTEMPTS ? 'error' : 'retryable',
+        deliveryState: accepted ? 'accepted' : invalid || attempts + 1 >= MAX_EXPO_PUSH_ATTEMPTS ? 'definitive-failure' : 'claimed',
         ...(!accepted ? { lastErrorCode: ticket.details?.error ?? 'ExpoRejected', lastErrorMessage: ticket.message?.slice(0, 500), lastErrorAt: attemptedAt } : {}),
         updatedAt: attemptedAt,
       });
@@ -201,7 +223,18 @@ export async function retryExpoPushNotifications(jobs: InternshipStore, users: U
         failed += 1;
       }
     } catch (error) {
-      await users.putReceipt({ ...receipt, attempts: attempts + 1, status: attempts + 1 >= MAX_EXPO_PUSH_ATTEMPTS ? 'error' : 'retryable', lastErrorCode: 'TransportError', lastErrorMessage: (error instanceof Error ? error.message : String(error)).slice(0, 500), lastErrorAt: attemptedAt, updatedAt: attemptedAt });
+      const explicitHttpFailure = error instanceof ExpoPushHttpError;
+      const retryable = explicitHttpFailure && retryableExpoHttpStatus(error.status) && attempts + 1 < MAX_EXPO_PUSH_ATTEMPTS;
+      await users.putReceipt({
+        ...receipt,
+        attempts: attempts + 1,
+        status: explicitHttpFailure ? retryable ? 'retryable' : 'error' : 'pending',
+        deliveryState: explicitHttpFailure ? retryable ? 'claimed' : 'definitive-failure' : 'unknown',
+        lastErrorCode: explicitHttpFailure ? `ExpoHttp${error.status}` : 'TransportAmbiguous',
+        lastErrorMessage: (error instanceof Error ? error.message : String(error)).slice(0, 500),
+        lastErrorAt: attemptedAt,
+        updatedAt: attemptedAt,
+      });
       failed += 1;
     }
   }

@@ -87,9 +87,21 @@ export function createCandidateRelease(jobs: Internship[], openedAt: Date, windo
 }
 
 function educationLabel(job: Internship): string {
-  const identity = (job as Internship & { internshipIdentity?: { education?: { audience?: string[]; evidence?: string } } }).internshipIdentity;
-  const audience = identity?.education?.audience?.filter(Boolean) ?? [];
-  if (!audience.length || identity?.education?.evidence === 'unspecified') return 'Education level not specified by employer';
+  const identity = (job as Internship & {
+    internshipIdentity?: {
+      education?: {
+        levels?: string[];
+        evidenceStatus?: string;
+        /** Legacy enrichment shape retained during the lazy migration. */
+        audience?: string[];
+        evidence?: string;
+      };
+    };
+  }).internshipIdentity;
+  const audience = (identity?.education?.levels ?? identity?.education?.audience ?? []).filter(Boolean);
+  const evidenceStatus = identity?.education?.evidenceStatus ?? identity?.education?.evidence;
+  if (!audience.length || evidenceStatus === 'unspecified') return 'Education level not specified by employer';
+  if (evidenceStatus === 'conflicting') return 'Employer education requirements conflict across official sources';
   return audience.join(' + ');
 }
 

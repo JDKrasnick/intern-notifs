@@ -1564,6 +1564,8 @@ function AppContent() {
   const { width } = useWindowDimensions();
   const usesNavigationRail = width >= 700;
   const [token, setToken] = useState<string>();
+  const tokenRef = useRef<string | undefined>(undefined);
+  tokenRef.current = token;
   const [ready, setReady] = useState(false);
   const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
   const [preferences, setPreferences] = useState<Preference>();
@@ -1776,7 +1778,12 @@ function AppContent() {
     }
     if (destination.kind === "release") {
       setTab("feed");
-      void api<{ jobs: Job[]; total?: number }>(`/me/releases/${encodeURIComponent(destination.releaseId)}`, token ?? "")
+      const currentToken = tokenRef.current;
+      if (!currentToken) {
+        pendingDestination.current = destination;
+        return;
+      }
+      void api<{ jobs: Job[]; total?: number }>(`/me/releases/${encodeURIComponent(destination.releaseId)}`, currentToken)
         .then((release) => {
           const openedAt = new Date().toISOString();
           setLaunchInbox({ jobs: release.jobs, total: release.total ?? release.jobs.length, hasMore: false, previousOpenedAt: null, openedAt });
@@ -1859,6 +1866,12 @@ function AppContent() {
     }
     presentDestination(destination);
   };
+  useEffect(() => {
+    if (!token || detailVisible.current || detailDismissalPending.current || pendingDestination.current?.kind !== "release") return;
+    const destination = pendingDestination.current;
+    pendingDestination.current = undefined;
+    presentDestination(destination);
+  }, [token]);
   const openCatalogJob = (job: Job) => {
     if (detailDismissalPending.current) {
       pendingDestination.current = {
@@ -2808,7 +2821,6 @@ function Profile({
     (preferences.filter.excludeKeywords ?? []).join(", "),
   );
   const [alertsEnabled, setAlertsEnabled] = useState(preferences.alertsEnabled);
-  const [emailAlertsEnabled, setEmailAlertsEnabled] = useState(preferences.emailAlertsEnabled ?? false);
   const [notificationsBlocked, setNotificationsBlocked] = useState(false);
   const [includeEmployerCategories, setIncludeEmployerCategories] = useState<EmployerCategory[]>(
     preferences.filter.includeEmployerCategories ?? [],
@@ -2865,7 +2877,6 @@ function Profile({
     setIncludeKeywords((preferences.filter.includeKeywords ?? []).join(", "));
     setExcludeKeywords((preferences.filter.excludeKeywords ?? []).join(", "));
     setAlertsEnabled(preferences.alertsEnabled);
-    setEmailAlertsEnabled(preferences.emailAlertsEnabled ?? false);
     setIncludeEmployerCategories(preferences.filter.includeEmployerCategories ?? []);
     setExcludeUsCitizenshipRequired(preferences.filter.excludeUsCitizenshipRequired ?? false);
     setExcludeAdvancedDegreeRequired(preferences.filter.excludeAdvancedDegreeRequired ?? false);
@@ -3019,7 +3030,6 @@ function Profile({
             excludeAdvancedDegreeRequired,
           },
           alertsEnabled,
-          emailAlertsEnabled,
           alertSettings: {
             delivery,
             quietHours: {
@@ -3221,19 +3231,6 @@ function Profile({
           value={alertsEnabled}
           onValueChange={setAlertsEnabled}
           accessibilityLabel="Job alerts"
-          trackColor={{ false: colors.border, true: colors.signal }}
-          thumbColor={colors.onDark}
-        />
-      </View>
-      <View style={styles.preferenceRow}>
-        <View style={styles.preferenceCopy}>
-          <Text style={styles.preferenceTitle}>Email alerts</Text>
-          <Text style={styles.muted}>Send the same immediate matching releases by email. This is a separate opt-in.</Text>
-        </View>
-        <Switch
-          value={emailAlertsEnabled}
-          onValueChange={setEmailAlertsEnabled}
-          accessibilityLabel="Email alerts"
           trackColor={{ false: colors.border, true: colors.signal }}
           thumbColor={colors.onDark}
         />
