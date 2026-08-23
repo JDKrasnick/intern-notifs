@@ -139,6 +139,7 @@ type AlertSettings = {
 type Preference = {
   filter: JobFilter;
   alertsEnabled: boolean;
+  emailAlertsEnabled?: boolean;
   onboardingComplete: boolean;
   alertSettings?: AlertSettings;
   push?: PushPreferences;
@@ -1773,6 +1774,18 @@ function AppContent() {
       setTab("saved");
       return;
     }
+    if (destination.kind === "release") {
+      setTab("feed");
+      void api<{ jobs: Job[]; total?: number }>(`/me/releases/${encodeURIComponent(destination.releaseId)}`, token ?? "")
+        .then((release) => {
+          const openedAt = new Date().toISOString();
+          setLaunchInbox({ jobs: release.jobs, total: release.total ?? release.jobs.length, hasMore: false, previousOpenedAt: null, openedAt });
+          setJobs((current) => [...release.jobs, ...current.filter((job) => !release.jobs.some((released) => released.jobId === job.jobId))]);
+          setShowLaunchInbox(true);
+        })
+        .catch((error) => Alert.alert("Could not open release", error instanceof Error ? error.message : "Please try again."));
+      return;
+    }
     routedJobId.current = destination.jobId;
     detailVisible.current = true;
     setTab("feed");
@@ -1818,6 +1831,15 @@ function AppContent() {
   const openDestination = (destination: AppDestination | undefined, options: { allowActiveJob?: boolean } = {}) => {
     if (!destination) return;
     if (destination.kind === "saved") {
+      if (detailVisible.current || detailDismissalPending.current) {
+        pendingDestination.current = destination;
+        if (detailVisible.current) dismissRoutedJob();
+        return;
+      }
+      presentDestination(destination);
+      return;
+    }
+    if (destination.kind === "release") {
       if (detailVisible.current || detailDismissalPending.current) {
         pendingDestination.current = destination;
         if (detailVisible.current) dismissRoutedJob();
@@ -2786,6 +2808,7 @@ function Profile({
     (preferences.filter.excludeKeywords ?? []).join(", "),
   );
   const [alertsEnabled, setAlertsEnabled] = useState(preferences.alertsEnabled);
+  const [emailAlertsEnabled, setEmailAlertsEnabled] = useState(preferences.emailAlertsEnabled ?? false);
   const [notificationsBlocked, setNotificationsBlocked] = useState(false);
   const [includeEmployerCategories, setIncludeEmployerCategories] = useState<EmployerCategory[]>(
     preferences.filter.includeEmployerCategories ?? [],
@@ -2842,6 +2865,7 @@ function Profile({
     setIncludeKeywords((preferences.filter.includeKeywords ?? []).join(", "));
     setExcludeKeywords((preferences.filter.excludeKeywords ?? []).join(", "));
     setAlertsEnabled(preferences.alertsEnabled);
+    setEmailAlertsEnabled(preferences.emailAlertsEnabled ?? false);
     setIncludeEmployerCategories(preferences.filter.includeEmployerCategories ?? []);
     setExcludeUsCitizenshipRequired(preferences.filter.excludeUsCitizenshipRequired ?? false);
     setExcludeAdvancedDegreeRequired(preferences.filter.excludeAdvancedDegreeRequired ?? false);
@@ -2995,6 +3019,7 @@ function Profile({
             excludeAdvancedDegreeRequired,
           },
           alertsEnabled,
+          emailAlertsEnabled,
           alertSettings: {
             delivery,
             quietHours: {
@@ -3196,6 +3221,19 @@ function Profile({
           value={alertsEnabled}
           onValueChange={setAlertsEnabled}
           accessibilityLabel="Job alerts"
+          trackColor={{ false: colors.border, true: colors.signal }}
+          thumbColor={colors.onDark}
+        />
+      </View>
+      <View style={styles.preferenceRow}>
+        <View style={styles.preferenceCopy}>
+          <Text style={styles.preferenceTitle}>Email alerts</Text>
+          <Text style={styles.muted}>Send the same immediate matching releases by email. This is a separate opt-in.</Text>
+        </View>
+        <Switch
+          value={emailAlertsEnabled}
+          onValueChange={setEmailAlertsEnabled}
+          accessibilityLabel="Email alerts"
           trackColor={{ false: colors.border, true: colors.signal }}
           thumbColor={colors.onDark}
         />

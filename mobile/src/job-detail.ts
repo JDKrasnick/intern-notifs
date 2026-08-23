@@ -6,6 +6,7 @@ export type FilterMatchReason = {
 export type JobNotificationData = {
   destination?: unknown;
   jobId?: unknown;
+  releaseId?: unknown;
   applicationId?: unknown;
   url?: unknown;
   matchedFilters?: unknown;
@@ -13,6 +14,7 @@ export type JobNotificationData = {
 
 export type AppDestination =
   | { kind: 'job'; jobId: string; reasons: FilterMatchReason[]; exclusionsApplied: boolean }
+  | { kind: 'release'; releaseId: string }
   | { kind: 'saved' };
 
 export type JobRouteState = 'idle' | 'loading' | 'missing' | 'error';
@@ -39,6 +41,7 @@ function filterContext(value: unknown) {
 
 export function destinationFromNotification(data: JobNotificationData): AppDestination | undefined {
   if (typeof data.applicationId === 'string' || data.destination === 'saved') return { kind: 'saved' };
+  if (data.destination === 'release' && typeof data.releaseId === 'string' && data.releaseId) return { kind: 'release', releaseId: data.releaseId };
   if (typeof data.jobId !== 'string' || !data.jobId) return undefined;
   return { kind: 'job', jobId: data.jobId, ...filterContext(data.matchedFilters) };
 }
@@ -46,9 +49,10 @@ export function destinationFromNotification(data: JobNotificationData): AppDesti
 export function destinationFromUrl(url: string): AppDestination | undefined {
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== 'internnotifs:' || parsed.hostname !== 'jobs') return undefined;
+    if (parsed.protocol !== 'internnotifs:' || !['jobs', 'releases'].includes(parsed.hostname)) return undefined;
     const encodedId = parsed.pathname.replace(/^\//, '').split('/')[0];
     if (!encodedId) return undefined;
+    if (parsed.hostname === 'releases') return { kind: 'release', releaseId: decodeURIComponent(encodedId) };
     return { kind: 'job', jobId: decodeURIComponent(encodedId), reasons: [], exclusionsApplied: false };
   } catch {
     return undefined;
@@ -57,6 +61,10 @@ export function destinationFromUrl(url: string): AppDestination | undefined {
 
 export function jobDeepLink(jobId: string) {
   return `internnotifs://jobs/${encodeURIComponent(jobId)}`;
+}
+
+export function releaseDeepLink(releaseId: string) {
+  return `internnotifs://releases/${encodeURIComponent(releaseId)}`;
 }
 
 export function isDuplicateJobOpen(activeJobId: string | undefined, nextJobId: string, allowActiveJob = false) {

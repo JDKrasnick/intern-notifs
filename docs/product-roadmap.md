@@ -63,6 +63,8 @@
 - [x] Add Ashby application-assistance route detection and headed-browser workflows after runtime promotion; this remains separate from source ingestion. Published reviewed boards are eligible automatically.
 - [x] Add human-readable source tags to default internship notifications for community job boards and published Greenhouse, Lever, and Ashby sources.
 - [x] Add job freshness, verified employer-posted versus unverified source-reported versus InternNotifs-found timing across mobile, responsive web, and alerts, official/community provenance labels to role details and every catalog or saved-role card, filter-match explanations, hybrid New/New here status, and duplicate-safe notification deep links, including closed and unavailable states.
+- [x] Add migration-safe structured internship/posting identity, conservative ATS alias reconciliation, grouped catalog/release APIs, permanent delivery-claim semantics, quiet-hours release modeling, and the reusable encrypted SNS/SQS notification construct.
+- [ ] Activate the grouped notification construct with production batch workers, TestFlight-owner allowlisting, Firehose/Athena audit exports, and measured 15-second p95 delivery before disabling the legacy direct sender globally.
 - [ ] Add user-facing settings, account deletion, and data export surface.
 - [x] Add source-quality reports, drift gates, nightly live probing, source-candidate review artifacts, and Firecrawl discovery-only workflow.
 - [x] Define the shared headed/headless application-session state machine and trust boundaries.

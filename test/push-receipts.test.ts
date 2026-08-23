@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { ExpoPushPublisher, inspectExpoPushReceipts, retryExpoPushNotifications, sendNewJobNotifications } from '../src/notifications.js';
-import { MemoryInternshipStore, MemoryUserStore } from '../src/store.js';
+import { ExpoPushPublisher, inspectExpoPushReceipts, sendNewJobNotifications } from '../src/notifications.js';
+import { postingIdentityKey } from '../src/core/normalize.js';
+import { MemoryUserStore } from '../src/store.js';
 import type { Internship } from '../src/types.js';
 
 const job: Internship = {
@@ -30,57 +31,60 @@ describe('Expo delivery lifecycle', () => {
     expect(calls.filter((url) => url === 'https://push.example.test')).toHaveLength(1);
     expect(await inspectExpoPushReceipts(users, publisher)).toEqual({ ok: 0, invalid: 1, retryable: 0, pending: 0 });
     expect((await users.activeDevices()).find((device) => device.userId === 'eligible')).toBeUndefined();
-    expect(await users.getReceipt('eligible', 'job-1', 'ExponentPushToken[eligible]')).toMatchObject({ status: 'error', attempts: 1, lastErrorCode: 'DeviceNotRegistered' });
   });
 
-  it('retries a transient receipt failure and preserves its diagnostic', async () => {
-    const jobs = new MemoryInternshipStore();
-    await jobs.putInternship(job);
-    const users = new MemoryUserStore();
-    await users.putPreferences({ userId: 'eligible', filter: {}, alertsEnabled: true, onboardingComplete: true, updatedAt: '2026-07-19T00:00:00.000Z' });
-    await users.putDevice({ userId: 'eligible', token: 'ExponentPushToken[eligible]', platform: 'ios', active: true, createdAt: '2026-07-19T00:00:00.000Z', updatedAt: '2026-07-19T00:00:00.000Z' });
-    let ticket = 0;
-    const publisher = new ExpoPushPublisher('https://push.example.test', async (url) => {
-      if (String(url).endsWith('/getReceipts')) {
-        const result = ticket === 1
-          ? { 'ticket-1': { status: 'error', details: { error: 'MessageRateExceeded' }, message: 'Try again later' } }
-          : { 'ticket-2': { status: 'ok' } };
-        return new Response(JSON.stringify({ data: result }), { status: 200 });
-      }
-      ticket += 1;
-      return new Response(JSON.stringify({ data: { id: `ticket-${ticket}`, status: 'ok' } }), { status: 200 });
-    });
-
-    expect(await sendNewJobNotifications([job], users, publisher)).toEqual({ sent: 1, skipped: 0, failed: 0 });
-    expect(await inspectExpoPushReceipts(users, publisher)).toEqual({ ok: 0, invalid: 0, retryable: 1, pending: 0 });
-    expect(await retryExpoPushNotifications(jobs, users, publisher)).toEqual({ sent: 1, skipped: 0, failed: 0 });
-    expect(await users.getReceipt('eligible', 'job-1', 'ExponentPushToken[eligible]')).toMatchObject({ status: 'pending', attempts: 2, ticketId: 'ticket-2', lastErrorCode: 'MessageRateExceeded', lastErrorMessage: 'Try again later' });
-    expect(await inspectExpoPushReceipts(users, publisher)).toEqual({ ok: 1, invalid: 0, retryable: 0, pending: 0 });
-    expect(await users.getReceipt('eligible', 'job-1', 'ExponentPushToken[eligible]')).toMatchObject({ status: 'ok', attempts: 2, lastErrorCode: 'MessageRateExceeded' });
-  });
-
-  it('queues a transport failure for bounded retry instead of leaving a receipt pending forever', async () => {
-    const jobs = new MemoryInternshipStore();
-    await jobs.putInternship(job);
+  it('records an ambiguous transport failure as terminal unknown and never retries it', async () => {
     const users = new MemoryUserStore();
     await users.putPreferences({ userId: 'eligible', filter: {}, alertsEnabled: true, onboardingComplete: true, updatedAt: '2026-07-19T00:00:00.000Z' });
     await users.putDevice({ userId: 'eligible', token: 'ExponentPushToken[eligible]', platform: 'android', active: true, createdAt: '2026-07-19T00:00:00.000Z', updatedAt: '2026-07-19T00:00:00.000Z' });
     const publisher = new ExpoPushPublisher('https://push.example.test', async () => new Response('unavailable', { status: 503 }));
     expect(await sendNewJobNotifications([job], users, publisher)).toEqual({ sent: 0, skipped: 0, failed: 1 });
     expect(await users.pendingReceipts()).toEqual([]);
-    expect(await users.getReceipt('eligible', 'job-1', 'ExponentPushToken[eligible]')).toMatchObject({ status: 'retryable', attempts: 1, lastErrorCode: 'TransportError' });
-    expect(await retryExpoPushNotifications(jobs, users, publisher)).toEqual({ sent: 0, skipped: 0, failed: 1 });
-    expect(await retryExpoPushNotifications(jobs, users, publisher)).toEqual({ sent: 0, skipped: 0, failed: 1 });
-    expect(await retryExpoPushNotifications(jobs, users, publisher)).toEqual({ sent: 0, skipped: 0, failed: 0 });
-    expect(await users.getReceipt('eligible', 'job-1', 'ExponentPushToken[eligible]')).toMatchObject({ status: 'error', attempts: 3, lastErrorCode: 'TransportError' });
+    expect(await users.getReceipt('eligible', postingIdentityKey(job.normalizedUrl), 'ExponentPushToken[eligible]')).toMatchObject({ status: 'pending', deliveryState: 'unknown' });
+    expect(await sendNewJobNotifications([job], users, publisher)).toEqual({ sent: 0, skipped: 1, failed: 0 });
   });
 
-  it('treats an Expo success response without a ticket ID as retryable instead of permanently suppressing the alert', async () => {
+  it('treats an Expo success response without a ticket ID as terminal unknown', async () => {
     const users = new MemoryUserStore();
     await users.putPreferences({ userId: 'eligible', filter: {}, alertsEnabled: true, onboardingComplete: true, updatedAt: '2026-07-19T00:00:00.000Z' });
     await users.putDevice({ userId: 'eligible', token: 'ExponentPushToken[eligible]', platform: 'ios', active: true, createdAt: '2026-07-19T00:00:00.000Z', updatedAt: '2026-07-19T00:00:00.000Z' });
     const publisher = new ExpoPushPublisher('https://push.example.test', async () => new Response(JSON.stringify({ data: { status: 'ok' } }), { status: 200 }));
     expect(await sendNewJobNotifications([job], users, publisher)).toEqual({ sent: 0, skipped: 0, failed: 1 });
-    expect(await users.getReceipt('eligible', 'job-1', 'ExponentPushToken[eligible]')).toMatchObject({ status: 'retryable', attempts: 1, lastErrorCode: 'ExpoRejected' });
+    expect(await users.getReceipt('eligible', postingIdentityKey(job.normalizedUrl), 'ExponentPushToken[eligible]')).toMatchObject({ status: 'pending', deliveryState: 'unknown' });
+  });
+
+  it('atomically claims a delivery so overlapping workers send only once and logs the race safely', async () => {
+    const users = new MemoryUserStore();
+    await users.putPreferences({ userId: 'eligible', filter: {}, alertsEnabled: true, onboardingComplete: true, updatedAt: '2026-07-19T00:00:00.000Z' });
+    await users.putDevice({ userId: 'eligible', token: 'ExponentPushToken[eligible]', platform: 'ios', active: true, createdAt: '2026-07-19T00:00:00.000Z', updatedAt: '2026-07-19T00:00:00.000Z' });
+    let publishes = 0;
+    const publisher = new ExpoPushPublisher('https://push.example.test', async () => { publishes += 1; await Promise.resolve(); return new Response(JSON.stringify({ data: { id: 'ticket-1', status: 'ok' } }), { status: 200 }); });
+    const events: Array<{ event: string; recipientKey: string }> = [];
+    const logger = (event: { event: string; recipientKey: string }) => { events.push(event); };
+
+    const results = await Promise.all([
+      sendNewJobNotifications([job], users, publisher, () => new Date('2026-08-14T00:00:00.000Z'), logger),
+      sendNewJobNotifications([job], users, publisher, () => new Date('2026-08-14T00:00:00.000Z'), logger),
+    ]);
+
+    expect(publishes).toBe(1);
+    expect(results.map((result) => result.sent).reduce((total, value) => total + value, 0)).toBe(1);
+    expect(events.map((event) => event.event).sort()).toEqual(['notification_sent', 'notification_skipped_duplicate']);
+    expect(JSON.stringify(events)).not.toContain('eligible');
+    expect(JSON.stringify(events)).not.toContain('ExponentPushToken');
+  });
+
+  it('suppresses a second catalog job when provider URL aliases identify one posting', async () => {
+    const users = new MemoryUserStore();
+    await users.putPreferences({ userId: 'eligible', filter: {}, alertsEnabled: true, onboardingComplete: true, updatedAt: '2026-07-19T00:00:00.000Z' });
+    await users.putDevice({ userId: 'eligible', token: 'ExponentPushToken[eligible]', platform: 'ios', active: true, createdAt: '2026-07-19T00:00:00.000Z', updatedAt: '2026-07-19T00:00:00.000Z' });
+    let publishes = 0;
+    const publisher = new ExpoPushPublisher('https://push.example.test', async () => { publishes += 1; return new Response(JSON.stringify({ data: { id: `ticket-${publishes}`, status: 'ok' } }), { status: 200 }); });
+    const alias = { ...job, jobId: 'job-2', normalizedUrl: 'https://jobs.ashbyhq.com/acme/501d374d-7d4f-4889-bc53-0a1fd16253ea/application?embed=true', applyUrl: 'https://jobs.ashbyhq.com/acme/501d374d-7d4f-4889-bc53-0a1fd16253ea/application?embed=true' };
+    const canonical = { ...job, jobId: 'job-3', normalizedUrl: 'https://jobs.ashbyhq.com/acme/501d374d-7d4f-4889-bc53-0a1fd16253ea', applyUrl: 'https://jobs.ashbyhq.com/acme/501d374d-7d4f-4889-bc53-0a1fd16253ea' };
+
+    expect(await sendNewJobNotifications([alias], users, publisher, undefined, () => undefined)).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(await sendNewJobNotifications([canonical], users, publisher, undefined, () => undefined)).toEqual({ sent: 0, skipped: 1, failed: 0 });
+    expect(publishes).toBe(1);
   });
 });

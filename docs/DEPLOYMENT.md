@@ -150,6 +150,37 @@ baseline roles. Also verify a signed-in opening interval does not return any
 repaired baseline job IDs. Production execution is an operator action separate
 from deployment and this code change.
 
+## Notification delivery log
+
+Delivery receipts are the durable record of attempted Expo pushes. Reconstruct
+the privacy-safe delivery timeline by resolving the retained tables from the
+`InternNotifs` stack, then running:
+
+```bash
+export AWS_PROFILE=intern-notifs
+export INTERNSHIPS_TABLE="$(aws cloudformation describe-stacks --stack-name InternNotifs --query 'Stacks[0].Outputs[?OutputKey==`InternshipsTableName`].OutputValue | [0]' --output text)"
+export USERS_TABLE="$(aws cloudformation describe-stacks --stack-name InternNotifs --query 'Stacks[0].Outputs[?OutputKey==`UserDataTableName`].OutputValue | [0]' --output text)"
+npm run notifications:log -- --since 2026-08-11T00:00:00.000Z
+```
+
+Use `--company TikTok` for a case-insensitive company filter and `--limit 100`
+to bound returned entries. The report includes current receipt status, the full
+role identity, the title users saw, source IDs, strong duplicate application
+identities, softer cross-location role families, and repeated rendered titles.
+It deliberately excludes user IDs, push tokens, and Expo ticket IDs.
+
+New deployments also emit structured `notification_sent`,
+`notification_failed`, `notification_skipped_duplicate`,
+`push_receipt_confirmed`, and `push_receipt_failed` CloudWatch events. The
+`recipientKey` is a short one-way hash used only to correlate delivery events.
+
+Delivery deduplication uses a confidence ladder. Known Greenhouse, Lever,
+Ashby, Workday, TikTok, and ByteDance URLs are keyed by provider and immutable
+posting ID, then protected by a conditional DynamoDB claim. Unknown providers
+fall back to the fully normalized application URL. Employer/title/season role
+families intentionally remain diagnostic-only so regional requisitions are not
+silently discarded.
+
 ## AWS deployment
 
 Use the configured `intern-notifs` assumed role from the AWS CLI. Confirm the active identity before every deployment:
