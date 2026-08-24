@@ -5,6 +5,14 @@ const baseUrl = publicConfig.apiUrl.replace(/\/$/, '');
 const requestTimeoutMs = 12_000;
 const readRetryDelaysMs = [250, 500, 1_000];
 const retryableReadStatuses = new Set([429, 502, 503, 504]);
+const idTokenStorageKey = 'internnotifs.idToken';
+const authSessionStorageKey = 'internnotifs.authSession';
+
+export type StoredAuthSession = { idToken: string; refreshToken: string; username: string };
+
+function cognitoStoragePrefix() {
+  return `@MemoryStorage:CognitoIdentityServiceProvider.${publicConfig.cognitoClientId}`;
+}
 
 function isReadRequest(init: RequestInit) {
   const method = (init.method ?? 'GET').toUpperCase();
@@ -55,9 +63,46 @@ export async function api<T>(path: string, token: string, init: RequestInit = {}
 }
 
 export const sessionStorage = {
-  get: () => AsyncStorage.getItem('internnotifs.idToken'),
-  set: (token: string) => AsyncStorage.setItem('internnotifs.idToken', token),
-  clear: () => AsyncStorage.removeItem('internnotifs.idToken')
+  get: () => AsyncStorage.getItem(idTokenStorageKey),
+  set: (token: string) => AsyncStorage.setItem(idTokenStorageKey, token),
+  getRefreshable: async () => {
+    const value = await AsyncStorage.getItem(authSessionStorageKey);
+    if (!value) return undefined;
+    try {
+      const parsed = JSON.parse(value) as { idToken?: unknown; refreshToken?: unknown; username?: unknown };
+      if (typeof parsed.idToken !== 'string' || typeof parsed.refreshToken !== 'string' || typeof parsed.username !== 'string') return undefined;
+      return { idToken: parsed.idToken, refreshToken: parsed.refreshToken, username: parsed.username };
+    } catch {
+      return undefined;
+    }
+  },
+  getCognitoCached: async (): Promise<StoredAuthSession | undefined> => {
+    if (!publicConfig.cognitoClientId) return undefined;
+    const prefix = cognitoStoragePrefix();
+    const username = await AsyncStorage.getItem(`${prefix}.LastAuthUser`);
+    if (!username) return undefined;
+    const [idToken, refreshToken] = await Promise.all([
+      AsyncStorage.getItem(`${prefix}.${username}.idToken`),
+      AsyncStorage.getItem(`${prefix}.${username}.refreshToken`),
+    ]);
+    if (!idToken || !refreshToken) return undefined;
+    return { idToken, refreshToken, username };
+  },
+  setRefreshable: async (value: StoredAuthSession) => {
+    await Promise.all([
+      AsyncStorage.setItem(idTokenStorageKey, value.idToken),
+      AsyncStorage.setItem(authSessionStorageKey, JSON.stringify(value)),
+    ]);
+  },
+  clear: async () => {
+    const keys = [idTokenStorageKey, authSessionStorageKey];
+    if (publicConfig.cognitoClientId) {
+      const prefix = `${cognitoStoragePrefix()}.`;
+      const cognitoKeys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(prefix));
+      keys.push(...cognitoKeys);
+    }
+    await AsyncStorage.multiRemove(keys);
+  },
 };
 
 /** Public catalog responses are safe to retain locally for a fast first view. */

@@ -3,6 +3,7 @@ import {
   AccessibilityInfo,
   Alert,
   Animated,
+  AppState,
   Easing,
   FlatList,
   InteractionManager,
@@ -28,7 +29,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { api, responseCache, sessionStorage } from "./src/api";
 import { appendCatalogPage, type CatalogPage } from "./src/catalog";
-import { confirmEmail, signIn, signUp } from "./src/auth";
+import { confirmEmail, restoreSession, signIn, signUp } from "./src/auth";
 import {
   clearApplicationFollowUp,
   notifyApplicationProgress,
@@ -1608,11 +1609,28 @@ function AppContent() {
   const catalogRequestGeneration = useRef(0);
   const catalogRequestInFlight = useRef(false);
   useEffect(() => {
-    void sessionStorage.get().then((value) => {
+    void restoreSession().then((value) => {
       setToken(value ?? undefined);
       setReady(true);
     }).catch(() => setReady(true));
   }, []);
+  useEffect(() => {
+    if (!token) return;
+    const refresh = () => {
+      void restoreSession().then((value) => {
+        if (value) setToken(value);
+        else setToken(undefined);
+      }).catch(() => undefined);
+    };
+    const interval = setInterval(refresh, 45 * 60 * 1_000);
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") refresh();
+    });
+    return () => {
+      clearInterval(interval);
+      appStateSubscription.remove();
+    };
+  }, [token]);
   useEffect(() => {
     let active = true;
     void responseCache.get<string[]>(hiddenRolesCacheKey).then((cached) => {
@@ -1788,8 +1806,19 @@ function AppContent() {
       launchRequestId.current += 1;
       launchRequestToken.current = currentToken;
       setLaunchLoaded(true);
-      void api<{ jobs: Job[]; total?: number }>(`/me/releases/${encodeURIComponent(destination.releaseId)}`, currentToken)
+      void restoreSession()
+        .then((usableToken) => {
+          if (!usableToken) {
+            pendingDestination.current = destination;
+            setToken(undefined);
+            return undefined;
+          }
+          tokenRef.current = usableToken;
+          setToken(usableToken);
+          return api<{ jobs: Job[]; total?: number }>(`/me/releases/${encodeURIComponent(destination.releaseId)}`, usableToken);
+        })
         .then((release) => {
+          if (!release) return;
           const openedAt = new Date().toISOString();
           setLaunchInbox({ jobs: release.jobs, total: release.total ?? release.jobs.length, hasMore: false, previousOpenedAt: null, openedAt });
           setJobs((current) => [...release.jobs, ...current.filter((job) => !release.jobs.some((released) => released.jobId === job.jobId))]);
