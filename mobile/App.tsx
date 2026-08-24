@@ -52,6 +52,7 @@ import {
   type JobRouteState,
 } from "./src/job-detail";
 import { resolveApplicationJob, type ApplicationJobSummary } from "./src/application";
+import { settingsDestinations, type SettingsDestination } from "./src/settings";
 
 type Job = {
   jobId: string;
@@ -2756,6 +2757,42 @@ function aliasesFromText(value: string) {
   return aliases;
 }
 
+function SettingsHome({
+  onOpen,
+}: {
+  onOpen: (destination: Exclude<SettingsDestination, "home">) => void;
+}) {
+  return (
+    <ScrollView style={styles.list} contentContainerStyle={styles.profileContent}>
+      <Text style={[styles.hero, styles.profileHero]}>Settings</Text>
+      <Text style={styles.intro}>
+        Keep your application details separate from how InternNotifs works for you.
+      </Text>
+      <View style={styles.settingsList}>
+        {settingsDestinations.map((destination) => (
+          <TouchableOpacity
+            key={destination.id}
+            accessibilityRole="button"
+            accessibilityLabel={destination.title}
+            accessibilityHint={destination.accessibilityHint}
+            onPress={() => onOpen(destination.id)}
+            style={styles.settingsRow}
+          >
+            <View style={styles.settingsRowIcon}>
+              <Ionicons name={destination.icon} size={22} color={colors.signal} />
+            </View>
+            <View style={styles.settingsRowCopy}>
+              <Text style={styles.settingsRowTitle}>{destination.title}</Text>
+              <Text style={styles.settingsRowDescription}>{destination.description}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={22} color={colors.muted} />
+          </TouchableOpacity>
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+
 function Profile({
   token,
   preferences,
@@ -2771,6 +2808,7 @@ function Profile({
   onPreferencesChanged: (value: Preference) => void;
   onSignOut: () => void;
 }) {
+  const [destination, setDestination] = useState<SettingsDestination>("home");
   const [profile, setProfile] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [includeCategories, setIncludeCategories] = useState<string[]>(
@@ -2861,7 +2899,8 @@ function Profile({
     setDescriptionTemplate(preferences.push?.descriptionTemplate ?? "");
     setRoleAliases(aliasesToText(preferences.push?.roleAbbreviations));
   }, [preferences]);
-  if (loading) return <ProfileLoadingSkeleton />;
+  if (destination === "home") return <SettingsHome onOpen={setDestination} />;
+  if (loading && destination === "user-info") return <ProfileLoadingSkeleton />;
   const contact = profile.contact as
     | { name?: string; firstName?: string; lastName?: string; email?: string; phone?: string }
     | undefined;
@@ -3083,35 +3122,53 @@ function Profile({
       contentContainerStyle={styles.profileContent}
       keyboardShouldPersistTaps="handled"
     >
-      <Text style={styles.eyebrow}>Profile</Text>
-      <Text style={[styles.hero, styles.profileHero]}>Application profile</Text>
-      <Text style={styles.intro}>
-        Keep the essentials ready for the next role you want to pursue.
-      </Text>
-      {hiddenJobs.length ? (
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel="Back to settings"
+        onPress={() => setDestination("home")}
+        style={styles.settingsBack}
+      >
+        <Ionicons name="chevron-back" size={22} color={colors.signal} />
+        <Text style={styles.settingsBackText}>Settings</Text>
+      </TouchableOpacity>
+      {destination === "app-account" ? (
         <>
-          <Text style={styles.profileSectionLabel}>Hidden roles</Text>
-          <Text style={styles.muted}>
-            These roles are hidden only on this device.
+          <Text style={[styles.hero, styles.profileHero]}>App & account</Text>
+          <Text style={styles.intro}>
+            Manage notification wording, privacy, and the app data stored on this device.
           </Text>
-          <View style={styles.hiddenRolesList}>
-            {hiddenJobs.map((job) => (
-              <View key={job.jobId} style={styles.hiddenRoleRow}>
-                <View style={styles.hiddenRoleCopy}>
-                  <Text style={styles.company}>{job.company}</Text>
-                  <Text style={styles.hiddenRoleTitle} numberOfLines={2}>{job.title}</Text>
-                </View>
-                <ActionButton
-                  compact
-                  label="Restore"
-                  onPress={() => onRestoreHiddenRole(job)}
-                />
+          {hiddenJobs.length ? (
+            <>
+              <Text style={styles.profileSectionLabel}>Hidden roles</Text>
+              <Text style={styles.muted}>
+                These roles are hidden only on this device.
+              </Text>
+              <View style={styles.hiddenRolesList}>
+                {hiddenJobs.map((job) => (
+                  <View key={job.jobId} style={styles.hiddenRoleRow}>
+                    <View style={styles.hiddenRoleCopy}>
+                      <Text style={styles.company}>{job.company}</Text>
+                      <Text style={styles.hiddenRoleTitle} numberOfLines={2}>{job.title}</Text>
+                    </View>
+                    <ActionButton
+                      compact
+                      label="Restore"
+                      onPress={() => onRestoreHiddenRole(job)}
+                    />
+                  </View>
+                ))}
               </View>
-            ))}
-          </View>
-          <View style={styles.spacer} />
+              <View style={styles.spacer} />
+            </>
+          ) : null}
         </>
       ) : null}
+      {destination === "user-info" ? (
+        <>
+      <Text style={[styles.hero, styles.profileHero]}>User info</Text>
+      <Text style={styles.intro}>
+        Add the details you want available when you apply. You stay in control of every form.
+      </Text>
       <Text style={styles.profileSectionLabel}>Contact</Text>
       <Text style={styles.inputLabel}>First name</Text>
       <TextInput
@@ -3183,6 +3240,14 @@ function Profile({
       />
       <SaveFeedback state={profileFeedback} onRetry={() => void saveProfile()} />
       <View style={styles.spacer} />
+        </>
+      ) : null}
+      {destination === "job-preferences" ? (
+        <>
+      <Text style={[styles.hero, styles.profileHero]}>Job preferences</Text>
+      <Text style={styles.intro}>
+        Choose the roles you want to see and when you want to hear about them.
+      </Text>
       <Text style={styles.profileSectionLabel}>Alerts and filters</Text>
       <Text style={styles.sectionTitle}>Job alerts</Text>
       <View style={styles.preferenceRow}>
@@ -3371,6 +3436,27 @@ function Profile({
         placeholder="Exclude keywords, comma separated"
         placeholderTextColor={colors.placeholder}
       />
+      <ActionButton
+        label={savingAlerts ? "Saving…" : "Save job preferences"}
+        disabled={savingAlerts}
+        onPress={() => void saveAlertPreferences()}
+      />
+      <SaveFeedback
+        state={alertFeedback}
+        onRetry={() => void saveAlertPreferences()}
+      />
+      {notificationsBlocked ? (
+        <>
+          <View style={styles.buttonGap} />
+          <ActionButton label="Open notification settings" variant="secondary" onPress={openAppSettings} />
+        </>
+      ) : null}
+      <View style={styles.spacer} />
+        </>
+      ) : null}
+      {destination === "app-account" ? (
+        <>
+      <Text style={styles.profileSectionLabel}>Notifications</Text>
       <Text style={styles.preferenceTitle}>Notification wording</Text>
       <Text style={styles.muted}>
         Supported placeholders: {pushPlaceholders.join(", ")}.
@@ -3445,7 +3531,7 @@ function Profile({
         </Text>
       </View>
       <ActionButton
-        label={savingAlerts ? "Saving…" : "Save alert preferences"}
+        label={savingAlerts ? "Saving…" : "Save app settings"}
         disabled={savingAlerts}
         onPress={() => void saveAlertPreferences()}
       />
@@ -3479,6 +3565,8 @@ function Profile({
       <ActionButton label="Sign out" variant="secondary" onPress={onSignOut} />
       <View style={styles.spacer} />
       <ActionButton label="Delete account" variant="danger" onPress={deleteAccount} />
+        </>
+      ) : null}
     </ScrollView>
   );
 }
@@ -3834,6 +3922,36 @@ const styles = StyleSheet.create({
     paddingBottom: 44,
     width: "100%",
   },
+  settingsList: { borderTopColor: colors.separator, borderTopWidth: 1 },
+  settingsRow: {
+    alignItems: "center",
+    borderBottomColor: colors.separator,
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    minHeight: 88,
+    paddingVertical: 14,
+  },
+  settingsRowIcon: {
+    alignItems: "center",
+    backgroundColor: colors.signalSoft,
+    borderRadius: 10,
+    height: 40,
+    justifyContent: "center",
+    width: 40,
+  },
+  settingsRowCopy: { flex: 1, paddingHorizontal: 14 },
+  settingsRowTitle: { color: colors.ink, fontSize: 17, fontWeight: "700", lineHeight: 22 },
+  settingsRowDescription: { color: colors.muted, fontSize: 14, lineHeight: 20, marginTop: 2 },
+  settingsBack: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    marginBottom: 16,
+    marginLeft: -6,
+    minHeight: 44,
+    paddingRight: 10,
+  },
+  settingsBackText: { color: colors.signal, fontSize: 16, fontWeight: "700" },
   pageHeading: { marginBottom: 0 },
   card: {
     backgroundColor: colors.surface,
