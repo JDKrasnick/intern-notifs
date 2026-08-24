@@ -4,6 +4,7 @@ import {
   Alert,
   Animated,
   AppState,
+  BackHandler,
   Easing,
   FlatList,
   InteractionManager,
@@ -53,6 +54,14 @@ import {
   type JobRouteState,
 } from "./src/job-detail";
 import { resolveApplicationJob, type ApplicationJobSummary } from "./src/application";
+import {
+  appSettingsPayload,
+  jobPreferencesPayload,
+  settingsDraftSyncPlan,
+  settingsDestinations,
+  type SettingsDestination,
+  type SettingsDraftRevisions,
+} from "./src/settings";
 
 type Job = {
   jobId: string;
@@ -2914,6 +2923,42 @@ function aliasesFromText(value: string) {
   return aliases;
 }
 
+function SettingsHome({
+  onOpen,
+}: {
+  onOpen: (destination: Exclude<SettingsDestination, "home">) => void;
+}) {
+  return (
+    <ScrollView style={styles.list} contentContainerStyle={styles.profileContent}>
+      <Text style={[styles.hero, styles.profileHero]}>Settings</Text>
+      <Text style={styles.intro}>
+        Keep your application details separate from how InternNotifs works for you.
+      </Text>
+      <View style={styles.settingsList}>
+        {settingsDestinations.map((destination) => (
+          <TouchableOpacity
+            key={destination.id}
+            accessibilityRole="button"
+            accessibilityLabel={destination.title}
+            accessibilityHint={destination.accessibilityHint}
+            onPress={() => onOpen(destination.id)}
+            style={styles.settingsRow}
+          >
+            <View style={styles.settingsRowIcon}>
+              <Ionicons name={destination.icon} size={22} color={colors.signal} />
+            </View>
+            <View style={styles.settingsRowCopy}>
+              <Text style={styles.settingsRowTitle}>{destination.title}</Text>
+              <Text style={styles.settingsRowDescription}>{destination.description}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={22} color={colors.muted} />
+          </TouchableOpacity>
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+
 function Profile({
   token,
   preferences,
@@ -2929,6 +2974,7 @@ function Profile({
   onPreferencesChanged: (value: Preference) => void;
   onSignOut: () => void;
 }) {
+  const [destination, setDestination] = useState<SettingsDestination>("home");
   const [profile, setProfile] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [includeCategories, setIncludeCategories] = useState<string[]>(
@@ -2981,45 +3027,80 @@ function Profile({
   const [roleAliases, setRoleAliases] = useState(
     aliasesToText(preferences.push?.roleAbbreviations),
   );
-  const [savingAlerts, setSavingAlerts] = useState(false);
-  const [alertFeedback, setAlertFeedback] = useState<SaveFeedbackState>({
+  const [savingJobPreferences, setSavingJobPreferences] = useState(false);
+  const [jobPreferenceFeedback, setJobPreferenceFeedback] = useState<SaveFeedbackState>({
+    kind: "idle",
+  });
+  const [savingAppSettings, setSavingAppSettings] = useState(false);
+  const [appSettingsFeedback, setAppSettingsFeedback] = useState<SaveFeedbackState>({
     kind: "idle",
   });
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileFeedback, setProfileFeedback] = useState<SaveFeedbackState>({
     kind: "idle",
   });
+  const draftRevisions = useRef<SettingsDraftRevisions>({
+    jobPreferences: 0,
+    appSettings: 0,
+  });
+  const syncedDraftRevisions = useRef<SettingsDraftRevisions>({
+    jobPreferences: 0,
+    appSettings: 0,
+  });
+  const markJobPreferencesDirty = () => {
+    draftRevisions.current.jobPreferences += 1;
+  };
+  const markAppSettingsDirty = () => {
+    draftRevisions.current.appSettings += 1;
+  };
   useEffect(() => {
     void authenticatedRead<Record<string, unknown> | null>("/me/profile")
       .then((value) => setProfile(value ?? {}))
       .finally(() => setLoading(false));
   }, [token]);
   useEffect(() => {
-    setIncludeCategories(preferences.filter.includeCategories ?? []);
-    setExcludeCategories(preferences.filter.excludeCategories ?? []);
-    setIncludeKeywords((preferences.filter.includeKeywords ?? []).join(", "));
-    setExcludeKeywords((preferences.filter.excludeKeywords ?? []).join(", "));
-    setAlertsEnabled(preferences.alertsEnabled);
-    setIncludeEmployerCategories(preferences.filter.includeEmployerCategories ?? []);
-    setExcludeUsCitizenshipRequired(preferences.filter.excludeUsCitizenshipRequired ?? false);
-    setExcludeAdvancedDegreeRequired(preferences.filter.excludeAdvancedDegreeRequired ?? false);
-    setDelivery(preferences.alertSettings?.delivery ?? defaultAlertSettings.delivery);
-    setQuietStart(preferences.alertSettings?.quietHours?.start ?? "22:00");
-    setQuietEnd(preferences.alertSettings?.quietHours?.end ?? "08:00");
-    setQuietTimezone(
-      preferences.alertSettings?.quietHours?.timezone ?? "America/New_York",
+    const sync = settingsDraftSyncPlan(
+      draftRevisions.current,
+      syncedDraftRevisions.current,
     );
-    setApplicationReminders(
-      preferences.alertSettings?.applicationReminders ?? true,
-    );
-    setFollowUpDays(
-      String(preferences.alertSettings?.followUpDays ?? defaultAlertSettings.followUpDays),
-    );
-    setTitleTemplate(preferences.push?.titleTemplate ?? "");
-    setDescriptionTemplate(preferences.push?.descriptionTemplate ?? "");
-    setRoleAliases(aliasesToText(preferences.push?.roleAbbreviations));
+    if (sync.jobPreferences) {
+      setIncludeCategories(preferences.filter.includeCategories ?? []);
+      setExcludeCategories(preferences.filter.excludeCategories ?? []);
+      setIncludeKeywords((preferences.filter.includeKeywords ?? []).join(", "));
+      setExcludeKeywords((preferences.filter.excludeKeywords ?? []).join(", "));
+      setAlertsEnabled(preferences.alertsEnabled);
+      setIncludeEmployerCategories(preferences.filter.includeEmployerCategories ?? []);
+      setExcludeUsCitizenshipRequired(preferences.filter.excludeUsCitizenshipRequired ?? false);
+      setExcludeAdvancedDegreeRequired(preferences.filter.excludeAdvancedDegreeRequired ?? false);
+      setDelivery(preferences.alertSettings?.delivery ?? defaultAlertSettings.delivery);
+      setQuietStart(preferences.alertSettings?.quietHours?.start ?? "22:00");
+      setQuietEnd(preferences.alertSettings?.quietHours?.end ?? "08:00");
+      setQuietTimezone(
+        preferences.alertSettings?.quietHours?.timezone ?? "America/New_York",
+      );
+    }
+    if (sync.appSettings) {
+      setApplicationReminders(
+        preferences.alertSettings?.applicationReminders ?? true,
+      );
+      setFollowUpDays(
+        String(preferences.alertSettings?.followUpDays ?? defaultAlertSettings.followUpDays),
+      );
+      setTitleTemplate(preferences.push?.titleTemplate ?? "");
+      setDescriptionTemplate(preferences.push?.descriptionTemplate ?? "");
+      setRoleAliases(aliasesToText(preferences.push?.roleAbbreviations));
+    }
   }, [preferences]);
-  if (loading) return <ProfileLoadingSkeleton />;
+  useEffect(() => {
+    if (destination === "home") return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      setDestination("home");
+      return true;
+    });
+    return () => subscription.remove();
+  }, [destination]);
+  if (destination === "home") return <SettingsHome onOpen={setDestination} />;
+  if (loading && destination === "user-info") return <ProfileLoadingSkeleton />;
   const contact = profile.contact as
     | { name?: string; firstName?: string; lastName?: string; email?: string; phone?: string }
     | undefined;
@@ -3108,15 +3189,16 @@ function Profile({
       setSavingProfile(false);
     }
   };
-  const saveAlertPreferences = async () => {
-    setSavingAlerts(true);
-    setAlertFeedback({ kind: "saving", message: "Saving alert settings…" });
+  const saveJobPreferences = async () => {
+    const revisionBeingSaved = draftRevisions.current.jobPreferences;
+    setSavingJobPreferences(true);
+    setJobPreferenceFeedback({ kind: "saving", message: "Saving job preferences…" });
     try {
       if (alertsEnabled) {
         const registration = await registerForJobAlerts(token);
         if (registration.status !== "registered") {
           setNotificationsBlocked(registration.status === "denied");
-          setAlertFeedback({
+          setJobPreferenceFeedback({
             kind: "error",
             message: registration.status === "denied"
               ? "Notifications are off for InternNotifs. Enable them in your device settings, then try again."
@@ -3126,6 +3208,47 @@ function Profile({
         }
       }
       setNotificationsBlocked(false);
+      const updated = await api<Preference>("/me/preferences", token, {
+        method: "PUT",
+        body: JSON.stringify(jobPreferencesPayload({
+          filter: {
+            includeCategories,
+            includeKeywords: commaList(includeKeywords),
+            excludeCategories,
+            excludeKeywords: commaList(excludeKeywords),
+            includeEmployerCategories,
+            excludeUsCitizenshipRequired,
+            excludeAdvancedDegreeRequired,
+          },
+          alertsEnabled,
+          delivery,
+          quietHours: {
+            start: quietStart.trim(),
+            end: quietEnd.trim(),
+            timezone: quietTimezone.trim(),
+          },
+        })),
+      });
+      if (draftRevisions.current.jobPreferences === revisionBeingSaved) {
+        syncedDraftRevisions.current.jobPreferences = revisionBeingSaved;
+      }
+      onPreferencesChanged(updated);
+      setJobPreferenceFeedback({ kind: "success", message: "Job preferences saved." });
+    } catch (error) {
+      setJobPreferenceFeedback({
+        kind: "error",
+        message:
+          error instanceof Error ? error.message : "Job preferences could not be saved.",
+      });
+    } finally {
+      setSavingJobPreferences(false);
+    }
+  };
+  const saveAppSettings = async () => {
+    const revisionBeingSaved = draftRevisions.current.appSettings;
+    setSavingAppSettings(true);
+    setAppSettingsFeedback({ kind: "saving", message: "Saving app settings…" });
+    try {
       const parsedFollowUpDays = Number(followUpDays);
       if (!Number.isInteger(parsedFollowUpDays) || parsedFollowUpDays < 1 || parsedFollowUpDays > 30) {
         throw new Error("Follow-up reminders must be scheduled 1 to 30 days after an update.");
@@ -3142,40 +3265,25 @@ function Profile({
       };
       const updated = await api<Preference>("/me/preferences", token, {
         method: "PUT",
-        body: JSON.stringify({
-          filter: {
-            includeCategories,
-            includeKeywords: commaList(includeKeywords),
-            excludeCategories,
-            excludeKeywords: commaList(excludeKeywords),
-            includeEmployerCategories,
-            excludeUsCitizenshipRequired,
-            excludeAdvancedDegreeRequired,
-          },
-          alertsEnabled,
-          alertSettings: {
-            delivery,
-            quietHours: {
-              start: quietStart.trim(),
-              end: quietEnd.trim(),
-              timezone: quietTimezone.trim(),
-            },
-            applicationReminders,
-            followUpDays: parsedFollowUpDays,
-          },
+        body: JSON.stringify(appSettingsPayload({
+          applicationReminders,
+          followUpDays: parsedFollowUpDays,
           push,
-        }),
+        })),
       });
+      if (draftRevisions.current.appSettings === revisionBeingSaved) {
+        syncedDraftRevisions.current.appSettings = revisionBeingSaved;
+      }
       onPreferencesChanged(updated);
-      setAlertFeedback({ kind: "success", message: "Alert settings saved." });
+      setAppSettingsFeedback({ kind: "success", message: "App settings saved." });
     } catch (error) {
-      setAlertFeedback({
+      setAppSettingsFeedback({
         kind: "error",
         message:
-          error instanceof Error ? error.message : "Alert settings could not be saved.",
+          error instanceof Error ? error.message : "App settings could not be saved.",
       });
     } finally {
-      setSavingAlerts(false);
+      setSavingAppSettings(false);
     }
   };
   const deleteAccount = () =>
@@ -3241,35 +3349,53 @@ function Profile({
       contentContainerStyle={styles.profileContent}
       keyboardShouldPersistTaps="handled"
     >
-      <Text style={styles.eyebrow}>Profile</Text>
-      <Text style={[styles.hero, styles.profileHero]}>Application profile</Text>
-      <Text style={styles.intro}>
-        Keep the essentials ready for the next role you want to pursue.
-      </Text>
-      {hiddenJobs.length ? (
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel="Back to settings"
+        onPress={() => setDestination("home")}
+        style={styles.settingsBack}
+      >
+        <Ionicons name="chevron-back" size={22} color={colors.signal} />
+        <Text style={styles.settingsBackText}>Settings</Text>
+      </TouchableOpacity>
+      {destination === "app-account" ? (
         <>
-          <Text style={styles.profileSectionLabel}>Hidden roles</Text>
-          <Text style={styles.muted}>
-            These roles are hidden only on this device.
+          <Text style={[styles.hero, styles.profileHero]}>App & account</Text>
+          <Text style={styles.intro}>
+            Manage notification wording, privacy, and the app data stored on this device.
           </Text>
-          <View style={styles.hiddenRolesList}>
-            {hiddenJobs.map((job) => (
-              <View key={job.jobId} style={styles.hiddenRoleRow}>
-                <View style={styles.hiddenRoleCopy}>
-                  <Text style={styles.company}>{job.company}</Text>
-                  <Text style={styles.hiddenRoleTitle} numberOfLines={2}>{job.title}</Text>
-                </View>
-                <ActionButton
-                  compact
-                  label="Restore"
-                  onPress={() => onRestoreHiddenRole(job)}
-                />
+          {hiddenJobs.length ? (
+            <>
+              <Text style={styles.profileSectionLabel}>Hidden roles</Text>
+              <Text style={styles.muted}>
+                These roles are hidden only on this device.
+              </Text>
+              <View style={styles.hiddenRolesList}>
+                {hiddenJobs.map((job) => (
+                  <View key={job.jobId} style={styles.hiddenRoleRow}>
+                    <View style={styles.hiddenRoleCopy}>
+                      <Text style={styles.company}>{job.company}</Text>
+                      <Text style={styles.hiddenRoleTitle} numberOfLines={2}>{job.title}</Text>
+                    </View>
+                    <ActionButton
+                      compact
+                      label="Restore"
+                      onPress={() => onRestoreHiddenRole(job)}
+                    />
+                  </View>
+                ))}
               </View>
-            ))}
-          </View>
-          <View style={styles.spacer} />
+              <View style={styles.spacer} />
+            </>
+          ) : null}
         </>
       ) : null}
+      {destination === "user-info" ? (
+        <>
+      <Text style={[styles.hero, styles.profileHero]}>User info</Text>
+      <Text style={styles.intro}>
+        Add the details you want available when you apply. You stay in control of every form.
+      </Text>
       <Text style={styles.profileSectionLabel}>Contact</Text>
       <Text style={styles.inputLabel}>First name</Text>
       <TextInput
@@ -3341,6 +3467,14 @@ function Profile({
       />
       <SaveFeedback state={profileFeedback} onRetry={() => void saveProfile()} />
       <View style={styles.spacer} />
+        </>
+      ) : null}
+      {destination === "job-preferences" ? (
+        <>
+      <Text style={[styles.hero, styles.profileHero]}>Job preferences</Text>
+      <Text style={styles.intro}>
+        Choose the roles you want to see and when you want to hear about them.
+      </Text>
       <Text style={styles.profileSectionLabel}>Alerts and filters</Text>
       <Text style={styles.sectionTitle}>Job alerts</Text>
       <View style={styles.preferenceRow}>
@@ -3352,7 +3486,10 @@ function Profile({
         </View>
         <Switch
           value={alertsEnabled}
-          onValueChange={setAlertsEnabled}
+          onValueChange={(value) => {
+            markJobPreferencesDirty();
+            setAlertsEnabled(value);
+          }}
           accessibilityLabel="Job alerts"
           trackColor={{ false: colors.border, true: colors.signal }}
           thumbColor={colors.onDark}
@@ -3369,7 +3506,10 @@ function Profile({
             accessibilityRole="checkbox"
             accessibilityState={{ checked: includeEmployerCategories.includes(category) }}
             style={[styles.chip, includeEmployerCategories.includes(category) && styles.chipOn]}
-            onPress={() => toggleCategory(category, includeEmployerCategories, setIncludeEmployerCategories)}
+            onPress={() => {
+              markJobPreferencesDirty();
+              toggleCategory(category, includeEmployerCategories, setIncludeEmployerCategories);
+            }}
           >
             <Text style={[styles.chipLabel, includeEmployerCategories.includes(category) && styles.chipLabelOn]}>
               {employerCategoryLabels[category]}
@@ -3385,7 +3525,10 @@ function Profile({
         </View>
         <Switch
           value={excludeUsCitizenshipRequired}
-          onValueChange={setExcludeUsCitizenshipRequired}
+          onValueChange={(value) => {
+            markJobPreferencesDirty();
+            setExcludeUsCitizenshipRequired(value);
+          }}
           accessibilityLabel="Hide roles requiring U.S. citizenship"
           trackColor={{ false: colors.border, true: colors.signal }}
           thumbColor={colors.onDark}
@@ -3398,7 +3541,10 @@ function Profile({
         </View>
         <Switch
           value={excludeAdvancedDegreeRequired}
-          onValueChange={setExcludeAdvancedDegreeRequired}
+          onValueChange={(value) => {
+            markJobPreferencesDirty();
+            setExcludeAdvancedDegreeRequired(value);
+          }}
           accessibilityLabel="Hide roles requiring an advanced degree"
           trackColor={{ false: colors.border, true: colors.signal }}
           thumbColor={colors.onDark}
@@ -3410,13 +3556,19 @@ function Profile({
           label="Immediate"
           description="Receive matching roles as they are found."
           selected={delivery === "immediate"}
-          onPress={() => setDelivery("immediate")}
+          onPress={() => {
+            markJobPreferencesDirty();
+            setDelivery("immediate");
+          }}
         />
         <ChoiceOption
           label="Daily digest"
           description="Review matching roles together once a day."
           selected={delivery === "daily-digest"}
-          onPress={() => setDelivery("daily-digest")}
+          onPress={() => {
+            markJobPreferencesDirty();
+            setDelivery("daily-digest");
+          }}
         />
       </View>
       <Text style={styles.preferenceTitle}>Quiet hours</Text>
@@ -3430,7 +3582,10 @@ function Profile({
             style={styles.search}
             accessibilityLabel="Quiet hours start"
             value={quietStart}
-            onChangeText={setQuietStart}
+            onChangeText={(value) => {
+              markJobPreferencesDirty();
+              setQuietStart(value);
+            }}
             placeholder="22:00"
             placeholderTextColor={colors.placeholder}
             autoCapitalize="none"
@@ -3442,7 +3597,10 @@ function Profile({
             style={styles.search}
             accessibilityLabel="Quiet hours end"
             value={quietEnd}
-            onChangeText={setQuietEnd}
+            onChangeText={(value) => {
+              markJobPreferencesDirty();
+              setQuietEnd(value);
+            }}
             placeholder="08:00"
             placeholderTextColor={colors.placeholder}
             autoCapitalize="none"
@@ -3454,7 +3612,10 @@ function Profile({
         style={styles.search}
         accessibilityLabel="Quiet hours timezone"
         value={quietTimezone}
-        onChangeText={setQuietTimezone}
+        onChangeText={(value) => {
+          markJobPreferencesDirty();
+          setQuietTimezone(value);
+        }}
         placeholder="America/New_York"
         placeholderTextColor={colors.placeholder}
         autoCapitalize="none"
@@ -3470,9 +3631,10 @@ function Profile({
             ]}
             accessibilityRole="checkbox"
             accessibilityState={{ checked: includeCategories.includes(category) }}
-            onPress={() =>
-              toggleCategory(category, includeCategories, setIncludeCategories)
-            }
+            onPress={() => {
+              markJobPreferencesDirty();
+              toggleCategory(category, includeCategories, setIncludeCategories);
+            }}
           >
             <Text
               style={[
@@ -3490,7 +3652,10 @@ function Profile({
         style={styles.search}
         accessibilityLabel="Include keywords"
         value={includeKeywords}
-        onChangeText={setIncludeKeywords}
+        onChangeText={(value) => {
+          markJobPreferencesDirty();
+          setIncludeKeywords(value);
+        }}
         placeholder="Include keywords, comma separated"
         placeholderTextColor={colors.placeholder}
       />
@@ -3505,9 +3670,10 @@ function Profile({
             ]}
             accessibilityRole="checkbox"
             accessibilityState={{ checked: excludeCategories.includes(category) }}
-            onPress={() =>
-              toggleCategory(category, excludeCategories, setExcludeCategories)
-            }
+            onPress={() => {
+              markJobPreferencesDirty();
+              toggleCategory(category, excludeCategories, setExcludeCategories);
+            }}
           >
             <Text
               style={[
@@ -3525,10 +3691,34 @@ function Profile({
         style={styles.search}
         accessibilityLabel="Exclude keywords"
         value={excludeKeywords}
-        onChangeText={setExcludeKeywords}
+        onChangeText={(value) => {
+          markJobPreferencesDirty();
+          setExcludeKeywords(value);
+        }}
         placeholder="Exclude keywords, comma separated"
         placeholderTextColor={colors.placeholder}
       />
+      <ActionButton
+        label={savingJobPreferences ? "Saving…" : "Save job preferences"}
+        disabled={savingJobPreferences}
+        onPress={() => void saveJobPreferences()}
+      />
+      <SaveFeedback
+        state={jobPreferenceFeedback}
+        onRetry={() => void saveJobPreferences()}
+      />
+      {notificationsBlocked ? (
+        <>
+          <View style={styles.buttonGap} />
+          <ActionButton label="Open notification settings" variant="secondary" onPress={openAppSettings} />
+        </>
+      ) : null}
+      <View style={styles.spacer} />
+        </>
+      ) : null}
+      {destination === "app-account" ? (
+        <>
+      <Text style={styles.profileSectionLabel}>Notifications</Text>
       <Text style={styles.preferenceTitle}>Notification wording</Text>
       <Text style={styles.muted}>
         Supported placeholders: {pushPlaceholders.join(", ")}.
@@ -3540,7 +3730,10 @@ function Profile({
         placeholder="Title: {shortTitle} — {company}"
         placeholderTextColor={colors.placeholder}
         value={titleTemplate}
-        onChangeText={setTitleTemplate}
+        onChangeText={(value) => {
+          markAppSettingsDirty();
+          setTitleTemplate(value);
+        }}
       />
       <Text style={styles.inputLabel}>Notification description</Text>
       <TextInput
@@ -3549,7 +3742,10 @@ function Profile({
         placeholder="Description: {location} · {season}\nSource: {source}\n{url}"
         placeholderTextColor={colors.placeholder}
         value={descriptionTemplate}
-        onChangeText={setDescriptionTemplate}
+        onChangeText={(value) => {
+          markAppSettingsDirty();
+          setDescriptionTemplate(value);
+        }}
         multiline
       />
       <Text style={styles.inputLabel}>Role abbreviations</Text>
@@ -3559,7 +3755,10 @@ function Profile({
         placeholder="Role abbreviations, one per line: software engineer = SWE"
         placeholderTextColor={colors.placeholder}
         value={roleAliases}
-        onChangeText={setRoleAliases}
+        onChangeText={(value) => {
+          markAppSettingsDirty();
+          setRoleAliases(value);
+        }}
         multiline
         autoCapitalize="none"
       />
@@ -3573,7 +3772,10 @@ function Profile({
         </View>
         <Switch
           value={applicationReminders}
-          onValueChange={setApplicationReminders}
+          onValueChange={(value) => {
+            markAppSettingsDirty();
+            setApplicationReminders(value);
+          }}
           accessibilityLabel="Application reminders"
           trackColor={{ false: colors.border, true: colors.signal }}
           thumbColor={colors.onDark}
@@ -3584,7 +3786,10 @@ function Profile({
         style={styles.search}
         accessibilityLabel="Follow up after days"
         value={followUpDays}
-        onChangeText={setFollowUpDays}
+        onChangeText={(value) => {
+          markAppSettingsDirty();
+          setFollowUpDays(value);
+        }}
         keyboardType="number-pad"
         placeholder="7"
         placeholderTextColor={colors.placeholder}
@@ -3603,20 +3808,14 @@ function Profile({
         </Text>
       </View>
       <ActionButton
-        label={savingAlerts ? "Saving…" : "Save alert preferences"}
-        disabled={savingAlerts}
-        onPress={() => void saveAlertPreferences()}
+        label={savingAppSettings ? "Saving…" : "Save app settings"}
+        disabled={savingAppSettings}
+        onPress={() => void saveAppSettings()}
       />
       <SaveFeedback
-        state={alertFeedback}
-        onRetry={() => void saveAlertPreferences()}
+        state={appSettingsFeedback}
+        onRetry={() => void saveAppSettings()}
       />
-      {notificationsBlocked ? (
-        <>
-          <View style={styles.buttonGap} />
-          <ActionButton label="Open notification settings" variant="secondary" onPress={openAppSettings} />
-        </>
-      ) : null}
       <View style={styles.spacer} />
       <Text style={styles.profileSectionLabel}>Account</Text>
       <Text style={styles.sectionTitle}>Account and support</Text>
@@ -3637,6 +3836,8 @@ function Profile({
       <ActionButton label="Sign out" variant="secondary" onPress={onSignOut} />
       <View style={styles.spacer} />
       <ActionButton label="Delete account" variant="danger" onPress={deleteAccount} />
+        </>
+      ) : null}
     </ScrollView>
   );
 }
@@ -3993,6 +4194,36 @@ const styles = StyleSheet.create({
     paddingBottom: 44,
     width: "100%",
   },
+  settingsList: { borderTopColor: colors.separator, borderTopWidth: 1 },
+  settingsRow: {
+    alignItems: "center",
+    borderBottomColor: colors.separator,
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    minHeight: 88,
+    paddingVertical: 14,
+  },
+  settingsRowIcon: {
+    alignItems: "center",
+    backgroundColor: colors.signalSoft,
+    borderRadius: 10,
+    height: 40,
+    justifyContent: "center",
+    width: 40,
+  },
+  settingsRowCopy: { flex: 1, paddingHorizontal: 14 },
+  settingsRowTitle: { color: colors.ink, fontSize: 17, fontWeight: "700", lineHeight: 22 },
+  settingsRowDescription: { color: colors.muted, fontSize: 14, lineHeight: 20, marginTop: 2 },
+  settingsBack: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    marginBottom: 16,
+    marginLeft: -6,
+    minHeight: 44,
+    paddingRight: 10,
+  },
+  settingsBackText: { color: colors.signal, fontSize: 16, fontWeight: "700" },
   pageHeading: { marginBottom: 0 },
   card: {
     backgroundColor: colors.surface,
