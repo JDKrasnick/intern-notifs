@@ -72,27 +72,22 @@ The content starts 42 pt below the safe area, with a 20 pt gutter on both sides.
 
 Navigation, search, headers, and cards all align to the same 20 pt edge. Cards are 16 pt radius, use a one-pixel slate border, and have a 12 pt gap—no floating/shadow-heavy treatment.
 
-### Focused Editorial sample: profile
+### Focused Editorial sample: settings
 
 ```text
-Application profile
+Settings
 
-Full name
-[ Jordan Lee                                           ]
-Email
-[ jordan@example.com                                   ]
-Location
-[ Boston, MA                                           ]
+User info                                           ›
+Contact details and résumé for application help.
 
-[                    Upload résumé                     ]
+Job preferences                                     ›
+Alerts and filters for the roles you want to follow.
 
-[                     Save profile                      ]
-
-Job alerts
-Job alerts                                         [ on ]
+App & account                                       ›
+Hidden roles, notification wording, privacy, and account controls.
 ```
 
-Profile is a single scrollable form with visible labels. Inputs, buttons, chips, and section headings never acquire an extra local horizontal margin; only the page container owns horizontal padding.
+Profile opens as a short Settings list with three focused destinations: **User info**, **Job preferences**, and **App & account**. Each destination is independently scrollable. Inputs, buttons, chips, and section headings never acquire an extra local horizontal margin; only the page container owns horizontal padding.
 
 ## Design tokens
 
@@ -208,15 +203,18 @@ Every screen follows these rules. They are as important as colors and type.
 
 ## Alert settings and application progress
 
-Alert settings live in the **Alerts and filters** portion of Profile. Keep them as one focused sequence, not a maze of sub-screens:
+Role matching and alert delivery settings live in the **Job preferences** destination. Keep that destination as one focused sequence; do not split it into another maze of sub-screens:
 
 1. Alert permission toggle and role/keyword filters.
 2. Company type: FAANG, startups, normal companies, or every company.
 3. Optional exclusions for source-marked U.S.-citizenship and advanced-degree requirements. Do not add a sponsorship filter.
 4. Delivery timing: immediate or daily digest.
 5. Quiet hours: start, end, and timezone.
-6. Wording templates with a dark live notification preview.
-7. Application reminders and a follow-up interval.
+
+Notification presentation and application follow-up settings live in **App & account**:
+
+1. Wording templates with a dark live notification preview.
+2. Application reminders and a follow-up interval.
 
 Onboarding must always offer **Continue without alerts**. It may request notification permission only after the user deliberately enables the alert switch and confirms the setup action. If permission is denied, preserve the role preferences, show an inline explanation with a retry action, and never block access to the feed.
 
@@ -233,7 +231,7 @@ The notification backend must apply the saved role, company-type, U.S.-citizensh
 - **Feed:** start with only search and filter controls, then the role list. Each card answers what, where, and when before any secondary detail; tracked roles also expose their current application status.
 - **Apply:** make the handoff to the employer explicit. InternNotifs tracks progress; it does not impersonate an employer form.
 - **Saved:** show a small, clear status model rather than a complex CRM workflow.
-- **Profile:** keep application data, résumé, alerts, support, and destructive account control in clearly separated sections.
+- **Profile:** separate application data, job preferences, and app/account controls into three clear Settings destinations.
 
 ## Implementation acceptance checklist
 
