@@ -24,6 +24,17 @@ describe('grouped catalog domain', () => {
     expect(groups[1]?.row.titles).toHaveLength(3);
   });
 
+  it('treats source decoration and corporate suffixes as the same employer without changing the display name', () => {
+    const groups = groupCatalogJobs([
+      job('one', 0, { company: 'TikTok' }),
+      job('two', 2, { company: '🔥 TikTok' }),
+      job('three', 4, { company: 'TikTok, Inc.' }),
+      job('four', 8, { company: 'TIKTOK' }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.row).toMatchObject({ kind: 'employer-release', company: 'TikTok', roleCount: 4 });
+  });
+
   it('groups only compatible program dimensions and leaves conflicting education individual', () => {
     const undergraduate = { educationAudience: { levels: ['Undergraduate'], evidence: 'explicit' } };
     const groups = groupCatalogJobs([
@@ -40,6 +51,7 @@ describe('grouped catalog domain', () => {
       job('ml', 0, { title: 'Machine Learning Intern', location: 'Boston' }),
       job('product', 10, { title: 'Product Manager Intern', location: 'Austin' }),
     ]);
+    expect(groups.map(({ row }) => row.kind)).toEqual(['individual', 'individual']);
     const filtered = filterCatalogGroups(groups, { disciplines: ['AI/ML'], educationLevels: ['Doctoral'] });
     expect(filtered).toHaveLength(1);
     expect(filtered[0]!.row).toMatchObject({ roleCount: 1, titles: ['Machine Learning Intern'], locations: ['Boston'] });
@@ -47,13 +59,15 @@ describe('grouped catalog domain', () => {
   });
 
   it('preserves full role titles and both detail and official application actions', () => {
-    const group = groupCatalogJobs([job('one', 0), job('two', 10)])[0]!;
+    const identity = { educationAudience: { levels: ['Undergraduate'], evidence: 'explicit' } };
+    const group = groupCatalogJobs([job('one', 0, { internshipIdentity: identity }), job('two', 10, { internshipIdentity: identity })])[0]!;
     const details = catalogGroupDetails(group);
     expect(details.roles[0]).toMatchObject({ title: expect.stringContaining('Software Engineer Intern'), detailUrl: expect.stringContaining('/jobs/'), officialApplyUrl: expect.stringContaining('careers.example.test') });
   });
 
   it('keeps a program row identifier stable when a compatible role arrives later', () => {
-    const original = [job('one', 0), job('two', 10)];
-    expect(groupCatalogJobs(original)[0]!.row.groupId).toBe(groupCatalogJobs([...original, job('three', 20)])[0]!.row.groupId);
+    const identity = { educationAudience: { levels: ['Undergraduate'], evidence: 'explicit' } };
+    const original = [job('one', 0, { internshipIdentity: identity }), job('two', 10, { internshipIdentity: identity })];
+    expect(groupCatalogJobs(original)[0]!.row.groupId).toBe(groupCatalogJobs([...original, job('three', 20, { internshipIdentity: identity })])[0]!.row.groupId);
   });
 });

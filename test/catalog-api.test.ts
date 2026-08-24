@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createApiHandler } from '../src/api.js';
 import { MemoryInternshipStore, MemoryReleaseStore, MemoryUserStore } from '../src/store.js';
+import { catalogGroupDetails, groupCatalogJobs } from '../src/catalog-groups.js';
 import type { Internship } from '../src/types.js';
 
 function job(id: string, seconds: number, title = `Software Intern ${id}`): Internship {
@@ -21,7 +22,9 @@ const body = <T>(response: { body: string }) => JSON.parse(response.body) as T;
 describe('grouped catalog API', () => {
   it('lists public rows, recomputes filtered summaries, and opens complete group details', async () => {
     const jobs = new MemoryInternshipStore();
-    await jobs.putInternship(job('swe', 0)); await jobs.putInternship(job('ml', 10, 'Machine Learning Intern'));
+    const identity = { educationAudience: { levels: ['Undergraduate'], evidence: 'explicit' } };
+    await jobs.putInternship({ ...job('swe', 0), internshipIdentity: identity });
+    await jobs.putInternship({ ...job('ml', 10, 'Machine Learning Intern'), internshipIdentity: identity });
     const handler = createApiHandler({ jobs, users: new MemoryUserStore() });
     const listing = await handler(event('GET', '/catalog', { discipline: 'AI/ML' }));
     const groups = body<{ groups: Array<{ groupId: string; roleCount: number; titles: string[] }> }>(listing).groups;
@@ -42,5 +45,16 @@ describe('grouped catalog API', () => {
     const response = await handler(event('GET', '/me/releases/release-1', undefined, 'student-a'));
     expect(body<{ deepLink: string; groups: Array<{ roles: unknown[] }> }>(response)).toMatchObject({ deepLink: 'internnotifs://releases/release-1', groups: [{ roles: [expect.any(Object)] }] });
     expect((await createApiHandler({ jobs, users: new MemoryUserStore() })(event('GET', '/me/releases/release-1', undefined, 'student-a'))).statusCode).toBe(404);
+  });
+
+  it('serves a materialized page without rebuilding the complete catalog', async () => {
+    const jobs = new MemoryInternshipStore();
+    const role = job('one', 0);
+    await jobs.putInternship(role);
+    await jobs.putCatalogProjection(groupCatalogJobs([role]).map(catalogGroupDetails), '2026-08-24T00:00:00.000Z');
+    jobs.listCatalog = async () => { throw new Error('projection should avoid a catalog rebuild'); };
+    const response = await createApiHandler({ jobs, users: new MemoryUserStore() })(event('GET', '/catalog', { limit: '1' }));
+    expect(response.statusCode).toBe(200);
+    expect(body<{ groups: Array<{ roleCount: number }> }>(response)).toMatchObject({ groups: [{ roleCount: 1 }] });
   });
 });

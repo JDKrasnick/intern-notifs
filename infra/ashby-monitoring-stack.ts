@@ -75,6 +75,7 @@ export class AshbyMonitoringStack extends cdk.Stack {
       reportBatchItemFailures: true,
     }));
     internships.grantReadWriteData(worker);
+    internships.grant(worker, 'dynamodb:TransactWriteItems');
     users.grantReadWriteData(worker);
 
     const schedulerDeadLetterQueue = new sqs.Queue(this, 'AshbySchedulerDeadLetterQueue', {

@@ -9,7 +9,7 @@ import { EmployerIntegrationRegistry } from './providers.js';
 import { assistanceAvailability } from './application-assistance.js';
 import { createApplicationSession, transitionApplicationSession, type ApplicationFieldDraft, type ApplicationSession, type ApplicationSessionEvent } from './application-automation.js';
 import { companyCoverage } from '../coverage/summary.js';
-import { catalogGroupDetails, filterCatalogGroups, groupCatalogJobs, type CatalogGroupFilter } from './catalog-groups.js';
+import { catalogGroupDetails, filterCatalogGroupDetails, filterCatalogGroups, groupCatalogJobs, type CatalogGroupFilter } from './catalog-groups.js';
 
 type ApiEvent = { requestContext?: { authorizer?: { jwt?: { claims?: Record<string, string> } }; http?: { method?: string }; requestId?: string }; rawPath?: string; routeKey?: string; pathParameters?: Record<string, string>; queryStringParameters?: Record<string, string>; headers?: Record<string, string | undefined>; body?: string | null };
 type ApiResponse = { statusCode: number; headers: Record<string, string>; body: string };
@@ -48,6 +48,19 @@ async function completeCatalog(store: InternshipStore) {
     jobs.push(...page.jobs); cursor = page.cursor;
   } while (cursor);
   return jobs;
+}
+
+async function projectedCatalogPage(store: InternshipStore, cursor: string | undefined, limit: number, filter: CatalogGroupFilter) {
+  if (!store.listCatalogProjection) return undefined;
+  let next = cursor;
+  do {
+    const page = await store.listCatalogProjection(next, limit);
+    if (!page) return undefined;
+    const groups = filterCatalogGroupDetails(page.groups, filter);
+    if (groups.length || !page.cursor) return { groups, cursor: page.cursor };
+    next = page.cursor;
+  } while (next);
+  return { groups: [] };
 }
 
 function safeSession(session: ApplicationSession) {
@@ -274,13 +287,17 @@ export function createApiHandler(dependencies: ApiDependencies) {
       if (method === 'GET' && path === '/catalog') {
         const requestedLimit = Number(event.queryStringParameters?.limit ?? 25);
         const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 50) : 25;
-        const requestedOffset = Number(event.queryStringParameters?.cursor ?? 0);
-        if (!Number.isFinite(requestedOffset) || requestedOffset < 0 || !Number.isInteger(requestedOffset)) return reply(400, { message: 'cursor is invalid' });
+        const cursor = event.queryStringParameters?.cursor;
         const query = event.queryStringParameters?.q?.trim();
         if (query && query.length > 120) return reply(400, { message: 'q must be 120 characters or fewer' });
         const source = event.queryStringParameters?.source;
         if (source && !['all', 'direct', 'community', 'corroborated'].includes(source)) return reply(400, { message: 'source is not supported' });
-        const grouped = filterCatalogGroups(groupCatalogJobs(await completeCatalog(dependencies.jobs)), catalogFilter(event.queryStringParameters));
+        const filter = catalogFilter(event.queryStringParameters);
+        const projected = await projectedCatalogPage(dependencies.jobs, cursor, limit, filter);
+        if (projected) return reply(200, { groups: projected.groups.map((group) => group.group), ...(projected.cursor ? { cursor: projected.cursor } : {}) });
+        const requestedOffset = Number(cursor ?? 0);
+        if (!Number.isFinite(requestedOffset) || requestedOffset < 0 || !Number.isInteger(requestedOffset)) return reply(400, { message: 'cursor is invalid' });
+        const grouped = filterCatalogGroups(groupCatalogJobs(await completeCatalog(dependencies.jobs)), filter);
         const page = grouped.slice(requestedOffset, requestedOffset + limit).map((group) => group.row);
         const nextOffset = requestedOffset + page.length;
         return reply(200, { groups: page, ...(nextOffset < grouped.length ? { cursor: String(nextOffset) } : {}) });
@@ -288,6 +305,8 @@ export function createApiHandler(dependencies: ApiDependencies) {
       const catalogGroupMatch = path.match(/^\/catalog\/groups\/([^/]+)$/);
       if (method === 'GET' && catalogGroupMatch) {
         const groupId = decodeURIComponent(catalogGroupMatch[1]!);
+        const projected = await dependencies.jobs.getCatalogProjectionGroup?.(groupId);
+        if (projected) return reply(200, projected);
         const group = groupCatalogJobs(await completeCatalog(dependencies.jobs)).find((candidate) => candidate.row.groupId === groupId);
         return group ? reply(200, catalogGroupDetails(group)) : reply(404, { message: 'Catalog group not found' });
       }
@@ -367,7 +386,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
         // unbounded historical backlog when the feature rolls out.
         if (!previousOpenedAt) {
           await dependencies.users.putPreferences(preferences);
-          return reply(200, { jobs: [], total: 0, hasMore: false, previousOpenedAt: null, openedAt });
+          return reply(200, { jobs: [], groups: [], total: 0, hasMore: false, previousOpenedAt: null, openedAt });
         }
         const matches = (await dependencies.jobs.listOpenSince(previousOpenedAt, openedAt))
           .filter((job) => matchesJobFilter(job, previous?.filter));
@@ -375,7 +394,8 @@ export function createApiHandler(dependencies: ApiDependencies) {
         // the complete catalog and provides the explicit path to the remainder.
         const limit = 50;
         await dependencies.users.putPreferences(preferences);
-        return reply(200, { jobs: matches.slice(0, limit), total: matches.length, hasMore: matches.length > limit, previousOpenedAt, openedAt });
+        const visible = matches.slice(0, limit);
+        return reply(200, { jobs: visible, groups: groupCatalogJobs(visible).map(catalogGroupDetails), total: matches.length, hasMore: matches.length > limit, previousOpenedAt, openedAt });
       }
       if (method === 'POST' && path === '/me/devices') { const body = parseBody(event); if (typeof body.token !== 'string' || !body.token.startsWith('ExponentPushToken[') || (body.platform !== 'ios' && body.platform !== 'android')) return reply(400, { message: 'A valid Expo token and platform are required' }); const value: DeviceToken = { userId, token: body.token, platform: body.platform, active: true, createdAt: now(), updatedAt: now() }; await dependencies.users.putDevice(value); return reply(201, value); }
       if (method === 'DELETE' && path.startsWith('/me/devices/')) { await dependencies.users.deleteDevice(userId, decodeURIComponent(path.slice('/me/devices/'.length))); return reply(204, {}); }

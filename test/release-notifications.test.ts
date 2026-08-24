@@ -22,18 +22,22 @@ describe('release notification pipeline domain', () => {
     expect(first.jobIds).toEqual(['1', '2']);
     expect(first.flushAt).toBe('2026-08-23T12:00:08.000Z');
     expect(() => createCandidateRelease([{ ...job('3', 'Product Intern'), company: 'Meta' }, job('1', 'Software Intern')], at)).toThrow(/span employers/);
+    expect(() => createCandidateRelease([{ ...job('3', 'Product Intern'), company: '🔥 Google, Inc.' }, job('1', 'Software Intern')], at)).not.toThrow();
     expect(() => createCandidateRelease([job('1', 'Software Intern')], at, 11)).toThrow(/1 to 10/);
   });
 
-  it('filters before grouping and keeps unknown education visible', () => {
+  it('filters before grouping and keeps unknown education roles individual', () => {
     const release = createCandidateRelease([
       job('1', 'Software Engineering Intern'),
       job('2', 'Frontend Software Intern'),
       job('3', 'Quant Trading Intern'),
     ], new Date('2026-08-23T12:00:00.000Z'));
     const groups = personalizeRelease(release, 'student', { includeCategories: ['swe'] });
-    expect(groups).toHaveLength(1);
-    expect(groups[0]).toMatchObject({ presentation: 'program-group', education: 'Education level not specified by employer', newlyMatchedJobIds: ['1', '2'] });
+    expect(groups).toHaveLength(2);
+    expect(groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({ presentation: 'individual', education: 'Education level not specified by employer', newlyMatchedJobIds: ['1'] }),
+      expect.objectContaining({ presentation: 'individual', education: 'Education level not specified by employer', newlyMatchedJobIds: ['2'] }),
+    ]));
   });
 
   it('uses one employer release at four matches and a release deep link', () => {

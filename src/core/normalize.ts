@@ -15,7 +15,7 @@ const corporateSuffixes = new Set(['co', 'company', 'corp', 'corporation', 'inc'
 function identityTerms(value: string) {
   return value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
 }
-function canonicalCompany(value: string) {
+export function canonicalCompanyKey(value: string) {
   const terms = identityTerms(value);
   while (terms.length > 1 && corporateSuffixes.has(terms.at(-1)!)) terms.pop();
   return terms.join(' ');
@@ -51,12 +51,12 @@ export function postingIdentityKey(input: string): string {
 }
 
 export function fingerprint(company: string, title: string, location: string, season: string): string {
-  return createHash('sha256').update([canonicalCompany(company), canonicalTitle(title), canonicalLocation(location), canonicalSeason(season)].join('|')).digest('hex');
+  return createHash('sha256').update([canonicalCompanyKey(company), canonicalTitle(title), canonicalLocation(location), canonicalSeason(season)].join('|')).digest('hex');
 }
 
 /** Soft grouping key for operator review; never sufficient for a hard merge. */
 export function roleFamilyFingerprint(company: string, title: string, season: string): string {
-  return createHash('sha256').update([canonicalCompany(company), canonicalTitle(title), canonicalSeason(season)].join('|')).digest('hex');
+  return createHash('sha256').update([canonicalCompanyKey(company), canonicalTitle(title), canonicalSeason(season)].join('|')).digest('hex');
 }
 
 /** A migration-safe lookup order for records written before canonical role identity keys. */

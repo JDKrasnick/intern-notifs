@@ -1,15 +1,17 @@
+import { createHash } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { BatchGetCommand, DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { BatchGetCommand, BatchWriteCommand, DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { isPastSeason } from './core/early-career.js';
 import { employerCategory } from './core/employers.js';
 import { canonicalCatalogRecency, catalogRecency, catalogVisibleAt, compareCatalogRecency, openCatalogSortKey } from './catalog-recency.js';
 import { catalogSearchText, catalogSourceClasses, type CatalogSource } from './catalog-fields.js';
-import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
+import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
+import { resolvePostingAliases, type AliasResolution } from './identity/posting.js';
 import type { ApplicationSession } from './application-automation.js';
 import type { ReviewedLeverSource } from './sources/lever-config.js';
 import type { LeverOwnershipEvidence } from './sources/lever-evidence.js';
 import type { LeverCandidateProbeResult } from './sources/lever-probe.js';
-import type { CatalogRelease } from './catalog-groups.js';
+import type { CatalogGroupDetails, CatalogProjectionPage, CatalogRelease } from './catalog-groups.js';
 
 export interface LeverAdmission {
   source: ReviewedLeverSource;
@@ -42,6 +44,8 @@ export interface InternshipStore {
   putMonitoringChecklist(checklist: MonitoringChecklist): Promise<void>;
   findByUrl(url: string): Promise<Internship | undefined>;
   findByFingerprint(fingerprint: string): Promise<Internship | undefined>;
+  /** Atomically claims every exact posting alias, converging concurrent sources on one job. */
+  claimPostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution>;
   putInternship(job: Internship): Promise<void>;
   getJob(jobId: string): Promise<Internship | undefined>;
   getSourceOccurrences(sourceId: string): Promise<SourceOccurrenceState[]>;
@@ -55,6 +59,9 @@ export interface InternshipStore {
   listOpen?(cursor?: string, limit?: number, status?: 'open' | 'closed', query?: CatalogQuery): Promise<{ jobs: Internship[]; cursor?: string }>;
   /** Complete open catalog used to build stable grouped rows before role-level filters are applied. */
   listCatalog?(): Promise<Internship[]>;
+  putCatalogProjection?(groups: CatalogGroupDetails[], generatedAt: string): Promise<void>;
+  listCatalogProjection?(cursor?: string, limit?: number): Promise<CatalogProjectionPage | undefined>;
+  getCatalogProjectionGroup?(groupId: string): Promise<CatalogGroupDetails | undefined>;
   listLeverAdmissions?(): Promise<LeverAdmission[]>;
   putLeverAdmission?(admission: LeverAdmission): Promise<void>;
   /** Normal-recency open technical roles made catalog-visible in `(after, before]`. */
@@ -69,6 +76,8 @@ export class MemoryInternshipStore implements InternshipStore {
   readonly sourceHealth = new Map<string, SourceHealth>();
   readonly monitoringChecklists = new Map<string, MonitoringChecklist>();
   readonly leverAdmissions = new Map<string, LeverAdmission>();
+  readonly postingAliases = new Map<string, string>();
+  catalogProjection?: { generatedAt: string; groups: CatalogGroupDetails[] };
   async getCheckpoint(sourceId: string) { return this.checkpoints.get(sourceId); }
   async putCheckpoint(checkpoint: SourceCheckpoint) { this.checkpoints.set(checkpoint.sourceId, checkpoint); }
   async getSourceHealth(sourceId: string) { return this.sourceHealth.get(sourceId); }
@@ -78,6 +87,20 @@ export class MemoryInternshipStore implements InternshipStore {
   async putMonitoringChecklist(checklist: MonitoringChecklist) { this.monitoringChecklists.set(checklist.period, structuredClone(checklist)); }
   async findByUrl(url: string) { const job = [...this.jobs.values()].find((item) => item.normalizedUrl === url); return job && withEmployerCategory(job); }
   async findByFingerprint(fingerprint: string) { const job = [...this.jobs.values()].find((item) => item.fingerprint === fingerprint); return job && withEmployerCategory(job); }
+  async claimPostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution> {
+    const resolution = resolvePostingAliases(identity, this.postingAliases);
+    if (resolution.outcome === 'quarantine') return resolution;
+    if (preferredJobId && resolution.outcome === 'merge' && resolution.canonicalJobId !== preferredJobId) {
+      return {
+        outcome: 'quarantine', aliases: resolution.aliases,
+        conflictingCanonicalJobIds: [resolution.canonicalJobId, preferredJobId].sort(),
+        reason: 'aliases-resolve-to-different-jobs',
+      };
+    }
+    const canonicalJobId = resolution.outcome === 'create' && preferredJobId ? preferredJobId : resolution.canonicalJobId;
+    for (const alias of resolution.aliases) this.postingAliases.set(alias, canonicalJobId);
+    return { ...resolution, canonicalJobId };
+  }
   async putInternship(job: Internship) { const canonical = canonicalCatalogRecency(job); this.jobs.set(canonical.jobId, structuredClone(canonical)); }
   async getSourceOccurrences(sourceId: string) { return [...this.occurrences.values()].filter((value) => value.sourceId === sourceId).map((value) => structuredClone(value)); }
   async putSourceOccurrence(occurrence: SourceOccurrenceState) { this.occurrences.set(`${occurrence.sourceId}#${occurrence.externalId}`, structuredClone(occurrence)); }
@@ -115,6 +138,19 @@ export class MemoryInternshipStore implements InternshipStore {
       .filter((job) => job.open && job.technical !== false && !isPastSeason(job.season))
       .sort(compareCatalogRecency)
       .map(withEmployerCategory);
+  }
+  async putCatalogProjection(groups: CatalogGroupDetails[], generatedAt: string) {
+    this.catalogProjection = { generatedAt, groups: structuredClone(groups) };
+  }
+  async listCatalogProjection(cursor?: string, limit = 25) {
+    if (!this.catalogProjection) return undefined;
+    const offset = cursor ? Number(cursor) : 0;
+    const groups = this.catalogProjection.groups.slice(offset, offset + limit);
+    return { groups: structuredClone(groups), ...(offset + groups.length < this.catalogProjection.groups.length ? { cursor: String(offset + groups.length) } : {}) };
+  }
+  async getCatalogProjectionGroup(groupId: string) {
+    const value = this.catalogProjection?.groups.find((group) => group.group.groupId === groupId);
+    return value ? structuredClone(value) : undefined;
   }
   async listLeverAdmissions() { return [...this.leverAdmissions.values()].map((value) => structuredClone(value)); }
   async putLeverAdmission(admission: LeverAdmission) {
@@ -234,6 +270,49 @@ export class DynamoInternshipStore implements InternshipStore {
   }
   findByUrl(url: string) { return this.find('urlIndex', 'urlPk', `URL#${url}`); }
   findByFingerprint(fingerprint: string) { return this.find('fingerprintIndex', 'fingerprintPk', `FP#${fingerprint}`); }
+  async claimPostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution> {
+    const aliases = [...new Set(identity.aliases.map((item) => item.value))].sort();
+    const keyFor = (alias: string) => ({
+      pk: `POSTING_ALIAS#${createHash('sha256').update(alias).digest('hex')}`,
+      sk: 'CLAIM',
+    });
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const result = await this.client.send(new BatchGetCommand({
+        RequestItems: { [this.tableName]: { Keys: aliases.map(keyFor), ConsistentRead: true } },
+      }));
+      const items = result.Responses?.[this.tableName] ?? [];
+      const claims = new Map<string, string>();
+      for (const item of items) {
+        if (typeof item.alias !== 'string' || typeof item.canonicalJobId !== 'string') continue;
+        claims.set(item.alias, item.canonicalJobId);
+      }
+      const resolution = resolvePostingAliases(identity, claims);
+      if (resolution.outcome === 'quarantine') return resolution;
+      if (preferredJobId && resolution.outcome === 'merge' && resolution.canonicalJobId !== preferredJobId) {
+        return {
+          outcome: 'quarantine', aliases: resolution.aliases,
+          conflictingCanonicalJobIds: [resolution.canonicalJobId, preferredJobId].sort(),
+          reason: 'aliases-resolve-to-different-jobs',
+        };
+      }
+      const canonicalJobId = resolution.outcome === 'create' && preferredJobId ? preferredJobId : resolution.canonicalJobId;
+      const unclaimed = resolution.aliases.filter((alias) => !claims.has(alias));
+      if (!unclaimed.length) return { ...resolution, canonicalJobId };
+      try {
+        await this.client.send(new TransactWriteCommand({
+          TransactItems: unclaimed.map((alias) => ({ Put: {
+            TableName: this.tableName,
+            Item: { ...keyFor(alias), alias, canonicalJobId, claimedAt: new Date().toISOString() },
+            ConditionExpression: 'attribute_not_exists(pk)',
+          } })),
+        }));
+        return { ...resolution, canonicalJobId };
+      } catch (error) {
+        if ((error as { name?: string }).name !== 'TransactionCanceledException' || attempt === 3) throw error;
+      }
+    }
+    throw new Error('Unable to claim posting identity aliases');
+  }
   async putInternship(job: Internship): Promise<void> {
     await this.client.send(new PutCommand({ TableName: this.tableName, Item: internshipItem(job) }));
   }
@@ -310,6 +389,61 @@ export class DynamoInternshipStore implements InternshipStore {
       .sort(compareCatalogRecency)
       .map(withEmployerCategory);
   }
+  async putCatalogProjection(groups: CatalogGroupDetails[], generatedAt: string): Promise<void> {
+    const version = createHash('sha256').update(`${generatedAt}\0${groups.map((group) => group.group.groupId).join('\0')}`).digest('hex').slice(0, 20);
+    const projectionPk = `CATALOG_PROJECTION#${version}`;
+    const expiresAtEpoch = Math.floor(Date.parse(generatedAt) / 1_000) + 2 * 24 * 60 * 60;
+    type ProjectionWrite = NonNullable<NonNullable<ConstructorParameters<typeof BatchWriteCommand>[0]>['RequestItems']>[string][number];
+    const requests: ProjectionWrite[] = groups.map((details) => ({ PutRequest: { Item: {
+      pk: projectionPk,
+      sk: `GROUP#${details.group.groupId}`,
+      projectionPk,
+      projectionSk: `${String(9_999_999_999_999 - Date.parse(details.group.updatedAt)).padStart(13, '0')}#${details.group.groupId}`,
+      details,
+      expiresAtEpoch,
+    } } }));
+    while (requests.length) {
+      const batch = requests.splice(0, 25);
+      let pending: ProjectionWrite[] = batch;
+      do {
+        const result = await this.client.send(new BatchWriteCommand({ RequestItems: { [this.tableName]: pending } }));
+        pending = result.UnprocessedItems?.[this.tableName] ?? [];
+      } while (pending.length);
+    }
+    await this.client.send(new PutCommand({
+      TableName: this.tableName,
+      Item: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT', version, generatedAt, groupCount: groups.length },
+    }));
+  }
+  async listCatalogProjection(cursor?: string, limit = 25): Promise<CatalogProjectionPage | undefined> {
+    const decoded = cursor ? JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { version: string; key?: Record<string, unknown> } : undefined;
+    const pointer = decoded ? undefined : await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT' }, ConsistentRead: true }));
+    const version = decoded?.version ?? pointer?.Item?.version as string | undefined;
+    if (!version) return undefined;
+    const result = await this.client.send(new QueryCommand({
+      TableName: this.tableName,
+      IndexName: 'catalogProjectionIndex',
+      KeyConditionExpression: 'projectionPk = :pk',
+      ExpressionAttributeValues: { ':pk': `CATALOG_PROJECTION#${version}` },
+      ScanIndexForward: true,
+      Limit: limit,
+      ...(decoded?.key ? { ExclusiveStartKey: decoded.key } : {}),
+    }));
+    return {
+      groups: (result.Items ?? []).map((item) => item.details as CatalogGroupDetails),
+      ...(result.LastEvaluatedKey ? { cursor: Buffer.from(JSON.stringify({ version, key: result.LastEvaluatedKey })).toString('base64url') } : {}),
+    };
+  }
+  async getCatalogProjectionGroup(groupId: string): Promise<CatalogGroupDetails | undefined> {
+    const pointer = await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT' }, ConsistentRead: true }));
+    const version = pointer.Item?.version as string | undefined;
+    if (!version) return undefined;
+    const result = await this.client.send(new GetCommand({
+      TableName: this.tableName,
+      Key: { pk: `CATALOG_PROJECTION#${version}`, sk: `GROUP#${groupId}` },
+    }));
+    return result.Item?.details as CatalogGroupDetails | undefined;
+  }
   async listLeverAdmissions(): Promise<LeverAdmission[]> {
     return (await this.queryAll({
       TableName: this.tableName,
@@ -336,6 +470,7 @@ export class DynamoInternshipStore implements InternshipStore {
 export interface UserStore {
   getPreferences(userId: string): Promise<UserPreferences | undefined>;
   putPreferences(value: UserPreferences): Promise<void>;
+  activePreferences(): Promise<UserPreferences[]>;
   activeDevices(): Promise<DeviceToken[]>;
   putDevice(value: DeviceToken): Promise<void>;
   deleteDevice(userId: string, token: string): Promise<void>;
@@ -355,6 +490,8 @@ export interface UserStore {
   /** Atomically claims a delivery key. Existing pending/ok receipts win; error receipts may be retried once. */
   claimReceipt(value: DeliveryReceipt): Promise<boolean>;
   putReceipt(value: DeliveryReceipt): Promise<void>;
+  /** Copies a legacy receipt to a hardened key without overwriting any existing claim. */
+  migrateReceipt(value: DeliveryReceipt, dedupeKey: string): Promise<boolean>;
   pendingReceipts(): Promise<DeliveryReceipt[]>;
   retryableReceipts(): Promise<DeliveryReceipt[]>;
   deleteUser(userId: string): Promise<UserDocument[]>;
@@ -402,6 +539,7 @@ export class DynamoReleaseStore implements ReleaseStore {
 export class MemoryUserStore implements UserStore {
   readonly preferences = new Map<string, UserPreferences>(); readonly devices = new Map<string, DeviceToken>(); readonly profiles = new Map<string, ApplicantProfile>(); readonly applications = new Map<string, ApplicationRecord>(); readonly sessions = new Map<string, ApplicationSession>(); readonly documents = new Map<string, UserDocument>(); readonly receipts = new Map<string, DeliveryReceipt>();
   async getPreferences(userId: string) { return this.preferences.get(userId); } async putPreferences(value: UserPreferences) { this.preferences.set(value.userId, structuredClone(value)); }
+  async activePreferences() { return [...this.preferences.values()].filter((value) => value.alertsEnabled && value.onboardingComplete).map((value) => structuredClone(value)); }
   async activeDevices() { return [...this.devices.values()].filter((d) => d.active).map((d) => structuredClone(d)); }
   async putDevice(value: DeviceToken) { this.devices.set(`${value.userId}#${value.token}`, structuredClone(value)); } async deleteDevice(userId: string, token: string) { this.devices.delete(`${userId}#${token}`); }
   async getProfile(userId: string) { return this.profiles.get(userId); } async putProfile(value: ApplicantProfile) { this.profiles.set(value.userId, structuredClone(value)); }
@@ -415,12 +553,18 @@ export class MemoryUserStore implements UserStore {
   async getReceipt(userId: string, dedupeKey: string, token: string) { return this.receipts.get(`${userId}#${dedupeKey}#${token}`); }
   async claimReceipt(value: DeliveryReceipt) { const key = `${value.userId}#${value.dedupeKey ?? value.jobId}#${value.token}`; const existing = this.receipts.get(key); if (existing && existing.status !== 'error') return false; this.receipts.set(key, structuredClone(value)); return true; }
   async putReceipt(value: DeliveryReceipt) { this.receipts.set(`${value.userId}#${value.dedupeKey ?? value.jobId}#${value.token}`, structuredClone(value)); }
+  async migrateReceipt(value: DeliveryReceipt, dedupeKey: string) {
+    const key = `${value.userId}#${dedupeKey}#${value.token}`;
+    if (this.receipts.has(key)) return false;
+    this.receipts.set(key, structuredClone({ ...value, dedupeKey }));
+    return true;
+  }
   async pendingReceipts() { return [...this.receipts.values()].filter((receipt) => receipt.status === 'pending' && receipt.ticketId).map((receipt) => structuredClone(receipt)); }
   async retryableReceipts() { return [...this.receipts.values()].filter((receipt) => receipt.status === 'retryable').map((receipt) => structuredClone(receipt)); }
   async deleteUser(userId: string) { const docs = await this.listDocuments(userId); for (const map of [this.preferences, this.profiles]) map.delete(userId); for (const [key] of this.devices) if (key.startsWith(`${userId}#`)) this.devices.delete(key); for (const [key] of this.applications) if (key.startsWith(`${userId}#`)) this.applications.delete(key); for (const [key] of this.sessions) if (key.startsWith(`${userId}#`)) this.sessions.delete(key); for (const [key] of this.documents) if (key.startsWith(`${userId}#`)) this.documents.delete(key); for (const [key] of this.receipts) if (key.startsWith(`${userId}#`)) this.receipts.delete(key); return docs; }
 }
 
-type UserItem = { pk: string; sk: string; kind: string; value: unknown; activePk?: string; tokenPk?: string; receiptPk?: string; activeSessionPk?: string; expiresAtEpoch?: number };
+type UserItem = { pk: string; sk: string; kind: string; value: unknown; activePk?: string; tokenPk?: string; receiptPk?: string; alertPk?: string; activeSessionPk?: string; expiresAtEpoch?: number };
 export class DynamoUserStore implements UserStore {
   private readonly client: DynamoDBDocumentClient;
   constructor(private readonly tableName: string, client?: DynamoDBDocumentClient) { this.client = client ?? createDynamoDocumentClient(); }
@@ -434,7 +578,9 @@ export class DynamoUserStore implements UserStore {
   }
   private async get<T>(userId: string, sk: string) { return (await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: `USER#${userId}`, sk } }))).Item?.value as T | undefined; }
   private async put(userId: string, sk: string, kind: string, value: unknown, extra: Partial<UserItem> = {}) { await this.client.send(new PutCommand({ TableName: this.tableName, Item: { pk: `USER#${userId}`, sk, kind, value, ...extra } })); }
-  getPreferences(userId: string) { return this.get<UserPreferences>(userId, 'PREFERENCES'); } putPreferences(value: UserPreferences) { return this.put(value.userId, 'PREFERENCES', 'preferences', value); }
+  getPreferences(userId: string) { return this.get<UserPreferences>(userId, 'PREFERENCES'); }
+  putPreferences(value: UserPreferences) { return this.put(value.userId, 'PREFERENCES', 'preferences', value, value.alertsEnabled && value.onboardingComplete ? { alertPk: 'ACTIVE' } : {}); }
+  async activePreferences() { return (await this.queryAll({ TableName: this.tableName, IndexName: 'activeAlertsIndex', KeyConditionExpression: 'alertPk = :active', ExpressionAttributeValues: { ':active': 'ACTIVE' } })).map((item) => item.value as UserPreferences); }
   async activeDevices() { return (await this.queryAll({ TableName: this.tableName, IndexName: 'activeDevicesIndex', KeyConditionExpression: 'activePk = :active', ExpressionAttributeValues: { ':active': 'ACTIVE' } })).map((item) => item.value as DeviceToken); }
   putDevice(value: DeviceToken) { return this.put(value.userId, `DEVICE#${value.token}`, 'device', value, value.active ? { activePk: 'ACTIVE', tokenPk: `TOKEN#${value.token}` } : { tokenPk: `TOKEN#${value.token}` }); } async deleteDevice(userId: string, token: string) { await this.client.send(new DeleteCommand({ TableName: this.tableName, Key: { pk: `USER#${userId}`, sk: `DEVICE#${token}` } })); }
   getProfile(userId: string) { return this.get<ApplicantProfile>(userId, 'PROFILE'); } putProfile(value: ApplicantProfile) { return this.put(value.userId, 'PROFILE', 'profile', value); }
@@ -480,6 +626,20 @@ export class DynamoUserStore implements UserStore {
     } catch (error) { if ((error as { name?: string }).name === 'ConditionalCheckFailedException') return false; throw error; }
   }
   putReceipt(value: DeliveryReceipt) { return this.put(value.userId, `RECEIPT#${value.dedupeKey ?? value.jobId}#${value.token}`, 'receipt', value, value.status === 'pending' ? { receiptPk: 'PENDING' } : value.status === 'retryable' ? { receiptPk: 'RETRYABLE' } : {}); }
+  async migrateReceipt(value: DeliveryReceipt, dedupeKey: string) {
+    const migrated = { ...value, dedupeKey };
+    const item: UserItem = {
+      pk: `USER#${value.userId}`, sk: `RECEIPT#${dedupeKey}#${value.token}`, kind: 'receipt', value: migrated,
+      ...(value.status === 'pending' ? { receiptPk: 'PENDING' } : value.status === 'retryable' ? { receiptPk: 'RETRYABLE' } : {}),
+    };
+    try {
+      await this.client.send(new PutCommand({ TableName: this.tableName, Item: item, ConditionExpression: 'attribute_not_exists(pk)' }));
+      return true;
+    } catch (error) {
+      if ((error as { name?: string }).name === 'ConditionalCheckFailedException') return false;
+      throw error;
+    }
+  }
   async pendingReceipts() { return (await this.queryAll({ TableName: this.tableName, IndexName: 'pendingReceiptsIndex', KeyConditionExpression: 'receiptPk = :pending', ExpressionAttributeValues: { ':pending': 'PENDING' } })).map((item) => item.value as DeliveryReceipt); }
   async retryableReceipts() { return (await this.queryAll({ TableName: this.tableName, IndexName: 'pendingReceiptsIndex', KeyConditionExpression: 'receiptPk = :retryable', ExpressionAttributeValues: { ':retryable': 'RETRYABLE' } })).map((item) => item.value as DeliveryReceipt); }
   async deleteUser(userId: string) { const documents = await this.listDocuments(userId); const items = await this.queryAll({ TableName: this.tableName, KeyConditionExpression: 'pk = :pk', ExpressionAttributeValues: { ':pk': `USER#${userId}` } }); await Promise.all(items.map((item) => this.client.send(new DeleteCommand({ TableName: this.tableName, Key: { pk: item.pk, sk: item.sk } })))); return documents; }

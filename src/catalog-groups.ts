@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { inferJobFocuses } from './core/filters.js';
 import { catalogSourceClasses, type CatalogSource } from './catalog-fields.js';
 import { catalogVisibleAt, compareCatalogRecency } from './catalog-recency.js';
+import { canonicalCompanyKey } from './core/normalize.js';
 import type { Internship } from './types.js';
 
 export type CatalogGroupKind = 'program-group' | 'employer-release' | 'individual';
@@ -33,6 +34,11 @@ export interface CatalogGroupRow {
 export interface CatalogGroupDetails {
   group: CatalogGroupRow;
   roles: CatalogGroupRole[];
+}
+
+export interface CatalogProjectionPage {
+  groups: CatalogGroupDetails[];
+  cursor?: string;
 }
 
 export interface CatalogGroupRole {
@@ -93,7 +99,7 @@ type StructuredIdentity = {
 };
 
 type CatalogJob = Internship & { internshipIdentity?: StructuredIdentity; identity?: StructuredIdentity };
-type BuiltGroup = { row: CatalogGroupRow; jobs: Internship[] };
+export type BuiltGroup = { row: CatalogGroupRow; jobs: Internship[] };
 
 const RELEASE_WINDOW_MS = 8_000;
 const compact = (value: string) => value.trim().replace(/\s+/g, ' ');
@@ -105,7 +111,13 @@ const identityFor = (job: Internship) => (job as CatalogJob).internshipIdentity 
 function companyKey(job: Internship) {
   const identity = identityFor(job);
   const value = identity?.canonicalCompanyId ?? identity?.company?.canonicalId ?? identity?.company?.id ?? job.company;
-  return compact(value) ? folded(value) : undefined;
+  const key = canonicalCompanyKey(value);
+  return key || undefined;
+}
+
+function displayCompany(job: Internship) {
+  const structured = identityFor(job)?.canonicalCompanyName ?? provenancedText(identityFor(job)?.company?.displayName);
+  return compact(structured ?? job.company).replace(/^[^\p{L}\p{N}]+/u, '').trim() || compact(structured ?? job.company);
 }
 
 function provenancedText(value: string | { value?: string } | undefined) {
@@ -141,10 +153,14 @@ export function catalogEducation(job: Internship): CatalogEducationSummary {
 }
 
 function safeProgramKey(job: Internship) {
+  const identity = identityFor(job);
   const company = companyKey(job);
   const season = seasonFor(job);
   const education = catalogEducation(job);
-  if (!company || !season || education.evidence === 'conflicting') return undefined;
+  // Program rows make an affirmative product claim. Legacy or evidence-poor
+  // roles stay individual until structured enrichment explicitly supports the
+  // audience dimensions; employer bursts remain a separate, factual grouping.
+  if (!identity || !company || !season || education.evidence !== 'explicit' || education.levels.length === 0) return undefined;
   return `${company}\u0000${folded(season)}\u0000${education.evidence}\u0000${education.levels.map(folded).sort().join(',')}`;
 }
 
@@ -181,9 +197,11 @@ function groupId(kind: CatalogGroupKind, jobs: Internship[]) {
 
 function summarize(kind: CatalogGroupKind, jobs: Internship[], stableGroupId?: string): CatalogGroupRow {
   const sorted = [...jobs].sort(compareCatalogRecency);
+  const chronological = [...jobs].sort((left, right) => timestamp(left) - timestamp(right));
   const createdAt = sorted.reduce((oldest, job) => catalogVisibleAt(job) < oldest ? catalogVisibleAt(job) : oldest, catalogVisibleAt(sorted[0]!));
   const updatedAt = catalogVisibleAt(sorted[0]!);
-  const company = identityFor(sorted[0]!)?.canonicalCompanyName ?? provenancedText(identityFor(sorted[0]!)?.company?.displayName) ?? sorted[0]!.company;
+  const structuredCompany = sorted.find((job) => identityFor(job)?.canonicalCompanyName || provenancedText(identityFor(job)?.company?.displayName));
+  const company = displayCompany(structuredCompany ?? chronological[0]!);
   return {
     groupId: stableGroupId ?? groupId(kind, sorted), kind, company,
     seasons: unique(sorted.map(seasonFor)),
@@ -286,5 +304,42 @@ export function filterCatalogGroups(groups: BuiltGroup[], filter: CatalogGroupFi
         && (!filter.locations?.length || filter.locations.some((location) => folded(locationsFor(job).join(' ')).includes(folded(location))));
     });
     return jobs.length ? [{ row: summarize(group.row.kind, jobs, group.row.groupId), jobs }] : [];
+  });
+}
+
+function credibilityMatches(value: CatalogGroupRole['sourceCredibility'], source: CatalogSource) {
+  if (source === 'all') return true;
+  if (source === 'corroborated') return value === 'corroborated';
+  if (source === 'direct') return value === 'official' || value === 'corroborated';
+  return value === 'community' || value === 'corroborated';
+}
+
+/** Filters a materialized projection without loading full catalog job records. */
+export function filterCatalogGroupDetails(groups: CatalogGroupDetails[], filter: CatalogGroupFilter): CatalogGroupDetails[] {
+  const query = folded(filter.query ?? '');
+  return groups.flatMap((details) => {
+    const roles = details.roles.filter((role) =>
+      (!query || folded(`${role.company} ${role.title} ${role.location} ${role.season}`).includes(query))
+      && (!filter.source || credibilityMatches(role.sourceCredibility, filter.source))
+      && (!filter.disciplines?.length || includesFolded(role.disciplines, filter.disciplines))
+      && (!filter.seasons?.length || includesFolded([role.season], filter.seasons))
+      && (!filter.educationLevels?.length || role.education.evidence === 'unspecified' || includesFolded(role.education.levels, filter.educationLevels))
+      && (!filter.workModes?.length || includesFolded(role.workModes, filter.workModes))
+      && (!filter.locations?.length || filter.locations.some((location) => folded(role.location).includes(folded(location)))));
+    if (!roles.length) return [];
+    return [{
+      group: {
+        ...details.group,
+        education: unique(roles.map((role) => JSON.stringify(role.education))).map((item) => JSON.parse(item) as CatalogEducationSummary),
+        roleCount: roles.length,
+        titles: unique(roles.map((role) => role.title)).slice(0, 3),
+        disciplines: unique(roles.flatMap((role) => role.disciplines)).slice(0, 6),
+        locations: unique(roles.map((role) => role.location)),
+        workModes: unique(roles.flatMap((role) => role.workModes)),
+        seasons: unique(roles.map((role) => role.season)),
+        roleIds: roles.map((role) => role.jobId),
+      },
+      roles,
+    }];
   });
 }

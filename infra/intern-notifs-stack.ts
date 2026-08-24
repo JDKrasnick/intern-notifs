@@ -14,18 +14,20 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import type { Construct } from 'constructs';
 import { SOURCE_POLL_CADENCE } from '../src/source-poll-cadence.js';
+import { NotificationPipeline } from './notification-pipeline.js';
 
 export interface InternNotifsStackProps extends cdk.StackProps { githubRepository: string; githubOwnerId?: string; githubRepositoryId?: string; emailAddress: string; existingOidcProviderArn?: string; }
 export class InternNotifsStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: InternNotifsStackProps) {
     super(scope, id, props);
-    const internships = new dynamodb.Table(this, 'Internships', { partitionKey: { name: 'pk', type: dynamodb.AttributeType.STRING }, sortKey: { name: 'sk', type: dynamodb.AttributeType.STRING }, billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true }, removalPolicy: cdk.RemovalPolicy.RETAIN });
+    const internships = new dynamodb.Table(this, 'Internships', { partitionKey: { name: 'pk', type: dynamodb.AttributeType.STRING }, sortKey: { name: 'sk', type: dynamodb.AttributeType.STRING }, billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES, timeToLiveAttribute: 'expiresAtEpoch', pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true }, removalPolicy: cdk.RemovalPolicy.RETAIN });
     internships.addGlobalSecondaryIndex({ indexName: 'urlIndex', partitionKey: { name: 'urlPk', type: dynamodb.AttributeType.STRING }, projectionType: dynamodb.ProjectionType.ALL });
     internships.addGlobalSecondaryIndex({ indexName: 'fingerprintIndex', partitionKey: { name: 'fingerprintPk', type: dynamodb.AttributeType.STRING }, projectionType: dynamodb.ProjectionType.ALL });
     internships.addGlobalSecondaryIndex({ indexName: 'pendingSmsIndex', partitionKey: { name: 'smsPk', type: dynamodb.AttributeType.STRING }, projectionType: dynamodb.ProjectionType.ALL });
     internships.addGlobalSecondaryIndex({ indexName: 'pendingDigestIndex', partitionKey: { name: 'digestPk', type: dynamodb.AttributeType.STRING }, projectionType: dynamodb.ProjectionType.ALL });
     internships.addGlobalSecondaryIndex({ indexName: 'openJobsIndex', partitionKey: { name: 'openPk', type: dynamodb.AttributeType.STRING }, sortKey: { name: 'openSk', type: dynamodb.AttributeType.STRING }, projectionType: dynamodb.ProjectionType.ALL });
     internships.addGlobalSecondaryIndex({ indexName: 'closedJobsIndex', partitionKey: { name: 'closedPk', type: dynamodb.AttributeType.STRING }, sortKey: { name: 'closedSk', type: dynamodb.AttributeType.STRING }, projectionType: dynamodb.ProjectionType.ALL });
+    internships.addGlobalSecondaryIndex({ indexName: 'catalogProjectionIndex', partitionKey: { name: 'projectionPk', type: dynamodb.AttributeType.STRING }, sortKey: { name: 'projectionSk', type: dynamodb.AttributeType.STRING }, projectionType: dynamodb.ProjectionType.ALL });
     const applications = new dynamodb.Table(this, 'Applications', { partitionKey: { name: 'applicationId', type: dynamodb.AttributeType.STRING }, billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true }, removalPolicy: cdk.RemovalPolicy.RETAIN });
     applications.addGlobalSecondaryIndex({ indexName: 'jobIdIndex', partitionKey: { name: 'jobId', type: dynamodb.AttributeType.STRING }, projectionType: dynamodb.ProjectionType.ALL });
     applications.addGlobalSecondaryIndex({ indexName: 'statusUpdatedAtIndex', partitionKey: { name: 'status', type: dynamodb.AttributeType.STRING }, sortKey: { name: 'updatedAt', type: dynamodb.AttributeType.STRING }, projectionType: dynamodb.ProjectionType.ALL });
@@ -34,6 +36,7 @@ export class InternNotifsStack extends cdk.Stack {
     users.addGlobalSecondaryIndex({ indexName: 'activeDevicesIndex', partitionKey: { name: 'activePk', type: dynamodb.AttributeType.STRING }, projectionType: dynamodb.ProjectionType.ALL });
     users.addGlobalSecondaryIndex({ indexName: 'tokenIndex', partitionKey: { name: 'tokenPk', type: dynamodb.AttributeType.STRING }, projectionType: dynamodb.ProjectionType.ALL });
     users.addGlobalSecondaryIndex({ indexName: 'pendingReceiptsIndex', partitionKey: { name: 'receiptPk', type: dynamodb.AttributeType.STRING }, projectionType: dynamodb.ProjectionType.ALL });
+    users.addGlobalSecondaryIndex({ indexName: 'activeAlertsIndex', partitionKey: { name: 'alertPk', type: dynamodb.AttributeType.STRING }, projectionType: dynamodb.ProjectionType.ALL });
     // This index is populated only while a short-lived assistance session is
     // active, allowing handoff and runner bearers to resolve a session without
     // exposing a user identifier in browser-facing credentials.
@@ -58,17 +61,45 @@ export class InternNotifsStack extends cdk.Stack {
     }));
     role.addToPolicy(new iam.PolicyStatement({ actions: ['ses:SendEmail'], resources: [identity.emailIdentityArn] }));
     const runtimeConfigParameterName = '/intern-notifs/runtime-config';
+    const groupedNotificationUserIds = new cdk.CfnParameter(this, 'GroupedNotificationUserIds', {
+      type: 'String', default: '',
+      description: 'Comma-separated Cognito user IDs allowed onto grouped delivery; use * only after the global cutover gate.',
+    });
     const notifier = new lambdaNodejs.NodejsFunction(this, 'Notifier', {
       entry: 'src/lambda.ts', handler: 'handler', runtime: lambda.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.minutes(4), memorySize: 512,
-      environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName, RUNTIME_CONFIG_PARAMETER_NAME: runtimeConfigParameterName },
+      environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName, RUNTIME_CONFIG_PARAMETER_NAME: runtimeConfigParameterName, GROUPED_NOTIFICATION_USER_IDS: groupedNotificationUserIds.valueAsString },
       bundling: { externalModules: [] }
     });
-    notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query', 'dynamodb:Scan'], resources: [internships.tableArn, `${internships.tableArn}/index/*`] }));
+    notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['dynamodb:BatchGetItem', 'dynamodb:BatchWriteItem', 'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query', 'dynamodb:Scan', 'dynamodb:TransactWriteItems'], resources: [internships.tableArn, `${internships.tableArn}/index/*`] }));
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query'], resources: [users.tableArn, `${users.tableArn}/index/*`] }));
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['ses:SendEmail'], resources: [identity.emailIdentityArn] }));
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameter'], resources: [`arn:${this.partition}:ssm:${this.region}:${this.account}:parameter${runtimeConfigParameterName}`] }));
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['kms:Decrypt'], resources: [`arn:${this.partition}:kms:${this.region}:${this.account}:key/*`], conditions: { StringEquals: { 'kms:ViaService': `ssm.${this.region}.amazonaws.com` } } }));
+    const pipelineHandler = (id: string, command: string) => new lambdaNodejs.NodejsFunction(this, id, {
+      entry: 'src/notification-pipeline-handler.ts', handler: 'handler', runtime: lambda.Runtime.NODEJS_22_X,
+      timeout: cdk.Duration.minutes(1), memorySize: 256,
+      environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName, PIPELINE_COMMAND: command, SES_FROM: props.emailAddress, GROUPED_NOTIFICATION_USER_IDS: groupedNotificationUserIds.valueAsString },
+      bundling: { externalModules: [] },
+    });
+    const streamPublisher = pipelineHandler('NotificationStreamPublisher', 'stream-publisher');
+    const aggregationWorker = pipelineHandler('NotificationAggregationWorker', 'aggregate');
+    const flushWorker = pipelineHandler('NotificationFlushWorker', 'flush');
+    const pushWorker = pipelineHandler('NotificationPushWorker', 'push');
+    const emailWorker = pipelineHandler('NotificationEmailWorker', 'email');
+    const receiptWorker = pipelineHandler('NotificationReceiptWorker', 'receipt');
+    const notificationPipeline = new NotificationPipeline(this, 'NotificationPipeline', {
+      catalogTable: internships, usersTable: users, emailIdentity: identity,
+      handlers: { streamPublisher, aggregationWorker, flushWorker, pushWorker, emailWorker, receiptWorker },
+    });
+    streamPublisher.addEnvironment('CANDIDATE_TOPIC_ARN', notificationPipeline.candidateTopic.topicArn);
+    aggregationWorker.addEnvironment('FLUSH_QUEUE_URL', notificationPipeline.delayedFlushQueue.queueUrl);
+    flushWorker.addEnvironment('INTENT_TOPIC_ARN', notificationPipeline.intentTopic.topicArn);
+    pushWorker.addEnvironment('PUSH_QUEUE_URL', notificationPipeline.pushQueue.queueUrl);
+    pushWorker.addEnvironment('RECEIPT_QUEUE_URL', notificationPipeline.receiptQueue.queueUrl);
+    emailWorker.addEnvironment('EMAIL_QUEUE_URL', notificationPipeline.emailQueue.queueUrl);
+    notificationPipeline.pushQueue.grantSendMessages(pushWorker);
+    notificationPipeline.emailQueue.grantSendMessages(emailWorker);
     const apiHandler = new lambdaNodejs.NodejsFunction(this, 'PublicApi', { entry: 'src/api.ts', handler: 'handler', runtime: lambda.Runtime.NODEJS_22_X, timeout: cdk.Duration.seconds(29), memorySize: 512, environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName, DOCUMENTS_BUCKET: documents.bucketName, USER_POOL_ID: userPool.userPoolId }, bundling: { externalModules: [] } });
     apiHandler.addToRolePolicy(new iam.PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:DeleteItem', 'dynamodb:Query'], resources: [internships.tableArn, `${internships.tableArn}/index/*`, users.tableArn, `${users.tableArn}/index/*`] }));
     documents.grantReadWrite(apiHandler); userPool.grant(apiHandler, 'cognito-idp:AdminDeleteUser');
@@ -88,10 +119,11 @@ export class InternNotifsStack extends cdk.Stack {
     const deadLetterQueue = new sqs.Queue(this, 'SchedulerDeadLetterQueue', { retentionPeriod: cdk.Duration.days(14), encryption: sqs.QueueEncryption.SQS_MANAGED });
     const schedulerRole = new iam.Role(this, 'SchedulerInvokeRole', { assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com') });
     notifier.grantInvoke(schedulerRole); deadLetterQueue.grantSendMessages(schedulerRole);
-    const target = (command: 'poll' | 'digest' | 'audit-catalog-indexes', maximumRetryAttempts = 2): scheduler.CfnSchedule.TargetProperty => ({ arn: notifier.functionArn, roleArn: schedulerRole.roleArn, input: JSON.stringify({ command }), deadLetterConfig: { arn: deadLetterQueue.queueArn }, retryPolicy: { maximumEventAgeInSeconds: 3600, maximumRetryAttempts } });
+    const target = (command: 'poll' | 'digest' | 'audit-catalog-indexes' | 'refresh-catalog-groups', maximumRetryAttempts = 2): scheduler.CfnSchedule.TargetProperty => ({ arn: notifier.functionArn, roleArn: schedulerRole.roleArn, input: JSON.stringify({ command }), deadLetterConfig: { arn: deadLetterQueue.queueArn }, retryPolicy: { maximumEventAgeInSeconds: 3600, maximumRetryAttempts } });
     // The next ten-minute poll is the safe retry boundary for this task;
     // Scheduler retries previously tripled the cost of repeated timeouts.
     new scheduler.CfnSchedule(this, 'PollSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: SOURCE_POLL_CADENCE.schedules.github, scheduleExpressionTimezone: 'UTC', state: 'ENABLED', target: target('poll', 0) });
+    new scheduler.CfnSchedule(this, 'CatalogGroupProjectionSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(9/10 * * * ? *)', scheduleExpressionTimezone: 'UTC', state: 'ENABLED', target: target('refresh-catalog-groups', 1) });
     new scheduler.CfnSchedule(this, 'CatalogIndexAuditSchedule', { flexibleTimeWindow: { mode: 'OFF' }, scheduleExpression: 'cron(42 8 * * ? *)', scheduleExpressionTimezone: 'UTC', state: 'ENABLED', target: target('audit-catalog-indexes') });
     // The poll Lambda publishes these as embedded metrics, so a source that
     // stops succeeding surfaces without anyone reading logs. Greenhouse boards

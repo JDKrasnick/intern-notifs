@@ -150,6 +150,49 @@ baseline roles. Also verify a signed-in opening interval does not return any
 repaired baseline job IDs. Production execution is an operator action separate
 from deployment and this code change.
 
+### Posting identity, receipt, and grouped-catalog migration
+
+Run this guarded migration before enabling the grouped notification stream for
+existing users. It scans open catalog roles and every retained delivery receipt,
+claims only exact provider/URL aliases, consolidates exact duplicate open rows,
+rewrites affected source-occurrence job IDs, and copies receipt tombstones to
+the hardened posting key. It also indexes existing opted-in preferences for the
+grouped release workers. The migration never creates an outbox event and never
+sends a notification.
+
+Validate the assumed role first, then export both physical table names. The
+default command is read-only:
+
+```bash
+AWS_PROFILE=intern-notifs aws sts get-caller-identity
+export AWS_PROFILE=intern-notifs
+export INTERNSHIPS_TABLE="$(aws cloudformation describe-stacks --stack-name InternNotifs --query 'Stacks[0].Outputs[?OutputKey==`InternshipsTableName`].OutputValue | [0]' --output text)"
+export USERS_TABLE="$(aws cloudformation describe-stacks --stack-name InternNotifs --query 'Stacks[0].Outputs[?OutputKey==`UserDataTableName`].OutputValue | [0]' --output text)"
+AWS_PROFILE=intern-notifs npm run migrate:posting-identity
+```
+
+Review every reported conflict and the exact duplicate count. Do not apply with
+any conflicts. Apply only with the deterministic token from that same dry run:
+
+```bash
+AWS_PROFILE=intern-notifs npm run migrate:posting-identity -- \
+  --apply --expected-repair-token EXACT_TOKEN
+```
+
+The apply is idempotent: alias claims converge on the preserved oldest job,
+receipt copies never overwrite an existing hardened claim, and legacy receipt
+rows remain available during rollback. After the infrastructure deployment,
+wait for `CatalogGroupProjectionSchedule` or invoke the notifier once with
+`{"command":"refresh-catalog-groups"}`. Verify `GET /catalog?limit=1` and one
+returned `/catalog/groups/{groupId}` before enabling an owner cohort.
+Set the deployment parameter to a comma-separated list of reviewed Cognito user
+IDs for that cohort. Leave it blank to keep every user on legacy delivery; use
+`*` only after cohort measurement approves the global cutover:
+
+```bash
+npm run cdk -- deploy InternNotifs --parameters GroupedNotificationUserIds=OWNER_COGNITO_USER_ID
+```
+
 ## Notification delivery log
 
 Delivery receipts are the durable record of attempted Expo pushes. Reconstruct

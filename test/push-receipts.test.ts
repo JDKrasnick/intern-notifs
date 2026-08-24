@@ -11,6 +11,22 @@ const job: Internship = {
 };
 
 describe('Expo delivery lifecycle', () => {
+  it('excludes the grouped-delivery cohort from the legacy sender', async () => {
+    const users = new MemoryUserStore();
+    for (const userId of ['legacy', 'grouped']) {
+      await users.putPreferences({ userId, filter: {}, alertsEnabled: true, onboardingComplete: true, updatedAt: '2026-07-19T00:00:00.000Z' });
+      await users.putDevice({ userId, token: `ExponentPushToken[${userId}]`, platform: 'ios', active: true, createdAt: '2026-07-19T00:00:00.000Z', updatedAt: '2026-07-19T00:00:00.000Z' });
+    }
+    const destinations: string[] = [];
+    const publisher = new ExpoPushPublisher('https://push.example.test', async (_url, init) => {
+      destinations.push(String(JSON.parse(String(init?.body)).to));
+      return new Response(JSON.stringify({ data: { id: 'ticket-1', status: 'ok' } }), { status: 200 });
+    });
+
+    expect(await sendNewJobNotifications([job], users, publisher, undefined, () => undefined, { excludeUserIds: new Set(['grouped']) })).toEqual({ sent: 1, skipped: 1, failed: 0 });
+    expect(destinations).toEqual(['ExponentPushToken[legacy]']);
+  });
+
   it('delivers only to opted-in matching users, avoids retry duplicates, and deactivates an invalid device after receipt reconciliation', async () => {
     const users = new MemoryUserStore();
     await users.putPreferences({ userId: 'eligible', filter: { includeCategories: ['swe'] }, alertsEnabled: true, onboardingComplete: true, updatedAt: '2026-07-19T00:00:00.000Z' });

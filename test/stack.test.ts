@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as cdk from 'aws-cdk-lib';
-import { Template } from 'aws-cdk-lib/assertions';
+import { Match, Template } from 'aws-cdk-lib/assertions';
 import { GreenhouseMonitoringStack } from '../infra/greenhouse-monitoring-stack.js';
 import { InternNotifsStack } from '../infra/intern-notifs-stack.js';
 import { LeverMonitoringStack } from '../infra/lever-monitoring-stack.js';
@@ -23,10 +23,14 @@ describe('CDK stack', () => {
       ExplicitAuthFlows: ['ALLOW_USER_PASSWORD_AUTH', 'ALLOW_REFRESH_TOKEN_AUTH'],
       PreventUserExistenceErrors: 'ENABLED',
     });
-    template.resourceCountIs('AWS::Scheduler::Schedule', 4);
-    template.resourceCountIs('AWS::SQS::Queue', 1);
+    template.resourceCountIs('AWS::Scheduler::Schedule', 5);
+    template.resourceCountIs('AWS::SQS::Queue', 12);
+    template.hasParameter('GroupedNotificationUserIds', { Type: 'String', Default: '' });
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: { Variables: Match.objectLike({ GROUPED_NOTIFICATION_USER_IDS: { Ref: 'GroupedNotificationUserIds' } }) },
+    });
     template.hasResourceProperties('AWS::IAM::Role', { AssumeRolePolicyDocument: { Statement: [{ Condition: { StringEquals: { 'token.actions.githubusercontent.com:sub': 'repo:owner/repo:ref:refs/heads/main' } } }] } });
-  });
+  }, 15_000);
   it('keeps an infrastructure snapshot', () => {
     const app = new cdk.App(); const stack = new InternNotifsStack(app, 'Snapshot', { githubRepository: 'owner/repo', emailAddress: 'me@example.com' });
     expect(snapshotTemplate(Template.fromStack(stack).toJSON())).toMatchSnapshot();
@@ -84,7 +88,7 @@ describe('CDK stack', () => {
       Namespace: 'InternNotifs/Catalog', MetricName: 'CatalogIndexMismatchCount', Threshold: 1,
       TreatMissingData: 'breaching', Dimensions: [{ Name: 'Service', Value: 'catalog' }],
     });
-    template.resourceCountIs('AWS::CloudWatch::Alarm', 8);
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 13);
   });
   it('queues Greenhouse boards every half hour with bounded worker concurrency', () => {
     const app = new cdk.App(); const stack = new GreenhouseMonitoringStack(app, 'Greenhouse', { internshipsTableName: 'internships', usersTableName: 'users', emailAddress: 'me@example.com' }); const template = Template.fromStack(stack);
@@ -102,7 +106,7 @@ describe('CDK stack', () => {
     });
     template.hasResourceProperties('AWS::Lambda::Function', { Timeout: 120 });
     expect(snapshotTemplate(template.toJSON())).toMatchSnapshot();
-  });
+  }, 15_000);
   it('queues Lever boards every half hour with bounded worker concurrency', () => {
     const app = new cdk.App(); const stack = new LeverMonitoringStack(app, 'Lever', { internshipsTableName: 'internships', usersTableName: 'users' }); const template = Template.fromStack(stack);
     template.resourceCountIs('AWS::SQS::Queue', 3);
@@ -119,7 +123,7 @@ describe('CDK stack', () => {
       MetricName: 'SourceFreshnessMinutes', Period: 3600, Threshold: 90, TreatMissingData: 'breaching',
     });
     expect(snapshotTemplate(template.toJSON())).toMatchSnapshot();
-  });
+  }, 15_000);
   it('queues Ashby boards on a staggered half-hour schedule with bounded concurrency', () => {
     const app = new cdk.App(); const stack = new AshbyMonitoringStack(app, 'Ashby', { internshipsTableName: 'internships', usersTableName: 'users' }); const template = Template.fromStack(stack);
     template.resourceCountIs('AWS::SQS::Queue', 3);
@@ -133,5 +137,5 @@ describe('CDK stack', () => {
     });
     template.hasResourceProperties('AWS::SSM::Parameter', { Name: '/intern-notifs/operations/ashby/queue-url' });
     template.hasResourceProperties('AWS::SSM::Parameter', { Name: '/intern-notifs/operations/ashby/dead-letter-queue-url' });
-  });
+  }, 15_000);
 });

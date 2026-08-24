@@ -15,7 +15,9 @@ export interface PushMessage {
   body: string;
   click?: string;
   tags?: string[];
-  data?: { destination: 'job'; jobId: string; url: string; matchedFilters: { reasons: FilterMatchReason[]; exclusionsApplied: boolean } };
+  data?:
+    | { destination: 'job'; jobId: string; url: string; matchedFilters: { reasons: FilterMatchReason[]; exclusionsApplied: boolean } }
+    | { destination: 'release'; releaseId: string; url: string };
 }
 export interface PushPublisher { publish(message: PushMessage): Promise<void>; }
 
@@ -53,7 +55,10 @@ export type NotificationDeliveryLogger = (event: NotificationDeliveryEvent) => v
 
 const defaultDeliveryLogger: NotificationDeliveryLogger = (event) => console.log(JSON.stringify(event));
 function recipientKey(userId: string, token: string) { return createHash('sha256').update(`${userId}\0${token}`).digest('hex').slice(0, 16); }
-export function notificationDedupeKey(job: Pick<Internship, 'jobId' | 'normalizedUrl'>) {
+export function notificationDedupeKey(job: Pick<Internship, 'jobId' | 'normalizedUrl' | 'postingIdentity'>) {
+  if (job.postingIdentity?.canonicalJobId) {
+    return createHash('sha256').update(`posting-v1:${job.postingIdentity.canonicalJobId}`).digest('hex');
+  }
   try { return postingIdentityKey(job.normalizedUrl); }
   catch { return createHash('sha256').update(`job:${job.jobId}`).digest('hex'); }
 }
@@ -111,11 +116,19 @@ function nativePushMessage(job: Internship, filter: Parameters<typeof evaluateJo
  * Delivers each new listing to matching opted-in users. Receipts are written before
  * sending so a poll retry cannot fan out duplicate pushes to the same device.
  */
-export async function sendNewJobNotifications(jobs: Internship[], users: UserStore, publisher: ExpoPushPublisher, now: () => Date = () => new Date(), logger: NotificationDeliveryLogger = defaultDeliveryLogger): Promise<{ sent: number; skipped: number; failed: number }> {
+export async function sendNewJobNotifications(
+  jobs: Internship[],
+  users: UserStore,
+  publisher: ExpoPushPublisher,
+  now: () => Date = () => new Date(),
+  logger: NotificationDeliveryLogger = defaultDeliveryLogger,
+  options: { excludeUserIds?: ReadonlySet<string>; excludeAllUsers?: boolean } = {},
+): Promise<{ sent: number; skipped: number; failed: number }> {
   let sent = 0; let skipped = 0; let failed = 0;
   const devices = await users.activeDevices();
   const preferences = new Map<string, Awaited<ReturnType<UserStore['getPreferences']>>>();
   for (const job of jobs) for (const device of devices) {
+    if (options.excludeAllUsers || options.excludeUserIds?.has(device.userId)) { skipped += 1; continue; }
     let preference = preferences.get(device.userId);
     if (!preference) { preference = await users.getPreferences(device.userId); preferences.set(device.userId, preference); }
     if (!preference?.alertsEnabled || !preference.onboardingComplete || !matchesJobFilter(job, preference.filter)) { skipped += 1; continue; }

@@ -433,6 +433,8 @@ export interface ProcessedListing extends SourceOccurrence {
   titleRepaired?: boolean;
   /** Whether the season came from this posting or a list-wide default. */
   seasonSource?: 'posting' | 'source-default';
+  /** Exact provider-aware identity resolved before reconciliation. */
+  postingIdentity?: PostingIdentity;
 }
 
 /** @deprecated Use `ProcessedListing`; retained only while callers migrate. */

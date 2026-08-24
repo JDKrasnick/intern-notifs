@@ -19,11 +19,11 @@ class Adapter implements SourceAdapter {
 }
 
 describe('dedupe resilience experiment', () => {
-  it('merges common public-list variants into one canonical job and one alert', async () => {
+  it('merges display variants only when their exact canonical URL agrees', async () => {
     const store = new MemoryInternshipStore();
     await new Poller([new Adapter('source-a', [listing()])], store).poll();
     const variants = [
-      listing({ sourceId: 'source-b', document: 'OFFSEASON.md', row: 4, company: 'Acme Incorporated', title: 'Software Engineer Intern', location: 'NYC', season: 'summer 2027', applyUrl: 'https://boards.example.test/acme/123' }),
+      listing({ sourceId: 'source-b', document: 'OFFSEASON.md', row: 4, company: 'Acme Incorporated', title: 'Software Engineer Intern', location: 'NYC', season: 'summer 2027', applyUrl: 'https://careers.example.test/jobs/123?utm_medium=feed' }),
       listing({ sourceId: 'source-c', document: 'roles.md', row: 9, company: 'ACME INC', title: 'SWE Intern', location: 'New York City', season: 'SUMMER 2027', applyUrl: 'https://careers.example.test/jobs/123?utm_campaign=mail' }),
     ];
     const report = await new Poller([new Adapter('source-b', [variants[0]]), new Adapter('source-c', [variants[1]])], store).poll();
@@ -61,22 +61,25 @@ describe('dedupe resilience experiment', () => {
     expect((await store.getCheckpoint('source-a'))?.successfulFetches).toBe(2);
   });
 
-  it('recognizes pre-canonical records by their legacy fingerprint during a gradual deployment', async () => {
+  it('does not adopt a legacy row through a weak fingerprint during migration', async () => {
     const original = listing(); const legacy = createHash('sha256').update([original.company, original.title, original.location, original.season].map((value) => value.trim().toLowerCase().replace(/\s+/g, ' ')).join('|')).digest('hex');
     const existing: Internship = {
       jobId: 'legacy-job', company: original.company, title: original.title, location: original.location, season: original.season, applyUrl: original.applyUrl,
       normalizedUrl: 'https://obsolete.example.test/jobs/123', fingerprint: legacy, compensation: original.compensation, sourceReferences: [], open: true,
       firstSeenAt: original.fetchedAt, lastSeenAt: original.fetchedAt, notification: { smsPending: false, digestPending: false },
     };
-    const store = new MemoryInternshipStore(); await store.putCheckpoint({ sourceId: 'source-a', successfulFetches: 1, lastRowCount: 1 }); await store.putInternship(existing);
+    const store = new MemoryInternshipStore();
+    await store.putCheckpoint({ sourceId: 'source-a', successfulFetches: 1, lastRowCount: 1 });
+    await store.putCheckpoint({ sourceId: 'source-b', successfulFetches: 1, lastRowCount: 1 });
+    await store.putInternship(existing);
     const report = await new Poller([new Adapter('source-b', [listing({ sourceId: 'source-b', applyUrl: 'https://boards.example.test/acme/123' })])], store).poll();
-    expect(report.newJobs).toEqual([]);
-    expect(store.jobs.size).toBe(1);
+    expect(report.newJobs).toHaveLength(1);
+    expect(store.jobs.size).toBe(2);
     expect(fingerprint(original.company, original.title, original.location, original.season)).not.toBe(legacy);
-    expect([...store.jobs.values()][0]?.fingerprint).toBe(fingerprint(original.company, original.title, original.location, original.season));
+    expect([...store.jobs.values()].some((job) => job.fingerprint === fingerprint(original.company, original.title, original.location, original.season))).toBe(true);
     await store.putCheckpoint({ sourceId: 'source-c', successfulFetches: 1, lastRowCount: 1 });
     const variant = await new Poller([new Adapter('source-c', [listing({ sourceId: 'source-c', company: 'Acme Incorporated', title: 'Software Engineer Intern', location: 'NYC', season: 'summer 2027', applyUrl: 'https://jobs.example.test/acme/123' })])], store).poll();
-    expect(variant.newJobs).toEqual([]);
-    expect(store.jobs.size).toBe(1);
+    expect(variant.newJobs).toHaveLength(1);
+    expect(store.jobs.size).toBe(3);
   });
 });

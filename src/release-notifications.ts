@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { inferJobFocuses, matchesJobFilter, type JobFilter } from './core/filters.js';
+import { canonicalCompanyKey } from './core/normalize.js';
 import type { Internship } from './types.js';
 
 export const DEFAULT_RELEASE_WINDOW_SECONDS = 8;
@@ -57,7 +58,7 @@ function stableHash(parts: string[]) {
 }
 
 function normalizedEmployer(company: string) {
-  return company.normalize('NFKC').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unknown';
+  return canonicalCompanyKey(company).replace(/\s+/g, '-') || 'unknown';
 }
 
 function exactJobId(job: Internship): string {
@@ -111,7 +112,10 @@ function seasonLabel(job: Internship) {
 }
 
 function cohortKey(job: Internship) {
-  return `${seasonLabel(job)}\0${educationLabel(job)}`;
+  const education = educationLabel(job);
+  if (education === 'Education level not specified by employer'
+    || education === 'Employer education requirements conflict across official sources') return `individual\0${exactJobId(job)}`;
+  return `${seasonLabel(job)}\0${education}`;
 }
 
 function personalized(release: CandidateRelease, userId: string, jobs: Internship[], presentation: ReleasePresentation): PersonalizedRelease {

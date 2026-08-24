@@ -74,6 +74,11 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
       "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
       "Type": "AWS::SSM::Parameter::Value<String>",
     },
+    "GroupedNotificationUserIds": {
+      "Default": "",
+      "Description": "Comma-separated Cognito user IDs allowed onto grouped delivery; use * only after the global cutover gate.",
+      "Type": "String",
+    },
   },
   "Resources": {
     "ApplicantDocumentsD1FBD230": {
@@ -227,6 +232,44 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
       },
       "Type": "AWS::DynamoDB::Table",
       "UpdateReplacePolicy": "Retain",
+    },
+    "CatalogGroupProjectionSchedule": {
+      "Properties": {
+        "FlexibleTimeWindow": {
+          "Mode": "OFF",
+        },
+        "ScheduleExpression": "cron(9/10 * * * ? *)",
+        "ScheduleExpressionTimezone": "UTC",
+        "State": "ENABLED",
+        "Target": {
+          "Arn": {
+            "Fn::GetAtt": [
+              "NotifierDFD80165",
+              "Arn",
+            ],
+          },
+          "DeadLetterConfig": {
+            "Arn": {
+              "Fn::GetAtt": [
+                "SchedulerDeadLetterQueueFA1FB96A",
+                "Arn",
+              ],
+            },
+          },
+          "Input": "{"command":"refresh-catalog-groups"}",
+          "RetryPolicy": {
+            "MaximumEventAgeInSeconds": 3600,
+            "MaximumRetryAttempts": 1,
+          },
+          "RoleArn": {
+            "Fn::GetAtt": [
+              "SchedulerInvokeRoleE2A7D616",
+              "Arn",
+            ],
+          },
+        },
+      },
+      "Type": "AWS::Scheduler::Schedule",
     },
     "CatalogIndexAuditSchedule": {
       "Properties": {
@@ -552,6 +595,14 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
             "AttributeName": "closedSk",
             "AttributeType": "S",
           },
+          {
+            "AttributeName": "projectionPk",
+            "AttributeType": "S",
+          },
+          {
+            "AttributeName": "projectionSk",
+            "AttributeType": "S",
+          },
         ],
         "BillingMode": "PAY_PER_REQUEST",
         "GlobalSecondaryIndexes": [
@@ -635,6 +686,22 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
               "ProjectionType": "ALL",
             },
           },
+          {
+            "IndexName": "catalogProjectionIndex",
+            "KeySchema": [
+              {
+                "AttributeName": "projectionPk",
+                "KeyType": "HASH",
+              },
+              {
+                "AttributeName": "projectionSk",
+                "KeyType": "RANGE",
+              },
+            ],
+            "Projection": {
+              "ProjectionType": "ALL",
+            },
+          },
         ],
         "KeySchema": [
           {
@@ -648,6 +715,13 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         ],
         "PointInTimeRecoverySpecification": {
           "PointInTimeRecoveryEnabled": true,
+        },
+        "StreamSpecification": {
+          "StreamViewType": "NEW_AND_OLD_IMAGES",
+        },
+        "TimeToLiveSpecification": {
+          "AttributeName": "expiresAtEpoch",
+          "Enabled": true,
         },
       },
       "Type": "AWS::DynamoDB::Table",
@@ -691,6 +765,1903 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
       },
       "Type": "AWS::Scheduler::Schedule",
     },
+    "NotificationAggregationWorkerBC533028": {
+      "DependsOn": [
+        "NotificationAggregationWorkerServiceRoleDefaultPolicyB3B50243",
+        "NotificationAggregationWorkerServiceRoleE1F255F6",
+      ],
+      "Properties": {
+        "Code": {
+          "S3Bucket": {
+            "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
+          },
+          "S3Key": "<lambda-asset>.zip",
+        },
+        "Environment": {
+          "Variables": {
+            "FLUSH_QUEUE_URL": {
+              "Ref": "NotificationPipelineDelayedFlushQueue464F7A30",
+            },
+            "GROUPED_NOTIFICATION_USER_IDS": {
+              "Ref": "GroupedNotificationUserIds",
+            },
+            "INTERNSHIPS_TABLE": {
+              "Ref": "InternshipsB67F358B",
+            },
+            "PIPELINE_COMMAND": "aggregate",
+            "SES_FROM": "me@example.com",
+            "USERS_TABLE": {
+              "Ref": "UserData6A2E227B",
+            },
+          },
+        },
+        "Handler": "index.handler",
+        "MemorySize": 256,
+        "Role": {
+          "Fn::GetAtt": [
+            "NotificationAggregationWorkerServiceRoleE1F255F6",
+            "Arn",
+          ],
+        },
+        "Runtime": "nodejs22.x",
+        "Timeout": 60,
+      },
+      "Type": "AWS::Lambda::Function",
+    },
+    "NotificationAggregationWorkerServiceRoleDefaultPolicyB3B50243": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sqs:ReceiveMessage",
+                "sqs:ChangeMessageVisibility",
+                "sqs:GetQueueUrl",
+                "sqs:DeleteMessage",
+                "sqs:GetQueueAttributes",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelineCandidateQueueCA12AF5C",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:DescribeTable",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "InternshipsB67F358B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "InternshipsB67F358B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "InternshipsB67F358B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "InternshipsB67F358B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": "dynamodb:TransactWriteItems",
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "InternshipsB67F358B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "InternshipsB67F358B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "sqs:SendMessage",
+                "sqs:GetQueueAttributes",
+                "sqs:GetQueueUrl",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelineDelayedFlushQueue464F7A30",
+                  "Arn",
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "NotificationAggregationWorkerServiceRoleDefaultPolicyB3B50243",
+        "Roles": [
+          {
+            "Ref": "NotificationAggregationWorkerServiceRoleE1F255F6",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "NotificationAggregationWorkerServiceRoleE1F255F6": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition",
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+              ],
+            ],
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "NotificationAggregationWorkerSqsEventSourceSnapshotNotificationPipelineCandidateQueueA6CD76875939ACAA": {
+      "Properties": {
+        "BatchSize": 10,
+        "EventSourceArn": {
+          "Fn::GetAtt": [
+            "NotificationPipelineCandidateQueueCA12AF5C",
+            "Arn",
+          ],
+        },
+        "FunctionName": {
+          "Ref": "NotificationAggregationWorkerBC533028",
+        },
+        "FunctionResponseTypes": [
+          "ReportBatchItemFailures",
+        ],
+        "ScalingConfig": {
+          "MaximumConcurrency": 4,
+        },
+      },
+      "Type": "AWS::Lambda::EventSourceMapping",
+    },
+    "NotificationEmailWorker72CC8E1D": {
+      "DependsOn": [
+        "NotificationEmailWorkerServiceRoleDefaultPolicy5B56367A",
+        "NotificationEmailWorkerServiceRole54C9B7AC",
+      ],
+      "Properties": {
+        "Code": {
+          "S3Bucket": {
+            "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
+          },
+          "S3Key": "<lambda-asset>.zip",
+        },
+        "Environment": {
+          "Variables": {
+            "EMAIL_QUEUE_URL": {
+              "Ref": "NotificationPipelineEmailQueue8B989CA7",
+            },
+            "GROUPED_NOTIFICATION_USER_IDS": {
+              "Ref": "GroupedNotificationUserIds",
+            },
+            "INTERNSHIPS_TABLE": {
+              "Ref": "InternshipsB67F358B",
+            },
+            "PIPELINE_COMMAND": "email",
+            "SES_FROM": "me@example.com",
+            "USERS_TABLE": {
+              "Ref": "UserData6A2E227B",
+            },
+          },
+        },
+        "Handler": "index.handler",
+        "MemorySize": 256,
+        "Role": {
+          "Fn::GetAtt": [
+            "NotificationEmailWorkerServiceRole54C9B7AC",
+            "Arn",
+          ],
+        },
+        "Runtime": "nodejs22.x",
+        "Timeout": 60,
+      },
+      "Type": "AWS::Lambda::Function",
+    },
+    "NotificationEmailWorkerServiceRole54C9B7AC": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition",
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+              ],
+            ],
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "NotificationEmailWorkerServiceRoleDefaultPolicy5B56367A": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sqs:ReceiveMessage",
+                "sqs:ChangeMessageVisibility",
+                "sqs:GetQueueUrl",
+                "sqs:DeleteMessage",
+                "sqs:GetQueueAttributes",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelineEmailQueue8B989CA7",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:DescribeTable",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "UserData6A2E227B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "UserData6A2E227B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "UserData6A2E227B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "UserData6A2E227B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": "dynamodb:TransactWriteItems",
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "UserData6A2E227B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "UserData6A2E227B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "ses:SendEmail",
+                "ses:SendRawEmail",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":ses:",
+                    {
+                      "Ref": "AWS::Region",
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId",
+                    },
+                    ":identity/",
+                    {
+                      "Ref": "NotifierIdentity52E42198",
+                    },
+                  ],
+                ],
+              },
+            },
+            {
+              "Action": [
+                "sqs:SendMessage",
+                "sqs:GetQueueAttributes",
+                "sqs:GetQueueUrl",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelineEmailQueue8B989CA7",
+                  "Arn",
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "NotificationEmailWorkerServiceRoleDefaultPolicy5B56367A",
+        "Roles": [
+          {
+            "Ref": "NotificationEmailWorkerServiceRole54C9B7AC",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "NotificationEmailWorkerSqsEventSourceSnapshotNotificationPipelineEmailQueue61557B90F5DE85B9": {
+      "Properties": {
+        "BatchSize": 10,
+        "EventSourceArn": {
+          "Fn::GetAtt": [
+            "NotificationPipelineEmailQueue8B989CA7",
+            "Arn",
+          ],
+        },
+        "FunctionName": {
+          "Ref": "NotificationEmailWorker72CC8E1D",
+        },
+        "FunctionResponseTypes": [
+          "ReportBatchItemFailures",
+        ],
+        "ScalingConfig": {
+          "MaximumConcurrency": 4,
+        },
+      },
+      "Type": "AWS::Lambda::EventSourceMapping",
+    },
+    "NotificationFlushWorker85A591A4": {
+      "DependsOn": [
+        "NotificationFlushWorkerServiceRoleDefaultPolicyD108ED75",
+        "NotificationFlushWorkerServiceRole27E54046",
+      ],
+      "Properties": {
+        "Code": {
+          "S3Bucket": {
+            "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
+          },
+          "S3Key": "<lambda-asset>.zip",
+        },
+        "Environment": {
+          "Variables": {
+            "GROUPED_NOTIFICATION_USER_IDS": {
+              "Ref": "GroupedNotificationUserIds",
+            },
+            "INTENT_TOPIC_ARN": {
+              "Ref": "NotificationPipelineIntentTopic51387BB1",
+            },
+            "INTERNSHIPS_TABLE": {
+              "Ref": "InternshipsB67F358B",
+            },
+            "PIPELINE_COMMAND": "flush",
+            "SES_FROM": "me@example.com",
+            "USERS_TABLE": {
+              "Ref": "UserData6A2E227B",
+            },
+          },
+        },
+        "Handler": "index.handler",
+        "MemorySize": 256,
+        "Role": {
+          "Fn::GetAtt": [
+            "NotificationFlushWorkerServiceRole27E54046",
+            "Arn",
+          ],
+        },
+        "Runtime": "nodejs22.x",
+        "Timeout": 60,
+      },
+      "Type": "AWS::Lambda::Function",
+    },
+    "NotificationFlushWorkerServiceRole27E54046": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition",
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+              ],
+            ],
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "NotificationFlushWorkerServiceRoleDefaultPolicyD108ED75": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sqs:ReceiveMessage",
+                "sqs:ChangeMessageVisibility",
+                "sqs:GetQueueUrl",
+                "sqs:DeleteMessage",
+                "sqs:GetQueueAttributes",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelineDelayedFlushQueue464F7A30",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:DescribeTable",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "InternshipsB67F358B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "InternshipsB67F358B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "InternshipsB67F358B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "InternshipsB67F358B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:DescribeTable",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "UserData6A2E227B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "UserData6A2E227B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "UserData6A2E227B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "UserData6A2E227B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": "sns:Publish",
+              "Effect": "Allow",
+              "Resource": {
+                "Ref": "NotificationPipelineIntentTopic51387BB1",
+              },
+            },
+            {
+              "Action": [
+                "kms:Decrypt",
+                "kms:GenerateDataKey*",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelineKeyFE28A24A",
+                  "Arn",
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "NotificationFlushWorkerServiceRoleDefaultPolicyD108ED75",
+        "Roles": [
+          {
+            "Ref": "NotificationFlushWorkerServiceRole27E54046",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "NotificationFlushWorkerSqsEventSourceSnapshotNotificationPipelineDelayedFlushQueue1E359D68A7BED5DF": {
+      "Properties": {
+        "BatchSize": 10,
+        "EventSourceArn": {
+          "Fn::GetAtt": [
+            "NotificationPipelineDelayedFlushQueue464F7A30",
+            "Arn",
+          ],
+        },
+        "FunctionName": {
+          "Ref": "NotificationFlushWorker85A591A4",
+        },
+        "FunctionResponseTypes": [
+          "ReportBatchItemFailures",
+        ],
+        "ScalingConfig": {
+          "MaximumConcurrency": 4,
+        },
+      },
+      "Type": "AWS::Lambda::EventSourceMapping",
+    },
+    "NotificationPipelineCandidateDeadLetterQueueA3B766E2": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "SqsManagedSseEnabled": true,
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "NotificationPipelineCandidateQueueAgeAlarmB5682F45": {
+      "Properties": {
+        "AlarmDescription": "CandidateQueue has not drained within the immediate notification latency budget.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "NotificationPipelineCandidateQueueCA12AF5C",
+                "QueueName",
+              ],
+            },
+          },
+        ],
+        "EvaluationPeriods": 2,
+        "MetricName": "ApproximateAgeOfOldestMessage",
+        "Namespace": "AWS/SQS",
+        "Period": 60,
+        "Statistic": "Maximum",
+        "Threshold": 60,
+        "TreatMissingData": "notBreaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+    "NotificationPipelineCandidateQueueCA12AF5C": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "MessageRetentionPeriod": 86400,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "NotificationPipelineCandidateDeadLetterQueueA3B766E2",
+              "Arn",
+            ],
+          },
+          "maxReceiveCount": 4,
+        },
+        "SqsManagedSseEnabled": true,
+        "VisibilityTimeout": 120,
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "NotificationPipelineCandidateQueuePolicyACF68A7E": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sqs:SendMessage",
+              "Condition": {
+                "ArnEquals": {
+                  "aws:SourceArn": {
+                    "Ref": "NotificationPipelineCandidateTopicD5A6896E",
+                  },
+                },
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "sns.amazonaws.com",
+              },
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelineCandidateQueueCA12AF5C",
+                  "Arn",
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "Queues": [
+          {
+            "Ref": "NotificationPipelineCandidateQueueCA12AF5C",
+          },
+        ],
+      },
+      "Type": "AWS::SQS::QueuePolicy",
+    },
+    "NotificationPipelineCandidateQueueSnapshotNotificationPipelineCandidateTopicDD75B940D0D4A994": {
+      "DependsOn": [
+        "NotificationPipelineCandidateQueuePolicyACF68A7E",
+      ],
+      "Properties": {
+        "Endpoint": {
+          "Fn::GetAtt": [
+            "NotificationPipelineCandidateQueueCA12AF5C",
+            "Arn",
+          ],
+        },
+        "Protocol": "sqs",
+        "RawMessageDelivery": true,
+        "TopicArn": {
+          "Ref": "NotificationPipelineCandidateTopicD5A6896E",
+        },
+      },
+      "Type": "AWS::SNS::Subscription",
+    },
+    "NotificationPipelineCandidateTopicD5A6896E": {
+      "Properties": {
+        "DisplayName": "Internship release candidates",
+        "KmsMasterKeyId": {
+          "Fn::GetAtt": [
+            "NotificationPipelineKeyFE28A24A",
+            "Arn",
+          ],
+        },
+      },
+      "Type": "AWS::SNS::Topic",
+    },
+    "NotificationPipelineDelayedFlushDeadLetterQueueFFF993D9": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "SqsManagedSseEnabled": true,
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "NotificationPipelineDelayedFlushQueue464F7A30": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "DelaySeconds": 8,
+        "MessageRetentionPeriod": 86400,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "NotificationPipelineDelayedFlushDeadLetterQueueFFF993D9",
+              "Arn",
+            ],
+          },
+          "maxReceiveCount": 4,
+        },
+        "SqsManagedSseEnabled": true,
+        "VisibilityTimeout": 120,
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "NotificationPipelineDelayedFlushQueueAgeAlarm8D0F7164": {
+      "Properties": {
+        "AlarmDescription": "DelayedFlushQueue has not drained within the immediate notification latency budget.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "NotificationPipelineDelayedFlushQueue464F7A30",
+                "QueueName",
+              ],
+            },
+          },
+        ],
+        "EvaluationPeriods": 2,
+        "MetricName": "ApproximateAgeOfOldestMessage",
+        "Namespace": "AWS/SQS",
+        "Period": 60,
+        "Statistic": "Maximum",
+        "Threshold": 60,
+        "TreatMissingData": "notBreaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+    "NotificationPipelineEmailDeadLetterQueueE7E0329E": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "SqsManagedSseEnabled": true,
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "NotificationPipelineEmailQueue8B989CA7": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "MessageRetentionPeriod": 86400,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "NotificationPipelineEmailDeadLetterQueueE7E0329E",
+              "Arn",
+            ],
+          },
+          "maxReceiveCount": 4,
+        },
+        "SqsManagedSseEnabled": true,
+        "VisibilityTimeout": 120,
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "NotificationPipelineEmailQueueAgeAlarm7B5C60F1": {
+      "Properties": {
+        "AlarmDescription": "EmailQueue has not drained within the immediate notification latency budget.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "NotificationPipelineEmailQueue8B989CA7",
+                "QueueName",
+              ],
+            },
+          },
+        ],
+        "EvaluationPeriods": 2,
+        "MetricName": "ApproximateAgeOfOldestMessage",
+        "Namespace": "AWS/SQS",
+        "Period": 60,
+        "Statistic": "Maximum",
+        "Threshold": 60,
+        "TreatMissingData": "notBreaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+    "NotificationPipelineEmailQueuePolicy2C7EC6AB": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sqs:SendMessage",
+              "Condition": {
+                "ArnEquals": {
+                  "aws:SourceArn": {
+                    "Ref": "NotificationPipelineIntentTopic51387BB1",
+                  },
+                },
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "sns.amazonaws.com",
+              },
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelineEmailQueue8B989CA7",
+                  "Arn",
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "Queues": [
+          {
+            "Ref": "NotificationPipelineEmailQueue8B989CA7",
+          },
+        ],
+      },
+      "Type": "AWS::SQS::QueuePolicy",
+    },
+    "NotificationPipelineEmailQueueSnapshotNotificationPipelineIntentTopicCF24D3D4D7A279DB": {
+      "DependsOn": [
+        "NotificationPipelineEmailQueuePolicy2C7EC6AB",
+      ],
+      "Properties": {
+        "Endpoint": {
+          "Fn::GetAtt": [
+            "NotificationPipelineEmailQueue8B989CA7",
+            "Arn",
+          ],
+        },
+        "FilterPolicy": {
+          "channel": [
+            "email",
+          ],
+        },
+        "Protocol": "sqs",
+        "RawMessageDelivery": true,
+        "TopicArn": {
+          "Ref": "NotificationPipelineIntentTopic51387BB1",
+        },
+      },
+      "Type": "AWS::SNS::Subscription",
+    },
+    "NotificationPipelineIntentTopic51387BB1": {
+      "Properties": {
+        "DisplayName": "Personalized notification intents",
+        "KmsMasterKeyId": {
+          "Fn::GetAtt": [
+            "NotificationPipelineKeyFE28A24A",
+            "Arn",
+          ],
+        },
+      },
+      "Type": "AWS::SNS::Topic",
+    },
+    "NotificationPipelineKeyFE28A24A": {
+      "DeletionPolicy": "Retain",
+      "Properties": {
+        "Description": "Encrypts notification pipeline topics.",
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Statement": [
+            {
+              "Action": "kms:*",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":iam::",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":root",
+                    ],
+                  ],
+                },
+              },
+              "Resource": "*",
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+      },
+      "Type": "AWS::KMS::Key",
+      "UpdateReplacePolicy": "Retain",
+    },
+    "NotificationPipelinePushDeadLetterQueueE575042A": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "SqsManagedSseEnabled": true,
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "NotificationPipelinePushQueueAgeAlarmA5F24DCE": {
+      "Properties": {
+        "AlarmDescription": "PushQueue has not drained within the immediate notification latency budget.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "NotificationPipelinePushQueueD656722F",
+                "QueueName",
+              ],
+            },
+          },
+        ],
+        "EvaluationPeriods": 2,
+        "MetricName": "ApproximateAgeOfOldestMessage",
+        "Namespace": "AWS/SQS",
+        "Period": 60,
+        "Statistic": "Maximum",
+        "Threshold": 60,
+        "TreatMissingData": "notBreaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+    "NotificationPipelinePushQueueD656722F": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "MessageRetentionPeriod": 86400,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "NotificationPipelinePushDeadLetterQueueE575042A",
+              "Arn",
+            ],
+          },
+          "maxReceiveCount": 4,
+        },
+        "SqsManagedSseEnabled": true,
+        "VisibilityTimeout": 120,
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "NotificationPipelinePushQueuePolicy0E86A813": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sqs:SendMessage",
+              "Condition": {
+                "ArnEquals": {
+                  "aws:SourceArn": {
+                    "Ref": "NotificationPipelineIntentTopic51387BB1",
+                  },
+                },
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "sns.amazonaws.com",
+              },
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelinePushQueueD656722F",
+                  "Arn",
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "Queues": [
+          {
+            "Ref": "NotificationPipelinePushQueueD656722F",
+          },
+        ],
+      },
+      "Type": "AWS::SQS::QueuePolicy",
+    },
+    "NotificationPipelinePushQueueSnapshotNotificationPipelineIntentTopicCF24D3D44FEB8CE2": {
+      "DependsOn": [
+        "NotificationPipelinePushQueuePolicy0E86A813",
+      ],
+      "Properties": {
+        "Endpoint": {
+          "Fn::GetAtt": [
+            "NotificationPipelinePushQueueD656722F",
+            "Arn",
+          ],
+        },
+        "FilterPolicy": {
+          "channel": [
+            "push",
+          ],
+        },
+        "Protocol": "sqs",
+        "RawMessageDelivery": true,
+        "TopicArn": {
+          "Ref": "NotificationPipelineIntentTopic51387BB1",
+        },
+      },
+      "Type": "AWS::SNS::Subscription",
+    },
+    "NotificationPipelineReceiptDeadLetterQueueEE78E730": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "SqsManagedSseEnabled": true,
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "NotificationPipelineReceiptQueueA6D88F85": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "MessageRetentionPeriod": 86400,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "NotificationPipelineReceiptDeadLetterQueueEE78E730",
+              "Arn",
+            ],
+          },
+          "maxReceiveCount": 4,
+        },
+        "SqsManagedSseEnabled": true,
+        "VisibilityTimeout": 120,
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "NotificationPipelineReceiptQueueAgeAlarmAB171A7E": {
+      "Properties": {
+        "AlarmDescription": "ReceiptQueue has not drained within the immediate notification latency budget.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "NotificationPipelineReceiptQueueA6D88F85",
+                "QueueName",
+              ],
+            },
+          },
+        ],
+        "EvaluationPeriods": 2,
+        "MetricName": "ApproximateAgeOfOldestMessage",
+        "Namespace": "AWS/SQS",
+        "Period": 60,
+        "Statistic": "Maximum",
+        "Threshold": 60,
+        "TreatMissingData": "notBreaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
+    "NotificationPipelineStreamFailureQueueFDB2D8CA": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "SqsManagedSseEnabled": true,
+      },
+      "Type": "AWS::SQS::Queue",
+      "UpdateReplacePolicy": "Delete",
+    },
+    "NotificationPushWorker7AA0A6D8": {
+      "DependsOn": [
+        "NotificationPushWorkerServiceRoleDefaultPolicyF4CE626B",
+        "NotificationPushWorkerServiceRole9199A1C0",
+      ],
+      "Properties": {
+        "Code": {
+          "S3Bucket": {
+            "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
+          },
+          "S3Key": "<lambda-asset>.zip",
+        },
+        "Environment": {
+          "Variables": {
+            "GROUPED_NOTIFICATION_USER_IDS": {
+              "Ref": "GroupedNotificationUserIds",
+            },
+            "INTERNSHIPS_TABLE": {
+              "Ref": "InternshipsB67F358B",
+            },
+            "PIPELINE_COMMAND": "push",
+            "PUSH_QUEUE_URL": {
+              "Ref": "NotificationPipelinePushQueueD656722F",
+            },
+            "RECEIPT_QUEUE_URL": {
+              "Ref": "NotificationPipelineReceiptQueueA6D88F85",
+            },
+            "SES_FROM": "me@example.com",
+            "USERS_TABLE": {
+              "Ref": "UserData6A2E227B",
+            },
+          },
+        },
+        "Handler": "index.handler",
+        "MemorySize": 256,
+        "Role": {
+          "Fn::GetAtt": [
+            "NotificationPushWorkerServiceRole9199A1C0",
+            "Arn",
+          ],
+        },
+        "Runtime": "nodejs22.x",
+        "Timeout": 60,
+      },
+      "Type": "AWS::Lambda::Function",
+    },
+    "NotificationPushWorkerServiceRole9199A1C0": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition",
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+              ],
+            ],
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "NotificationPushWorkerServiceRoleDefaultPolicyF4CE626B": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sqs:ReceiveMessage",
+                "sqs:ChangeMessageVisibility",
+                "sqs:GetQueueUrl",
+                "sqs:DeleteMessage",
+                "sqs:GetQueueAttributes",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelinePushQueueD656722F",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:DescribeTable",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "UserData6A2E227B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "UserData6A2E227B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "UserData6A2E227B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "UserData6A2E227B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": "dynamodb:TransactWriteItems",
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "UserData6A2E227B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "UserData6A2E227B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "sqs:SendMessage",
+                "sqs:GetQueueAttributes",
+                "sqs:GetQueueUrl",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelineReceiptQueueA6D88F85",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": [
+                "sqs:SendMessage",
+                "sqs:GetQueueAttributes",
+                "sqs:GetQueueUrl",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelinePushQueueD656722F",
+                  "Arn",
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "NotificationPushWorkerServiceRoleDefaultPolicyF4CE626B",
+        "Roles": [
+          {
+            "Ref": "NotificationPushWorkerServiceRole9199A1C0",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "NotificationPushWorkerSqsEventSourceSnapshotNotificationPipelinePushQueueCBCA5C1D42565CC7": {
+      "Properties": {
+        "BatchSize": 10,
+        "EventSourceArn": {
+          "Fn::GetAtt": [
+            "NotificationPipelinePushQueueD656722F",
+            "Arn",
+          ],
+        },
+        "FunctionName": {
+          "Ref": "NotificationPushWorker7AA0A6D8",
+        },
+        "FunctionResponseTypes": [
+          "ReportBatchItemFailures",
+        ],
+        "ScalingConfig": {
+          "MaximumConcurrency": 4,
+        },
+      },
+      "Type": "AWS::Lambda::EventSourceMapping",
+    },
+    "NotificationReceiptWorker82C54B06": {
+      "DependsOn": [
+        "NotificationReceiptWorkerServiceRoleDefaultPolicyBADE7A3F",
+        "NotificationReceiptWorkerServiceRole739EF4E7",
+      ],
+      "Properties": {
+        "Code": {
+          "S3Bucket": {
+            "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
+          },
+          "S3Key": "<lambda-asset>.zip",
+        },
+        "Environment": {
+          "Variables": {
+            "GROUPED_NOTIFICATION_USER_IDS": {
+              "Ref": "GroupedNotificationUserIds",
+            },
+            "INTERNSHIPS_TABLE": {
+              "Ref": "InternshipsB67F358B",
+            },
+            "PIPELINE_COMMAND": "receipt",
+            "SES_FROM": "me@example.com",
+            "USERS_TABLE": {
+              "Ref": "UserData6A2E227B",
+            },
+          },
+        },
+        "Handler": "index.handler",
+        "MemorySize": 256,
+        "Role": {
+          "Fn::GetAtt": [
+            "NotificationReceiptWorkerServiceRole739EF4E7",
+            "Arn",
+          ],
+        },
+        "Runtime": "nodejs22.x",
+        "Timeout": 60,
+      },
+      "Type": "AWS::Lambda::Function",
+    },
+    "NotificationReceiptWorkerServiceRole739EF4E7": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition",
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+              ],
+            ],
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "NotificationReceiptWorkerServiceRoleDefaultPolicyBADE7A3F": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sqs:ReceiveMessage",
+                "sqs:ChangeMessageVisibility",
+                "sqs:GetQueueUrl",
+                "sqs:DeleteMessage",
+                "sqs:GetQueueAttributes",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelineReceiptQueueA6D88F85",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:DescribeTable",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "UserData6A2E227B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "UserData6A2E227B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "UserData6A2E227B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "UserData6A2E227B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "NotificationReceiptWorkerServiceRoleDefaultPolicyBADE7A3F",
+        "Roles": [
+          {
+            "Ref": "NotificationReceiptWorkerServiceRole739EF4E7",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
+    "NotificationReceiptWorkerSqsEventSourceSnapshotNotificationPipelineReceiptQueue4CD5B12DF1868FB5": {
+      "Properties": {
+        "BatchSize": 10,
+        "EventSourceArn": {
+          "Fn::GetAtt": [
+            "NotificationPipelineReceiptQueueA6D88F85",
+            "Arn",
+          ],
+        },
+        "FunctionName": {
+          "Ref": "NotificationReceiptWorker82C54B06",
+        },
+        "FunctionResponseTypes": [
+          "ReportBatchItemFailures",
+        ],
+        "ScalingConfig": {
+          "MaximumConcurrency": 4,
+        },
+      },
+      "Type": "AWS::Lambda::EventSourceMapping",
+    },
+    "NotificationStreamPublisherDynamoDBEventSourceSnapshotInternships06ABCE11597CDD3F": {
+      "Properties": {
+        "BatchSize": 10,
+        "BisectBatchOnFunctionError": false,
+        "DestinationConfig": {
+          "OnFailure": {
+            "Destination": {
+              "Fn::GetAtt": [
+                "NotificationPipelineStreamFailureQueueFDB2D8CA",
+                "Arn",
+              ],
+            },
+          },
+        },
+        "EventSourceArn": {
+          "Fn::GetAtt": [
+            "InternshipsB67F358B",
+            "StreamArn",
+          ],
+        },
+        "FunctionName": {
+          "Ref": "NotificationStreamPublisherEE4F6704",
+        },
+        "FunctionResponseTypes": [
+          "ReportBatchItemFailures",
+        ],
+        "MaximumRetryAttempts": 3,
+        "StartingPosition": "LATEST",
+      },
+      "Type": "AWS::Lambda::EventSourceMapping",
+    },
+    "NotificationStreamPublisherEE4F6704": {
+      "DependsOn": [
+        "NotificationStreamPublisherServiceRoleDefaultPolicyF8CE35C2",
+        "NotificationStreamPublisherServiceRoleD52D5476",
+      ],
+      "Properties": {
+        "Code": {
+          "S3Bucket": {
+            "Fn::Sub": "cdk-hnb659fds-assets-\${AWS::AccountId}-\${AWS::Region}",
+          },
+          "S3Key": "<lambda-asset>.zip",
+        },
+        "Environment": {
+          "Variables": {
+            "CANDIDATE_TOPIC_ARN": {
+              "Ref": "NotificationPipelineCandidateTopicD5A6896E",
+            },
+            "GROUPED_NOTIFICATION_USER_IDS": {
+              "Ref": "GroupedNotificationUserIds",
+            },
+            "INTERNSHIPS_TABLE": {
+              "Ref": "InternshipsB67F358B",
+            },
+            "PIPELINE_COMMAND": "stream-publisher",
+            "SES_FROM": "me@example.com",
+            "USERS_TABLE": {
+              "Ref": "UserData6A2E227B",
+            },
+          },
+        },
+        "Handler": "index.handler",
+        "MemorySize": 256,
+        "Role": {
+          "Fn::GetAtt": [
+            "NotificationStreamPublisherServiceRoleD52D5476",
+            "Arn",
+          ],
+        },
+        "Runtime": "nodejs22.x",
+        "Timeout": 60,
+      },
+      "Type": "AWS::Lambda::Function",
+    },
+    "NotificationStreamPublisherServiceRoleD52D5476": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com",
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Join": [
+              "",
+              [
+                "arn:",
+                {
+                  "Ref": "AWS::Partition",
+                },
+                ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+              ],
+            ],
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Role",
+    },
+    "NotificationStreamPublisherServiceRoleDefaultPolicyF8CE35C2": {
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sqs:SendMessage",
+                "sqs:GetQueueAttributes",
+                "sqs:GetQueueUrl",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelineStreamFailureQueueFDB2D8CA",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": "dynamodb:ListStreams",
+              "Effect": "Allow",
+              "Resource": "*",
+            },
+            {
+              "Action": [
+                "dynamodb:DescribeStream",
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "InternshipsB67F358B",
+                  "StreamArn",
+                ],
+              },
+            },
+            {
+              "Action": "sns:Publish",
+              "Effect": "Allow",
+              "Resource": {
+                "Ref": "NotificationPipelineCandidateTopicD5A6896E",
+              },
+            },
+            {
+              "Action": [
+                "kms:Decrypt",
+                "kms:GenerateDataKey*",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelineKeyFE28A24A",
+                  "Arn",
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "NotificationStreamPublisherServiceRoleDefaultPolicyF8CE35C2",
+        "Roles": [
+          {
+            "Ref": "NotificationStreamPublisherServiceRoleD52D5476",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+    },
     "NotifierDFD80165": {
       "DependsOn": [
         "NotifierServiceRoleDefaultPolicy0848DC19",
@@ -705,6 +2676,9 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         },
         "Environment": {
           "Variables": {
+            "GROUPED_NOTIFICATION_USER_IDS": {
+              "Ref": "GroupedNotificationUserIds",
+            },
             "INTERNSHIPS_TABLE": {
               "Ref": "InternshipsB67F358B",
             },
@@ -770,10 +2744,13 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
           "Statement": [
             {
               "Action": [
+                "dynamodb:BatchGetItem",
+                "dynamodb:BatchWriteItem",
                 "dynamodb:GetItem",
                 "dynamodb:PutItem",
                 "dynamodb:Query",
                 "dynamodb:Scan",
+                "dynamodb:TransactWriteItems",
               ],
               "Effect": "Allow",
               "Resource": [
@@ -2091,6 +4068,10 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
             "AttributeType": "S",
           },
           {
+            "AttributeName": "alertPk",
+            "AttributeType": "S",
+          },
+          {
             "AttributeName": "activeSessionPk",
             "AttributeType": "S",
           },
@@ -2126,6 +4107,18 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
             "KeySchema": [
               {
                 "AttributeName": "receiptPk",
+                "KeyType": "HASH",
+              },
+            ],
+            "Projection": {
+              "ProjectionType": "ALL",
+            },
+          },
+          {
+            "IndexName": "activeAlertsIndex",
+            "KeySchema": [
+              {
+                "AttributeName": "alertPk",
                 "KeyType": "HASH",
               },
             ],
@@ -3781,6 +5774,52 @@ exports[`CDK stack > queues Greenhouse boards every half hour with bounded worke
               ],
             },
             {
+              "Action": "dynamodb:TransactWriteItems",
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/internships",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/internships/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
               "Action": [
                 "dynamodb:BatchGetItem",
                 "dynamodb:Query",
@@ -4786,6 +6825,52 @@ exports[`CDK stack > queues Lever boards every half hour with bounded worker con
                 "dynamodb:GetRecords",
                 "dynamodb:GetShardIterator",
               ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/internships",
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition",
+                      },
+                      ":dynamodb:",
+                      {
+                        "Ref": "AWS::Region",
+                      },
+                      ":",
+                      {
+                        "Ref": "AWS::AccountId",
+                      },
+                      ":table/internships/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": "dynamodb:TransactWriteItems",
               "Effect": "Allow",
               "Resource": [
                 {

@@ -1,6 +1,8 @@
-import type { DynamoDBDocumentClient, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
+import type { BatchWriteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it, vi } from 'vitest';
 import { createDynamoDocumentClient, DynamoInternshipStore, DynamoUserStore, MemoryUserStore } from '../src/store.js';
+import { buildPostingIdentity } from '../src/identity/posting.js';
+import { catalogGroupDetails, groupCatalogJobs } from '../src/catalog-groups.js';
 import type { DeliveryReceipt, Internship } from '../src/types.js';
 
 const job = (title = 'Software Engineering Intern', overrides: Partial<Internship> = {}): Internship => ({
@@ -40,6 +42,22 @@ describe('DynamoDB persistence contract', () => {
     expect(page.jobs).toMatchObject([{ jobId: 'job-1' }]);
     expect(JSON.parse(Buffer.from(page.cursor!, 'base64url').toString('utf8'))).toEqual({ pk: 'JOB#next', sk: 'META' });
     expect((send.mock.calls[0]?.[0] as QueryCommand).input).toMatchObject({ TableName: 'jobs-table', IndexName: 'openJobsIndex', ScanIndexForward: false, Limit: 10, ExclusiveStartKey: { pk: 'JOB#previous', sk: 'META' } });
+  });
+
+  it('materializes and pages the grouped catalog without reading job rows', async () => {
+    const { send, client } = fakeClient(); const store = new DynamoInternshipStore('jobs-table', client);
+    const details = catalogGroupDetails(groupCatalogJobs([job()])[0]!);
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({});
+    await store.putCatalogProjection!([details], '2026-08-24T00:00:00.000Z');
+    expect((send.mock.calls[0]?.[0] as BatchWriteCommand).input.RequestItems?.['jobs-table']?.[0]).toMatchObject({ PutRequest: { Item: { projectionPk: expect.stringContaining('CATALOG_PROJECTION#'), details } } });
+    expect((send.mock.calls[1]?.[0] as PutCommand).input.Item).toMatchObject({ pk: 'CATALOG_PROJECTION', sk: 'CURRENT', groupCount: 1 });
+
+    send.mockResolvedValueOnce({ Item: { version: 'version-a' } });
+    send.mockResolvedValueOnce({ Items: [{ details }] });
+    expect(await store.listCatalogProjection!(undefined, 1)).toMatchObject({ groups: [details] });
+    expect((send.mock.calls[2]?.[0] as GetCommand).input).toMatchObject({ Key: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT' }, ConsistentRead: true });
+    expect((send.mock.calls[3]?.[0] as QueryCommand).input).toMatchObject({ IndexName: 'catalogProjectionIndex', Limit: 1, ScanIndexForward: true });
   });
 
   it('advances past an expired GSI page before returning an unfiltered catalog page', async () => {
@@ -111,6 +129,22 @@ describe('DynamoDB persistence contract', () => {
     ]);
   });
 
+  it('claims unowned posting aliases in one conditional transaction', async () => {
+    const { send, client } = fakeClient(); const store = new DynamoInternshipStore('jobs-table', client);
+    const identity = buildPostingIdentity({ applicationUrl: 'https://boards.greenhouse.io/acme?gh_jid=100' });
+    send.mockResolvedValueOnce({ Responses: { 'jobs-table': [] } });
+    const resolution = await store.claimPostingIdentity(identity, 'legacy-job');
+    expect(resolution).toMatchObject({ outcome: 'create', canonicalJobId: 'legacy-job' });
+    const transaction = (send.mock.calls[1]?.[0] as TransactWriteCommand).input.TransactItems ?? [];
+    expect(transaction.length).toBeGreaterThan(1);
+    expect(transaction).toEqual(expect.arrayContaining([
+      expect.objectContaining({ Put: expect.objectContaining({
+        TableName: 'jobs-table', ConditionExpression: 'attribute_not_exists(pk)',
+        Item: expect.objectContaining({ alias: 'provider:greenhouse:acme:100', canonicalJobId: 'legacy-job' }),
+      }) }),
+    ]));
+  });
+
   it('claims a push receipt only when absent or retryable', async () => {
     const { send, client } = fakeClient(); const store = new DynamoUserStore('users-table', client);
     const receipt: DeliveryReceipt = { userId: 'student-a', jobId: 'job-1', token: 'ExponentPushToken[test]', status: 'pending', createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z' };
@@ -123,6 +157,18 @@ describe('DynamoDB persistence contract', () => {
     });
     send.mockRejectedValueOnce(Object.assign(new Error('claimed'), { name: 'ConditionalCheckFailedException' }));
     expect(await store.claimReceipt(receipt)).toBe(false);
+  });
+
+  it('copies a migrated receipt only when the hardened key is absent', async () => {
+    const { send, client } = fakeClient(); const store = new DynamoUserStore('users-table', client);
+    const receipt: DeliveryReceipt = { userId: 'student-a', jobId: 'legacy-job', token: 'ExponentPushToken[test]', status: 'ok', createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:01.000Z' };
+    expect(await store.migrateReceipt(receipt, 'strong-key')).toBe(true);
+    expect((send.mock.calls[0]?.[0] as PutCommand).input).toMatchObject({
+      Item: { pk: 'USER#student-a', sk: 'RECEIPT#strong-key#ExponentPushToken[test]', value: { jobId: 'legacy-job', dedupeKey: 'strong-key', status: 'ok' } },
+      ConditionExpression: 'attribute_not_exists(pk)',
+    });
+    send.mockRejectedValueOnce(Object.assign(new Error('exists'), { name: 'ConditionalCheckFailedException' }));
+    expect(await store.migrateReceipt(receipt, 'strong-key')).toBe(false);
   });
 
   it('deletes every user-owned item after returning the document list for object cleanup', async () => {

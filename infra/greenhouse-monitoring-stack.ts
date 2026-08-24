@@ -82,6 +82,7 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
       reportBatchItemFailures: true,
     }));
     internships.grantReadWriteData(worker);
+    internships.grant(worker, 'dynamodb:TransactWriteItems');
     users.grantReadWriteData(worker);
 
     const operationsSecret = new secretsmanager.Secret(this, 'GreenhouseOperationsSecret', {

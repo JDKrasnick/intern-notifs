@@ -65,6 +65,8 @@
 - [x] Add job freshness, verified employer-posted versus unverified source-reported versus InternNotifs-found timing across mobile, responsive web, and alerts, official/community provenance labels to role details and every catalog or saved-role card, filter-match explanations, hybrid New/New here status, and duplicate-safe notification deep links, including closed and unavailable states.
 - [x] Add migration-safe structured internship/posting identity, conservative ATS alias reconciliation, grouped catalog/release APIs, permanent delivery-claim semantics, quiet-hours release modeling, and the reusable encrypted SNS/SQS notification construct.
 - [ ] Activate the grouped notification construct with production batch workers, TestFlight-owner allowlisting, Firehose/Athena audit exports, and measured 15-second p95 delivery before disabling the legacy direct sender globally.
+  - [x] Wire the production stream, aggregation, flush, personalized push/email, receipt, release-deep-link, and materialized catalog workers in infrastructure.
+  - [ ] Execute the guarded identity/receipt migration, deploy to an owner-only cohort, export delivery audits, and measure the 15-second p95 gate.
 - [x] Add user-facing settings with separate user-info, job-preference, and app/account destinations, including account deletion.
 - [ ] Add a user-facing data export surface.
 - [x] Add source-quality reports, drift gates, nightly live probing, source-candidate review artifacts, and Firecrawl discovery-only workflow.

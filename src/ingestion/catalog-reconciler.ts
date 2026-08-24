@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { employerCategory } from '../core/employers.js';
 import { isTechnicalJob, matchesJobFilter, type JobFilter } from '../core/filters.js';
 import { fingerprint, jobId, normalizeUrl } from '../core/normalize.js';
-import { sameRole } from '../core/role-title.js';
 import type {
   Internship,
   NotificationEvent,
@@ -113,6 +112,7 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
     season: listing.season,
     applyUrl: replaceStoredUrl ? listing.applyUrl : existing.applyUrl || listing.applyUrl,
     normalizedUrl: replaceStoredUrl ? listingNormalizedUrl : existing.normalizedUrl,
+    postingIdentity: listing.postingIdentity ?? existing.postingIdentity,
     fingerprint: fingerprint(company, existing.title || listing.title, location, listing.season),
     compensation: listing.compensation.maxHourlyUSD ? listing.compensation : existing.compensation,
     requirements: listing.requirements ?? existing.requirements,
@@ -130,13 +130,14 @@ function create(listing: ProcessedListing, externalId: string, now: string, base
   const normalizedUrl = normalizeUrl(listing.applyUrl);
   const key = fingerprint(listing.company, listing.title, listing.location, listing.season);
   return {
-    jobId: jobId(normalizedUrl, key),
+    jobId: listing.postingIdentity?.canonicalJobId ?? jobId(normalizedUrl, key),
     company: listing.company,
     title: listing.title,
     location: listing.location,
     season: listing.season,
     applyUrl: listing.applyUrl,
     normalizedUrl,
+    ...(listing.postingIdentity ? { postingIdentity: listing.postingIdentity } : {}),
     ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}),
     ...(metadataVersion ? { applicationPageMetadataVersion: metadataVersion } : {}),
     fingerprint: key,
@@ -195,29 +196,20 @@ export class CatalogReconciler {
     const filteredJobs: Internship[] = [];
     const includedIds = new Set<string>();
     const priorById = new Map(input.priorOccurrences.map((prior) => [prior.externalId, prior]));
-    // One snapshot can list one role twice, across documents or with different
-    // tracking links. Resolution happens before any write, so the snapshot keeps
-    // its own URL/fingerprint index to merge duplicates and alert exactly once.
+    // One snapshot can list one exact posting twice, across documents or through
+    // reviewed provider URL variants. Only exact identity or URL evidence may
+    // converge them; title/location fingerprints can collide across requisitions.
     const byUrl = new Map<string, Internship>();
-    const byFingerprint = new Map<string, Internship>();
-    // Exact keys miss a role whose title one source truncated, so a per-employer
-    // bucket gets a similarity pass — but only for a title that was actually
-    // reconstructed. Applying it to whole titles would merge "SWE Intern,
-    // Backend" into "SWE Intern", and losing a real role is worse than keeping a
-    // duplicate.
-    const byEmployer = new Map<string, Internship[]>();
+    const byPostingIdentity = new Map<string, Internship>();
 
     for (const listing of input.listings) {
       const externalId = listing.externalId ?? `${listing.document}:${safeNormalizeUrl(listing.applyUrl)}`;
       includedIds.add(externalId);
       const listingUrl = safeNormalizeUrl(listing.applyUrl);
-      const listingFingerprint = fingerprint(listing.company, listing.title, listing.location, listing.season);
       const stored = input.resolvedJobs.get(externalId);
-      const employerKey = listing.company.toLowerCase();
-      const inSnapshot = (stored && jobs.get(stored.jobId)) ?? byUrl.get(listingUrl) ?? byFingerprint.get(listingFingerprint)
-        ?? (listing.titleRepaired
-          ? (byEmployer.get(employerKey) ?? []).find((candidate) => candidate.season === listing.season && sameRole(candidate, listing))
-          : undefined);
+      const inSnapshot = (stored && jobs.get(stored.jobId))
+        ?? (listing.postingIdentity ? byPostingIdentity.get(listing.postingIdentity.canonicalJobId) : undefined)
+        ?? byUrl.get(listingUrl);
       const existing = inSnapshot ?? stored;
       const validatedAt = input.validatedAt?.get(externalId);
       const metadataVersion = input.metadataValidated?.get(externalId);
@@ -242,11 +234,7 @@ export class CatalogReconciler {
       jobs.set(job.jobId, job);
       byUrl.set(job.normalizedUrl, job);
       byUrl.set(listingUrl, job);
-      byFingerprint.set(job.fingerprint, job);
-      byFingerprint.set(listingFingerprint, job);
-      if (!(byEmployer.get(employerKey) ?? []).includes(job)) {
-        byEmployer.set(employerKey, [...(byEmployer.get(employerKey) ?? []), job]);
-      }
+      if (listing.postingIdentity) byPostingIdentity.set(listing.postingIdentity.canonicalJobId, job);
       const next: SourceOccurrenceState = {
         sourceId: input.sourceId,
         externalId,
