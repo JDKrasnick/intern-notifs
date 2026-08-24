@@ -1,7 +1,7 @@
 import type { DynamoDBDocumentClient, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it, vi } from 'vitest';
 import { createDynamoDocumentClient, DynamoInternshipStore, DynamoUserStore, MemoryUserStore } from '../src/store.js';
-import type { Internship } from '../src/types.js';
+import type { DeliveryReceipt, Internship } from '../src/types.js';
 
 const job = (title = 'Software Engineering Intern', overrides: Partial<Internship> = {}): Internship => ({
   jobId: 'job-1', company: 'Acme', title, location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/job-1',
@@ -109,6 +109,20 @@ describe('DynamoDB persistence contract', () => {
         }),
       }),
     ]);
+  });
+
+  it('claims a push receipt only when absent or retryable', async () => {
+    const { send, client } = fakeClient(); const store = new DynamoUserStore('users-table', client);
+    const receipt: DeliveryReceipt = { userId: 'student-a', jobId: 'job-1', token: 'ExponentPushToken[test]', status: 'pending', createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z' };
+    expect(await store.claimReceipt(receipt)).toBe(true);
+    expect((send.mock.calls[0]?.[0] as PutCommand).input).toMatchObject({
+      TableName: 'users-table',
+      Item: { pk: 'USER#student-a', sk: 'RECEIPT#job-1#ExponentPushToken[test]', kind: 'receipt', receiptPk: 'PENDING', value: receipt },
+      ConditionExpression: 'attribute_not_exists(pk) OR #value.#status = :error',
+      ExpressionAttributeValues: { ':error': 'error' },
+    });
+    send.mockRejectedValueOnce(Object.assign(new Error('claimed'), { name: 'ConditionalCheckFailedException' }));
+    expect(await store.claimReceipt(receipt)).toBe(false);
   });
 
   it('deletes every user-owned item after returning the document list for object cleanup', async () => {

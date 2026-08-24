@@ -3,12 +3,13 @@ import { DeleteObjectCommand, GetObjectCommand, S3Client, PutObjectCommand } fro
 import { CognitoIdentityProviderClient, AdminDeleteUserCommand } from '@aws-sdk/client-cognito-identity-provider';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { jobCategories, matchesJobFilter, parseJobFilter } from './core/filters.js';
-import { DynamoInternshipStore, DynamoUserStore, type InternshipStore, type UserStore } from './store.js';
+import { DynamoInternshipStore, DynamoReleaseStore, DynamoUserStore, type InternshipStore, type ReleaseStore, type UserStore } from './store.js';
 import type { ApplicantProfile, ApplicationRecord, ApplicationStatus, DeviceToken, UserPreferences } from './types.js';
 import { EmployerIntegrationRegistry } from './providers.js';
 import { assistanceAvailability } from './application-assistance.js';
 import { createApplicationSession, transitionApplicationSession, type ApplicationFieldDraft, type ApplicationSession, type ApplicationSessionEvent } from './application-automation.js';
 import { companyCoverage } from '../coverage/summary.js';
+import { catalogGroupDetails, filterCatalogGroups, groupCatalogJobs, type CatalogGroupFilter } from './catalog-groups.js';
 
 type ApiEvent = { requestContext?: { authorizer?: { jwt?: { claims?: Record<string, string> } }; http?: { method?: string }; requestId?: string }; rawPath?: string; routeKey?: string; pathParameters?: Record<string, string>; queryStringParameters?: Record<string, string>; headers?: Record<string, string | undefined>; body?: string | null };
 type ApiResponse = { statusCode: number; headers: Record<string, string>; body: string };
@@ -21,6 +22,33 @@ const statuses: ApplicationStatus[] = ['saved', 'applied', 'assessment', 'interv
 const hashSecret = (value: string) => createHash('sha256').update(value).digest('base64url');
 const inMinutes = (iso: string, minutes: number) => new Date(new Date(iso).getTime() + minutes * 60_000).toISOString();
 const isBefore = (left: string, right: string) => new Date(left).getTime() < new Date(right).getTime();
+
+function catalogFilter(parameters: Record<string, string> | undefined): CatalogGroupFilter {
+  const list = (...names: string[]) => {
+    const value = names.map((name) => parameters?.[name]).find((candidate) => candidate !== undefined);
+    return value?.split(',').map((item) => item.trim()).filter(Boolean);
+  };
+  return {
+    ...(parameters?.q?.trim() ? { query: parameters.q.trim() } : {}),
+    ...(parameters?.source ? { source: parameters.source as CatalogGroupFilter['source'] } : {}),
+    ...(list('discipline', 'disciplines')?.length ? { disciplines: list('discipline', 'disciplines') } : {}),
+    ...(list('season', 'seasons')?.length ? { seasons: list('season', 'seasons') } : {}),
+    ...(list('education', 'educationLevel', 'educationLevels')?.length ? { educationLevels: list('education', 'educationLevel', 'educationLevels') } : {}),
+    ...(list('workMode', 'workModes')?.length ? { workModes: list('workMode', 'workModes') } : {}),
+    ...(list('location', 'locations')?.length ? { locations: list('location', 'locations') } : {}),
+  };
+}
+
+async function completeCatalog(store: InternshipStore) {
+  if (store.listCatalog) return store.listCatalog();
+  const jobs = []; let cursor: string | undefined;
+  do {
+    const page = await store.listOpen?.(cursor, 50, 'open');
+    if (!page) break;
+    jobs.push(...page.jobs); cursor = page.cursor;
+  } while (cursor);
+  return jobs;
+}
 
 function safeSession(session: ApplicationSession) {
   const safe: Partial<ApplicationSession> = { ...session };
@@ -195,12 +223,12 @@ function alertSettings(
 
 function requireProfile(value: Record<string, unknown>, userId: string): ApplicantProfile {
   const contact = value.contact as ApplicantProfile['contact'];
-  if (!contact?.name || !contact.email || typeof value.location !== 'string' || typeof value.workAuthorization !== 'string' || !Array.isArray(value.education) || !value.links || !value.reusableAnswers || typeof value.resumeDocumentId !== 'string') throw new Error('Profile needs contact name/email, location, work authorization, résumé, education, links, and reusable answers');
+  if (!contact?.name || !contact.email || typeof value.location !== 'string' || typeof value.workAuthorization !== 'string' || !Array.isArray(value.education) || !value.links || !value.reusableAnswers) throw new Error('Profile needs contact name/email, location, work authorization, education, links, and reusable answers');
   if ((contact.firstName !== undefined && typeof contact.firstName !== 'string') || (contact.lastName !== undefined && typeof contact.lastName !== 'string') || (contact.phone !== undefined && typeof contact.phone !== 'string')) throw new Error('Profile contact details must be text');
   return { userId, contact, location: value.location, workAuthorization: value.workAuthorization, links: value.links as Record<string, string>, education: value.education as ApplicantProfile['education'], reusableAnswers: value.reusableAnswers as Record<string, string>, ...(typeof value.resumeDocumentId === 'string' ? { resumeDocumentId: value.resumeDocumentId } : {}), ...(value.sensitive && typeof value.sensitive === 'object' ? { sensitive: value.sensitive as Record<string, unknown> } : {}), updatedAt: now() };
 }
 
-export interface ApiDependencies { jobs: InternshipStore; users: UserStore; documentsBucket?: string; userPoolId?: string; integrations?: EmployerIntegrationRegistry; s3?: S3Client; cognito?: CognitoIdentityProviderClient; now?: () => string; }
+export interface ApiDependencies { jobs: InternshipStore; users: UserStore; releases?: ReleaseStore; documentsBucket?: string; userPoolId?: string; integrations?: EmployerIntegrationRegistry; s3?: S3Client; cognito?: CognitoIdentityProviderClient; now?: () => string; }
 export function createApiHandler(dependencies: ApiDependencies) {
   const integrations = dependencies.integrations ?? new EmployerIntegrationRegistry(); const s3 = dependencies.s3 ?? new S3Client({});
   return async (event: ApiEvent): Promise<ApiResponse> => {
@@ -243,6 +271,26 @@ export function createApiHandler(dependencies: ApiDependencies) {
         const page = await dependencies.jobs.listOpen?.(event.queryStringParameters?.cursor, limit, status, { ...(query ? { query } : {}), ...(source ? { source: source as 'all' | 'direct' | 'community' | 'corroborated' } : {}) });
         return reply(200, page ?? { jobs: [] });
       }
+      if (method === 'GET' && path === '/catalog') {
+        const requestedLimit = Number(event.queryStringParameters?.limit ?? 25);
+        const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 50) : 25;
+        const requestedOffset = Number(event.queryStringParameters?.cursor ?? 0);
+        if (!Number.isFinite(requestedOffset) || requestedOffset < 0 || !Number.isInteger(requestedOffset)) return reply(400, { message: 'cursor is invalid' });
+        const query = event.queryStringParameters?.q?.trim();
+        if (query && query.length > 120) return reply(400, { message: 'q must be 120 characters or fewer' });
+        const source = event.queryStringParameters?.source;
+        if (source && !['all', 'direct', 'community', 'corroborated'].includes(source)) return reply(400, { message: 'source is not supported' });
+        const grouped = filterCatalogGroups(groupCatalogJobs(await completeCatalog(dependencies.jobs)), catalogFilter(event.queryStringParameters));
+        const page = grouped.slice(requestedOffset, requestedOffset + limit).map((group) => group.row);
+        const nextOffset = requestedOffset + page.length;
+        return reply(200, { groups: page, ...(nextOffset < grouped.length ? { cursor: String(nextOffset) } : {}) });
+      }
+      const catalogGroupMatch = path.match(/^\/catalog\/groups\/([^/]+)$/);
+      if (method === 'GET' && catalogGroupMatch) {
+        const groupId = decodeURIComponent(catalogGroupMatch[1]!);
+        const group = groupCatalogJobs(await completeCatalog(dependencies.jobs)).find((candidate) => candidate.row.groupId === groupId);
+        return group ? reply(200, catalogGroupDetails(group)) : reply(404, { message: 'Catalog group not found' });
+      }
       const jobMatch = path.match(/^\/jobs\/([^/]+)$/);
       if (method === 'GET' && jobMatch) {
         const job = await dependencies.jobs.getJob?.(decodeURIComponent(jobMatch[1]));
@@ -278,8 +326,26 @@ export function createApiHandler(dependencies: ApiDependencies) {
         return reply(result.statusCode, result.body);
       }
       const userId = identity(event); if (!userId) return reply(401, { message: 'Authentication required' });
+      const releaseMatch = path.match(/^\/me\/releases\/([^/]+)$/);
+      if (method === 'GET' && releaseMatch) {
+        const releaseId = decodeURIComponent(releaseMatch[1]!);
+        const release = await dependencies.releases?.getRelease(userId, releaseId);
+        if (!release) return reply(404, { message: 'Release not found' });
+        const jobs = (await Promise.all(release.jobIds.map((jobId) => dependencies.jobs.getJob(jobId))))
+          .filter((job): job is NonNullable<typeof job> => Boolean(job));
+        return reply(200, {
+          releaseId: release.releaseId,
+          createdAt: release.createdAt,
+          newJobIds: release.newJobIds,
+          deepLink: `internnotifs://releases/${encodeURIComponent(release.releaseId)}`,
+          // Mobile clients render the complete role list directly; grouped
+          // metadata remains alongside it for collapsed release summaries.
+          jobs,
+          groups: groupCatalogJobs(jobs, { includeClosed: true }).map(catalogGroupDetails),
+        });
+      }
       if (method === 'GET' && path === '/me/preferences') return reply(200, (await dependencies.users.getPreferences(userId)) ?? { userId, filter: {}, alertsEnabled: false, onboardingComplete: false });
-      if (method === 'PUT' && path === '/me/preferences') { const body = parseBody(event); const previous = await dependencies.users.getPreferences(userId); const filter = parseJobFilter(body.filter ?? previous?.filter ?? {}); const push = pushPreferences(body.push); const value: UserPreferences = { userId, filter: filter ?? {}, alertsEnabled: typeof body.alertsEnabled === 'boolean' ? body.alertsEnabled : previous?.alertsEnabled ?? false, onboardingComplete: typeof body.onboardingComplete === 'boolean' ? body.onboardingComplete : previous?.onboardingComplete ?? false, alertSettings: alertSettings(body.alertSettings, previous?.alertSettings), ...(push !== undefined ? { push } : previous?.push ? { push: previous.push } : {}), ...(previous?.lastCatalogOpenedAt ? { lastCatalogOpenedAt: previous.lastCatalogOpenedAt } : {}), updatedAt: now() }; await dependencies.users.putPreferences(value); return reply(200, value); }
+      if (method === 'PUT' && path === '/me/preferences') { const body = parseBody(event); const previous = await dependencies.users.getPreferences(userId); const filter = parseJobFilter(body.filter ?? previous?.filter ?? {}); const push = pushPreferences(body.push); const value: UserPreferences = { userId, filter: filter ?? {}, alertsEnabled: typeof body.alertsEnabled === 'boolean' ? body.alertsEnabled : previous?.alertsEnabled ?? false, emailAlertsEnabled: typeof body.emailAlertsEnabled === 'boolean' ? body.emailAlertsEnabled : previous?.emailAlertsEnabled ?? false, onboardingComplete: typeof body.onboardingComplete === 'boolean' ? body.onboardingComplete : previous?.onboardingComplete ?? false, alertSettings: alertSettings(body.alertSettings, previous?.alertSettings), ...(push !== undefined ? { push } : previous?.push ? { push: previous.push } : {}), ...(previous?.lastCatalogOpenedAt ? { lastCatalogOpenedAt: previous.lastCatalogOpenedAt } : {}), updatedAt: now() }; await dependencies.users.putPreferences(value); return reply(200, value); }
       if (method === 'POST' && path === '/me/opening') {
         const openedAt = dependencies.now?.() ?? now();
         const previous = await dependencies.users.getPreferences(userId);
@@ -288,6 +354,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
           userId,
           filter: previous?.filter ?? {},
           alertsEnabled: previous?.alertsEnabled ?? false,
+          emailAlertsEnabled: previous?.emailAlertsEnabled ?? false,
           onboardingComplete: previous?.onboardingComplete ?? false,
           ...(previous?.alertSettings ? { alertSettings: previous.alertSettings } : {}),
           ...(previous?.push ? { push: previous.push } : {}),
@@ -375,4 +442,4 @@ export function createApiHandler(dependencies: ApiDependencies) {
   };
 }
 
-export const handler = createApiHandler({ jobs: new DynamoInternshipStore(process.env.INTERNSHIPS_TABLE ?? ''), users: new DynamoUserStore(process.env.USERS_TABLE ?? ''), documentsBucket: process.env.DOCUMENTS_BUCKET, userPoolId: process.env.USER_POOL_ID });
+export const handler = createApiHandler({ jobs: new DynamoInternshipStore(process.env.INTERNSHIPS_TABLE ?? ''), users: new DynamoUserStore(process.env.USERS_TABLE ?? ''), releases: new DynamoReleaseStore(process.env.USERS_TABLE ?? ''), documentsBucket: process.env.DOCUMENTS_BUCKET, userPoolId: process.env.USER_POOL_ID });

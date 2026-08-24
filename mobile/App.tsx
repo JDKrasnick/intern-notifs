@@ -4,6 +4,7 @@ import {
   Alert,
   Animated,
   BackHandler,
+  AppState,
   Easing,
   FlatList,
   InteractionManager,
@@ -29,7 +30,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { api, responseCache, sessionStorage } from "./src/api";
 import { appendCatalogPage, type CatalogPage } from "./src/catalog";
-import { confirmEmail, signIn, signUp } from "./src/auth";
+import { confirmEmail, restoreSession, signIn, signUp } from "./src/auth";
 import {
   clearApplicationFollowUp,
   notifyApplicationProgress,
@@ -148,6 +149,7 @@ type AlertSettings = {
 type Preference = {
   filter: JobFilter;
   alertsEnabled: boolean;
+  emailAlertsEnabled?: boolean;
   onboardingComplete: boolean;
   alertSettings?: AlertSettings;
   push?: PushPreferences;
@@ -1572,6 +1574,8 @@ function AppContent() {
   const { width } = useWindowDimensions();
   const usesNavigationRail = width >= 700;
   const [token, setToken] = useState<string>();
+  const tokenRef = useRef<string | undefined>(undefined);
+  tokenRef.current = token;
   const [ready, setReady] = useState(false);
   const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
   const [preferences, setPreferences] = useState<Preference>();
@@ -1614,11 +1618,28 @@ function AppContent() {
   const catalogRequestGeneration = useRef(0);
   const catalogRequestInFlight = useRef(false);
   useEffect(() => {
-    void sessionStorage.get().then((value) => {
+    void restoreSession().then((value) => {
       setToken(value ?? undefined);
       setReady(true);
     }).catch(() => setReady(true));
   }, []);
+  useEffect(() => {
+    if (!token) return;
+    const refresh = () => {
+      void restoreSession().then((value) => {
+        if (value) setToken(value);
+        else setToken(undefined);
+      }).catch(() => undefined);
+    };
+    const interval = setInterval(refresh, 45 * 60 * 1_000);
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") refresh();
+    });
+    return () => {
+      clearInterval(interval);
+      appStateSubscription.remove();
+    };
+  }, [token]);
   useEffect(() => {
     let active = true;
     void responseCache.get<string[]>(hiddenRolesCacheKey).then((cached) => {
@@ -1782,6 +1803,39 @@ function AppContent() {
       setTab("saved");
       return;
     }
+    if (destination.kind === "release") {
+      setTab("feed");
+      const currentToken = tokenRef.current;
+      if (!currentToken) {
+        pendingDestination.current = destination;
+        return;
+      }
+      // An explicit notification tap must win over the automatic launch
+      // inbox, including when that request already started during cold boot.
+      launchRequestId.current += 1;
+      launchRequestToken.current = currentToken;
+      setLaunchLoaded(true);
+      void restoreSession()
+        .then((usableToken) => {
+          if (!usableToken) {
+            pendingDestination.current = destination;
+            setToken(undefined);
+            return undefined;
+          }
+          tokenRef.current = usableToken;
+          setToken(usableToken);
+          return api<{ jobs: Job[]; total?: number }>(`/me/releases/${encodeURIComponent(destination.releaseId)}`, usableToken);
+        })
+        .then((release) => {
+          if (!release) return;
+          const openedAt = new Date().toISOString();
+          setLaunchInbox({ jobs: release.jobs, total: release.total ?? release.jobs.length, hasMore: false, previousOpenedAt: null, openedAt });
+          setJobs((current) => [...release.jobs, ...current.filter((job) => !release.jobs.some((released) => released.jobId === job.jobId))]);
+          setShowLaunchInbox(true);
+        })
+        .catch((error) => Alert.alert("Could not open release", error instanceof Error ? error.message : "Please try again."));
+      return;
+    }
     routedJobId.current = destination.jobId;
     detailVisible.current = true;
     setTab("feed");
@@ -1835,6 +1889,15 @@ function AppContent() {
       presentDestination(destination);
       return;
     }
+    if (destination.kind === "release") {
+      if (detailVisible.current || detailDismissalPending.current) {
+        pendingDestination.current = destination;
+        if (detailVisible.current) dismissRoutedJob();
+        return;
+      }
+      presentDestination(destination);
+      return;
+    }
     const disposition = options.allowActiveJob
       ? "open"
       : jobOpenDisposition(routedJobId.current, destination.jobId, detailDismissalPending.current);
@@ -1846,6 +1909,12 @@ function AppContent() {
     }
     presentDestination(destination);
   };
+  useEffect(() => {
+    if (!token || detailVisible.current || detailDismissalPending.current || pendingDestination.current?.kind !== "release") return;
+    const destination = pendingDestination.current;
+    pendingDestination.current = undefined;
+    presentDestination(destination);
+  }, [token]);
   const openCatalogJob = (job: Job) => {
     if (detailDismissalPending.current) {
       pendingDestination.current = {

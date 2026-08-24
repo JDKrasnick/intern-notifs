@@ -110,7 +110,7 @@ describe('public catalog and authenticated applicant workflow', () => {
 
     const profile = {
       contact: { name: 'Student A', email: 'student@example.test' }, location: 'Boston, MA', workAuthorization: 'F-1 OPT',
-      resumeDocumentId: 'resume-1', education: [{ school: 'Example University', degree: 'BS' }], links: { github: 'https://github.com/student' }, reusableAnswers: { sponsorship: 'Yes' },
+      education: [{ school: 'Example University', degree: 'BS' }], links: { github: 'https://github.com/student' }, reusableAnswers: { sponsorship: 'Yes' },
     };
     expect((await handler(event('student-a', 'PUT', '/me/profile', profile))).statusCode).toBe(200);
     expect(body<{ userId: string }>(await handler(event('student-b', 'GET', '/me/profile')))).toBeNull();
