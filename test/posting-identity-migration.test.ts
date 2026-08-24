@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
-import { planPostingIdentityMigration } from '../src/migrate-posting-identity.js';
-import type { DeliveryReceipt, Internship } from '../src/types.js';
+import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { describe, expect, it, vi } from 'vitest';
+import { migratePostingIdentity, planPostingIdentityMigration } from '../src/migrate-posting-identity.js';
+import type { ApplicationSession } from '../src/application-automation.js';
+import type { ApplicationRecord, DeliveryReceipt, Internship } from '../src/types.js';
 
 function job(jobId: string, applyUrl: string, firstSeenAt: string, open = true): Internship {
   return {
@@ -15,6 +17,25 @@ function receipt(jobId: string): DeliveryReceipt {
   return {
     userId: 'student', jobId, token: 'ExponentPushToken[test]', status: 'ok',
     createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:01.000Z',
+  };
+}
+
+function application(applicationId: string, jobId: string, status: ApplicationRecord['status'], createdAt: string, updatedAt: string, notes?: string) {
+  return {
+    userId: 'student', pk: 'USER#student', sk: `APPLICATION#${applicationId}`,
+    application: { applicationId, jobId, status, createdAt, updatedAt, notes } satisfies ApplicationRecord,
+  };
+}
+
+function session(sessionId: string, applicationId: string, jobId: string): { userId: string; pk: string; sk: string; session: ApplicationSession } {
+  return {
+    userId: 'student', pk: 'USER#student', sk: `APPLICATION_SESSION#${sessionId}`,
+    session: {
+      sessionId, userId: 'student', applicationId, jobId, mode: 'headed', status: 'awaiting-user-review',
+      version: 1, fields: [], fieldPlanDigest: 'digest', runnerLifecycle: 'paused',
+      expiresAt: '2026-08-03T00:00:00.000Z', metadataExpiresAt: '2026-09-03T00:00:00.000Z',
+      eventIds: [], createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
+    },
   };
 }
 
@@ -46,5 +67,97 @@ describe('posting identity migration plan', () => {
     ], [receipt('closed')]);
     expect(plan).toMatchObject({ referencedJobs: 1, jobUpdates: 1, duplicateOpenJobs: 0, receiptCopies: 1 });
     expect(plan.updates[0]?.postingIdentity?.canonicalJobId).toBe('closed');
+  });
+
+  it('remaps saved applications, merges user collisions, and repairs their sessions before deleting aliases', () => {
+    const plan = planPostingIdentityMigration([
+      job('legacy-a', 'https://boards.greenhouse.io/acme?gh_jid=100', '2026-08-01T00:00:00.000Z'),
+      job('legacy-b', 'https://job-boards.greenhouse.io/acme/jobs/100', '2026-08-02T00:00:00.000Z'),
+    ], [], [
+      application('application-a', 'legacy-a', 'saved', '2026-08-01T00:00:00.000Z', '2026-08-01T12:00:00.000Z', 'Ask about relocation.'),
+      application('application-b', 'legacy-b', 'applied', '2026-08-02T00:00:00.000Z', '2026-08-03T12:00:00.000Z', 'Submitted on the official site.'),
+    ], [
+      session('session-a', 'application-a', 'legacy-a'),
+      session('session-b', 'application-b', 'legacy-b'),
+    ]);
+
+    expect(plan).toMatchObject({
+      duplicateOpenJobs: 1, applicationRows: 2, applicationRemaps: 1, applicationMerges: 1, applicationSessionRemaps: 2,
+    });
+    expect(plan.applications.writes).toEqual([{
+      pk: 'USER#student', sk: 'APPLICATION#application-b', expectedUpdatedAt: '2026-08-03T12:00:00.000Z',
+      application: {
+        applicationId: 'application-b', jobId: 'legacy-a', status: 'applied',
+        createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-03T12:00:00.000Z',
+        notes: 'Ask about relocation.\n\nSubmitted on the official site.',
+      },
+    }]);
+    expect(plan.applications.deletes).toEqual([{
+      pk: 'USER#student', sk: 'APPLICATION#application-a', applicationId: 'application-a', expectedUpdatedAt: '2026-08-01T12:00:00.000Z',
+    }]);
+    expect(plan.applications.sessionWrites.map(({ session: value }) => value)).toEqual([
+      expect.objectContaining({ sessionId: 'session-a', applicationId: 'application-b', jobId: 'legacy-a' }),
+      expect.objectContaining({ sessionId: 'session-b', applicationId: 'application-b', jobId: 'legacy-a' }),
+    ]);
+  });
+
+  it('keeps a saved application usable when its only job alias is deleted', () => {
+    const plan = planPostingIdentityMigration([
+      job('legacy-a', 'https://boards.greenhouse.io/acme?gh_jid=100', '2026-08-01T00:00:00.000Z'),
+      job('legacy-b', 'https://job-boards.greenhouse.io/acme/jobs/100', '2026-08-02T00:00:00.000Z'),
+    ], [], [
+      application('application-b', 'legacy-b', 'saved', '2026-08-02T00:00:00.000Z', '2026-08-02T12:00:00.000Z'),
+    ]);
+
+    expect(plan.applications.writes).toEqual([expect.objectContaining({
+      application: expect.objectContaining({ applicationId: 'application-b', jobId: 'legacy-a', status: 'saved' }),
+    })]);
+    expect(plan.applications.deletes).toEqual([]);
+  });
+
+  it('applies application and session repairs before deleting duplicate applications and jobs', async () => {
+    const jobs = [
+      job('legacy-a', 'https://boards.greenhouse.io/acme?gh_jid=100', '2026-08-01T00:00:00.000Z'),
+      job('legacy-b', 'https://job-boards.greenhouse.io/acme/jobs/100', '2026-08-02T00:00:00.000Z'),
+    ];
+    const applications = [
+      application('application-a', 'legacy-a', 'saved', '2026-08-01T00:00:00.000Z', '2026-08-01T12:00:00.000Z'),
+      application('application-b', 'legacy-b', 'applied', '2026-08-02T00:00:00.000Z', '2026-08-03T12:00:00.000Z'),
+    ];
+    const sessions = [session('session-a', 'application-a', 'legacy-a')];
+    const send = vi.fn(async (command: { constructor: { name: string }; input: Record<string, unknown> }) => {
+      if (command.constructor.name === 'ScanCommand') {
+        if (command.input.TableName === 'internships') {
+          return { Items: jobs.map((value) => ({ pk: `JOB#${value.jobId}`, sk: 'META', job: value })) };
+        }
+        return { Items: [
+          ...applications.map((value) => ({ pk: value.pk, sk: value.sk, kind: 'application', value: value.application })),
+          ...sessions.map((value) => ({ pk: value.pk, sk: value.sk, kind: 'application-session', value: value.session })),
+        ] };
+      }
+      return {};
+    });
+    const client = { send } as unknown as DynamoDBDocumentClient;
+    const dryRun = await migratePostingIdentity('internships', 'users', client);
+    send.mockClear();
+
+    const applied = await migratePostingIdentity('internships', 'users', client, {
+      apply: true, expectedRepairToken: dryRun.repairToken,
+    });
+    expect(applied).toMatchObject({ applied: true, applicationRemaps: 1, applicationMerges: 1, applicationSessionRemaps: 1 });
+
+    const commands = send.mock.calls.map(([command]) => command as unknown as { constructor: { name: string }; input: Record<string, unknown> });
+    const applicationWrite = commands.findIndex(({ constructor, input }) => constructor.name === 'UpdateCommand'
+      && input.TableName === 'users' && (input.Key as { sk?: string }).sk === 'APPLICATION#application-b');
+    const sessionWrite = commands.findIndex(({ constructor, input }) => constructor.name === 'UpdateCommand'
+      && input.TableName === 'users' && (input.Key as { sk?: string }).sk === 'APPLICATION_SESSION#session-a');
+    const applicationDelete = commands.findIndex(({ constructor, input }) => constructor.name === 'DeleteCommand'
+      && input.TableName === 'users');
+    const jobDelete = commands.findIndex(({ constructor, input }) => constructor.name === 'DeleteCommand'
+      && input.TableName === 'internships');
+    expect([applicationWrite, sessionWrite, applicationDelete, jobDelete].every((index) => index >= 0)).toBe(true);
+    expect(applicationWrite).toBeLessThan(applicationDelete);
+    expect(sessionWrite).toBeLessThan(applicationDelete);
+    expect(applicationDelete).toBeLessThan(jobDelete);
   });
 });

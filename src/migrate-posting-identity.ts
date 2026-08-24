@@ -2,13 +2,17 @@ import { createHash } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DeleteCommand, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import type { ApplicationSession } from './application-automation.js';
 import { buildPostingIdentity } from './identity/posting.js';
 import { notificationDedupeKey } from './notifications.js';
 import { createDynamoDocumentClient, DynamoInternshipStore, DynamoUserStore } from './store.js';
-import type { DeliveryReceipt, Internship, PostingAlias, PostingIdentity, SourceOccurrence, UserPreferences } from './types.js';
+import type { ApplicationRecord, DeliveryReceipt, Internship, PostingAlias, PostingIdentity, SourceOccurrence, UserPreferences } from './types.js';
 
 type JobItem = { pk?: string; sk?: string; job?: Internship; occurrence?: { jobId: string } };
 type ReceiptItem = { kind?: string; value?: DeliveryReceipt };
+type UserValueItem<T> = { pk: string; sk: string; kind?: string; value: T };
+export type MigrationApplication = { userId: string; application: ApplicationRecord; pk: string; sk: string };
+export type MigrationApplicationSession = { userId: string; session: ApplicationSession; pk: string; sk: string };
 
 export interface PostingIdentityMigrationReport {
   openJobs: number;
@@ -19,6 +23,10 @@ export interface PostingIdentityMigrationReport {
   duplicateOpenJobs: number;
   occurrenceRemaps: number;
   receiptCopies: number;
+  applicationRows: number;
+  applicationRemaps: number;
+  applicationMerges: number;
+  applicationSessionRemaps: number;
   activeAlertPreferences: number;
   conflicts: string[];
   repairToken: string;
@@ -31,6 +39,13 @@ type MigrationPlan = PostingIdentityMigrationReport & {
   duplicateIds: string[];
   canonicalByJobId: Map<string, string>;
   receipts: Array<{ receipt: DeliveryReceipt; dedupeKey: string; canonicalJobId: string }>;
+  applications: ApplicationMigrationPlan;
+};
+
+export type ApplicationMigrationPlan = {
+  writes: Array<{ pk: string; sk: string; application: ApplicationRecord; expectedUpdatedAt: string }>;
+  deletes: Array<{ pk: string; sk: string; applicationId: string; expectedUpdatedAt: string }>;
+  sessionWrites: Array<{ pk: string; sk: string; session: ApplicationSession }>;
 };
 
 function first(value: Internship) { return value.firstSeenAt || value.lastSeenAt; }
@@ -69,7 +84,68 @@ function unionAliases(identities: PostingIdentity[], canonicalJobId: string): Po
   return { ...representative, aliases, canonicalJobId };
 }
 
-export function planPostingIdentityMigration(jobs: Internship[], receipts: DeliveryReceipt[]): MigrationPlan {
+function userIdFromPk(pk: string) { return pk.startsWith('USER#') ? pk.slice('USER#'.length) : ''; }
+
+function mergedNotes(applications: ApplicationRecord[]) {
+  const notes = [...new Set([...applications]
+    .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt) || left.applicationId.localeCompare(right.applicationId))
+    .map((application) => application.notes?.trim()).filter((note): note is string => Boolean(note)))];
+  return notes.length ? notes.join('\n\n') : undefined;
+}
+
+export function planApplicationIdentityMigration(
+  applications: MigrationApplication[],
+  sessions: MigrationApplicationSession[],
+  canonicalByJobId: Map<string, string>,
+): ApplicationMigrationPlan {
+  const groups = new Map<string, MigrationApplication[]>();
+  for (const item of applications) {
+    const canonicalJobId = canonicalByJobId.get(item.application.jobId);
+    if (!canonicalJobId) continue;
+    const key = `${item.userId}\0${canonicalJobId}`;
+    groups.set(key, [...(groups.get(key) ?? []), item]);
+  }
+
+  const writes: ApplicationMigrationPlan['writes'] = [];
+  const deletes: ApplicationMigrationPlan['deletes'] = [];
+  const canonicalApplicationId = new Map<string, string>();
+  for (const members of groups.values()) {
+    const canonicalJobId = canonicalByJobId.get(members[0]!.application.jobId)!;
+    if (members.every((member) => member.application.jobId === canonicalJobId)) continue;
+    const ordered = [...members].sort((left, right) =>
+      right.application.updatedAt.localeCompare(left.application.updatedAt)
+      || left.application.applicationId.localeCompare(right.application.applicationId));
+    const keeper = ordered[0]!;
+    const notes = mergedNotes(ordered.map((item) => item.application));
+    const application: ApplicationRecord = {
+      ...keeper.application,
+      jobId: canonicalJobId,
+      createdAt: earliest(ordered.map((item) => item.application.createdAt)),
+      updatedAt: latest(ordered.map((item) => item.application.updatedAt)),
+      ...(notes ? { notes } : { notes: undefined }),
+    };
+    writes.push({ pk: keeper.pk, sk: keeper.sk, application, expectedUpdatedAt: keeper.application.updatedAt });
+    for (const member of ordered) canonicalApplicationId.set(`${member.userId}\0${member.application.applicationId}`, application.applicationId);
+    deletes.push(...ordered.slice(1).map(({ pk, sk, application: value }) => ({
+      pk, sk, applicationId: value.applicationId, expectedUpdatedAt: value.updatedAt,
+    })));
+  }
+
+  const sessionWrites = sessions.flatMap(({ userId, session, pk, sk }) => {
+    const jobId = canonicalByJobId.get(session.jobId) ?? session.jobId;
+    const applicationId = canonicalApplicationId.get(`${userId}\0${session.applicationId}`) ?? session.applicationId;
+    if (jobId === session.jobId && applicationId === session.applicationId) return [];
+    return [{ pk, sk, session: { ...session, jobId, applicationId } }];
+  });
+  return { writes, deletes, sessionWrites };
+}
+
+export function planPostingIdentityMigration(
+  jobs: Internship[],
+  receipts: DeliveryReceipt[],
+  applications: MigrationApplication[] = [],
+  sessions: MigrationApplicationSession[] = [],
+): MigrationPlan {
   const receiptJobIds = new Set(receipts.map((receipt) => receipt.jobId));
   const selected = jobs.filter((job) => job.open || receiptJobIds.has(job.jobId));
   const conflicts: string[] = [];
@@ -119,10 +195,15 @@ export function planPostingIdentityMigration(jobs: Internship[], receipts: Deliv
     if (!canonicalJobId || !canonical) return [];
     return [{ receipt, canonicalJobId, dedupeKey: notificationDedupeKey(canonical) }];
   });
+  const applicationPlan = planApplicationIdentityMigration(applications, sessions, canonicalByJobId);
   const facts = {
     updates: updates.map((job) => [job.jobId, job.postingIdentity?.aliases.map((alias: PostingAlias) => alias.value)]),
     duplicateIds: [...duplicateIds].sort(),
     receipts: receiptCopies.map(({ receipt, canonicalJobId, dedupeKey }) => [receipt.userId, receipt.jobId, receipt.token, canonicalJobId, dedupeKey]).sort(),
+    applications: applicationPlan.writes.map(({ pk, sk, application, expectedUpdatedAt }) => [pk, sk, application, expectedUpdatedAt] as const)
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+    applicationDeletes: applicationPlan.deletes.map(({ pk, sk }) => [pk, sk]).sort(),
+    applicationSessions: applicationPlan.sessionWrites.map(({ pk, sk, session }) => [pk, sk, session.applicationId, session.jobId]).sort(),
     conflicts: [...conflicts].sort(),
   };
   const repairToken = createHash('sha256').update(JSON.stringify(facts)).digest('hex');
@@ -135,6 +216,10 @@ export function planPostingIdentityMigration(jobs: Internship[], receipts: Deliv
     duplicateOpenJobs: duplicateIds.length,
     occurrenceRemaps: 0,
     receiptCopies: receiptCopies.length,
+    applicationRows: applications.length,
+    applicationRemaps: applicationPlan.writes.length,
+    applicationMerges: applicationPlan.deletes.length,
+    applicationSessionRemaps: applicationPlan.sessionWrites.length,
     activeAlertPreferences: 0,
     conflicts,
     repairToken,
@@ -144,6 +229,7 @@ export function planPostingIdentityMigration(jobs: Internship[], receipts: Deliv
     duplicateIds,
     canonicalByJobId,
     receipts: receiptCopies,
+    applications: applicationPlan,
   };
 }
 
@@ -167,10 +253,18 @@ export async function migratePostingIdentity(
   const jobs = internshipItems.map((item) => (item as JobItem).job).filter((job): job is Internship => Boolean(job));
   const receipts = userItems.filter((item) => (item as ReceiptItem).kind === 'receipt')
     .map((item) => (item as ReceiptItem).value).filter((receipt): receipt is DeliveryReceipt => Boolean(receipt));
+  const applications = userItems.filter((item): item is UserValueItem<ApplicationRecord> =>
+    (item as { kind?: string }).kind === 'application' && typeof item.pk === 'string' && typeof item.sk === 'string')
+    .map((item) => ({ userId: userIdFromPk(item.pk), application: item.value, pk: item.pk, sk: item.sk }))
+    .filter((item) => Boolean(item.userId && item.application));
+  const applicationSessions = userItems.filter((item): item is UserValueItem<ApplicationSession> =>
+    (item as { kind?: string }).kind === 'application-session' && typeof item.pk === 'string' && typeof item.sk === 'string')
+    .map((item) => ({ userId: userIdFromPk(item.pk), session: item.value, pk: item.pk, sk: item.sk }))
+    .filter((item) => Boolean(item.userId && item.session));
   const activePreferences = userItems.filter((item) => (item as { kind?: string }).kind === 'preferences')
     .map((item) => (item as { value?: UserPreferences }).value)
     .filter((value): value is UserPreferences => Boolean(value?.alertsEnabled && value.onboardingComplete));
-  const plan = planPostingIdentityMigration(jobs, receipts);
+  const plan = planPostingIdentityMigration(jobs, receipts, applications, applicationSessions);
   plan.activeAlertPreferences = activePreferences.length;
   plan.repairToken = createHash('sha256').update(`${plan.repairToken}\0${activePreferences.map((value) => value.userId).sort().join('\0')}`).digest('hex');
   plan.occurrenceRemaps = internshipItems.filter((item) => {
@@ -204,6 +298,34 @@ export async function migratePostingIdentity(
   for (const copy of plan.receipts) {
     await userStore.migrateReceipt({ ...copy.receipt, jobId: copy.canonicalJobId }, copy.dedupeKey);
   }
+  for (const write of plan.applications.writes) {
+    await client.send(new UpdateCommand({
+      TableName: usersTable, Key: { pk: write.pk, sk: write.sk },
+      UpdateExpression: 'SET #value = :value',
+      ConditionExpression: '#value.applicationId = :applicationId AND #value.updatedAt = :updatedAt',
+      ExpressionAttributeNames: { '#value': 'value' },
+      ExpressionAttributeValues: {
+        ':value': write.application, ':applicationId': write.application.applicationId, ':updatedAt': write.expectedUpdatedAt,
+      },
+    }));
+  }
+  for (const write of plan.applications.sessionWrites) {
+    await client.send(new UpdateCommand({
+      TableName: usersTable, Key: { pk: write.pk, sk: write.sk },
+      UpdateExpression: 'SET #value = :value',
+      ConditionExpression: '#value.sessionId = :sessionId AND #value.#version = :version',
+      ExpressionAttributeNames: { '#value': 'value', '#version': 'version' },
+      ExpressionAttributeValues: { ':value': write.session, ':sessionId': write.session.sessionId, ':version': write.session.version },
+    }));
+  }
+  for (const application of plan.applications.deletes) {
+    await client.send(new DeleteCommand({
+      TableName: usersTable, Key: { pk: application.pk, sk: application.sk },
+      ConditionExpression: '#value.applicationId = :applicationId AND #value.updatedAt = :updatedAt',
+      ExpressionAttributeNames: { '#value': 'value' },
+      ExpressionAttributeValues: { ':applicationId': application.applicationId, ':updatedAt': application.expectedUpdatedAt },
+    }));
+  }
   for (const preference of activePreferences) await userStore.putPreferences(preference);
   for (const jobId of plan.duplicateIds) {
     await client.send(new DeleteCommand({ TableName: internshipsTable, Key: { pk: `JOB#${jobId}`, sk: 'META' } }));
@@ -234,6 +356,10 @@ async function main() {
     duplicateOpenJobs: report.duplicateOpenJobs,
     occurrenceRemaps: report.occurrenceRemaps,
     receiptCopies: report.receiptCopies,
+    applicationRows: report.applicationRows,
+    applicationRemaps: report.applicationRemaps,
+    applicationMerges: report.applicationMerges,
+    applicationSessionRemaps: report.applicationSessionRemaps,
     activeAlertPreferences: report.activeAlertPreferences,
     conflicts: report.conflicts,
     repairToken: report.repairToken,
