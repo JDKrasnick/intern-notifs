@@ -4,20 +4,28 @@ const mocks = vi.hoisted(() => ({
   stored: undefined as { idToken: string; refreshToken: string; username: string } | undefined,
   cognitoCached: undefined as { idToken: string; refreshToken: string; username: string } | undefined,
   legacy: undefined as string | undefined,
+  storageError: undefined as Error | undefined,
   refreshError: undefined as Error | undefined,
   refreshedIdToken: 'fresh-token',
+  returnedRefreshToken: 'refresh-token',
   expiration: 0,
+  refreshCalls: 0,
   setRefreshable: vi.fn(),
   clear: vi.fn(),
+  clearLegacy: vi.fn(),
 }));
 
-vi.mock('../src/api', () => ({
+vi.mock('../src/session-storage', () => ({
   sessionStorage: {
     get: vi.fn(async () => mocks.legacy),
-    getRefreshable: vi.fn(async () => mocks.stored),
+    getRefreshable: vi.fn(async () => {
+      if (mocks.storageError) throw mocks.storageError;
+      return mocks.stored;
+    }),
     getCognitoCached: vi.fn(async () => mocks.cognitoCached),
     setRefreshable: mocks.setRefreshable,
     clear: mocks.clear,
+    clearLegacy: mocks.clearLegacy,
   },
 }));
 
@@ -34,10 +42,11 @@ vi.mock('amazon-cognito-identity-js', () => {
   class CognitoUser {
     constructor(_value: unknown) {}
     refreshSession(_token: unknown, callback: (error: Error | null, session?: unknown) => void) {
+      mocks.refreshCalls += 1;
       if (mocks.refreshError) callback(mocks.refreshError);
       else callback(null, {
         getIdToken: () => new CognitoIdToken({}),
-        getRefreshToken: () => new CognitoRefreshToken({}),
+        getRefreshToken: () => ({ getToken: () => mocks.returnedRefreshToken }),
       });
     }
   }
@@ -56,24 +65,28 @@ beforeEach(() => {
   mocks.stored = undefined;
   mocks.cognitoCached = undefined;
   mocks.legacy = undefined;
+  mocks.storageError = undefined;
   mocks.refreshError = undefined;
   mocks.refreshedIdToken = 'fresh-token';
+  mocks.returnedRefreshToken = 'refresh-token';
   mocks.expiration = Math.floor(Date.now() / 1_000) + 3_600;
+  mocks.refreshCalls = 0;
   mocks.setRefreshable.mockReset();
   mocks.clear.mockReset();
+  mocks.clearLegacy.mockReset();
 });
 
 describe('Cognito session restoration', () => {
   it('keeps a stored ID token that is not near expiry', async () => {
     mocks.stored = { idToken: 'current-token', refreshToken: 'refresh-token', username: 'student@example.test' };
-    await expect(restoreSession()).resolves.toBe('current-token');
+    await expect(restoreSession()).resolves.toEqual({ status: 'authenticated', token: 'current-token' });
     expect(mocks.setRefreshable).not.toHaveBeenCalled();
   });
 
   it('refreshes an expired ID token and persists the replacement', async () => {
     mocks.stored = { idToken: 'expired-token', refreshToken: 'refresh-token', username: 'student@example.test' };
     mocks.expiration = 0;
-    await expect(restoreSession()).resolves.toBe('fresh-token');
+    await expect(restoreSession()).resolves.toEqual({ status: 'authenticated', token: 'fresh-token' });
     expect(mocks.setRefreshable).toHaveBeenCalledWith({
       idToken: 'fresh-token', refreshToken: 'refresh-token', username: 'student@example.test',
     });
@@ -82,7 +95,7 @@ describe('Cognito session restoration', () => {
   it('migrates and refreshes the Cognito cache created by earlier builds', async () => {
     mocks.cognitoCached = { idToken: 'expired-token', refreshToken: 'cached-refresh-token', username: 'student@example.test' };
     mocks.expiration = 0;
-    await expect(restoreSession()).resolves.toBe('fresh-token');
+    await expect(restoreSession()).resolves.toEqual({ status: 'authenticated', token: 'fresh-token' });
     expect(mocks.setRefreshable).toHaveBeenCalledWith({
       idToken: 'fresh-token', refreshToken: 'refresh-token', username: 'student@example.test',
     });
@@ -90,7 +103,7 @@ describe('Cognito session restoration', () => {
 
   it('migrates a still-valid Cognito cache without refreshing it', async () => {
     mocks.cognitoCached = { idToken: 'current-token', refreshToken: 'cached-refresh-token', username: 'student@example.test' };
-    await expect(restoreSession()).resolves.toBe('current-token');
+    await expect(restoreSession()).resolves.toEqual({ status: 'authenticated', token: 'current-token' });
     expect(mocks.setRefreshable).toHaveBeenCalledWith(mocks.cognitoCached);
   });
 
@@ -98,14 +111,58 @@ describe('Cognito session restoration', () => {
     mocks.stored = { idToken: 'expired-token', refreshToken: 'refresh-token', username: 'student@example.test' };
     mocks.expiration = 0;
     mocks.refreshError = Object.assign(new Error('Refresh Token has expired'), { code: 'NotAuthorizedException' });
-    await expect(restoreSession()).resolves.toBeUndefined();
+    await expect(restoreSession()).resolves.toEqual({ status: 'signed_out', reason: 'rejected' });
     expect(mocks.clear).toHaveBeenCalledOnce();
   });
 
   it('does not keep a legacy expired token that cannot be refreshed', async () => {
     mocks.legacy = 'expired-legacy-token';
     mocks.expiration = 0;
-    await expect(restoreSession()).resolves.toBeUndefined();
-    expect(mocks.clear).toHaveBeenCalledOnce();
+    await expect(restoreSession()).resolves.toEqual({ status: 'signed_out', reason: 'incomplete' });
+    expect(mocks.clearLegacy).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a valid-looking legacy token without a refresh credential', async () => {
+    mocks.legacy = 'unverifiable-legacy-token';
+    await expect(restoreSession()).resolves.toEqual({ status: 'signed_out', reason: 'incomplete' });
+    expect(mocks.clearLegacy).toHaveBeenCalledOnce();
+    expect(mocks.clear).not.toHaveBeenCalled();
+  });
+
+  it('preserves storage and returns a retryable outcome when refresh fails transiently', async () => {
+    mocks.stored = { idToken: 'expired-token', refreshToken: 'refresh-token', username: 'student@example.test' };
+    mocks.expiration = 0;
+    mocks.refreshError = new Error('Network request failed');
+    await expect(restoreSession()).resolves.toEqual({
+      status: 'temporarily_unavailable', message: 'Check your connection and try again.',
+    });
+    expect(mocks.clear).not.toHaveBeenCalled();
+  });
+
+  it('returns a retryable outcome when device storage is temporarily unavailable', async () => {
+    mocks.storageError = new Error('Storage unavailable');
+    await expect(restoreSession()).resolves.toEqual({
+      status: 'temporarily_unavailable', message: 'Check your connection and try again.',
+    });
+    expect(mocks.clear).not.toHaveBeenCalled();
+  });
+
+  it('shares one refresh between concurrent callers', async () => {
+    mocks.stored = { idToken: 'expired-token', refreshToken: 'refresh-token', username: 'student@example.test' };
+    mocks.expiration = 0;
+    const [first, second] = await Promise.all([restoreSession(), restoreSession()]);
+    expect(first).toEqual({ status: 'authenticated', token: 'fresh-token' });
+    expect(second).toEqual(first);
+    expect(mocks.refreshCalls).toBe(1);
+  });
+
+  it('persists the fallback refresh token when Cognito omits it', async () => {
+    mocks.stored = { idToken: 'expired-token', refreshToken: 'fallback-token', username: 'student@example.test' };
+    mocks.expiration = 0;
+    mocks.returnedRefreshToken = '';
+    await restoreSession();
+    expect(mocks.setRefreshable).toHaveBeenCalledWith({
+      idToken: 'fresh-token', refreshToken: 'fallback-token', username: 'student@example.test',
+    });
   });
 });

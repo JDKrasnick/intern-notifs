@@ -98,7 +98,7 @@ describe('CDK stack', () => {
     template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
       BatchSize: 10,
       FunctionResponseTypes: ['ReportBatchItemFailures'],
-      ScalingConfig: { MaximumConcurrency: 4 },
+      ScalingConfig: { MaximumConcurrency: SOURCE_POLL_CADENCE.workerMaxConcurrency },
     });
     template.hasResourceProperties('AWS::Lambda::Function', { Timeout: 120 });
     expect(snapshotTemplate(template.toJSON())).toMatchSnapshot();
@@ -110,7 +110,7 @@ describe('CDK stack', () => {
     template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
       BatchSize: 10,
       FunctionResponseTypes: ['ReportBatchItemFailures'],
-      ScalingConfig: { MaximumConcurrency: 4 },
+      ScalingConfig: { MaximumConcurrency: SOURCE_POLL_CADENCE.workerMaxConcurrency },
     });
     template.hasResourceProperties('AWS::Lambda::Function', { Timeout: 120 });
     template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
@@ -124,7 +124,7 @@ describe('CDK stack', () => {
     const app = new cdk.App(); const stack = new AshbyMonitoringStack(app, 'Ashby', { internshipsTableName: 'internships', usersTableName: 'users' }); const template = Template.fromStack(stack);
     template.resourceCountIs('AWS::SQS::Queue', 3);
     template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: SOURCE_POLL_CADENCE.schedules.ashby, State: 'ENABLED' });
-    template.hasResourceProperties('AWS::Lambda::EventSourceMapping', { BatchSize: 10, FunctionResponseTypes: ['ReportBatchItemFailures'], ScalingConfig: { MaximumConcurrency: 4 } });
+    template.hasResourceProperties('AWS::Lambda::EventSourceMapping', { BatchSize: 10, FunctionResponseTypes: ['ReportBatchItemFailures'], ScalingConfig: { MaximumConcurrency: SOURCE_POLL_CADENCE.workerMaxConcurrency } });
     template.hasResourceProperties('AWS::Lambda::Function', { Timeout: 120 });
     template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
     template.resourceCountIs('AWS::CloudWatch::Dashboard', 1);

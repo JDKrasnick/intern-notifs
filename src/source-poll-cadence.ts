@@ -4,6 +4,9 @@ import type { SourceCheckpoint, SourceHealth } from './types.js';
 export const SOURCE_POLL_CADENCE = {
   publishedIntervalMs: 30 * 60 * 1000,
   shadowIntervalMs: 3 * 60 * 60 * 1000,
+  // With the current account concurrency quota of 10, three provider fleets
+  // can use at most six worker executions and leave capacity for the public API.
+  workerMaxConcurrency: 2,
   schedules: {
     github: 'cron(7/10 * * * ? *)',
     greenhouse: 'cron(12,42 * * * ? *)',

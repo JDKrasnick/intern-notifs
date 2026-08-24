@@ -28,7 +28,7 @@ import * as WebBrowser from "expo-web-browser";
 import * as Notifications from "expo-notifications";
 import * as DocumentPicker from "expo-document-picker";
 import { Ionicons } from "@expo/vector-icons";
-import { api, responseCache, sessionStorage } from "./src/api";
+import { ApiError, api, authenticatedRead, responseCache, sessionStorage } from "./src/api";
 import { appendCatalogPage, type CatalogPage } from "./src/catalog";
 import { confirmEmail, restoreSession, signIn, signUp } from "./src/auth";
 import {
@@ -1411,6 +1411,17 @@ function LaunchInbox({
           description="You can restore them from Profile whenever you want."
         />
       }
+      ListFooterComponent={
+        visibleJobs.length ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={onViewAll}
+            style={[styles.inboxViewAll, styles.inboxViewAllFooter]}
+          >
+            <Text style={styles.inboxViewAllText}>View all internships</Text>
+          </TouchableOpacity>
+        ) : null
+      }
     />
   );
 }
@@ -1544,6 +1555,31 @@ function AccountLoadError({
   );
 }
 
+function SessionRecoveryError({
+  message,
+  onRetry,
+  onContinueBrowsing,
+}: {
+  message: string;
+  onRetry: () => void;
+  onContinueBrowsing: () => void;
+}) {
+  return (
+    <SafeAreaView style={styles.screen}>
+      <View style={styles.loadErrorScreen}>
+        <PageHeading
+          eyebrow="Connection"
+          title="We couldn’t refresh your sign-in."
+          description={message}
+        />
+        <ActionButton label="Try again" onPress={onRetry} />
+        <View style={styles.buttonGap} />
+        <ActionButton label="Continue browsing" variant="secondary" onPress={onContinueBrowsing} />
+      </View>
+    </SafeAreaView>
+  );
+}
+
 function ProfileLoadingSkeleton() {
   return (
     <ScrollView
@@ -1577,6 +1613,8 @@ function AppContent() {
   const tokenRef = useRef<string | undefined>(undefined);
   tokenRef.current = token;
   const [ready, setReady] = useState(false);
+  const [sessionRecoveryMessage, setSessionRecoveryMessage] = useState<string>();
+  const sessionRequestId = useRef(0);
   const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
   const [preferences, setPreferences] = useState<Preference>();
   const [preferenceError, setPreferenceError] = useState<string>();
@@ -1617,19 +1655,29 @@ function AppContent() {
   const catalogCursorRef = useRef<string | undefined>(undefined);
   const catalogRequestGeneration = useRef(0);
   const catalogRequestInFlight = useRef(false);
+  const recoverSession = async (forceRefresh = false) => {
+    const requestId = ++sessionRequestId.current;
+    const result = await restoreSession({ forceRefresh });
+    if (sessionRequestId.current !== requestId) return result;
+    if (result.status === "authenticated") {
+      tokenRef.current = result.token;
+      setToken(result.token);
+      setSessionRecoveryMessage(undefined);
+    } else if (result.status === "temporarily_unavailable") {
+      setSessionRecoveryMessage(result.message);
+    } else {
+      tokenRef.current = undefined;
+      setToken(undefined);
+      setSessionRecoveryMessage(undefined);
+    }
+    return result;
+  };
   useEffect(() => {
-    void restoreSession().then((value) => {
-      setToken(value ?? undefined);
-      setReady(true);
-    }).catch(() => setReady(true));
+    void recoverSession().finally(() => setReady(true));
   }, []);
   useEffect(() => {
-    if (!token) return;
     const refresh = () => {
-      void restoreSession().then((value) => {
-        if (value) setToken(value);
-        else setToken(undefined);
-      }).catch(() => undefined);
+      void recoverSession();
     };
     const interval = setInterval(refresh, 45 * 60 * 1_000);
     const appStateSubscription = AppState.addEventListener("change", (state) => {
@@ -1639,7 +1687,7 @@ function AppContent() {
       clearInterval(interval);
       appStateSubscription.remove();
     };
-  }, [token]);
+  }, []);
   useEffect(() => {
     let active = true;
     void responseCache.get<string[]>(hiddenRolesCacheKey).then((cached) => {
@@ -1746,17 +1794,29 @@ function AppContent() {
         }
       });
   };
-  const load = async (idToken = token) => {
-    if (!idToken) return;
+  const acceptRefreshedToken = (requestId: number, value: string) => {
+    if (sessionRequestId.current !== requestId) return;
+    tokenRef.current = value;
+    setToken(value);
+  };
+  const load = async () => {
+    if (!tokenRef.current) return;
     setPreferenceError(undefined);
+    const requestId = sessionRequestId.current;
     try {
       const [pref, apps] = await Promise.all([
-        api<Preference>("/me/preferences", idToken),
-        api<{ applications: Application[] }>("/me/applications", idToken),
+        authenticatedRead<Preference>("/me/preferences", { onToken: (value) => acceptRefreshedToken(requestId, value) }),
+        authenticatedRead<{ applications: Application[] }>("/me/applications", { onToken: (value) => acceptRefreshedToken(requestId, value) }),
       ]);
       setPreferences(pref);
       setApplications(apps.applications);
     } catch (error) {
+      if (error instanceof ApiError && error.kind === "unauthorized") {
+        tokenRef.current = undefined;
+        setToken(undefined);
+        setPreferenceError(undefined);
+        return;
+      }
       setPreferenceError(
         error instanceof Error
           ? error.message
@@ -1815,25 +1875,31 @@ function AppContent() {
       launchRequestId.current += 1;
       launchRequestToken.current = currentToken;
       setLaunchLoaded(true);
-      void restoreSession()
-        .then((usableToken) => {
-          if (!usableToken) {
-            pendingDestination.current = destination;
-            setToken(undefined);
-            return undefined;
-          }
-          tokenRef.current = usableToken;
-          setToken(usableToken);
-          return api<{ jobs: Job[]; total?: number }>(`/me/releases/${encodeURIComponent(destination.releaseId)}`, usableToken);
-        })
+      const sessionId = sessionRequestId.current;
+      void authenticatedRead<{ jobs: Job[]; total?: number }>(
+        `/me/releases/${encodeURIComponent(destination.releaseId)}`,
+        { onToken: (value) => acceptRefreshedToken(sessionId, value) },
+      )
         .then((release) => {
-          if (!release) return;
           const openedAt = new Date().toISOString();
           setLaunchInbox({ jobs: release.jobs, total: release.total ?? release.jobs.length, hasMore: false, previousOpenedAt: null, openedAt });
           setJobs((current) => [...release.jobs, ...current.filter((job) => !release.jobs.some((released) => released.jobId === job.jobId))]);
           setShowLaunchInbox(true);
         })
-        .catch((error) => Alert.alert("Could not open release", error instanceof Error ? error.message : "Please try again."));
+        .catch((error) => {
+          if (error instanceof ApiError && error.kind === "unauthorized") {
+            pendingDestination.current = destination;
+            tokenRef.current = undefined;
+            setToken(undefined);
+            return;
+          }
+          if (error instanceof ApiError && error.kind === "offline") {
+            pendingDestination.current = destination;
+            setSessionRecoveryMessage(error.message);
+            return;
+          }
+          Alert.alert("Could not open release", error instanceof Error ? error.message : "Please try again.");
+        });
       return;
     }
     routedJobId.current = destination.jobId;
@@ -2030,6 +2096,19 @@ function AppContent() {
   };
   if (!ready)
     return <AppLoadingSkeleton />;
+  if (sessionRecoveryMessage)
+    return (
+      <SessionRecoveryError
+        message={sessionRecoveryMessage}
+        onRetry={() => void recoverSession(true)}
+        onContinueBrowsing={() => {
+          sessionRequestId.current += 1;
+          tokenRef.current = undefined;
+          setToken(undefined);
+          setSessionRecoveryMessage(undefined);
+        }}
+      />
+    );
   if (!token)
     return (
       <GuestExperience
@@ -2061,6 +2140,8 @@ function AppContent() {
         onOpenJob={openCatalogJob}
         onSession={async (idToken) => {
           await sessionStorage.set(idToken);
+          sessionRequestId.current += 1;
+          tokenRef.current = idToken;
           setToken(idToken);
         }}
       />
@@ -2069,9 +2150,15 @@ function AppContent() {
     return (
       <AccountLoadError
         message={preferenceError}
-        onRetry={() => void load()}
+        onRetry={() => {
+          void recoverSession(true).then((result) => {
+            if (result?.status === "authenticated") void load();
+          });
+        }}
         onSignOut={() => {
+          sessionRequestId.current += 1;
           void sessionStorage.clear();
+          tokenRef.current = undefined;
           setToken(undefined);
         }}
       />
@@ -2282,7 +2369,9 @@ function AppContent() {
               onRestoreHiddenRole={restoreHiddenRole}
               onPreferencesChanged={(updated) => setPreferences(updated)}
               onSignOut={async () => {
+                sessionRequestId.current += 1;
                 await sessionStorage.clear();
+                tokenRef.current = undefined;
                 setToken(undefined);
               }}
             />
@@ -2965,7 +3054,7 @@ function Profile({
     draftRevisions.current.appSettings += 1;
   };
   useEffect(() => {
-    void api<Record<string, unknown> | null>("/me/profile", token)
+    void authenticatedRead<Record<string, unknown> | null>("/me/profile")
       .then((value) => setProfile(value ?? {}))
       .finally(() => setLoading(false));
   }, [token]);
@@ -4076,6 +4165,7 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   inboxViewAllText: { color: colors.signal, fontSize: 15, fontWeight: "700" },
+  inboxViewAllFooter: { alignSelf: "center", marginBottom: 12, marginTop: 24 },
   inboxSectionLabel: { color: colors.signal, fontSize: 12, fontWeight: "700", letterSpacing: 1, marginTop: 28 },
   newRolesLabel: { color: colors.signal, fontSize: 12, fontWeight: "700", letterSpacing: 1, marginTop: 8, marginBottom: 12 },
   caughtUpBlock: { marginTop: 20, marginBottom: 12 },
