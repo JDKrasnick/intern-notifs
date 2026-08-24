@@ -77,10 +77,14 @@ describe('CDK stack', () => {
       TreatMissingData: 'notBreaching',
     });
     template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      MetricName: 'Throttles', Statistic: 'Sum', Period: 60, Threshold: 1,
+      EvaluationPeriods: 1, TreatMissingData: 'notBreaching',
+    });
+    template.hasResourceProperties('AWS::CloudWatch::Alarm', {
       Namespace: 'InternNotifs/Catalog', MetricName: 'CatalogIndexMismatchCount', Threshold: 1,
       TreatMissingData: 'breaching', Dimensions: [{ Name: 'Service', Value: 'catalog' }],
     });
-    template.resourceCountIs('AWS::CloudWatch::Alarm', 7);
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 8);
   });
   it('queues Greenhouse boards every half hour with bounded worker concurrency', () => {
     const app = new cdk.App(); const stack = new GreenhouseMonitoringStack(app, 'Greenhouse', { internshipsTableName: 'internships', usersTableName: 'users', emailAddress: 'me@example.com' }); const template = Template.fromStack(stack);

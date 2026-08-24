@@ -1200,6 +1200,28 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
       },
       "Type": "AWS::IAM::Policy",
     },
+    "PublicApiThrottlesAlarmB46224B5": {
+      "Properties": {
+        "AlarmDescription": "The public mobile API was throttled by the regional Lambda concurrency limit.",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": {
+              "Ref": "PublicApiC8293BC5",
+            },
+          },
+        ],
+        "EvaluationPeriods": 1,
+        "MetricName": "Throttles",
+        "Namespace": "AWS/Lambda",
+        "Period": 60,
+        "Statistic": "Sum",
+        "Threshold": 1,
+        "TreatMissingData": "notBreaching",
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+    },
     "PublicHttpApi954A824B": {
       "Properties": {
         "CorsConfiguration": {

@@ -3,14 +3,23 @@ import { publicConfig } from './public-config';
 
 const baseUrl = publicConfig.apiUrl.replace(/\/$/, '');
 const requestTimeoutMs = 12_000;
+const readRetryDelaysMs = [250, 500, 1_000];
+const retryableReadStatuses = new Set([429, 502, 503, 504]);
 
-export async function api<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
-  if (!baseUrl) throw new Error('EXPO_PUBLIC_API_URL is not configured');
+function isReadRequest(init: RequestInit) {
+  const method = (init.method ?? 'GET').toUpperCase();
+  return method === 'GET' || method === 'HEAD';
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function fetchOnce(path: string, token: string, init: RequestInit) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-  let response: Response;
   try {
-    response = await fetch(`${baseUrl}${path}`, {
+    return await fetch(`${baseUrl}${path}`, {
       ...init,
       signal: controller.signal,
       headers: {
@@ -26,6 +35,18 @@ export async function api<T>(path: string, token: string, init: RequestInit = {}
     throw error;
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+export async function api<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
+  if (!baseUrl) throw new Error('EXPO_PUBLIC_API_URL is not configured');
+  let response = await fetchOnce(path, token, init);
+  if (isReadRequest(init)) {
+    for (const delay of readRetryDelaysMs) {
+      if (!retryableReadStatuses.has(response.status)) break;
+      await wait(delay);
+      response = await fetchOnce(path, token, init);
+    }
   }
   if (response.status === 204) return undefined as T;
   const data = await response.json() as T & { message?: string };

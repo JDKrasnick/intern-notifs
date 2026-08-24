@@ -142,6 +142,13 @@ export class InternNotifsStack extends cdk.Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       alarmDescription: 'The scheduled poll/digest Lambda exceeded three minutes and is approaching its four-minute timeout.',
     });
+    new cloudwatch.Alarm(this, 'PublicApiThrottlesAlarm', {
+      metric: apiHandler.metricThrottles({ period: cdk.Duration.minutes(1), statistic: 'Sum' }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      alarmDescription: 'The public mobile API was throttled by the regional Lambda concurrency limit.',
+    });
     new cloudwatch.Alarm(this, 'CatalogIndexMismatchAlarm', {
       metric: new cloudwatch.Metric({
         namespace: 'InternNotifs/Catalog', metricName: 'CatalogIndexMismatchCount',
