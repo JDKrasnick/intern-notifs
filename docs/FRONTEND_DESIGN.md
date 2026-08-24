@@ -203,15 +203,18 @@ Every screen follows these rules. They are as important as colors and type.
 
 ## Alert settings and application progress
 
-Alert settings live in the **Job preferences** destination. Keep that destination as one focused sequence; do not split it into another maze of sub-screens:
+Role matching and alert delivery settings live in the **Job preferences** destination. Keep that destination as one focused sequence; do not split it into another maze of sub-screens:
 
 1. Alert permission toggle and role/keyword filters.
 2. Company type: FAANG, startups, normal companies, or every company.
 3. Optional exclusions for source-marked U.S.-citizenship and advanced-degree requirements. Do not add a sponsorship filter.
 4. Delivery timing: immediate or daily digest.
 5. Quiet hours: start, end, and timezone.
-6. Wording templates with a dark live notification preview.
-7. Application reminders and a follow-up interval.
+
+Notification presentation and application follow-up settings live in **App & account**:
+
+1. Wording templates with a dark live notification preview.
+2. Application reminders and a follow-up interval.
 
 Onboarding must always offer **Continue without alerts**. It may request notification permission only after the user deliberately enables the alert switch and confirms the setup action. If permission is denied, preserve the role preferences, show an inline explanation with a retry action, and never block access to the feed.
 

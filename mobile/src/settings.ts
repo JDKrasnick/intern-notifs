@@ -24,6 +24,21 @@ export const settingsDestinations = [
 
 export type SettingsDestination = "home" | (typeof settingsDestinations)[number]["id"];
 
+export type SettingsDraftRevisions = {
+  jobPreferences: number;
+  appSettings: number;
+};
+
+export function settingsDraftSyncPlan(
+  current: SettingsDraftRevisions,
+  synced: SettingsDraftRevisions,
+) {
+  return {
+    jobPreferences: current.jobPreferences === synced.jobPreferences,
+    appSettings: current.appSettings === synced.appSettings,
+  };
+}
+
 type QuietHours = { start: string; end: string; timezone: string };
 
 export function jobPreferencesPayload<TFilter>(draft: {

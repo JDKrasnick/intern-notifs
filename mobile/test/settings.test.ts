@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   appSettingsPayload,
   jobPreferencesPayload,
+  settingsDraftSyncPlan,
   settingsDestinations,
 } from "../src/settings.js";
 
@@ -46,5 +47,23 @@ describe("profile settings navigation", () => {
     expect(appUpdate).not.toHaveProperty("alertsEnabled");
     expect(appUpdate.alertSettings).not.toHaveProperty("delivery");
     expect(appUpdate.alertSettings).not.toHaveProperty("quietHours");
+  });
+
+  it("does not resynchronize a dirty draft when the other destination saves", () => {
+    expect(settingsDraftSyncPlan(
+      { jobPreferences: 1, appSettings: 0 },
+      { jobPreferences: 0, appSettings: 0 },
+    )).toEqual({
+      jobPreferences: false,
+      appSettings: true,
+    });
+
+    expect(settingsDraftSyncPlan(
+      { jobPreferences: 1, appSettings: 2 },
+      { jobPreferences: 1, appSettings: 1 },
+    )).toEqual({
+      jobPreferences: true,
+      appSettings: false,
+    });
   });
 });
