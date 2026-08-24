@@ -27,6 +27,7 @@ The detailed product tracker is [`docs/product-roadmap.md`](docs/product-roadmap
 - Make small, atomic or medium-sized commits and keep CI green. Preserve unrelated dirty working-tree changes.
 - Use AWS through the configured `intern-notifs` assumed role in the CLI; validate the active principal with `aws sts get-caller-identity`. Never use root credentials or commit credentials.
 - The owner handles Apple/App Store Connect UI and physical-device testing when required. Agents can launch EAS builds and submissions after approval.
+- After using the iPhone Simulator, shut down any booted simulator and quit the Simulator app before finishing unless the owner asks to leave it running; it consumes significant memory.
 
 ## Read before release work
 
