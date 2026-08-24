@@ -23,3 +23,35 @@ export const settingsDestinations = [
 ] as const;
 
 export type SettingsDestination = "home" | (typeof settingsDestinations)[number]["id"];
+
+type QuietHours = { start: string; end: string; timezone: string };
+
+export function jobPreferencesPayload<TFilter>(draft: {
+  filter: TFilter;
+  alertsEnabled: boolean;
+  delivery: "immediate" | "daily-digest";
+  quietHours: QuietHours;
+}) {
+  return {
+    filter: draft.filter,
+    alertsEnabled: draft.alertsEnabled,
+    alertSettings: {
+      delivery: draft.delivery,
+      quietHours: draft.quietHours,
+    },
+  };
+}
+
+export function appSettingsPayload<TPush>(draft: {
+  applicationReminders: boolean;
+  followUpDays: number;
+  push: TPush;
+}) {
+  return {
+    alertSettings: {
+      applicationReminders: draft.applicationReminders,
+      followUpDays: draft.followUpDays,
+    },
+    push: draft.push,
+  };
+}

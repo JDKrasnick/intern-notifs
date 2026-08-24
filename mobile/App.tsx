@@ -3,6 +3,7 @@ import {
   AccessibilityInfo,
   Alert,
   Animated,
+  BackHandler,
   Easing,
   FlatList,
   InteractionManager,
@@ -52,7 +53,12 @@ import {
   type JobRouteState,
 } from "./src/job-detail";
 import { resolveApplicationJob, type ApplicationJobSummary } from "./src/application";
-import { settingsDestinations, type SettingsDestination } from "./src/settings";
+import {
+  appSettingsPayload,
+  jobPreferencesPayload,
+  settingsDestinations,
+  type SettingsDestination,
+} from "./src/settings";
 
 type Job = {
   jobId: string;
@@ -2861,8 +2867,12 @@ function Profile({
   const [roleAliases, setRoleAliases] = useState(
     aliasesToText(preferences.push?.roleAbbreviations),
   );
-  const [savingAlerts, setSavingAlerts] = useState(false);
-  const [alertFeedback, setAlertFeedback] = useState<SaveFeedbackState>({
+  const [savingJobPreferences, setSavingJobPreferences] = useState(false);
+  const [jobPreferenceFeedback, setJobPreferenceFeedback] = useState<SaveFeedbackState>({
+    kind: "idle",
+  });
+  const [savingAppSettings, setSavingAppSettings] = useState(false);
+  const [appSettingsFeedback, setAppSettingsFeedback] = useState<SaveFeedbackState>({
     kind: "idle",
   });
   const [savingProfile, setSavingProfile] = useState(false);
@@ -2899,6 +2909,14 @@ function Profile({
     setDescriptionTemplate(preferences.push?.descriptionTemplate ?? "");
     setRoleAliases(aliasesToText(preferences.push?.roleAbbreviations));
   }, [preferences]);
+  useEffect(() => {
+    if (destination === "home") return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      setDestination("home");
+      return true;
+    });
+    return () => subscription.remove();
+  }, [destination]);
   if (destination === "home") return <SettingsHome onOpen={setDestination} />;
   if (loading && destination === "user-info") return <ProfileLoadingSkeleton />;
   const contact = profile.contact as
@@ -2989,15 +3007,15 @@ function Profile({
       setSavingProfile(false);
     }
   };
-  const saveAlertPreferences = async () => {
-    setSavingAlerts(true);
-    setAlertFeedback({ kind: "saving", message: "Saving alert settings…" });
+  const saveJobPreferences = async () => {
+    setSavingJobPreferences(true);
+    setJobPreferenceFeedback({ kind: "saving", message: "Saving job preferences…" });
     try {
       if (alertsEnabled) {
         const registration = await registerForJobAlerts(token);
         if (registration.status !== "registered") {
           setNotificationsBlocked(registration.status === "denied");
-          setAlertFeedback({
+          setJobPreferenceFeedback({
             kind: "error",
             message: registration.status === "denied"
               ? "Notifications are off for InternNotifs. Enable them in your device settings, then try again."
@@ -3007,6 +3025,43 @@ function Profile({
         }
       }
       setNotificationsBlocked(false);
+      const updated = await api<Preference>("/me/preferences", token, {
+        method: "PUT",
+        body: JSON.stringify(jobPreferencesPayload({
+          filter: {
+            includeCategories,
+            includeKeywords: commaList(includeKeywords),
+            excludeCategories,
+            excludeKeywords: commaList(excludeKeywords),
+            includeEmployerCategories,
+            excludeUsCitizenshipRequired,
+            excludeAdvancedDegreeRequired,
+          },
+          alertsEnabled,
+          delivery,
+          quietHours: {
+            start: quietStart.trim(),
+            end: quietEnd.trim(),
+            timezone: quietTimezone.trim(),
+          },
+        })),
+      });
+      onPreferencesChanged(updated);
+      setJobPreferenceFeedback({ kind: "success", message: "Job preferences saved." });
+    } catch (error) {
+      setJobPreferenceFeedback({
+        kind: "error",
+        message:
+          error instanceof Error ? error.message : "Job preferences could not be saved.",
+      });
+    } finally {
+      setSavingJobPreferences(false);
+    }
+  };
+  const saveAppSettings = async () => {
+    setSavingAppSettings(true);
+    setAppSettingsFeedback({ kind: "saving", message: "Saving app settings…" });
+    try {
       const parsedFollowUpDays = Number(followUpDays);
       if (!Number.isInteger(parsedFollowUpDays) || parsedFollowUpDays < 1 || parsedFollowUpDays > 30) {
         throw new Error("Follow-up reminders must be scheduled 1 to 30 days after an update.");
@@ -3023,40 +3078,22 @@ function Profile({
       };
       const updated = await api<Preference>("/me/preferences", token, {
         method: "PUT",
-        body: JSON.stringify({
-          filter: {
-            includeCategories,
-            includeKeywords: commaList(includeKeywords),
-            excludeCategories,
-            excludeKeywords: commaList(excludeKeywords),
-            includeEmployerCategories,
-            excludeUsCitizenshipRequired,
-            excludeAdvancedDegreeRequired,
-          },
-          alertsEnabled,
-          alertSettings: {
-            delivery,
-            quietHours: {
-              start: quietStart.trim(),
-              end: quietEnd.trim(),
-              timezone: quietTimezone.trim(),
-            },
-            applicationReminders,
-            followUpDays: parsedFollowUpDays,
-          },
+        body: JSON.stringify(appSettingsPayload({
+          applicationReminders,
+          followUpDays: parsedFollowUpDays,
           push,
-        }),
+        })),
       });
       onPreferencesChanged(updated);
-      setAlertFeedback({ kind: "success", message: "Alert settings saved." });
+      setAppSettingsFeedback({ kind: "success", message: "App settings saved." });
     } catch (error) {
-      setAlertFeedback({
+      setAppSettingsFeedback({
         kind: "error",
         message:
-          error instanceof Error ? error.message : "Alert settings could not be saved.",
+          error instanceof Error ? error.message : "App settings could not be saved.",
       });
     } finally {
-      setSavingAlerts(false);
+      setSavingAppSettings(false);
     }
   };
   const deleteAccount = () =>
@@ -3437,13 +3474,13 @@ function Profile({
         placeholderTextColor={colors.placeholder}
       />
       <ActionButton
-        label={savingAlerts ? "Saving…" : "Save job preferences"}
-        disabled={savingAlerts}
-        onPress={() => void saveAlertPreferences()}
+        label={savingJobPreferences ? "Saving…" : "Save job preferences"}
+        disabled={savingJobPreferences}
+        onPress={() => void saveJobPreferences()}
       />
       <SaveFeedback
-        state={alertFeedback}
-        onRetry={() => void saveAlertPreferences()}
+        state={jobPreferenceFeedback}
+        onRetry={() => void saveJobPreferences()}
       />
       {notificationsBlocked ? (
         <>
@@ -3531,13 +3568,13 @@ function Profile({
         </Text>
       </View>
       <ActionButton
-        label={savingAlerts ? "Saving…" : "Save app settings"}
-        disabled={savingAlerts}
-        onPress={() => void saveAlertPreferences()}
+        label={savingAppSettings ? "Saving…" : "Save app settings"}
+        disabled={savingAppSettings}
+        onPress={() => void saveAppSettings()}
       />
       <SaveFeedback
-        state={alertFeedback}
-        onRetry={() => void saveAlertPreferences()}
+        state={appSettingsFeedback}
+        onRetry={() => void saveAppSettings()}
       />
       {notificationsBlocked ? (
         <>
