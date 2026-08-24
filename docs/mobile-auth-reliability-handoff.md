@@ -1,7 +1,9 @@
 # Mobile authentication and notification reliability handoff
 
-Status: investigation complete; fixes not yet implemented  
-Last updated: 2026-08-23  
+Status: investigation complete; fixes not yet implemented
+
+Last updated: 2026-08-23
+
 Relevant branch commit: `7df22f96823cbc24dd3c38835753ea4b8d0e5966`
 
 ## Objective
