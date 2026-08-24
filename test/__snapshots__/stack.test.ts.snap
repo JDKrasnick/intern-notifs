@@ -3914,7 +3914,7 @@ exports[`CDK stack > queues Greenhouse boards every half hour with bounded worke
           "ReportBatchItemFailures",
         ],
         "ScalingConfig": {
-          "MaximumConcurrency": 4,
+          "MaximumConcurrency": 2,
         },
       },
       "Type": "AWS::Lambda::EventSourceMapping",
@@ -4964,7 +4964,7 @@ exports[`CDK stack > queues Lever boards every half hour with bounded worker con
           "ReportBatchItemFailures",
         ],
         "ScalingConfig": {
-          "MaximumConcurrency": 4,
+          "MaximumConcurrency": 2,
         },
       },
       "Type": "AWS::Lambda::EventSourceMapping",

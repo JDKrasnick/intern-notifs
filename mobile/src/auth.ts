@@ -1,10 +1,16 @@
 import { AuthenticationDetails, CognitoIdToken, CognitoRefreshToken, CognitoUser, CognitoUserPool, type CognitoUserSession } from 'amazon-cognito-identity-js';
 import { publicConfig } from './public-config';
-import { sessionStorage } from './api';
+import { sessionStorage } from './session-storage';
 
 const { cognitoUserPoolId: userPoolId, cognitoClientId: clientId } = publicConfig;
 function pool() { if (!userPoolId || !clientId) throw new Error('Cognito is not configured'); return new CognitoUserPool({ UserPoolId: userPoolId, ClientId: clientId }); }
 const refreshMarginSeconds = 5 * 60;
+let refreshInFlight: Promise<SessionRestoreResult> | undefined;
+
+export type SessionRestoreResult =
+  | { status: 'authenticated'; token: string }
+  | { status: 'signed_out'; reason: 'missing' | 'rejected' | 'incomplete' }
+  | { status: 'temporarily_unavailable'; message: string };
 
 function normalizedEmail(email: string) { return email.trim().toLowerCase(); }
 
@@ -39,28 +45,55 @@ function refreshTokenRejected(error: unknown) {
   return value?.code === 'NotAuthorizedException' || value?.name === 'NotAuthorizedException';
 }
 
-/** Restores a usable ID token and refreshes it before account reads can fail. */
-export async function restoreSession(): Promise<string | undefined> {
+function temporaryRefreshMessage(error: unknown) {
+  const name = (error as { name?: string })?.name;
+  if (name === 'TimeoutError' || name === 'AbortError') return 'The request timed out. Check your connection and try again.';
+  return 'Check your connection and try again.';
+}
+
+async function restoreSessionOnce(forceRefresh: boolean): Promise<SessionRestoreResult> {
   let stored = await sessionStorage.getRefreshable();
   const requiresMigration = !stored;
   stored ??= await sessionStorage.getCognitoCached();
   if (stored) {
-    if (!idTokenNeedsRefresh(stored.idToken)) {
+    if (!forceRefresh && !idTokenNeedsRefresh(stored.idToken)) {
       if (requiresMigration) await sessionStorage.setRefreshable(stored);
-      return stored.idToken;
+      return { status: 'authenticated', token: stored.idToken };
     }
-    try {
-      return await refresh(stored.username, stored.refreshToken);
-    } catch (error) {
-      if (!refreshTokenRejected(error)) throw error;
-      await sessionStorage.clear();
-      return undefined;
+    if (!refreshInFlight) {
+      const operation = (async (): Promise<SessionRestoreResult> => {
+        try {
+          return { status: 'authenticated', token: await refresh(stored.username, stored.refreshToken) };
+        } catch (error) {
+          if (refreshTokenRejected(error)) {
+            await sessionStorage.clear();
+            return { status: 'signed_out', reason: 'rejected' };
+          }
+          return { status: 'temporarily_unavailable', message: temporaryRefreshMessage(error) };
+        }
+      })();
+      refreshInFlight = operation;
+      const clearFlight = () => {
+        if (refreshInFlight === operation) refreshInFlight = undefined;
+      };
+      void operation.then(clearFlight, clearFlight);
     }
+    return refreshInFlight;
   }
   const legacyToken = await sessionStorage.get();
-  if (legacyToken && !idTokenNeedsRefresh(legacyToken)) return legacyToken;
-  if (legacyToken) await sessionStorage.clear();
-  return undefined;
+  if (legacyToken) {
+    await sessionStorage.clearLegacy();
+    return { status: 'signed_out', reason: 'incomplete' };
+  }
+  return { status: 'signed_out', reason: 'missing' };
+}
+
+/** Restores a usable session. Concurrent refreshes share one Cognito request. */
+export function restoreSession(options: { forceRefresh?: boolean } = {}): Promise<SessionRestoreResult> {
+  return restoreSessionOnce(Boolean(options.forceRefresh)).catch(() => ({
+    status: 'temporarily_unavailable',
+    message: 'Check your connection and try again.',
+  }));
 }
 
 export function signIn(email: string, password: string): Promise<string> {

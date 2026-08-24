@@ -71,7 +71,7 @@ export class AshbyMonitoringStack extends cdk.Stack {
     });
     worker.addEventSource(new lambdaEventSources.SqsEventSource(queue, {
       batchSize: 10,
-      maxConcurrency: 4,
+      maxConcurrency: SOURCE_POLL_CADENCE.workerMaxConcurrency,
       reportBatchItemFailures: true,
     }));
     internships.grantReadWriteData(worker);
