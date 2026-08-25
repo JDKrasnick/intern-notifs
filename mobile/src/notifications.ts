@@ -3,7 +3,7 @@ import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { api } from './api';
+import { installationApi } from './installation';
 
 Notifications.setNotificationHandler({ handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false }) });
 
@@ -69,7 +69,7 @@ export async function clearApplicationFollowUp(applicationId: string) {
   await AsyncStorage.removeItem(key);
 }
 
-export async function registerForJobAlerts(idToken: string): Promise<JobAlertRegistration> {
+export async function registerForJobAlerts(): Promise<JobAlertRegistration> {
   if (!Device.isDevice) return { status: 'unsupported' } as const;
   // Expo requires an Android channel before requesting a push token. Creating
   // an existing channel is safe and preserves any choices the user made for it.
@@ -85,6 +85,6 @@ export async function registerForJobAlerts(idToken: string): Promise<JobAlertReg
   const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
   if (!projectId) throw new Error('Push notifications are not configured for this build yet.');
   const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
-  await api('/me/devices', idToken, { method: 'POST', body: JSON.stringify({ token, platform: Platform.OS }) });
+  await installationApi('/devices', { method: 'POST', body: JSON.stringify({ token, platform: Platform.OS }) });
   return { status: 'registered', token } as const;
 }

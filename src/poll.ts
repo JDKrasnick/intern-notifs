@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { assessApplicationPageForListing, canonicalApplicationUrl, type ApplicationUrlValidator } from './core/application-url.js';
 import { boardReference, reachabilityFromFailure, reachabilityFromSignals, verifyApplication, type AttributionBasis, type Reachability } from './core/application-verification.js';
-import { inferSeason } from './core/early-career.js';
+import { inferSeason, isPastSeason } from './core/early-career.js';
 import { normalizeUrl } from './core/normalize.js';
 import { buildPostingIdentity } from './identity/posting.js';
 import { isTechnicalJob, type JobFilter } from './core/filters.js';
@@ -376,7 +376,8 @@ export class IngestionRunner {
         };
         const attribution = await this.attribute(listing);
         if (listing.seasonSource === 'source-default'
-          && existing?.applicationPageMetadataVersion === applicationPageMetadataVersion) {
+          && existing?.applicationPageMetadataVersion === applicationPageMetadataVersion
+          && !isPastSeason(existing.season, this.now())) {
           listing = { ...listing, season: existing.season, seasonSource: 'posting' };
         }
         let reachability: Reachability = 'implied';

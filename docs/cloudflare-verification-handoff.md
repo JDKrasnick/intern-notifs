@@ -27,7 +27,7 @@ Wait for Apple to finish processing build 20, then install it on a physical iPho
 
 ## Known follow-ups
 
-- `canadian-tech-2027` is intentionally dormant and currently returns 404 for its missing 2027 README. Other source fleets completed the backfill.
+- `canadian-tech-2027` now reads the live `Canadian-Tech-Internships-2027` repository alongside the other 2027 boards.
 - Before public beta, configure verification email delivery and disable `AUTH_DEV_MODE`.
 - AWS is retained for rollback/export and has not been deleted.
 

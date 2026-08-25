@@ -2,15 +2,16 @@
 
 ## Status and invariants
 
-The Cloudflare replacement is implemented and locally verified, but it is not
-the production backend until infrastructure is provisioned, D1 is initialized,
-and the mobile API URL is changed. AWS stays untouched until its suspended
-account is reactivated and any useful development data is exported.
+The Cloudflare replacement is the active development backend and the production
+EAS environment targets its Worker. AWS stays untouched until its suspended
+account is reactivated and any useful development data is exported. Existing
+Cognito passwords cannot be migrated, so people who want account-backed data
+must create a fresh InternNotifs account; browsing and device alerts need none.
 
 The migration preserves these product rules:
 
 - the catalog remains public;
-- accounts are required only for alerts, profiles, documents, and application tracking;
+- anonymous installations own push alerts and settings; accounts are required only for profiles, documents, and synced application tracking;
 - employer applications still hand off to the official form;
 - private documents remain accessible only to their owner;
 - source admission, reconciliation, notification, and operator-control behavior remains provider-neutral.
@@ -171,3 +172,32 @@ endpoint; it does not delete Cloudflare or AWS data.
 Only after the observation window and an owner-approved export should AWS
 schedules be disabled. Destruction of retained DynamoDB tables, Cognito users,
 or S3 documents is a separate, explicit operation and is not part of cutover.
+
+## Recover notification markers consumed before device registration
+
+The notification drain leaves jobs pending while D1 has no user with both an
+active Expo device and completed, enabled alert preferences. If an older Worker
+already consumed markers without creating a delivery receipt, use the guarded
+operations endpoint after deploying the fix and completing the physical-device
+alert check.
+
+First preview one bounded batch. Keep the shared secret in the shell and out of
+history, logs, and source control:
+
+```bash
+read -s OPERATIONS_SHARED_SECRET
+curl --fail-with-body --silent --show-error \
+  -H "X-Operations-Key: $OPERATIONS_SHARED_SECRET" \
+  -H 'Content-Type: application/json' \
+  -d '{"since":"2026-08-25T00:00:00.000Z","limit":10}' \
+  https://intern-notifs.jdkrasnick.workers.dev/internal/recover-notifications
+unset OPERATIONS_SHARED_SECRET
+```
+
+The preview returns `candidates` and changes nothing. Re-run the same request
+with `"apply":true` and `"expectedCount":<the exact preview count>` only after
+confirming at least one opted-in physical device is registered. The operation
+requeues only open jobs that have a durable notification event and no delivery
+receipt for any device; the expected-count guard rejects a changed candidate
+set. Use small batches to avoid a burst of old alerts, and preview again before
+each batch until it returns zero.

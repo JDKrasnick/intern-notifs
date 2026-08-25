@@ -116,7 +116,7 @@ describe('verification in the poll', () => {
     expect(fetched).toEqual(['https://job-boards.greenhouse.io/unknown-board/jobs/1']);
   });
 
-  it('replaces a list-wide season with season evidence from the employer page', async () => {
+  it('replaces current list-wide season with employer evidence, then rolls a past cycle forward', async () => {
     const store = new MemoryInternshipStore();
     await seeded(store);
     const rows = [listing({ season: 'summer-2027', seasonSource: 'source-default' })];
@@ -146,7 +146,7 @@ describe('verification in the poll', () => {
       async (url: string) => { refetched.push(url); return url; },
     ).run();
     expect(refetched).toEqual([]);
-    expect([...store.jobs.values()][0]?.season).toBe('summer-2026');
+    expect([...store.jobs.values()][0]?.season).toBe('summer-2027');
   });
 
   it('does not let employer-page enrichment override a season in the listing title', async () => {

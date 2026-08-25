@@ -18,7 +18,7 @@ describe('GitHub source adapters', () => {
     const calls: RequestInit[] = [];
     const adapter = new GitHubMarkdownAdapter({ id: 'fixture', owner: 'owner', repo: 'repo', documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }], fetchImpl: async (_url, init) => { calls.push(init ?? {}); return new Response(null, { status: 304 }); } });
     const result = await adapter.fetch({ sourceId: 'fixture', successfulFetches: 1, documentEtags: { 'README.md': '"abc"' } });
-    expect(result.notModified).toBe(true); expect(calls[0].headers).toEqual({ 'If-None-Match': '"abc"' });
+    expect(result).toMatchObject({ notModified: true, unchangedReason: 'not_modified' }); expect(calls[0].headers).toEqual({ 'If-None-Match': '"abc"' });
   });
   it('keeps a snapshot complete when two rows share one normalized application URL', async () => {
     const adapter = new GitHubMarkdownAdapter({

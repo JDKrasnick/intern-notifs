@@ -82,6 +82,7 @@ export class GitHubMarkdownAdapter implements SourceAdapter, SourceConnector {
         contentHash: previous?.contentHash ?? '',
         listings: [],
         notModified: true,
+        unchangedReason: 'not_modified',
         checkpoint: {
           ...previous,
           sourceId: this.id,
@@ -142,10 +143,12 @@ export class GitHubMarkdownAdapter implements SourceAdapter, SourceConnector {
 
 export const defaultSources: SourceAdapter[] = [
   new GitHubMarkdownAdapter({ id: 'vanshb03-summer-2027', owner: 'vanshb03', repo: 'Summer2027-Internships', documents: [{ path: 'README.md', branch: 'dev', season: 'summer-2027' }, { path: 'OFFSEASON_README.md', branch: 'dev', season: 'offseason-2027' }] }),
-  new GitHubMarkdownAdapter({ id: 'simplify-summer-2026', owner: 'SimplifyJobs', repo: 'Summer2026-Internships', documents: [{ path: 'README.md', branch: 'dev', season: 'summer-2026' }, { path: 'README-Off-Season.md', branch: 'dev', season: 'offseason-2026' }] }),
+  // Keep the legacy source ID so existing checkpoints and occurrences roll
+  // forward in place; the upstream repository and season are the 2027 cycle.
+  new GitHubMarkdownAdapter({ id: 'simplify-summer-2026', owner: 'SimplifyJobs', repo: 'Summer2027-Internships', documents: [{ path: 'README.md', branch: 'dev', season: 'summer-2027' }, { path: 'README-Off-Season.md', branch: 'dev', season: 'offseason-2027' }] }),
   new GitHubMarkdownAdapter({ id: 'zapply-2027', owner: 'zapplyjobs', repo: 'Internships-2027', documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }] }),
   new GitHubMarkdownAdapter({ id: 'speedyapply-2027-swe', owner: 'speedyapply', repo: '2027-SWE-College-Jobs', documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }, { path: 'INTERN_INTL.md', branch: 'main', season: 'summer-2027' }] }),
   new GitHubMarkdownAdapter({ id: 'speedyapply-2027-ai', owner: 'speedyapply', repo: '2027-AI-College-Jobs', documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }, { path: 'INTERN_INTL.md', branch: 'main', season: 'summer-2027' }] }),
   new GitHubMarkdownAdapter({ id: 'northwestern-fintech-2027-quant', owner: 'northwesternfintech', repo: '2027QuantInternships', documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }], parser: parseQuantInternshipMarkdown }),
-  new GitHubMarkdownAdapter({ id: 'canadian-tech-2027', owner: 'negarprh', repo: 'Canadian-Tech-Internships-2026', documents: [{ path: 'README-2027.md', branch: 'main', season: 'summer-2027' }] })
+  new GitHubMarkdownAdapter({ id: 'canadian-tech-2027', owner: 'negarprh', repo: 'Canadian-Tech-Internships-2027', documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }] })
 ];

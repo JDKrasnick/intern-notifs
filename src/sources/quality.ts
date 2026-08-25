@@ -171,7 +171,7 @@ export const sourceQualityPolicies: SourceQualityPolicy[] = [
   { id: 'speedyapply-2027-swe', sourceClass: 'curated' },
   { id: 'speedyapply-2027-ai', sourceClass: 'curated' },
   { id: 'northwestern-fintech-2027-quant', sourceClass: 'curated' },
-  { id: 'canadian-tech-2027', sourceClass: 'curated', dormant: true },
+  { id: 'canadian-tech-2027', sourceClass: 'curated' },
   ...reviewedLeverSources.map((source) => ({ id: source.id, sourceClass: 'lever' as const, leverSite: source.site })),
 ];
 
