@@ -180,16 +180,29 @@ AWS_PROFILE=intern-notifs npm run migrate:posting-identity -- \
 ```
 
 The apply is idempotent: alias claims converge on the preserved oldest job,
-receipt copies never overwrite an existing hardened claim, and legacy receipt
-rows remain available during rollback. After the infrastructure deployment,
+colliding receipt rows select the strongest delivery tombstone deterministically,
+and legacy receipt rows remain available during rollback. Application collisions
+retain the furthest workflow state rather than allowing a newer saved/applied
+alias to erase interview or offer progress. Catalog rewrites and duplicate
+deletes are conditional on the dry-run snapshot, so concurrent ingestion stops
+the apply and requires a fresh token instead of being overwritten. After the infrastructure deployment,
 wait for `CatalogGroupProjectionSchedule` or invoke the notifier once with
 `{"command":"refresh-catalog-groups"}`. Verify `GET /catalog?limit=1` and one
 returned `/catalog/groups/{groupId}` before enabling an owner cohort.
 Set the deployment parameter to a comma-separated list of reviewed Cognito user
-IDs for that cohort. Leave it blank to keep every user on legacy delivery; use
-`*` only after cohort measurement approves the global cutover:
+IDs for that cohort. The main stack publishes the same versioned cohort to
+`/intern-notifs/grouped-notification-user-ids`; the Greenhouse, Lever, and Ashby
+workers read that parameter so a cohort user cannot receive both legacy and
+grouped delivery. Leave it blank to keep every user on legacy delivery; use `*`
+only after cohort measurement approves the global cutover. Every legacy and
+grouped sender reads this same SSM value at runtime. First deploy the new code
+with an empty cohort, then deploy all three provider stacks. Wait for in-flight
+poll and delivery queues to drain before the final parameter-only activation so
+one discovery event cannot straddle the cohort boundary:
 
 ```bash
+npm run cdk -- deploy InternNotifs --parameters GroupedNotificationUserIds=
+npm run cdk -- deploy InternNotifsGreenhouse InternNotifsLever InternNotifsAshby
 npm run cdk -- deploy InternNotifs --parameters GroupedNotificationUserIds=OWNER_COGNITO_USER_ID
 ```
 

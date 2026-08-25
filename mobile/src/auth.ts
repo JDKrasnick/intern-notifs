@@ -6,6 +6,10 @@ const { cognitoUserPoolId: userPoolId, cognitoClientId: clientId } = publicConfi
 function pool() { if (!userPoolId || !clientId) throw new Error('Cognito is not configured'); return new CognitoUserPool({ UserPoolId: userPoolId, ClientId: clientId }); }
 const refreshMarginSeconds = 5 * 60;
 let refreshInFlight: Promise<SessionRestoreResult> | undefined;
+let refreshGeneration = -1;
+let authGeneration = 0;
+
+class StaleAuthenticationOperation extends Error {}
 
 export type SessionRestoreResult =
   | { status: 'authenticated'; token: string }
@@ -22,20 +26,21 @@ export function idTokenNeedsRefresh(token: string, now = () => Date.now()) {
   }
 }
 
-async function saveSession(username: string, session: CognitoUserSession, fallbackRefreshToken?: string) {
+async function saveSession(username: string, session: CognitoUserSession, fallbackRefreshToken?: string, expectedGeneration = authGeneration) {
   const idToken = session.getIdToken().getJwtToken();
   const refreshToken = session.getRefreshToken().getToken() || fallbackRefreshToken;
   if (!refreshToken) throw new Error('Cognito did not return a refresh token');
+  if (authGeneration !== expectedGeneration) throw new StaleAuthenticationOperation();
   await sessionStorage.setRefreshable({ idToken, refreshToken, username });
   return idToken;
 }
 
-function refresh(username: string, refreshToken: string) {
+function refresh(username: string, refreshToken: string, expectedGeneration: number) {
   return new Promise<string>((resolve, reject) => {
     const user = new CognitoUser({ Username: username, Pool: pool() });
     user.refreshSession(new CognitoRefreshToken({ RefreshToken: refreshToken }), (error, session) => {
       if (error) { reject(error); return; }
-      void saveSession(username, session as CognitoUserSession, refreshToken).then(resolve, reject);
+      void saveSession(username, session as CognitoUserSession, refreshToken, expectedGeneration).then(resolve, reject);
     });
   });
 }
@@ -52,20 +57,25 @@ function temporaryRefreshMessage(error: unknown) {
 }
 
 async function restoreSessionOnce(forceRefresh: boolean): Promise<SessionRestoreResult> {
+  const expectedGeneration = authGeneration;
   let stored = await sessionStorage.getRefreshable();
   const requiresMigration = !stored;
   stored ??= await sessionStorage.getCognitoCached();
+  if (authGeneration !== expectedGeneration) return { status: 'signed_out', reason: 'missing' };
   if (stored) {
     if (!forceRefresh && !idTokenNeedsRefresh(stored.idToken)) {
-      if (requiresMigration) await sessionStorage.setRefreshable(stored);
+      if (requiresMigration && authGeneration === expectedGeneration) await sessionStorage.setRefreshable(stored);
       return { status: 'authenticated', token: stored.idToken };
     }
-    if (!refreshInFlight) {
+    if (!refreshInFlight || refreshGeneration !== expectedGeneration) {
       const operation = (async (): Promise<SessionRestoreResult> => {
         try {
-          return { status: 'authenticated', token: await refresh(stored.username, stored.refreshToken) };
+          return { status: 'authenticated', token: await refresh(stored.username, stored.refreshToken, expectedGeneration) };
         } catch (error) {
+          if (error instanceof StaleAuthenticationOperation) return { status: 'signed_out', reason: 'missing' };
           if (refreshTokenRejected(error)) {
+            if (authGeneration !== expectedGeneration) return { status: 'signed_out', reason: 'missing' };
+            authGeneration += 1;
             await sessionStorage.clear();
             return { status: 'signed_out', reason: 'rejected' };
           }
@@ -73,6 +83,7 @@ async function restoreSessionOnce(forceRefresh: boolean): Promise<SessionRestore
         }
       })();
       refreshInFlight = operation;
+      refreshGeneration = expectedGeneration;
       const clearFlight = () => {
         if (refreshInFlight === operation) refreshInFlight = undefined;
       };
@@ -96,9 +107,26 @@ export function restoreSession(options: { forceRefresh?: boolean } = {}): Promis
   }));
 }
 
+/** Invalidates pending authentication work before deleting persisted credentials. */
+export async function clearSession(expectedIdToken?: string) {
+  const expectedGeneration = authGeneration;
+  if (expectedIdToken) {
+    const stored = await sessionStorage.getRefreshable();
+    if (authGeneration !== expectedGeneration || stored?.idToken !== expectedIdToken) return false;
+  }
+  authGeneration += 1;
+  refreshInFlight = undefined;
+  refreshGeneration = -1;
+  await sessionStorage.clear();
+  return true;
+}
+
 export function signIn(email: string, password: string): Promise<string> {
   const username = normalizedEmail(email);
-  return new Promise((resolve, reject) => new CognitoUser({ Username: username, Pool: pool() }).authenticateUser(new AuthenticationDetails({ Username: username, Password: password }), { onSuccess: (session) => { void saveSession(username, session).then(resolve, reject); }, onFailure: reject, newPasswordRequired: () => reject(new Error('Set a new password in the Cognito console before signing in.')) }));
+  const expectedGeneration = ++authGeneration;
+  refreshInFlight = undefined;
+  refreshGeneration = -1;
+  return new Promise((resolve, reject) => new CognitoUser({ Username: username, Pool: pool() }).authenticateUser(new AuthenticationDetails({ Username: username, Password: password }), { onSuccess: (session) => { void saveSession(username, session, undefined, expectedGeneration).then(resolve, reject); }, onFailure: reject, newPasswordRequired: () => reject(new Error('Set a new password in the Cognito console before signing in.')) }));
 }
 export function signUp(email: string, password: string): Promise<void> {
   return new Promise((resolve, reject) => pool().signUp(normalizedEmail(email), password, [], [], (error) => error ? reject(error) : resolve()));

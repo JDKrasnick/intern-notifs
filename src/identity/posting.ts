@@ -57,19 +57,19 @@ export function providerPostingReference(input: string): ProviderPostingReferenc
   const url = new URL(canonicalizePostingUrl(input));
   const host = url.hostname.replace(/^www\./, '');
   let match: RegExpExecArray | null;
-  if (host === 'job-boards.greenhouse.io' && (match = /^\/([^/]+)\/jobs\/(\d+)/i.exec(url.pathname))) {
+  if (host === 'job-boards.greenhouse.io' && (match = /^\/([^/]+)\/jobs\/(\d+)\/?$/i.exec(url.pathname))) {
     return { provider: 'greenhouse', tenant: match[1]!.toLowerCase(), postingId: match[2] };
   }
-  if (host === 'jobs.lever.co' && (match = /^\/([^/]+)\/([a-f0-9-]+)/i.exec(url.pathname))) {
+  if (host === 'jobs.lever.co' && (match = /^\/([^/]+)\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})(?:\/apply)?\/?$/i.exec(url.pathname))) {
     return { provider: 'lever', tenant: match[1]!.toLowerCase(), postingId: match[2]!.toLowerCase() };
   }
-  if (host === 'jobs.ashbyhq.com' && (match = /^\/([^/]+)\/([a-f0-9-]+)/i.exec(url.pathname))) {
+  if (host === 'jobs.ashbyhq.com' && (match = /^\/([^/]+)\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})(?:\/application)?\/?$/i.exec(url.pathname))) {
     return { provider: 'ashby', tenant: match[1]!.toLowerCase(), postingId: match[2]!.toLowerCase() };
   }
-  if ((host === 'lifeattiktok.com' || host === 'joinbytedance.com') && (match = /^\/(?:search|position)\/(\d+)/i.exec(url.pathname))) {
+  if ((host === 'lifeattiktok.com' || host === 'joinbytedance.com') && (match = /^\/(?:search|position)\/(\d+)(?:\/detail)?\/?$/i.exec(url.pathname))) {
     return { provider: 'bytedance', tenant: 'bytedance', postingId: match[1] };
   }
-  if (host === 'jobs.bytedance.com' && (match = /^\/[a-z-]+\/position\/(\d+)/i.exec(url.pathname))) {
+  if (host === 'jobs.bytedance.com' && (match = /^\/[a-z-]+\/position\/(\d+)(?:\/detail)?\/?$/i.exec(url.pathname))) {
     return { provider: 'bytedance', tenant: 'bytedance', postingId: match[1] };
   }
   if (host.endsWith('.myworkdayjobs.com') && (match = /_([^/_]+)\/?$/i.exec(url.pathname))) {

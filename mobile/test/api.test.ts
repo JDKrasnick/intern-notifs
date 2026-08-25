@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const authMocks = vi.hoisted(() => ({ restoreSession: vi.fn(), clear: vi.fn() }));
-vi.mock('../src/auth', () => ({ restoreSession: authMocks.restoreSession }));
+vi.mock('../src/auth', () => ({ restoreSession: authMocks.restoreSession, clearSession: authMocks.clear }));
 vi.mock('../src/session-storage', () => ({ sessionStorage: { clear: authMocks.clear } }));
 
 import { ApiError, api, authenticatedRead } from '../src/api';

@@ -26,8 +26,9 @@ describe('CDK stack', () => {
     template.resourceCountIs('AWS::Scheduler::Schedule', 5);
     template.resourceCountIs('AWS::SQS::Queue', 12);
     template.hasParameter('GroupedNotificationUserIds', { Type: 'String', Default: '' });
+    template.hasResourceProperties('AWS::SSM::Parameter', { Name: '/intern-notifs/grouped-notification-user-ids' });
     template.hasResourceProperties('AWS::Lambda::Function', {
-      Environment: { Variables: Match.objectLike({ GROUPED_NOTIFICATION_USER_IDS: { Ref: 'GroupedNotificationUserIds' } }) },
+      Environment: { Variables: Match.objectLike({ GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME: '/intern-notifs/grouped-notification-user-ids' }) },
     });
     template.hasResourceProperties('AWS::IAM::Role', { AssumeRolePolicyDocument: { Statement: [{ Condition: { StringEquals: { 'token.actions.githubusercontent.com:sub': 'repo:owner/repo:ref:refs/heads/main' } } }] } });
   }, 15_000);
@@ -105,6 +106,7 @@ describe('CDK stack', () => {
       ScalingConfig: { MaximumConcurrency: SOURCE_POLL_CADENCE.workerMaxConcurrency },
     });
     template.hasResourceProperties('AWS::Lambda::Function', { Timeout: 120 });
+    template.hasResourceProperties('AWS::Lambda::Function', { Environment: { Variables: Match.objectLike({ GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME: '/intern-notifs/grouped-notification-user-ids' }) } });
     expect(snapshotTemplate(template.toJSON())).toMatchSnapshot();
   }, 15_000);
   it('queues Lever boards every half hour with bounded worker concurrency', () => {
@@ -117,6 +119,7 @@ describe('CDK stack', () => {
       ScalingConfig: { MaximumConcurrency: SOURCE_POLL_CADENCE.workerMaxConcurrency },
     });
     template.hasResourceProperties('AWS::Lambda::Function', { Timeout: 120 });
+    template.hasResourceProperties('AWS::Lambda::Function', { Environment: { Variables: Match.objectLike({ GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME: '/intern-notifs/grouped-notification-user-ids' }) } });
     template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
     template.resourceCountIs('AWS::CloudWatch::Dashboard', 1);
     template.hasResourceProperties('AWS::CloudWatch::Alarm', {
@@ -130,6 +133,7 @@ describe('CDK stack', () => {
     template.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: SOURCE_POLL_CADENCE.schedules.ashby, State: 'ENABLED' });
     template.hasResourceProperties('AWS::Lambda::EventSourceMapping', { BatchSize: 10, FunctionResponseTypes: ['ReportBatchItemFailures'], ScalingConfig: { MaximumConcurrency: SOURCE_POLL_CADENCE.workerMaxConcurrency } });
     template.hasResourceProperties('AWS::Lambda::Function', { Timeout: 120 });
+    template.hasResourceProperties('AWS::Lambda::Function', { Environment: { Variables: Match.objectLike({ GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME: '/intern-notifs/grouped-notification-user-ids' }) } });
     template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
     template.resourceCountIs('AWS::CloudWatch::Dashboard', 1);
     template.hasResourceProperties('AWS::CloudWatch::Alarm', {

@@ -31,6 +31,10 @@ function catalogFilter(parameters: Record<string, string> | undefined): CatalogG
   return {
     ...(parameters?.q?.trim() ? { query: parameters.q.trim() } : {}),
     ...(parameters?.source ? { source: parameters.source as CatalogGroupFilter['source'] } : {}),
+    status: parameters?.status === 'closed' ? 'closed' : 'open',
+    ...(list('employerCategory', 'employerCategories')?.length ? { employerCategories: list('employerCategory', 'employerCategories') as CatalogGroupFilter['employerCategories'] } : {}),
+    ...(parameters?.hideUsCitizenshipRequired === 'true' ? { hideUsCitizenshipRequired: true } : {}),
+    ...(parameters?.hideAdvancedDegreeRequired === 'true' ? { hideAdvancedDegreeRequired: true } : {}),
     ...(list('discipline', 'disciplines')?.length ? { disciplines: list('discipline', 'disciplines') } : {}),
     ...(list('season', 'seasons')?.length ? { seasons: list('season', 'seasons') } : {}),
     ...(list('education', 'educationLevel', 'educationLevels')?.length ? { educationLevels: list('education', 'educationLevel', 'educationLevels') } : {}),
@@ -297,7 +301,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
         if (projected) return reply(200, { groups: projected.groups.map((group) => group.group), ...(projected.cursor ? { cursor: projected.cursor } : {}) });
         const requestedOffset = Number(cursor ?? 0);
         if (!Number.isFinite(requestedOffset) || requestedOffset < 0 || !Number.isInteger(requestedOffset)) return reply(400, { message: 'cursor is invalid' });
-        const grouped = filterCatalogGroups(groupCatalogJobs(await completeCatalog(dependencies.jobs)), filter);
+        const grouped = filterCatalogGroups(groupCatalogJobs(await completeCatalog(dependencies.jobs), { includeClosed: true }), filter);
         const page = grouped.slice(requestedOffset, requestedOffset + limit).map((group) => group.row);
         const nextOffset = requestedOffset + page.length;
         return reply(200, { groups: page, ...(nextOffset < grouped.length ? { cursor: String(nextOffset) } : {}) });
@@ -306,9 +310,13 @@ export function createApiHandler(dependencies: ApiDependencies) {
       if (method === 'GET' && catalogGroupMatch) {
         const groupId = decodeURIComponent(catalogGroupMatch[1]!);
         const projected = await dependencies.jobs.getCatalogProjectionGroup?.(groupId);
-        if (projected) return reply(200, projected);
-        const group = groupCatalogJobs(await completeCatalog(dependencies.jobs)).find((candidate) => candidate.row.groupId === groupId);
-        return group ? reply(200, catalogGroupDetails(group)) : reply(404, { message: 'Catalog group not found' });
+        if (projected) {
+          const filtered = filterCatalogGroupDetails([projected], catalogFilter(event.queryStringParameters))[0];
+          return filtered ? reply(200, filtered) : reply(404, { message: 'Catalog group not found' });
+        }
+        const group = groupCatalogJobs(await completeCatalog(dependencies.jobs), { includeClosed: true }).find((candidate) => candidate.row.groupId === groupId);
+        const filtered = group && filterCatalogGroupDetails([catalogGroupDetails(group)], catalogFilter(event.queryStringParameters))[0];
+        return filtered ? reply(200, filtered) : reply(404, { message: 'Catalog group not found' });
       }
       const jobMatch = path.match(/^\/jobs\/([^/]+)$/);
       if (method === 'GET' && jobMatch) {

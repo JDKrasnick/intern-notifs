@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ExpoPushPublisher, inspectExpoPushReceipts, retryExpoPushNotifications, sendNewJobNotifications } from '../src/notifications.js';
+import { classifyAwsServiceFailure, classifyExpoPushFailure, ExpoPushPublisher, inspectExpoPushReceipts, retryExpoPushNotifications, sendNewJobNotifications } from '../src/notifications.js';
 import { postingIdentityKey } from '../src/core/normalize.js';
 import { MemoryInternshipStore, MemoryUserStore } from '../src/store.js';
 import type { Internship } from '../src/types.js';
@@ -11,6 +11,16 @@ const job: Internship = {
 };
 
 describe('Expo delivery lifecycle', () => {
+  it('classifies explicit transient provider rejections separately from ambiguous transport failures', async () => {
+    const transient = new ExpoPushPublisher('https://push.example.test', async () => new Response('unavailable', { status: 503 }));
+    const permanent = new ExpoPushPublisher('https://push.example.test', async () => new Response('invalid', { status: 400 }));
+    await expect(transient.publish('ExponentPushToken[test]', { title: 'Title', body: 'Body' })).rejects.toSatisfy((error) => classifyExpoPushFailure(error) === 'retryable');
+    await expect(permanent.publish('ExponentPushToken[test]', { title: 'Title', body: 'Body' })).rejects.toSatisfy((error) => classifyExpoPushFailure(error) === 'definitive-failure');
+    expect(classifyExpoPushFailure(new TypeError('connection reset'))).toBe('unknown');
+    expect(classifyAwsServiceFailure({ $metadata: { httpStatusCode: 503 } })).toBe('retryable');
+    expect(classifyAwsServiceFailure({ $metadata: { httpStatusCode: 400 } })).toBe('definitive-failure');
+    expect(classifyAwsServiceFailure(new TypeError('connection reset'))).toBe('unknown');
+  });
   it('excludes the grouped-delivery cohort from the legacy sender', async () => {
     const users = new MemoryUserStore();
     for (const userId of ['legacy', 'grouped']) {
@@ -66,6 +76,28 @@ describe('Expo delivery lifecycle', () => {
     expect(await users.getReceipt('eligible', postingIdentityKey(job.normalizedUrl), 'ExponentPushToken[eligible]')).toMatchObject({ status: 'retryable', attempts: 1, lastErrorCode: 'ExpoHttp503' });
     expect(await retryExpoPushNotifications(jobs, users, publisher)).toEqual({ sent: 1, skipped: 0, failed: 0 });
     expect(await users.getReceipt('eligible', postingIdentityKey(job.normalizedUrl), 'ExponentPushToken[eligible]')).toMatchObject({ status: 'pending', deliveryState: 'accepted', attempts: 2, ticketId: 'ticket-2' });
+  });
+
+  it('terminalizes a legacy retry after its user joins the grouped-delivery cohort', async () => {
+    const jobs = new MemoryInternshipStore();
+    await jobs.putInternship(job);
+    const users = new MemoryUserStore();
+    await users.putPreferences({ userId: 'grouped', filter: {}, alertsEnabled: true, onboardingComplete: true, updatedAt: '2026-07-19T00:00:00.000Z' });
+    await users.putDevice({ userId: 'grouped', token: 'ExponentPushToken[grouped]', platform: 'android', active: true, createdAt: '2026-07-19T00:00:00.000Z', updatedAt: '2026-07-19T00:00:00.000Z' });
+    let publishes = 0;
+    const publisher = new ExpoPushPublisher('https://push.example.test', async () => {
+      publishes += 1;
+      return new Response('unavailable', { status: 503 });
+    });
+
+    expect(await sendNewJobNotifications([job], users, publisher)).toEqual({ sent: 0, skipped: 0, failed: 1 });
+    expect(await retryExpoPushNotifications(jobs, users, publisher, undefined, { excludeUserIds: new Set(['grouped']) })).toEqual({ sent: 0, skipped: 1, failed: 0 });
+    expect(publishes).toBe(1);
+    expect(await users.getReceipt('grouped', postingIdentityKey(job.normalizedUrl), 'ExponentPushToken[grouped]')).toMatchObject({
+      status: 'error',
+      deliveryState: 'definitive-failure',
+      lastErrorCode: 'GroupedPipelineCohort',
+    });
   });
 
   it('records an ambiguous connection failure as terminal unknown and never retries it', async () => {

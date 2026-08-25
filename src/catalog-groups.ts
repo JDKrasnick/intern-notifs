@@ -3,6 +3,7 @@ import { inferJobFocuses } from './core/filters.js';
 import { catalogSourceClasses, type CatalogSource } from './catalog-fields.js';
 import { catalogVisibleAt, compareCatalogRecency } from './catalog-recency.js';
 import { canonicalCompanyKey } from './core/normalize.js';
+import { employerCategory, type EmployerCategory } from './core/employers.js';
 import type { Internship } from './types.js';
 
 export type CatalogGroupKind = 'program-group' | 'employer-release' | 'individual';
@@ -46,6 +47,8 @@ export interface CatalogGroupRole {
   company: string;
   title: string;
   location: string;
+  locations: string[];
+  visibleAt: string;
   season: string;
   education: CatalogEducationSummary;
   disciplines: string[];
@@ -55,6 +58,9 @@ export interface CatalogGroupRole {
   officialApplyUrl: string;
   applicationUrlValidated: boolean;
   open: boolean;
+  employerCategory: EmployerCategory;
+  requiresUsCitizenship: boolean;
+  advancedDegreeRequired: boolean;
 }
 
 export interface CatalogGroupFilter {
@@ -65,6 +71,10 @@ export interface CatalogGroupFilter {
   educationLevels?: string[];
   workModes?: string[];
   locations?: string[];
+  status?: 'open' | 'closed';
+  employerCategories?: EmployerCategory[];
+  hideUsCitizenshipRequired?: boolean;
+  hideAdvancedDegreeRequired?: boolean;
 }
 
 /** A durable release already contains the job set matched for one user. */
@@ -80,7 +90,8 @@ type StructuredIdentity = {
   canonicalCompanyId?: string;
   canonicalCompanyName?: string;
   company?: { canonicalId?: string; id?: string; displayName?: string | { value?: string } };
-  season?: string | { term?: string; year?: number | string; evidence?: string };
+  programType?: string | { value?: string };
+  season?: string | { term?: string; year?: number | string; evidence?: string; evidenceStatus?: string };
   educationAudience?: {
     levels?: string[];
     evidence?: string;
@@ -157,11 +168,17 @@ function safeProgramKey(job: Internship) {
   const company = companyKey(job);
   const season = seasonFor(job);
   const education = catalogEducation(job);
+  const programType = provenancedText(identity?.programType);
+  const seasonIdentity = identity?.season;
+  const explicitSeason = typeof seasonIdentity === 'object'
+    && (seasonIdentity.evidenceStatus ?? seasonIdentity.evidence) === 'explicit'
+    && Boolean(seasonIdentity.term && seasonIdentity.year);
   // Program rows make an affirmative product claim. Legacy or evidence-poor
   // roles stay individual until structured enrichment explicitly supports the
   // audience dimensions; employer bursts remain a separate, factual grouping.
-  if (!identity || !company || !season || education.evidence !== 'explicit' || education.levels.length === 0) return undefined;
-  return `${company}\u0000${folded(season)}\u0000${education.evidence}\u0000${education.levels.map(folded).sort().join(',')}`;
+  if (!identity || !company || !season || !programType || !explicitSeason
+    || education.evidence !== 'explicit' || education.levels.length === 0) return undefined;
+  return `${company}\u0000${folded(programType)}\u0000${folded(season)}\u0000${education.evidence}\u0000${education.levels.map(folded).sort().join(',')}`;
 }
 
 function locationsFor(job: Internship) {
@@ -182,17 +199,25 @@ function workModesFor(job: Internship) {
 function disciplinesFor(job: Internship) {
   const identity = identityFor(job);
   const structured = identity?.disciplineTags ?? identity?.disciplines;
-  return unique(structured?.map((item) => typeof item === 'string' ? item : item.value ?? '').filter(Boolean) ?? inferJobFocuses(job));
+  const labels: Record<string, string> = {
+    software: 'SWE', 'ai-ml': 'AI/ML', data: 'Data', 'infrastructure-cloud': 'Cloud/Infra',
+    security: 'Security', quant: 'Quant/Fintech', product: 'Product', 'technical-design': 'Design',
+  };
+  return unique(structured?.map((item) => {
+    const value = typeof item === 'string' ? item : item.value ?? '';
+    return labels[value] ?? value;
+  }).filter(Boolean) ?? inferJobFocuses(job));
 }
 
 function groupId(kind: CatalogGroupKind, jobs: Internship[]) {
   const chronological = [...jobs].sort((left, right) => timestamp(left) - timestamp(right));
-  const stable = kind === 'program-group'
-    ? safeProgramKey(chronological[0]!) ?? chronological[0]!.jobId
+  const programKey = safeProgramKey(chronological[0]!);
+  const stable = programKey
+    ? programKey
     : kind === 'employer-release'
       ? `${companyKey(chronological[0]!) ?? chronological[0]!.company}\u0000${catalogVisibleAt(chronological[0]!)}`
       : chronological[0]!.jobId;
-  return `${kind}-${createHash('sha256').update(stable).digest('base64url').slice(0, 20)}`;
+  return `${programKey ? 'program' : kind}-${createHash('sha256').update(stable).digest('base64url').slice(0, 20)}`;
 }
 
 function summarize(kind: CatalogGroupKind, jobs: Internship[], stableGroupId?: string): CatalogGroupRow {
@@ -277,9 +302,13 @@ export function catalogGroupDetails(group: BuiltGroup): CatalogGroupDetails {
     group: group.row,
     roles: [...group.jobs].sort(compareCatalogRecency).map((job) => ({
       jobId: job.jobId, company: job.company, title: titleFor(job), location: job.location, season: seasonFor(job),
+      locations: locationsFor(job), visibleAt: catalogVisibleAt(job),
       education: catalogEducation(job), disciplines: disciplinesFor(job), workModes: workModesFor(job),
       sourceCredibility: sourceCredibility(job), detailUrl: `/jobs/${encodeURIComponent(job.jobId)}`,
       officialApplyUrl: job.applyUrl, applicationUrlValidated: Boolean(job.applicationUrlValidatedAt), open: job.open,
+      employerCategory: job.employerCategory ?? employerCategory(job.company),
+      requiresUsCitizenship: Boolean(job.requirements?.requiresUsCitizenship),
+      advancedDegreeRequired: Boolean(job.requirements?.advancedDegreeRequired),
     })),
   };
 }
@@ -295,6 +324,10 @@ export function filterCatalogGroups(groups: BuiltGroup[], filter: CatalogGroupFi
     const jobs = group.jobs.filter((job) => {
       const education = catalogEducation(job);
       return (!query || folded(`${job.company} ${titleFor(job)} ${job.location} ${seasonFor(job)}`).includes(query))
+        && (!filter.status || job.open === (filter.status === 'open'))
+        && (!filter.employerCategories?.length || filter.employerCategories.includes(job.employerCategory ?? employerCategory(job.company)))
+        && (!filter.hideUsCitizenshipRequired || !job.requirements?.requiresUsCitizenship)
+        && (!filter.hideAdvancedDegreeRequired || !job.requirements?.advancedDegreeRequired)
         && (!filter.source || filter.source === 'all' || catalogSourceClasses(job).includes(filter.source))
         && (!filter.disciplines?.length || includesFolded(disciplinesFor(job), filter.disciplines))
         && (!filter.seasons?.length || includesFolded([seasonFor(job)], filter.seasons))
@@ -320,12 +353,16 @@ export function filterCatalogGroupDetails(groups: CatalogGroupDetails[], filter:
   return groups.flatMap((details) => {
     const roles = details.roles.filter((role) =>
       (!query || folded(`${role.company} ${role.title} ${role.location} ${role.season}`).includes(query))
+      && (!filter.status || role.open === (filter.status === 'open'))
+      && (!filter.employerCategories?.length || filter.employerCategories.includes(role.employerCategory))
+      && (!filter.hideUsCitizenshipRequired || !role.requiresUsCitizenship)
+      && (!filter.hideAdvancedDegreeRequired || !role.advancedDegreeRequired)
       && (!filter.source || credibilityMatches(role.sourceCredibility, filter.source))
       && (!filter.disciplines?.length || includesFolded(role.disciplines, filter.disciplines))
       && (!filter.seasons?.length || includesFolded([role.season], filter.seasons))
       && (!filter.educationLevels?.length || role.education.evidence === 'unspecified' || includesFolded(role.education.levels, filter.educationLevels))
       && (!filter.workModes?.length || includesFolded(role.workModes, filter.workModes))
-      && (!filter.locations?.length || filter.locations.some((location) => folded(role.location).includes(folded(location)))));
+      && (!filter.locations?.length || filter.locations.some((location) => folded((role.locations ?? role.location.split(/\s*(?:;|\||\n)\s*/)).join(' ')).includes(folded(location)))));
     if (!roles.length) return [];
     return [{
       group: {
@@ -334,10 +371,13 @@ export function filterCatalogGroupDetails(groups: CatalogGroupDetails[], filter:
         roleCount: roles.length,
         titles: unique(roles.map((role) => role.title)).slice(0, 3),
         disciplines: unique(roles.flatMap((role) => role.disciplines)).slice(0, 6),
-        locations: unique(roles.map((role) => role.location)),
+        locations: unique(roles.flatMap((role) => role.locations ?? role.location.split(/\s*(?:;|\||\n)\s*/))),
         workModes: unique(roles.flatMap((role) => role.workModes)),
         seasons: unique(roles.map((role) => role.season)),
         roleIds: roles.map((role) => role.jobId),
+        createdAt: roles.reduce((oldest, role) => role.visibleAt < oldest ? role.visibleAt : oldest, roles[0]!.visibleAt),
+        updatedAt: roles.reduce((newest, role) => role.visibleAt > newest ? role.visibleAt : newest, roles[0]!.visibleAt),
+        hasNewRoles: roles.some((role) => role.visibleAt !== roles[0]!.visibleAt),
       },
       roles,
     }];

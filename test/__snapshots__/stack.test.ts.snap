@@ -551,6 +551,24 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
       "Type": "Custom::AWSCDKOpenIdConnectProvider",
       "UpdateReplacePolicy": "Delete",
     },
+    "GroupedNotificationCohortParameter1DB01728": {
+      "Properties": {
+        "Name": "/intern-notifs/grouped-notification-user-ids",
+        "Type": "String",
+        "Value": {
+          "Fn::Join": [
+            "",
+            [
+              "v1:",
+              {
+                "Ref": "GroupedNotificationUserIds",
+              },
+            ],
+          ],
+        },
+      },
+      "Type": "AWS::SSM::Parameter",
+    },
     "InternshipsB67F358B": {
       "DeletionPolicy": "Retain",
       "Properties": {
@@ -782,9 +800,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
             "FLUSH_QUEUE_URL": {
               "Ref": "NotificationPipelineDelayedFlushQueue464F7A30",
             },
-            "GROUPED_NOTIFICATION_USER_IDS": {
-              "Ref": "GroupedNotificationUserIds",
-            },
+            "GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME": "/intern-notifs/grouped-notification-user-ids",
             "INTERNSHIPS_TABLE": {
               "Ref": "InternshipsB67F358B",
             },
@@ -1015,9 +1031,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
             "EMAIL_QUEUE_URL": {
               "Ref": "NotificationPipelineEmailQueue8B989CA7",
             },
-            "GROUPED_NOTIFICATION_USER_IDS": {
-              "Ref": "GroupedNotificationUserIds",
-            },
+            "GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME": "/intern-notifs/grouped-notification-user-ids",
             "INTERNSHIPS_TABLE": {
               "Ref": "InternshipsB67F358B",
             },
@@ -1275,9 +1289,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         },
         "Environment": {
           "Variables": {
-            "GROUPED_NOTIFICATION_USER_IDS": {
-              "Ref": "GroupedNotificationUserIds",
-            },
+            "GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME": "/intern-notifs/grouped-notification-user-ids",
             "INTENT_TOPIC_ARN": {
               "Ref": "NotificationPipelineIntentTopic51387BB1",
             },
@@ -1504,6 +1516,38 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
                 "Fn::GetAtt": [
                   "NotificationPipelineKeyFE28A24A",
                   "Arn",
+                ],
+              },
+            },
+            {
+              "Action": [
+                "ssm:DescribeParameters",
+                "ssm:GetParameters",
+                "ssm:GetParameter",
+                "ssm:GetParameterHistory",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":ssm:",
+                    {
+                      "Ref": "AWS::Region",
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId",
+                    },
+                    ":parameter",
+                    {
+                      "Ref": "GroupedNotificationCohortParameter1DB01728",
+                    },
+                  ],
                 ],
               },
             },
@@ -2062,18 +2106,13 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         },
         "Environment": {
           "Variables": {
-            "GROUPED_NOTIFICATION_USER_IDS": {
-              "Ref": "GroupedNotificationUserIds",
-            },
+            "GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME": "/intern-notifs/grouped-notification-user-ids",
             "INTERNSHIPS_TABLE": {
               "Ref": "InternshipsB67F358B",
             },
             "PIPELINE_COMMAND": "push",
             "PUSH_QUEUE_URL": {
               "Ref": "NotificationPipelinePushQueueD656722F",
-            },
-            "RECEIPT_QUEUE_URL": {
-              "Ref": "NotificationPipelineReceiptQueueA6D88F85",
             },
             "SES_FROM": "me@example.com",
             "USERS_TABLE": {
@@ -2239,17 +2278,61 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
             },
             {
               "Action": [
-                "sqs:SendMessage",
-                "sqs:GetQueueAttributes",
-                "sqs:GetQueueUrl",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:DescribeTable",
               ],
               "Effect": "Allow",
-              "Resource": {
-                "Fn::GetAtt": [
-                  "NotificationPipelineReceiptQueueA6D88F85",
-                  "Arn",
-                ],
-              },
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "InternshipsB67F358B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "InternshipsB67F358B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": "dynamodb:TransactWriteItems",
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "InternshipsB67F358B",
+                    "Arn",
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Fn::GetAtt": [
+                          "InternshipsB67F358B",
+                          "Arn",
+                        ],
+                      },
+                      "/index/*",
+                    ],
+                  ],
+                },
+              ],
             },
             {
               "Action": [
@@ -2312,9 +2395,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         },
         "Environment": {
           "Variables": {
-            "GROUPED_NOTIFICATION_USER_IDS": {
-              "Ref": "GroupedNotificationUserIds",
-            },
+            "GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME": "/intern-notifs/grouped-notification-user-ids",
             "INTERNSHIPS_TABLE": {
               "Ref": "InternshipsB67F358B",
             },
@@ -2536,13 +2617,17 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
             "CANDIDATE_TOPIC_ARN": {
               "Ref": "NotificationPipelineCandidateTopicD5A6896E",
             },
-            "GROUPED_NOTIFICATION_USER_IDS": {
-              "Ref": "GroupedNotificationUserIds",
+            "FLUSH_QUEUE_URL": {
+              "Ref": "NotificationPipelineDelayedFlushQueue464F7A30",
             },
+            "GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME": "/intern-notifs/grouped-notification-user-ids",
             "INTERNSHIPS_TABLE": {
               "Ref": "InternshipsB67F358B",
             },
             "PIPELINE_COMMAND": "stream-publisher",
+            "RECEIPT_QUEUE_URL": {
+              "Ref": "NotificationPipelineReceiptQueueA6D88F85",
+            },
             "SES_FROM": "me@example.com",
             "USERS_TABLE": {
               "Ref": "UserData6A2E227B",
@@ -2650,6 +2735,34 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
                 ],
               },
             },
+            {
+              "Action": [
+                "sqs:SendMessage",
+                "sqs:GetQueueAttributes",
+                "sqs:GetQueueUrl",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelineDelayedFlushQueue464F7A30",
+                  "Arn",
+                ],
+              },
+            },
+            {
+              "Action": [
+                "sqs:SendMessage",
+                "sqs:GetQueueAttributes",
+                "sqs:GetQueueUrl",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "NotificationPipelineReceiptQueueA6D88F85",
+                  "Arn",
+                ],
+              },
+            },
           ],
           "Version": "2012-10-17",
         },
@@ -2676,9 +2789,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         },
         "Environment": {
           "Variables": {
-            "GROUPED_NOTIFICATION_USER_IDS": {
-              "Ref": "GroupedNotificationUserIds",
-            },
+            "GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME": "/intern-notifs/grouped-notification-user-ids",
             "INTERNSHIPS_TABLE": {
               "Ref": "InternshipsB67F358B",
             },
@@ -2893,6 +3004,38 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
                       "Ref": "AWS::AccountId",
                     },
                     ":key/*",
+                  ],
+                ],
+              },
+            },
+            {
+              "Action": [
+                "ssm:DescribeParameters",
+                "ssm:GetParameters",
+                "ssm:GetParameter",
+                "ssm:GetParameterHistory",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":ssm:",
+                    {
+                      "Ref": "AWS::Region",
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId",
+                    },
+                    ":parameter",
+                    {
+                      "Ref": "GroupedNotificationCohortParameter1DB01728",
+                    },
                   ],
                 ],
               },
@@ -4349,6 +4492,10 @@ exports[`CDK stack > queues Greenhouse boards every half hour with bounded worke
       "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
       "Type": "AWS::SSM::Parameter::Value<String>",
     },
+    "GroupedNotificationCohortParameter": {
+      "Default": "/intern-notifs/grouped-notification-user-ids",
+      "Type": "AWS::SSM::Parameter::Value<String>",
+    },
   },
   "Resources": {
     "GreenhouseDeadLetterAlarm2B738E6F": {
@@ -5578,6 +5725,7 @@ exports[`CDK stack > queues Greenhouse boards every half hour with bounded worke
         },
         "Environment": {
           "Variables": {
+            "GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME": "/intern-notifs/grouped-notification-user-ids",
             "INTERNSHIPS_TABLE": "internships",
             "USERS_TABLE": "users",
           },
@@ -5925,6 +6073,35 @@ exports[`CDK stack > queues Greenhouse boards every half hour with bounded worke
                 },
               ],
             },
+            {
+              "Action": [
+                "ssm:DescribeParameters",
+                "ssm:GetParameters",
+                "ssm:GetParameter",
+                "ssm:GetParameterHistory",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":ssm:",
+                    {
+                      "Ref": "AWS::Region",
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId",
+                    },
+                    ":parameter/intern-notifs/grouped-notification-user-ids",
+                  ],
+                ],
+              },
+            },
           ],
           "Version": "2012-10-17",
         },
@@ -6170,6 +6347,10 @@ exports[`CDK stack > queues Lever boards every half hour with bounded worker con
     "BootstrapVersion": {
       "Default": "/cdk-bootstrap/hnb659fds/version",
       "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>",
+    },
+    "GroupedNotificationCohortParameter": {
+      "Default": "/intern-notifs/grouped-notification-user-ids",
       "Type": "AWS::SSM::Parameter::Value<String>",
     },
   },
@@ -6674,6 +6855,7 @@ exports[`CDK stack > queues Lever boards every half hour with bounded worker con
         },
         "Environment": {
           "Variables": {
+            "GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME": "/intern-notifs/grouped-notification-user-ids",
             "INTERNSHIPS_TABLE": "internships",
             "USERS_TABLE": "users",
           },
@@ -7020,6 +7202,35 @@ exports[`CDK stack > queues Lever boards every half hour with bounded worker con
                   ],
                 },
               ],
+            },
+            {
+              "Action": [
+                "ssm:DescribeParameters",
+                "ssm:GetParameters",
+                "ssm:GetParameter",
+                "ssm:GetParameterHistory",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition",
+                    },
+                    ":ssm:",
+                    {
+                      "Ref": "AWS::Region",
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId",
+                    },
+                    ":parameter/intern-notifs/grouped-notification-user-ids",
+                  ],
+                ],
+              },
             },
           ],
           "Version": "2012-10-17",

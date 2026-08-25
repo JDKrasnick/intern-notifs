@@ -46,8 +46,11 @@ Greenhouse ETags make unchanged checks cheap; Lever always retrieves the full
 paginated board and uses a stable content hash because its public endpoint does
 not honor conditional requests. A changed published snapshot passes through
 canonicalization, deduplication, official-link validation, DynamoDB storage,
-and notification matching. The existing general notifier continues to
-reconcile push receipts and the optional ntfy fallback.
+and notification matching. Every published provider worker reads the shared
+grouped-notification cohort from SSM and excludes those users from its legacy
+direct sender; the grouped pipeline is their sole delivery path. The existing
+general notifier continues to reconcile push receipts and the optional ntfy
+fallback.
 
 ## Capacity and failure boundaries
 

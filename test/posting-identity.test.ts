@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeUrl, postingIdentity, postingIdentityKey, roleFamilyFingerprint } from '../src/core/normalize.js';
-import { buildPostingIdentity, resolvePostingAliases } from '../src/identity/posting.js';
+import { buildPostingIdentity, providerPostingReference, resolvePostingAliases } from '../src/identity/posting.js';
 
 describe('posting identity', () => {
   it.each([
@@ -17,6 +17,30 @@ describe('posting identity', () => {
 
   it('keeps distinct provider requisitions separate even when their titles would match', () => {
     expect(postingIdentity('https://lifeattiktok.com/search/7672569081632229685')).not.toBe(postingIdentity('https://lifeattiktok.com/search/7672562486917286149'));
+  });
+
+  it('does not treat provider-ID prefixes or malformed UUID slugs as authoritative aliases', () => {
+    const leverBackend = buildPostingIdentity({ applicationUrl: 'https://jobs.lever.co/acme/deadbeef/backend' });
+    const leverFrontend = buildPostingIdentity({ applicationUrl: 'https://jobs.lever.co/acme/deadbeef/frontend' });
+    const ashbyBackend = buildPostingIdentity({ applicationUrl: 'https://jobs.ashbyhq.com/acme/deadbeef/backend' });
+    const ashbyFrontend = buildPostingIdentity({ applicationUrl: 'https://jobs.ashbyhq.com/acme/deadbeef/frontend' });
+    expect(leverBackend.provider).toBe('unknown');
+    expect(ashbyBackend.provider).toBe('unknown');
+    expect(leverBackend.canonicalJobId).not.toBe(leverFrontend.canonicalJobId);
+    expect(ashbyBackend.canonicalJobId).not.toBe(ashbyFrontend.canonicalJobId);
+  });
+
+  it('accepts only reviewed provider suffixes after an immutable posting ID', () => {
+    const uuid = '501d374d-7d4f-4889-bc53-0a1fd16253ea';
+    for (const url of [
+      `https://jobs.lever.co/acme/${uuid}/backend`,
+      `https://jobs.ashbyhq.com/acme/${uuid}/frontend`,
+      'https://job-boards.greenhouse.io/acme/jobs/123/backend',
+      'https://jobs.bytedance.com/en/position/123/frontend',
+    ]) expect(providerPostingReference(url).provider).toBe('unknown');
+    expect(providerPostingReference(`https://jobs.lever.co/acme/${uuid}/apply`).provider).toBe('lever');
+    expect(providerPostingReference(`https://jobs.ashbyhq.com/acme/${uuid}/application`).provider).toBe('ashby');
+    expect(providerPostingReference('https://jobs.bytedance.com/en/position/123/detail').provider).toBe('bytedance');
   });
 
   it('groups location variants only as a soft role family', () => {

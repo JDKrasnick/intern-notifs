@@ -5,9 +5,10 @@ import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { createCandidateRelease, createNotificationIntents, deliveryClaimId, logicalTombstoneId, renderReleaseEmail, renderReleasePush, type DeliveryClaim, type NotificationIntent } from './release-notifications.js';
 import { canonicalCompanyKey } from './core/normalize.js';
-import { ExpoPushPublisher, SesEmailSender } from './notifications.js';
+import { classifyAwsServiceFailure, classifyExpoPushFailure, ExpoPushPublisher, SesEmailSender } from './notifications.js';
 import { createDynamoDocumentClient, DynamoInternshipStore, DynamoReleaseStore, DynamoUserStore } from './store.js';
 import type { NotificationEvent } from './types.js';
+import { loadGroupedNotificationCohort } from './grouped-notification-cohort.js';
 
 type SqsRecord = { messageId: string; body: string };
 type SqsEvent = { Records?: SqsRecord[] };
@@ -48,15 +49,54 @@ function bucketId(employerId: string, event: NotificationEvent) {
   return createHash('sha256').update(`${employerId}\0${event.createdAt}\0${event.eventId}`).digest('hex').slice(0, 24);
 }
 
+export function candidateFitsActiveBucket(
+  pointer: { bucketId?: string; flushAt?: string; closedAt?: string } | undefined,
+  event: Pick<NotificationEvent, 'createdAt'>,
+) {
+  return Boolean(pointer?.bucketId && pointer.flushAt && !pointer.closedAt && event.createdAt <= pointer.flushAt);
+}
+
+export const EXPO_RECEIPT_DELAY_SECONDS = 15 * 60;
+
+export function notificationStreamTarget(record: StreamRecord):
+  | { kind: 'flush'; bucketId: string }
+  | { kind: 'candidate'; notification: NotificationEvent }
+  | { kind: 'receipt'; message: { claim: DeliveryClaim; ticketId: string; token: string } }
+  | undefined {
+  const pk = record.dynamodb?.Keys?.pk?.S;
+  if (record.eventName !== 'INSERT' || !pk) return undefined;
+  if (pk.startsWith('RELEASE_BUCKET#')) return { kind: 'flush', bucketId: pk.slice('RELEASE_BUCKET#'.length) };
+  if (pk.startsWith('PIPELINE_RECEIPT_OUTBOX#')) {
+    const message = unmarshall(record.dynamodb?.NewImage?.message) as { claim: DeliveryClaim; ticketId: string; token: string } | undefined;
+    return message ? { kind: 'receipt', message } : undefined;
+  }
+  if (!pk.startsWith('OUTBOX#')) return undefined;
+  const notification = unmarshall(record.dynamodb?.NewImage?.event) as NotificationEvent | undefined;
+  return notification?.kind === 'new-job' ? { kind: 'candidate', notification } : undefined;
+}
+
 async function streamPublisher(event: StreamEvent) {
   const failures: Array<{ itemIdentifier: string }> = [];
   for (const record of event.Records ?? []) {
     try {
-      const pk = record.dynamodb?.Keys?.pk?.S;
-      if (record.eventName !== 'INSERT' || !pk?.startsWith('OUTBOX#')) continue;
-      const notification = unmarshall(record.dynamodb?.NewImage?.event) as NotificationEvent | undefined;
-      if (!notification || notification.kind !== 'new-job') continue;
-      await sns.send(new PublishCommand({ TopicArn: process.env.CANDIDATE_TOPIC_ARN, Message: JSON.stringify(notification) }));
+      const target = notificationStreamTarget(record);
+      if (target?.kind === 'flush') {
+        await sqs.send(new SendMessageCommand({
+          QueueUrl: process.env.FLUSH_QUEUE_URL,
+          MessageBody: JSON.stringify({ bucketId: target.bucketId }),
+        }));
+        continue;
+      }
+      if (target?.kind === 'receipt') {
+        await sqs.send(new SendMessageCommand({
+          QueueUrl: process.env.RECEIPT_QUEUE_URL,
+          MessageBody: JSON.stringify(target.message),
+          DelaySeconds: EXPO_RECEIPT_DELAY_SECONDS,
+        }));
+        continue;
+      }
+      if (target?.kind !== 'candidate') continue;
+      await sns.send(new PublishCommand({ TopicArn: process.env.CANDIDATE_TOPIC_ARN, Message: JSON.stringify(target.notification) }));
     } catch { failures.push({ itemIdentifier: record.eventID }); }
   }
   return { batchItemFailures: failures };
@@ -68,20 +108,22 @@ async function aggregateCandidate(event: NotificationEvent) {
   const employerId = normalizedEmployer(job.company);
   const pointerKey = { pk: `RELEASE_AGGREGATION#${employerId}`, sk: 'ACTIVE' };
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    const pointer = (await documentClient.send(new GetCommand({ TableName: catalogTable, Key: pointerKey, ConsistentRead: true }))).Item as { bucketId?: string; flushAt?: string } | undefined;
-    if (pointer?.bucketId && pointer.flushAt && event.createdAt <= pointer.flushAt) {
+    const pointer = (await documentClient.send(new GetCommand({ TableName: catalogTable, Key: pointerKey, ConsistentRead: true }))).Item as { bucketId?: string; flushAt?: string; closedAt?: string } | undefined;
+    if (candidateFitsActiveBucket(pointer, event) && pointer?.bucketId) {
       try {
         await documentClient.send(new UpdateCommand({
           TableName: catalogTable,
           Key: { pk: `RELEASE_BUCKET#${pointer.bucketId}`, sk: 'META' },
           UpdateExpression: 'ADD jobIds :jobIds',
-          ConditionExpression: 'attribute_exists(pk)',
+          ConditionExpression: 'attribute_exists(pk) AND attribute_not_exists(closedAt)',
           ExpressionAttributeValues: { ':jobIds': new Set([event.jobId]) },
         }));
+        await sqs.send(new SendMessageCommand({ QueueUrl: process.env.FLUSH_QUEUE_URL, MessageBody: JSON.stringify({ bucketId: pointer.bucketId }) }));
         return;
       } catch (error) {
         if ((error as { name?: string }).name !== 'ConditionalCheckFailedException') throw error;
-        continue;
+        // The flush won the race. Replace the processed pointer with a fresh
+        // bucket below so this candidate is never stranded after the flush.
       }
     }
     const id = bucketId(employerId, event);
@@ -92,6 +134,8 @@ async function aggregateCandidate(event: NotificationEvent) {
         { Put: { TableName: catalogTable, Item: { pk: `RELEASE_BUCKET#${id}`, sk: 'META', bucketId: id, employerId, company: job.company, openedAt: event.createdAt, flushAt, jobIds: new Set([event.jobId]), expiresAtEpoch: Math.floor(Date.parse(flushAt) / 1_000) + 86_400 }, ConditionExpression: 'attribute_not_exists(pk)' } },
         { Put: { TableName: catalogTable, Item: { ...pointerKey, bucketId: id, openedAt: event.createdAt, flushAt }, ConditionExpression: condition, ...(pointer?.bucketId ? { ExpressionAttributeNames: { '#bucketId': 'bucketId' }, ExpressionAttributeValues: { ':prior': pointer.bucketId } } : {}) } },
       ] }));
+      // Keep direct scheduling during the compatibility rollout. The catalog
+      // stream is the durable outbox; duplicate flush messages are idempotent.
       await sqs.send(new SendMessageCommand({ QueueUrl: process.env.FLUSH_QUEUE_URL, MessageBody: JSON.stringify({ bucketId: id }) }));
       return;
     } catch (error) {
@@ -105,30 +149,65 @@ async function aggregationWorker(event: SqsEvent) {
 }
 
 async function flushBucket(message: { bucketId: string }) {
-  const result = await documentClient.send(new GetCommand({ TableName: catalogTable, Key: { pk: `RELEASE_BUCKET#${message.bucketId}`, sk: 'META' }, ConsistentRead: true }));
-  const bucket = result.Item as { openedAt?: string; jobIds?: Set<string>; processedAt?: string } | undefined;
-  if (!bucket?.openedAt || bucket.processedAt) return;
+  const bucketKey = { pk: `RELEASE_BUCKET#${message.bucketId}`, sk: 'META' };
+  const result = await documentClient.send(new GetCommand({ TableName: catalogTable, Key: bucketKey, ConsistentRead: true }));
+  const initial = result.Item as { employerId?: string; openedAt?: string; closedAt?: string; processedAt?: string } | undefined;
+  if (!initial?.employerId || !initial.openedAt || initial.processedAt) return;
+  const closedAt = initial.closedAt ?? new Date().toISOString();
+  if (!initial.closedAt) {
+    try {
+      // Close aggregation before reading the final job set. An aggregation
+      // update that won before this close is visible in the reread; a later
+      // update fails its closedAt condition and creates a fresh bucket instead.
+      await documentClient.send(new UpdateCommand({
+        TableName: catalogTable, Key: bucketKey,
+        UpdateExpression: 'SET closedAt = :now', ConditionExpression: 'attribute_not_exists(closedAt)',
+        ExpressionAttributeValues: { ':now': closedAt },
+      }));
+    } catch (error) {
+      if ((error as { name?: string }).name !== 'ConditionalCheckFailedException') throw error;
+    }
+  }
+  try {
+    await documentClient.send(new UpdateCommand({
+      TableName: catalogTable, Key: { pk: `RELEASE_AGGREGATION#${initial.employerId}`, sk: 'ACTIVE' },
+      UpdateExpression: 'SET closedAt = :now', ConditionExpression: 'bucketId = :bucketId',
+      ExpressionAttributeValues: { ':now': closedAt, ':bucketId': message.bucketId },
+    }));
+  } catch (error) {
+    if ((error as { name?: string }).name !== 'ConditionalCheckFailedException') throw error;
+  }
+  const final = await documentClient.send(new GetCommand({ TableName: catalogTable, Key: bucketKey, ConsistentRead: true }));
+  const bucket = final.Item as { openedAt?: string; jobIds?: Set<string> } | undefined;
+  if (!bucket?.openedAt) return;
   const releaseJobs = (await Promise.all([...(bucket.jobIds ?? [])].map((jobId) => jobs.getJob(jobId))))
     .filter((job): job is NonNullable<typeof job> => Boolean(job?.open && job.technical !== false));
-  if (!releaseJobs.length) return;
-  const candidate = createCandidateRelease(releaseJobs, new Date(bucket.openedAt));
-  const configuredCohort = (process.env.GROUPED_NOTIFICATION_USER_IDS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
-  const allUsers = configuredCohort.includes('*');
-  const cohort = new Set(configuredCohort);
-  const preferences = (await users.activePreferences()).filter((preference) => allUsers || cohort.has(preference.userId));
-  for (const preference of preferences) {
-    const channels = ['push', ...(preference.emailAlertsEnabled ? ['email' as const] : [])] as const;
-    const intents = createNotificationIntents(candidate, preference.userId, preference.filter, [...channels], new Date(), preference.alertSettings?.quietHours);
-    if (!intents.length) continue;
-    const matchedJobIds = [...new Set(intents.flatMap((intent) => intent.release.jobs.map((job) => job.jobId)))].sort();
-    await releases.putRelease({ releaseId: candidate.releaseId, userId: preference.userId, jobIds: matchedJobIds, newJobIds: matchedJobIds, createdAt: candidate.flushAt });
-    for (const intent of intents) await sns.send(new PublishCommand({
-      TopicArn: process.env.INTENT_TOPIC_ARN,
-      Message: JSON.stringify(intent),
-      MessageAttributes: { channel: { DataType: 'String', StringValue: intent.channel } },
-    }));
+  if (releaseJobs.length) {
+    const candidate = createCandidateRelease(releaseJobs, new Date(bucket.openedAt));
+    const cohortParameterName = process.env.GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME;
+    if (!cohortParameterName) throw new Error('GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME is required');
+    const configuredCohort = await loadGroupedNotificationCohort(cohortParameterName);
+    const allUsers = configuredCohort === '*';
+    const cohort = configuredCohort === '*' ? new Set<string>() : configuredCohort;
+    const preferences = (await users.activePreferences()).filter((preference) => allUsers || cohort.has(preference.userId));
+    for (const preference of preferences) {
+      const channels = ['push', ...(preference.emailAlertsEnabled ? ['email' as const] : [])] as const;
+      const intents = createNotificationIntents(candidate, preference.userId, preference.filter, [...channels], new Date(), preference.alertSettings?.quietHours);
+      if (!intents.length) continue;
+      const matchedJobIds = [...new Set(intents.flatMap((intent) => intent.release.jobs.map((job) => job.jobId)))].sort();
+      await releases.putRelease({ releaseId: candidate.releaseId, userId: preference.userId, jobIds: matchedJobIds, newJobIds: matchedJobIds, createdAt: candidate.flushAt });
+      for (const intent of intents) await sns.send(new PublishCommand({
+        TopicArn: process.env.INTENT_TOPIC_ARN,
+        Message: JSON.stringify(intent),
+        MessageAttributes: { channel: { DataType: 'String', StringValue: intent.channel } },
+      }));
+    }
   }
-  await documentClient.send(new UpdateCommand({ TableName: catalogTable, Key: { pk: `RELEASE_BUCKET#${message.bucketId}`, sk: 'META' }, UpdateExpression: 'SET processedAt = :now', ExpressionAttributeValues: { ':now': new Date().toISOString() } }));
+  await documentClient.send(new UpdateCommand({
+    TableName: catalogTable, Key: bucketKey,
+    UpdateExpression: 'SET processedAt = :now',
+    ExpressionAttributeValues: { ':now': new Date().toISOString() },
+  }));
 }
 
 async function flushWorker(event: SqsEvent) {
@@ -168,6 +247,39 @@ async function transitionClaim(claim: DeliveryClaim, state: DeliveryClaim['state
   }));
 }
 
+async function acceptPushWithReceiptOutbox(claim: DeliveryClaim, ticketId: string, token: string) {
+  const updatedAt = new Date().toISOString();
+  const accepted = { ...claim, state: 'accepted' as const, providerId: ticketId, updatedAt };
+  await documentClient.send(new TransactWriteCommand({ TransactItems: [
+    { Update: {
+      TableName: usersTable, Key: { pk: `DELIVERY#${claim.claimId}`, sk: 'CLAIM' },
+      UpdateExpression: 'SET claim = :claim', ConditionExpression: 'claim.#state = :claimed',
+      ExpressionAttributeNames: { '#state': 'state' }, ExpressionAttributeValues: { ':claim': accepted, ':claimed': 'claimed' },
+    } },
+    { Put: {
+      TableName: catalogTable,
+      Item: {
+        pk: `PIPELINE_RECEIPT_OUTBOX#${claim.claimId}`, sk: ticketId,
+        message: { claim: accepted, ticketId, token },
+        expiresAtEpoch: Math.floor(Date.now() / 1_000) + 24 * 60 * 60,
+      },
+      ConditionExpression: 'attribute_not_exists(pk)',
+    } },
+  ] }));
+}
+
+async function abandonRetryableClaim(claim: DeliveryClaim) {
+  const writes: NonNullable<ConstructorParameters<typeof TransactWriteCommand>[0]['TransactItems']> = [{ Delete: {
+    TableName: usersTable, Key: { pk: `DELIVERY#${claim.claimId}`, sk: 'CLAIM' },
+    ConditionExpression: 'claim.#state = :claimed',
+    ExpressionAttributeNames: { '#state': 'state' }, ExpressionAttributeValues: { ':claimed': 'claimed' },
+  } }];
+  if (claim.channel === 'email') writes.push({ Delete: {
+    TableName: usersTable, Key: { pk: `DELIVERY_TOMBSTONE#${claim.tombstoneId}`, sk: 'CLAIM' },
+  } });
+  await documentClient.send(new TransactWriteCommand({ TransactItems: writes }));
+}
+
 async function deliverPush(intent: NotificationIntent) {
   if (await deferIntent(intent, process.env.PUSH_QUEUE_URL ?? '')) return;
   const devices = (await users.activeDevices()).filter((device) => device.userId === intent.release.userId);
@@ -182,10 +294,16 @@ async function deliverPush(intent: NotificationIntent) {
         if (ticket.details?.error === 'DeviceNotRegistered') await users.putDevice({ ...device, active: false, updatedAt: new Date().toISOString() });
       } else if (!ticket.id) await transitionClaim(claim, 'unknown');
       else {
-        await transitionClaim(claim, 'accepted', ticket.id);
-        await sqs.send(new SendMessageCommand({ QueueUrl: process.env.RECEIPT_QUEUE_URL, MessageBody: JSON.stringify({ claim, ticketId: ticket.id, token: device.token }), DelaySeconds: 15 }));
+        await acceptPushWithReceiptOutbox(claim, ticket.id, device.token);
       }
-    } catch { await transitionClaim(claim, 'unknown'); }
+    } catch (error) {
+      const failure = classifyExpoPushFailure(error);
+      if (failure === 'retryable') {
+        await abandonRetryableClaim(claim);
+        throw error;
+      }
+      await transitionClaim(claim, failure);
+    }
   }
 }
 
@@ -203,8 +321,16 @@ async function deliverEmail(intent: NotificationIntent) {
   const rendered = renderReleaseEmail(intent.release);
   try {
     await new SesEmailSender(process.env.SES_FROM ?? '', email).send(rendered.subject, rendered.text, `<pre>${rendered.text.replace(/[&<>]/g, (value) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[value]!))}</pre>`);
-    await transitionClaim(claim, 'delivered');
-  } catch { await transitionClaim(claim, 'unknown'); }
+  } catch (error) {
+    const failure = classifyAwsServiceFailure(error);
+    if (failure === 'retryable') {
+      await abandonRetryableClaim(claim);
+      throw error;
+    }
+    await transitionClaim(claim, failure);
+    return;
+  }
+  await transitionClaim(claim, 'delivered');
 }
 
 async function emailWorker(event: SqsEvent) {

@@ -30,7 +30,9 @@ import * as DocumentPicker from "expo-document-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { ApiError, api, authenticatedRead, responseCache, sessionStorage } from "./src/api";
 import { appendGroupedCatalogPage, type GroupedCatalogPage } from "./src/catalog";
-import { confirmEmail, restoreSession, signIn, signUp } from "./src/auth";
+import { catalogGroupAvailabilityLabel, groupedCatalogParameters } from "./src/catalog-filters";
+import { createLatestRequestGuard } from "./src/latest-request";
+import { clearSession, confirmEmail, restoreSession, signIn, signUp } from "./src/auth";
 import {
   clearApplicationFollowUp,
   notifyApplicationProgress,
@@ -504,12 +506,8 @@ function JobCard({
   );
 }
 
-function CatalogGroupCard({ group, onOpen }: { group: CatalogGroupRow; onOpen: () => void }) {
-  const label = group.kind === "employer-release"
-    ? `${group.roleCount} new roles`
-    : group.kind === "program-group"
-      ? `${group.roleCount} roles in this program`
-      : "1 open role";
+function CatalogGroupCard({ group, onOpen, status = "open" }: { group: CatalogGroupRow; onOpen: () => void; status?: "open" | "closed" }) {
+  const label = catalogGroupAvailabilityLabel(group, status);
   const education = group.education.map((item) => item.label).join(" · ");
   return (
     <TouchableOpacity
@@ -575,7 +573,7 @@ function CatalogGroupSheet({
               <View style={styles.catalogGroupSheetHeader}>
                 <Text style={styles.sheetTitle}>{details.group.company}</Text>
                 <Text style={styles.sheetCompany}>
-                  {details.group.roleCount} open role{details.group.roleCount === 1 ? "" : "s"}
+                  {details.group.roleCount} {details.roles.every((role) => role.open) ? "open " : details.roles.every((role) => !role.open) ? "closed " : ""}role{details.group.roleCount === 1 ? "" : "s"}
                 </Text>
                 {details.group.education.map((item) => item.label).filter(Boolean).map((label) => (
                   <Text key={label} style={styles.sheetDetail}>{label}</Text>
@@ -1653,6 +1651,16 @@ function GroupedCatalogFeed({
   onQueryChange,
   source,
   onSourceChange,
+  employerFilter,
+  onEmployerFilterChange,
+  jobStatus,
+  onJobStatusChange,
+  filtersExpanded,
+  onFiltersExpandedChange,
+  hideUsCitizenshipRequired,
+  onHideUsCitizenshipRequiredChange,
+  hideAdvancedDegreeRequired,
+  onHideAdvancedDegreeRequiredChange,
   loading,
   error,
   loadingMore,
@@ -1668,6 +1676,16 @@ function GroupedCatalogFeed({
   onQueryChange: (value: string) => void;
   source: CatalogSource;
   onSourceChange: (value: CatalogSource) => void;
+  employerFilter: EmployerCategory | "all";
+  onEmployerFilterChange: (value: EmployerCategory | "all") => void;
+  jobStatus: "open" | "closed";
+  onJobStatusChange: (value: "open" | "closed") => void;
+  filtersExpanded: boolean;
+  onFiltersExpandedChange: (value: boolean) => void;
+  hideUsCitizenshipRequired: boolean;
+  onHideUsCitizenshipRequiredChange: (value: boolean) => void;
+  hideAdvancedDegreeRequired: boolean;
+  onHideAdvancedDegreeRequiredChange: (value: boolean) => void;
   loading: boolean;
   error?: string;
   loadingMore: boolean;
@@ -1689,19 +1707,20 @@ function GroupedCatalogFeed({
           placeholderTextColor={colors.placeholder}
           style={styles.feedSearch}
         />
-        <View style={styles.catalogSourceFilters} accessibilityRole="radiogroup">
-          {([['all', 'All'], ['direct', 'Official'], ['community', 'Community'], ['corroborated', 'Confirmed']] as const).map(([value, label]) => (
-            <TouchableOpacity
-              key={value}
-              accessibilityRole="radio"
-              accessibilityState={{ selected: source === value }}
-              onPress={() => onSourceChange(value)}
-              style={[styles.chip, source === value && styles.chipOn]}
-            >
-              <Text style={[styles.chipLabel, source === value && styles.chipLabelOn]}>{label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        <RoleFilters
+          expanded={filtersExpanded}
+          onToggle={() => onFiltersExpandedChange(!filtersExpanded)}
+          employerFilter={employerFilter}
+          onEmployerFilterChange={onEmployerFilterChange}
+          jobStatus={jobStatus}
+          onJobStatusChange={onJobStatusChange}
+          sourceFilter={source}
+          onSourceFilterChange={onSourceChange}
+          hideUsCitizenshipRequired={hideUsCitizenshipRequired}
+          hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
+          onHideUsCitizenshipRequiredChange={onHideUsCitizenshipRequiredChange}
+          onHideAdvancedDegreeRequiredChange={onHideAdvancedDegreeRequiredChange}
+        />
       </View>
       <FlatList
         data={groups}
@@ -1709,7 +1728,7 @@ function GroupedCatalogFeed({
         contentContainerStyle={styles.feedListContent}
         onEndReached={onLoadMore}
         onEndReachedThreshold={0.6}
-        renderItem={({ item }) => <CatalogGroupCard group={item} onOpen={() => onOpenGroup(item)} />}
+        renderItem={({ item }) => <CatalogGroupCard group={item} status={jobStatus} onOpen={() => onOpenGroup(item)} />}
         ListEmptyComponent={
           loading ? <CatalogInitialLoading /> : error ? (
             <View style={styles.catalogUnavailable}>
@@ -1917,6 +1936,7 @@ function AppContent() {
   const catalogCursorRef = useRef<string | undefined>(undefined);
   const catalogRequestGeneration = useRef(0);
   const catalogRequestInFlight = useRef(false);
+  const groupRequestGuard = useRef(createLatestRequestGuard());
   const recoverSession = async (forceRefresh = false) => {
     const requestId = ++sessionRequestId.current;
     const result = await restoreSession({ forceRefresh });
@@ -1986,9 +2006,7 @@ function AppContent() {
     setCatalogError(undefined);
     setCatalogMoreError(undefined);
     const catalogQuery = (token ? query : guestSearchQuery).trim();
-    const params = new URLSearchParams({ limit: "25" });
-    if (catalogQuery) params.set("q", catalogQuery);
-    if (catalogSource !== "all") params.set("source", catalogSource);
+    const params = groupedCatalogParameters({ query: catalogQuery, source: catalogSource, status: jobStatus, employerCategory: employerFilter, hideUsCitizenshipRequired, hideAdvancedDegreeRequired });
     void api<GroupedCatalogPage<CatalogGroupRow>>(`/catalog?${params.toString()}`, "")
       .then((page) => {
         if (catalogRequestGeneration.current !== requestGeneration) return;
@@ -1996,7 +2014,8 @@ function AppContent() {
         catalogCursorRef.current = page.cursor;
         setCatalogGroups(page.groups);
         setNextCatalogCursor(page.cursor);
-        if (!catalogQuery && catalogSource === "all") {
+        if (!catalogQuery && catalogSource === "all" && jobStatus === "open" && employerFilter === "all"
+          && !hideUsCitizenshipRequired && !hideAdvancedDegreeRequired) {
           void responseCache.set(catalogCacheKey, page);
         }
       })
@@ -2021,7 +2040,7 @@ function AppContent() {
         catalogRequestInFlight.current = false;
       }
     };
-  }, [catalogRefresh, query, guestSearchQuery, catalogSource, token]);
+  }, [catalogRefresh, query, guestSearchQuery, catalogSource, jobStatus, employerFilter, hideUsCitizenshipRequired, hideAdvancedDegreeRequired, token]);
   const loadNextCatalogPage = (retry = false) => {
     const cursor = catalogCursorRef.current;
     if (!cursor || catalogRequestInFlight.current || (!retry && catalogMoreError)) return;
@@ -2030,9 +2049,10 @@ function AppContent() {
     setCatalogLoadingMore(true);
     setCatalogMoreError(undefined);
     const catalogQuery = (token ? query : guestSearchQuery).trim();
-    const params = new URLSearchParams({ limit: "25", cursor });
-    if (catalogQuery) params.set("q", catalogQuery);
-    if (catalogSource !== "all") params.set("source", catalogSource);
+    const params = groupedCatalogParameters(
+      { query: catalogQuery, source: catalogSource, status: jobStatus, employerCategory: employerFilter, hideUsCitizenshipRequired, hideAdvancedDegreeRequired },
+      { cursor },
+    );
     void api<GroupedCatalogPage<CatalogGroupRow>>(`/catalog?${params.toString()}`, "")
       .then((page) => {
         if (catalogRequestGeneration.current !== requestGeneration) return;
@@ -2263,18 +2283,29 @@ function AppContent() {
     setSelectedJob(job);
   };
   const loadCatalogGroup = (groupId: string) => {
+    const requestGeneration = groupRequestGuard.current.begin(groupId);
     setSelectedGroupLoading(true);
     setSelectedGroupError(undefined);
-    void api<CatalogGroupDetails>(`/catalog/groups/${encodeURIComponent(groupId)}`, "")
+    const params = groupedCatalogParameters({
+      query: (token ? query : guestSearchQuery).trim(), source: catalogSource, status: jobStatus,
+      employerCategory: employerFilter, hideUsCitizenshipRequired, hideAdvancedDegreeRequired,
+    });
+    params.delete("limit");
+    void api<CatalogGroupDetails>(`/catalog/groups/${encodeURIComponent(groupId)}?${params.toString()}`, "")
       .then((details) => {
+        if (!groupRequestGuard.current.isCurrent(requestGeneration, groupId)) return;
         setSelectedGroup(details);
       })
       .catch((error) => {
+        if (!groupRequestGuard.current.isCurrent(requestGeneration, groupId)) return;
         setSelectedGroupError(error instanceof Error ? error.message : "We couldn't load these roles.");
       })
-      .finally(() => setSelectedGroupLoading(false));
+      .finally(() => {
+        if (groupRequestGuard.current.isCurrent(requestGeneration, groupId)) setSelectedGroupLoading(false);
+      });
   };
   const openCatalogGroup = (group: CatalogGroupRow, details?: CatalogGroupDetails) => {
+    groupRequestGuard.current.invalidate();
     setSelectedGroupId(group.groupId);
     setSelectedGroupVisible(true);
     setSelectedGroup(details);
@@ -2284,6 +2315,7 @@ function AppContent() {
     } else loadCatalogGroup(group.groupId);
   };
   const dismissCatalogGroup = () => {
+    groupRequestGuard.current.invalidate();
     setSelectedGroupVisible(false);
     returnToGroupedRoles.current = false;
     setSelectedGroupId(undefined);
@@ -2421,6 +2453,14 @@ function AppContent() {
         onRetryRoute={retryRoutedJob}
         jobStatus={jobStatus}
         onJobStatusChange={setJobStatus}
+        employerFilter={employerFilter}
+        onEmployerFilterChange={setEmployerFilter}
+        filtersExpanded={filtersExpanded}
+        onFiltersExpandedChange={setFiltersExpanded}
+        hideUsCitizenshipRequired={hideUsCitizenshipRequired}
+        onHideUsCitizenshipRequiredChange={setHideUsCitizenshipRequired}
+        hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
+        onHideAdvancedDegreeRequiredChange={setHideAdvancedDegreeRequired}
         onSearchQueryChange={setGuestSearchQuery}
         sourceFilter={catalogSource}
         onSourceFilterChange={setCatalogSource}
@@ -2467,7 +2507,7 @@ function AppContent() {
         }}
         onSignOut={() => {
           sessionRequestId.current += 1;
-          void sessionStorage.clear();
+          void clearSession();
           tokenRef.current = undefined;
           setToken(undefined);
         }}
@@ -2574,6 +2614,16 @@ function AppContent() {
                 onQueryChange={setQuery}
                 source={catalogSource}
                 onSourceChange={setCatalogSource}
+                employerFilter={employerFilter}
+                onEmployerFilterChange={setEmployerFilter}
+                jobStatus={jobStatus}
+                onJobStatusChange={setJobStatus}
+                filtersExpanded={filtersExpanded}
+                onFiltersExpandedChange={setFiltersExpanded}
+                hideUsCitizenshipRequired={hideUsCitizenshipRequired}
+                onHideUsCitizenshipRequiredChange={setHideUsCitizenshipRequired}
+                hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
+                onHideAdvancedDegreeRequiredChange={setHideAdvancedDegreeRequired}
                 loading={catalogInitialLoading}
                 error={catalogError}
                 loadingMore={catalogLoadingMore}
@@ -2604,7 +2654,7 @@ function AppContent() {
               onPreferencesChanged={(updated) => setPreferences(updated)}
               onSignOut={async () => {
                 sessionRequestId.current += 1;
-                await sessionStorage.clear();
+                await clearSession();
                 tokenRef.current = undefined;
                 setToken(undefined);
               }}
@@ -2663,6 +2713,14 @@ function GuestExperience({
   onRetryRoute,
   jobStatus,
   onJobStatusChange,
+  employerFilter,
+  onEmployerFilterChange,
+  filtersExpanded,
+  onFiltersExpandedChange,
+  hideUsCitizenshipRequired,
+  onHideUsCitizenshipRequiredChange,
+  hideAdvancedDegreeRequired,
+  onHideAdvancedDegreeRequiredChange,
   onSearchQueryChange,
   sourceFilter,
   onSourceFilterChange,
@@ -2692,6 +2750,14 @@ function GuestExperience({
   onRetryRoute: () => void;
   jobStatus: "open" | "closed";
   onJobStatusChange: (status: "open" | "closed") => void;
+  employerFilter: EmployerCategory | "all";
+  onEmployerFilterChange: (value: EmployerCategory | "all") => void;
+  filtersExpanded: boolean;
+  onFiltersExpandedChange: (value: boolean) => void;
+  hideUsCitizenshipRequired: boolean;
+  onHideUsCitizenshipRequiredChange: (value: boolean) => void;
+  hideAdvancedDegreeRequired: boolean;
+  onHideAdvancedDegreeRequiredChange: (value: boolean) => void;
   onSearchQueryChange: (query: string) => void;
   sourceFilter: CatalogSource;
   onSourceFilterChange: (source: CatalogSource) => void;
@@ -2732,6 +2798,16 @@ function GuestExperience({
               onQueryChange={(value) => { setQuery(value); onSearchQueryChange(value); }}
               source={sourceFilter}
               onSourceChange={onSourceFilterChange}
+              employerFilter={employerFilter}
+              onEmployerFilterChange={onEmployerFilterChange}
+              jobStatus={jobStatus}
+              onJobStatusChange={onJobStatusChange}
+              filtersExpanded={filtersExpanded}
+              onFiltersExpandedChange={onFiltersExpandedChange}
+              hideUsCitizenshipRequired={hideUsCitizenshipRequired}
+              onHideUsCitizenshipRequiredChange={onHideUsCitizenshipRequiredChange}
+              hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
+              onHideAdvancedDegreeRequiredChange={onHideAdvancedDegreeRequiredChange}
               loading={catalogInitialLoading}
               error={catalogError}
               loadingMore={catalogLoadingMore}
@@ -3469,7 +3545,7 @@ function Profile({
           onPress: () =>
             void api("/me", token, { method: "DELETE" })
               .then(async () => {
-                await sessionStorage.clear();
+                await clearSession();
                 onSignOut();
               })
               .catch((error) =>

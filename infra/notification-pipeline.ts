@@ -151,7 +151,8 @@ export class NotificationPipeline extends Construct {
     this.intentTopic.grantPublish(this.flushWorker);
     props.usersTable.grantReadWriteData(this.pushWorker);
     props.usersTable.grant(this.pushWorker, 'dynamodb:TransactWriteItems');
-    this.receiptQueue.grantSendMessages(this.pushWorker);
+    props.catalogTable.grantWriteData(this.pushWorker);
+    props.catalogTable.grant(this.pushWorker, 'dynamodb:TransactWriteItems');
     props.usersTable.grantReadWriteData(this.emailWorker);
     props.usersTable.grant(this.emailWorker, 'dynamodb:TransactWriteItems');
     props.usersTable.grantReadWriteData(this.receiptWorker);

@@ -13,6 +13,7 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import type { Construct } from 'constructs';
 import { SOURCE_POLL_CADENCE } from '../src/source-poll-cadence.js';
+import { GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME } from '../src/grouped-notification-cohort.js';
 
 export interface GreenhouseMonitoringStackProps extends cdk.StackProps {
   internshipsTableName: string;
@@ -35,6 +36,9 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
       tableName: props.usersTableName,
       globalIndexes: ['activeDevicesIndex', 'tokenIndex', 'pendingReceiptsIndex', 'activeSessionsIndex'],
     });
+    const groupedNotificationCohort = ssm.StringParameter.fromStringParameterName(
+      this, 'GroupedNotificationCohort', GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME,
+    );
     const deadLetterQueue = new sqs.Queue(this, 'GreenhouseDeadLetterQueue', {
       fifo: true,
       retentionPeriod: cdk.Duration.days(14),
@@ -73,7 +77,7 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.minutes(2),
       memorySize: 512,
-      environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName },
+      environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName, GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME },
       bundling: { externalModules: [] },
     });
     worker.addEventSource(new lambdaEventSources.SqsEventSource(queue, {
@@ -84,6 +88,7 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
     internships.grantReadWriteData(worker);
     internships.grant(worker, 'dynamodb:TransactWriteItems');
     users.grantReadWriteData(worker);
+    groupedNotificationCohort.grantRead(worker);
 
     const operationsSecret = new secretsmanager.Secret(this, 'GreenhouseOperationsSecret', {
       description: 'Server-to-server credential for the shared source operations dashboard.',

@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   returnedRefreshToken: 'refresh-token',
   expiration: 0,
   refreshCalls: 0,
+  deferRefresh: false,
+  pendingRefresh: undefined as undefined | ((error: Error | null, session?: unknown) => void),
   setRefreshable: vi.fn(),
   clear: vi.fn(),
   clearLegacy: vi.fn(),
@@ -43,8 +45,15 @@ vi.mock('amazon-cognito-identity-js', () => {
     constructor(_value: unknown) {}
     refreshSession(_token: unknown, callback: (error: Error | null, session?: unknown) => void) {
       mocks.refreshCalls += 1;
+      if (mocks.deferRefresh) { mocks.pendingRefresh = callback; return; }
       if (mocks.refreshError) callback(mocks.refreshError);
       else callback(null, {
+        getIdToken: () => new CognitoIdToken({}),
+        getRefreshToken: () => ({ getToken: () => mocks.returnedRefreshToken }),
+      });
+    }
+    authenticateUser(_details: unknown, callbacks: { onSuccess: (session: unknown) => void }) {
+      callbacks.onSuccess({
         getIdToken: () => new CognitoIdToken({}),
         getRefreshToken: () => ({ getToken: () => mocks.returnedRefreshToken }),
       });
@@ -59,7 +68,7 @@ vi.mock('amazon-cognito-identity-js', () => {
   };
 });
 
-import { restoreSession } from '../src/auth';
+import { clearSession, restoreSession, signIn } from '../src/auth';
 
 beforeEach(() => {
   mocks.stored = undefined;
@@ -71,6 +80,8 @@ beforeEach(() => {
   mocks.returnedRefreshToken = 'refresh-token';
   mocks.expiration = Math.floor(Date.now() / 1_000) + 3_600;
   mocks.refreshCalls = 0;
+  mocks.deferRefresh = false;
+  mocks.pendingRefresh = undefined;
   mocks.setRefreshable.mockReset();
   mocks.clear.mockReset();
   mocks.clearLegacy.mockReset();
@@ -164,5 +175,41 @@ describe('Cognito session restoration', () => {
     expect(mocks.setRefreshable).toHaveBeenCalledWith({
       idToken: 'fresh-token', refreshToken: 'fallback-token', username: 'student@example.test',
     });
+  });
+
+  it('does not persist a refresh that completes after sign-out', async () => {
+    mocks.stored = { idToken: 'expired-token', refreshToken: 'refresh-token', username: 'student-a@example.test' };
+    mocks.expiration = 0;
+    mocks.deferRefresh = true;
+    const restoring = restoreSession();
+    await vi.waitFor(() => expect(mocks.pendingRefresh).toBeTypeOf('function'));
+    await clearSession();
+    mocks.pendingRefresh!(null, {
+      getIdToken: () => new (class { getJwtToken() { return 'stale-a-token'; } })(),
+      getRefreshToken: () => ({ getToken: () => 'stale-a-refresh' }),
+    });
+    await expect(restoring).resolves.toEqual({ status: 'signed_out', reason: 'missing' });
+    expect(mocks.setRefreshable).not.toHaveBeenCalled();
+  });
+
+  it('does not let an old rejected refresh clear a newly signed-in user', async () => {
+    mocks.stored = { idToken: 'expired-token', refreshToken: 'refresh-token', username: 'student-a@example.test' };
+    mocks.expiration = 0;
+    mocks.deferRefresh = true;
+    const restoring = restoreSession();
+    await vi.waitFor(() => expect(mocks.pendingRefresh).toBeTypeOf('function'));
+    await signIn('student-b@example.test', 'password');
+    mocks.pendingRefresh!(Object.assign(new Error('revoked'), { code: 'NotAuthorizedException' }));
+    await expect(restoring).resolves.toEqual({ status: 'signed_out', reason: 'missing' });
+    expect(mocks.clear).not.toHaveBeenCalled();
+    expect(mocks.setRefreshable).toHaveBeenLastCalledWith({
+      idToken: 'fresh-token', refreshToken: 'refresh-token', username: 'student-b@example.test',
+    });
+  });
+
+  it('does not clear the current account for an older request token', async () => {
+    mocks.stored = { idToken: 'user-b-token', refreshToken: 'user-b-refresh', username: 'student-b@example.test' };
+    await expect(clearSession('user-a-token')).resolves.toBe(false);
+    expect(mocks.clear).not.toHaveBeenCalled();
   });
 });

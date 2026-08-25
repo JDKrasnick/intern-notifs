@@ -12,9 +12,11 @@ import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as ses from 'aws-cdk-lib/aws-ses';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
 import type { Construct } from 'constructs';
 import { SOURCE_POLL_CADENCE } from '../src/source-poll-cadence.js';
 import { NotificationPipeline } from './notification-pipeline.js';
+import { GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME } from '../src/grouped-notification-cohort.js';
 
 export interface InternNotifsStackProps extends cdk.StackProps { githubRepository: string; githubOwnerId?: string; githubRepositoryId?: string; emailAddress: string; existingOidcProviderArn?: string; }
 export class InternNotifsStack extends cdk.Stack {
@@ -65,10 +67,14 @@ export class InternNotifsStack extends cdk.Stack {
       type: 'String', default: '',
       description: 'Comma-separated Cognito user IDs allowed onto grouped delivery; use * only after the global cutover gate.',
     });
+    const groupedNotificationCohortParameter = new ssm.StringParameter(this, 'GroupedNotificationCohortParameter', {
+      parameterName: GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME,
+      stringValue: cdk.Fn.join('', ['v1:', groupedNotificationUserIds.valueAsString]),
+    });
     const notifier = new lambdaNodejs.NodejsFunction(this, 'Notifier', {
       entry: 'src/lambda.ts', handler: 'handler', runtime: lambda.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.minutes(4), memorySize: 512,
-      environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName, RUNTIME_CONFIG_PARAMETER_NAME: runtimeConfigParameterName, GROUPED_NOTIFICATION_USER_IDS: groupedNotificationUserIds.valueAsString },
+      environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName, RUNTIME_CONFIG_PARAMETER_NAME: runtimeConfigParameterName, GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME },
       bundling: { externalModules: [] }
     });
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['dynamodb:BatchGetItem', 'dynamodb:BatchWriteItem', 'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query', 'dynamodb:Scan', 'dynamodb:TransactWriteItems'], resources: [internships.tableArn, `${internships.tableArn}/index/*`] }));
@@ -79,7 +85,7 @@ export class InternNotifsStack extends cdk.Stack {
     const pipelineHandler = (id: string, command: string) => new lambdaNodejs.NodejsFunction(this, id, {
       entry: 'src/notification-pipeline-handler.ts', handler: 'handler', runtime: lambda.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.minutes(1), memorySize: 256,
-      environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName, PIPELINE_COMMAND: command, SES_FROM: props.emailAddress, GROUPED_NOTIFICATION_USER_IDS: groupedNotificationUserIds.valueAsString },
+      environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName, PIPELINE_COMMAND: command, SES_FROM: props.emailAddress, GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME },
       bundling: { externalModules: [] },
     });
     const streamPublisher = pipelineHandler('NotificationStreamPublisher', 'stream-publisher');
@@ -92,12 +98,17 @@ export class InternNotifsStack extends cdk.Stack {
       catalogTable: internships, usersTable: users, emailIdentity: identity,
       handlers: { streamPublisher, aggregationWorker, flushWorker, pushWorker, emailWorker, receiptWorker },
     });
+    groupedNotificationCohortParameter.grantRead(notifier);
+    groupedNotificationCohortParameter.grantRead(flushWorker);
     streamPublisher.addEnvironment('CANDIDATE_TOPIC_ARN', notificationPipeline.candidateTopic.topicArn);
+    streamPublisher.addEnvironment('FLUSH_QUEUE_URL', notificationPipeline.delayedFlushQueue.queueUrl);
+    streamPublisher.addEnvironment('RECEIPT_QUEUE_URL', notificationPipeline.receiptQueue.queueUrl);
     aggregationWorker.addEnvironment('FLUSH_QUEUE_URL', notificationPipeline.delayedFlushQueue.queueUrl);
     flushWorker.addEnvironment('INTENT_TOPIC_ARN', notificationPipeline.intentTopic.topicArn);
     pushWorker.addEnvironment('PUSH_QUEUE_URL', notificationPipeline.pushQueue.queueUrl);
-    pushWorker.addEnvironment('RECEIPT_QUEUE_URL', notificationPipeline.receiptQueue.queueUrl);
     emailWorker.addEnvironment('EMAIL_QUEUE_URL', notificationPipeline.emailQueue.queueUrl);
+    notificationPipeline.delayedFlushQueue.grantSendMessages(streamPublisher);
+    notificationPipeline.receiptQueue.grantSendMessages(streamPublisher);
     notificationPipeline.pushQueue.grantSendMessages(pushWorker);
     notificationPipeline.emailQueue.grantSendMessages(emailWorker);
     const apiHandler = new lambdaNodejs.NodejsFunction(this, 'PublicApi', { entry: 'src/api.ts', handler: 'handler', runtime: lambda.Runtime.NODEJS_22_X, timeout: cdk.Duration.seconds(29), memorySize: 512, environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName, DOCUMENTS_BUCKET: documents.bucketName, USER_POOL_ID: userPool.userPoolId }, bundling: { externalModules: [] } });

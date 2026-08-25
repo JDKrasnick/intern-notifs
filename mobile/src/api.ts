@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { publicConfig } from './public-config';
-import { restoreSession } from './auth';
+import { clearSession, restoreSession } from './auth';
 import { sessionStorage } from './session-storage';
 export { sessionStorage, type StoredAuthSession } from './session-storage';
 
@@ -118,7 +118,7 @@ export async function authenticatedRead<T>(
   try {
     return await api<T>(path, session.token, { method: options.method });
   } catch (error) {
-    if (error instanceof ApiError && error.kind === 'unauthorized') await sessionStorage.clear();
+    if (error instanceof ApiError && error.kind === 'unauthorized') await clearSession(session.token);
     throw error;
   }
 }

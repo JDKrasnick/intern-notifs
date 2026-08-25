@@ -9,6 +9,7 @@ import { DynamoInternshipStore, DynamoUserStore, type InternshipStore, type User
 import { defaultSources } from './sources/index.js';
 import type { SourceAdapter } from './types.js';
 import { catalogGroupDetails, groupCatalogJobs } from './catalog-groups.js';
+import { loadGroupedNotificationCohort } from './grouped-notification-cohort.js';
 
 export interface RuntimeConfig {
   /** Optional personal fallback topic. Public app alerts use Expo Push Service. */
@@ -67,7 +68,15 @@ export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies
           : { excludeUserIds: dependencies.groupedPipelineUserIds },
       );
       const receipts = await inspectExpoPushReceipts(dependencies.userStore, publisher);
-      const pushRetries = await retryExpoPushNotifications(dependencies.store, dependencies.userStore, publisher);
+      const pushRetries = await retryExpoPushNotifications(
+        dependencies.store,
+        dependencies.userStore,
+        publisher,
+        undefined,
+        dependencies.groupedPipelineUserIds === '*'
+          ? { excludeAllUsers: true }
+          : { excludeUserIds: dependencies.groupedPipelineUserIds },
+      );
       return { poll, notifications, ntfy, receipts, pushRetries };
     }
     if (dependencies.notificationPublisher) {
@@ -91,7 +100,7 @@ export async function runtimeHandler(event: { command?: string } = {}) {
   }
   if (command === 'refresh-catalog-groups') {
     const store = new DynamoInternshipStore(tableName);
-    const groups = groupCatalogJobs(await store.listCatalog()).map(catalogGroupDetails);
+    const groups = groupCatalogJobs(await store.listCatalog(), { includeClosed: true }).map(catalogGroupDetails);
     const generatedAt = new Date().toISOString();
     await store.putCatalogProjection?.(groups, generatedAt);
     return { generatedAt, groups: groups.length, roles: groups.reduce((total, group) => total + group.roles.length, 0) };
@@ -99,10 +108,12 @@ export async function runtimeHandler(event: { command?: string } = {}) {
   const parameterName = process.env.RUNTIME_CONFIG_PARAMETER_NAME;
   const usersTable = process.env.USERS_TABLE;
   if (!parameterName || !usersTable) throw new Error('USERS_TABLE and RUNTIME_CONFIG_PARAMETER_NAME are required');
-  const cohort = (process.env.GROUPED_NOTIFICATION_USER_IDS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+  const cohortParameterName = process.env.GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME;
+  if (!cohortParameterName) throw new Error('GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME is required');
+  const cohort = await loadGroupedNotificationCohort(cohortParameterName);
   const result = await runRuntimeCommand(command, {
     store: new DynamoInternshipStore(tableName), userStore: new DynamoUserStore(usersTable), config: await loadRuntimeConfig(parameterName),
-    groupedPipelineUserIds: cohort.includes('*') ? '*' : new Set(cohort),
+    groupedPipelineUserIds: cohort,
   });
   console.log(JSON.stringify({ command, ...result }));
   return result;

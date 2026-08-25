@@ -8,6 +8,7 @@ import { DynamoInternshipStore, DynamoUserStore, type InternshipStore, type User
 import type { GreenhouseWorkMessage } from './greenhouse-dispatch.js';
 import { failedSourceHealth, successfulSourceHealth } from './source-health.js';
 import { processFifoBatch } from './sqs-fifo-batch.js';
+import { legacyDeliveryExclusions, loadGroupedNotificationCohort, type GroupedNotificationCohort } from './grouped-notification-cohort.js';
 
 const SHADOW_CHECKPOINT_PREFIX = 'shadow-';
 const SHADOW_LINK_CONCURRENCY = 4;
@@ -30,6 +31,7 @@ export interface GreenhouseBoardDependencies {
   sources?: ReviewedGreenhouseSource[];
   fetchImpl?: typeof fetch;
   linkValidator?: ApplicationUrlValidator;
+  groupedNotificationCohort?: GroupedNotificationCohort;
 }
 
 export interface GreenhouseBoardResult {
@@ -131,6 +133,9 @@ export async function runGreenhouseBoard(
       poll.newJobs.filter((job) => job.technical !== false),
       dependencies.userStore,
       dependencies.publisher ?? new ExpoPushPublisher(),
+      undefined,
+      undefined,
+      legacyDeliveryExclusions(dependencies.groupedNotificationCohort ?? new Set()),
     )
     : { sent: 0, skipped: 0, failed: 0 };
   return {
@@ -198,8 +203,11 @@ export async function handler(event: QueueEvent): Promise<{ batchItemFailures: A
   const tableName = process.env.INTERNSHIPS_TABLE;
   const usersTable = process.env.USERS_TABLE;
   if (!tableName || !usersTable) throw new Error('INTERNSHIPS_TABLE and USERS_TABLE are required');
+  const cohortParameterName = process.env.GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME;
+  if (!cohortParameterName) throw new Error('GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME is required');
   return processGreenhouseQueue(event, {
     store: new DynamoInternshipStore(tableName),
     userStore: new DynamoUserStore(usersTable),
+    groupedNotificationCohort: await loadGroupedNotificationCohort(cohortParameterName),
   });
 }

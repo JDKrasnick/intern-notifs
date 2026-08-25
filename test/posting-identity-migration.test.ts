@@ -115,6 +115,48 @@ describe('posting identity migration plan', () => {
     expect(plan.applications.deletes).toEqual([]);
   });
 
+  it('never downgrades an older progressed application when a newer saved alias collides', () => {
+    const plan = planPostingIdentityMigration([
+      job('legacy-a', 'https://boards.greenhouse.io/acme?gh_jid=100', '2026-08-01T00:00:00.000Z'),
+      job('legacy-b', 'https://job-boards.greenhouse.io/acme/jobs/100', '2026-08-02T00:00:00.000Z'),
+    ], [], [
+      application('application-a', 'legacy-a', 'interview', '2026-08-01T00:00:00.000Z', '2026-08-02T00:00:00.000Z'),
+      application('application-b', 'legacy-b', 'saved', '2026-08-03T00:00:00.000Z', '2026-08-04T00:00:00.000Z'),
+    ]);
+
+    expect(plan.applications.writes[0]?.application).toMatchObject({
+      applicationId: 'application-b', jobId: 'legacy-a', status: 'interview',
+    });
+  });
+
+  it('preserves the furthest application state instead of a newer less-progressed alias', () => {
+    const plan = planPostingIdentityMigration([
+      job('legacy-a', 'https://boards.greenhouse.io/acme?gh_jid=100', '2026-08-01T00:00:00.000Z'),
+      job('legacy-b', 'https://job-boards.greenhouse.io/acme/jobs/100', '2026-08-02T00:00:00.000Z'),
+    ], [], [
+      application('application-a', 'legacy-a', 'offer', '2026-08-01T00:00:00.000Z', '2026-08-02T00:00:00.000Z'),
+      application('application-b', 'legacy-b', 'applied', '2026-08-03T00:00:00.000Z', '2026-08-04T00:00:00.000Z'),
+    ]);
+
+    expect(plan.applications.writes[0]?.application.status).toBe('offer');
+  });
+
+  it('chooses the strongest receipt tombstone deterministically when aliases collapse', () => {
+    const jobs = [
+      job('legacy-a', 'https://boards.greenhouse.io/acme?gh_jid=100', '2026-08-01T00:00:00.000Z'),
+      job('legacy-b', 'https://job-boards.greenhouse.io/acme/jobs/100', '2026-08-02T00:00:00.000Z'),
+    ];
+    const failed = { ...receipt('legacy-a'), status: 'error' as const };
+    const delivered = { ...receipt('legacy-b'), status: 'ok' as const };
+    const forward = planPostingIdentityMigration(jobs, [failed, delivered]);
+    const reverse = planPostingIdentityMigration(jobs, [delivered, failed]);
+    expect(forward.receipts).toHaveLength(1);
+    expect(reverse.receipts).toHaveLength(1);
+    expect(forward.receipts[0]?.receipt.status).toBe('ok');
+    expect(reverse.receipts[0]?.receipt.status).toBe('ok');
+    expect(forward.repairToken).toBe(reverse.repairToken);
+  });
+
   it('applies application and session repairs before deleting duplicate applications and jobs', async () => {
     const jobs = [
       job('legacy-a', 'https://boards.greenhouse.io/acme?gh_jid=100', '2026-08-01T00:00:00.000Z'),

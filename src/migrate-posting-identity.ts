@@ -93,6 +93,22 @@ function mergedNotes(applications: ApplicationRecord[]) {
   return notes.length ? notes.join('\n\n') : undefined;
 }
 
+function applicationStatusRank(status: ApplicationRecord['status']) {
+  return status === 'saved' ? 0
+    : status === 'applied' ? 1
+      : status === 'assessment' ? 2
+        : status === 'interview' ? 3
+          : 4;
+}
+
+function receiptRank(receipt: DeliveryReceipt) {
+  if (receipt.status === 'ok' || receipt.deliveryState === 'delivered') return 5;
+  if (receipt.deliveryState === 'accepted' || receipt.deliveryState === 'unknown' || receipt.status === 'pending') return 4;
+  if (receipt.deliveryState === 'definitive-failure') return 3;
+  if (receipt.status === 'retryable') return 2;
+  return 1;
+}
+
 export function planApplicationIdentityMigration(
   applications: MigrationApplication[],
   sessions: MigrationApplicationSession[],
@@ -116,10 +132,15 @@ export function planApplicationIdentityMigration(
       right.application.updatedAt.localeCompare(left.application.updatedAt)
       || left.application.applicationId.localeCompare(right.application.applicationId));
     const keeper = ordered[0]!;
+    const status = [...ordered].sort((left, right) =>
+      applicationStatusRank(right.application.status) - applicationStatusRank(left.application.status)
+      || right.application.updatedAt.localeCompare(left.application.updatedAt)
+      || left.application.applicationId.localeCompare(right.application.applicationId))[0]!.application.status;
     const notes = mergedNotes(ordered.map((item) => item.application));
     const application: ApplicationRecord = {
       ...keeper.application,
       jobId: canonicalJobId,
+      status,
       createdAt: earliest(ordered.map((item) => item.application.createdAt)),
       updatedAt: latest(ordered.map((item) => item.application.updatedAt)),
       ...(notes ? { notes } : { notes: undefined }),
@@ -189,12 +210,27 @@ export function planPostingIdentityMigration(
     duplicateIds.push(...openMembers.filter((job) => job.jobId !== canonical.jobId).map((job) => job.jobId));
   }
 
-  const receiptCopies = receipts.flatMap((receipt) => {
+  const rawReceiptCopies = receipts.flatMap((receipt) => {
     const canonicalJobId = canonicalByJobId.get(receipt.jobId);
     const canonical = canonicalJobId && canonicalJobs.get(canonicalJobId);
     if (!canonicalJobId || !canonical) return [];
     return [{ receipt, canonicalJobId, dedupeKey: notificationDedupeKey(canonical) }];
   });
+  const receiptCopyByKey = new Map<string, (typeof rawReceiptCopies)[number]>();
+  for (const copy of rawReceiptCopies) {
+    const key = `${copy.receipt.userId}\0${copy.dedupeKey}\0${copy.receipt.token}`;
+    const prior = receiptCopyByKey.get(key);
+    if (!prior
+      || receiptRank(copy.receipt) > receiptRank(prior.receipt)
+      || (receiptRank(copy.receipt) === receiptRank(prior.receipt)
+        && (copy.receipt.updatedAt > prior.receipt.updatedAt
+          || (copy.receipt.updatedAt === prior.receipt.updatedAt && copy.receipt.jobId < prior.receipt.jobId)))) {
+      receiptCopyByKey.set(key, copy);
+    }
+  }
+  const receiptCopies = [...receiptCopyByKey.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, copy]) => copy);
   const applicationPlan = planApplicationIdentityMigration(applications, sessions, canonicalByJobId);
   const facts = {
     updates: updates.map((job) => [job.jobId, job.postingIdentity?.aliases.map((alias: PostingAlias) => alias.value)]),
@@ -278,11 +314,17 @@ export async function migratePostingIdentity(
   if (plan.conflicts.length) throw new Error(`Refusing apply with ${plan.conflicts.length} identity conflicts`);
   const internshipStore = new DynamoInternshipStore(internshipsTable, client);
   const userStore = new DynamoUserStore(usersTable, client);
+  const scannedJobs = new Map(jobs.map((job) => [job.jobId, job]));
   for (const claim of plan.aliases) {
     const result = await internshipStore.claimPostingIdentity(claim.identity, claim.canonicalJobId);
     if (result.outcome === 'quarantine') throw new Error(`Alias claim conflict: ${result.reason}`);
   }
-  for (const update of plan.updates) await internshipStore.putInternship(update);
+  for (const update of plan.updates) {
+    const expected = scannedJobs.get(update.jobId);
+    if (!expected || !await internshipStore.migrateInternship(update, expected)) {
+      throw new Error(`Catalog changed while migrating ${update.jobId}; rerun the dry-run before apply`);
+    }
+  }
   for (const item of internshipItems) {
     const value = item as JobItem;
     const occurrence = value.occurrence;
@@ -328,7 +370,13 @@ export async function migratePostingIdentity(
   }
   for (const preference of activePreferences) await userStore.putPreferences(preference);
   for (const jobId of plan.duplicateIds) {
-    await client.send(new DeleteCommand({ TableName: internshipsTable, Key: { pk: `JOB#${jobId}`, sk: 'META' } }));
+    const expected = scannedJobs.get(jobId);
+    if (!expected) throw new Error(`Missing scanned duplicate job ${jobId}`);
+    await client.send(new DeleteCommand({
+      TableName: internshipsTable, Key: { pk: `JOB#${jobId}`, sk: 'META' },
+      ConditionExpression: 'job = :expectedJob',
+      ExpressionAttributeValues: { ':expectedJob': expected },
+    }));
   }
   return { ...plan, applied: true };
 }

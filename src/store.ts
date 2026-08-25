@@ -57,7 +57,7 @@ export interface InternshipStore {
   markSmsSent(jobIds: string, sentAt: string): Promise<void>;
   markDigested(jobIds: string[], sentAt: string): Promise<void>;
   listOpen?(cursor?: string, limit?: number, status?: 'open' | 'closed', query?: CatalogQuery): Promise<{ jobs: Internship[]; cursor?: string }>;
-  /** Complete open catalog used to build stable grouped rows before role-level filters are applied. */
+  /** Complete current-season catalog used to build stable grouped rows before role-level filters are applied. */
   listCatalog?(): Promise<Internship[]>;
   putCatalogProjection?(groups: CatalogGroupDetails[], generatedAt: string): Promise<void>;
   listCatalogProjection?(cursor?: string, limit?: number): Promise<CatalogProjectionPage | undefined>;
@@ -135,7 +135,7 @@ export class MemoryInternshipStore implements InternshipStore {
   }
   async listCatalog() {
     return [...this.jobs.values()]
-      .filter((job) => job.open && job.technical !== false && !isPastSeason(job.season))
+      .filter((job) => job.technical !== false && !isPastSeason(job.season))
       .sort(compareCatalogRecency)
       .map(withEmployerCategory);
   }
@@ -316,6 +316,20 @@ export class DynamoInternshipStore implements InternshipStore {
   async putInternship(job: Internship): Promise<void> {
     await this.client.send(new PutCommand({ TableName: this.tableName, Item: internshipItem(job) }));
   }
+  async migrateInternship(job: Internship, expected: Internship): Promise<boolean> {
+    try {
+      await this.client.send(new PutCommand({
+        TableName: this.tableName,
+        Item: internshipItem(job),
+        ConditionExpression: 'job = :expectedJob',
+        ExpressionAttributeValues: { ':expectedJob': expected },
+      }));
+      return true;
+    } catch (error) {
+      if ((error as { name?: string }).name === 'ConditionalCheckFailedException') return false;
+      throw error;
+    }
+  }
   private async pending(index: 'pendingSmsIndex' | 'pendingDigestIndex', attribute: 'smsPk' | 'digestPk', value: string): Promise<Internship[]> {
     return (await this.queryAll({ TableName: this.tableName, IndexName: index, KeyConditionExpression: '#key = :value', ExpressionAttributeNames: { '#key': attribute }, ExpressionAttributeValues: { ':value': value } })).map((item) => item.job as Internship);
   }
@@ -377,15 +391,22 @@ export class DynamoInternshipStore implements InternshipStore {
       .map(withEmployerCategory);
   }
   async listCatalog(): Promise<Internship[]> {
-    return (await this.queryAll({
+    const [open, closed] = await Promise.all([this.queryAll({
       TableName: this.tableName,
       IndexName: 'openJobsIndex',
       KeyConditionExpression: 'openPk = :open',
       ExpressionAttributeValues: { ':open': 'OPEN' },
       ScanIndexForward: false,
-    }))
+    }), this.queryAll({
+      TableName: this.tableName,
+      IndexName: 'closedJobsIndex',
+      KeyConditionExpression: 'closedPk = :closed',
+      ExpressionAttributeValues: { ':closed': 'CLOSED' },
+      ScanIndexForward: false,
+    })]);
+    return [...open, ...closed]
       .map((item) => item.job as Internship)
-      .filter((job) => job.open && job.technical !== false && !isPastSeason(job.season))
+      .filter((job) => job.technical !== false && !isPastSeason(job.season))
       .sort(compareCatalogRecency)
       .map(withEmployerCategory);
   }
@@ -394,14 +415,13 @@ export class DynamoInternshipStore implements InternshipStore {
     const projectionPk = `CATALOG_PROJECTION#${version}`;
     const expiresAtEpoch = Math.floor(Date.parse(generatedAt) / 1_000) + 2 * 24 * 60 * 60;
     type ProjectionWrite = NonNullable<NonNullable<ConstructorParameters<typeof BatchWriteCommand>[0]>['RequestItems']>[string][number];
-    const requests: ProjectionWrite[] = groups.map((details) => ({ PutRequest: { Item: {
-      pk: projectionPk,
-      sk: `GROUP#${details.group.groupId}`,
-      projectionPk,
-      projectionSk: `${String(9_999_999_999_999 - Date.parse(details.group.updatedAt)).padStart(13, '0')}#${details.group.groupId}`,
-      details,
-      expiresAtEpoch,
-    } } }));
+    const requests: ProjectionWrite[] = groups.flatMap((details) => {
+      const order = `${String(9_999_999_999_999 - Date.parse(details.group.updatedAt)).padStart(13, '0')}#${details.group.groupId}`;
+      return [
+        { PutRequest: { Item: { pk: projectionPk, sk: `ORDER#${order}`, details, expiresAtEpoch } } },
+        { PutRequest: { Item: { pk: projectionPk, sk: `GROUP#${details.group.groupId}`, details, expiresAtEpoch } } },
+      ];
+    });
     while (requests.length) {
       const batch = requests.splice(0, 25);
       let pending: ProjectionWrite[] = batch;
@@ -412,35 +432,41 @@ export class DynamoInternshipStore implements InternshipStore {
     }
     await this.client.send(new PutCommand({
       TableName: this.tableName,
-      Item: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT', version, generatedAt, groupCount: groups.length },
+      Item: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT', schemaVersion: 3, version, generatedAt, groupCount: groups.length },
     }));
   }
   async listCatalogProjection(cursor?: string, limit = 25): Promise<CatalogProjectionPage | undefined> {
-    const decoded = cursor ? JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { version: string; key?: Record<string, unknown> } : undefined;
+    const decoded = cursor ? JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { schemaVersion?: number; version: string; generatedAt?: string; key?: Record<string, unknown> } : undefined;
     const pointer = decoded ? undefined : await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT' }, ConsistentRead: true }));
     const version = decoded?.version ?? pointer?.Item?.version as string | undefined;
-    if (!version) return undefined;
+    const schemaVersion = decoded?.schemaVersion ?? pointer?.Item?.schemaVersion as number | undefined;
+    if (!version || schemaVersion !== 3) return undefined;
+    const generatedAt = decoded?.generatedAt ?? pointer?.Item?.generatedAt as string | undefined;
+    if (generatedAt && Date.now() - Date.parse(generatedAt) > 24 * 60 * 60 * 1_000) return undefined;
     const result = await this.client.send(new QueryCommand({
       TableName: this.tableName,
-      IndexName: 'catalogProjectionIndex',
-      KeyConditionExpression: 'projectionPk = :pk',
-      ExpressionAttributeValues: { ':pk': `CATALOG_PROJECTION#${version}` },
+      KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
+      ExpressionAttributeValues: { ':pk': `CATALOG_PROJECTION#${version}`, ':prefix': 'ORDER#' },
       ScanIndexForward: true,
+      ConsistentRead: true,
       Limit: limit,
       ...(decoded?.key ? { ExclusiveStartKey: decoded.key } : {}),
     }));
+    if (!decoded && Number(pointer?.Item?.groupCount ?? 0) > 0 && !(result.Items?.length)) return undefined;
     return {
       groups: (result.Items ?? []).map((item) => item.details as CatalogGroupDetails),
-      ...(result.LastEvaluatedKey ? { cursor: Buffer.from(JSON.stringify({ version, key: result.LastEvaluatedKey })).toString('base64url') } : {}),
+      ...(result.LastEvaluatedKey ? { cursor: Buffer.from(JSON.stringify({ schemaVersion, version, generatedAt, key: result.LastEvaluatedKey })).toString('base64url') } : {}),
     };
   }
   async getCatalogProjectionGroup(groupId: string): Promise<CatalogGroupDetails | undefined> {
     const pointer = await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT' }, ConsistentRead: true }));
     const version = pointer.Item?.version as string | undefined;
-    if (!version) return undefined;
+    const generatedAt = pointer.Item?.generatedAt as string | undefined;
+    if (!version || pointer.Item?.schemaVersion !== 3 || !generatedAt || Date.now() - Date.parse(generatedAt) > 24 * 60 * 60 * 1_000) return undefined;
     const result = await this.client.send(new GetCommand({
       TableName: this.tableName,
       Key: { pk: `CATALOG_PROJECTION#${version}`, sk: `GROUP#${groupId}` },
+      ConsistentRead: true,
     }));
     return result.Item?.details as CatalogGroupDetails | undefined;
   }

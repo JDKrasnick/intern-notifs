@@ -35,6 +35,18 @@ describe('DynamoDB persistence contract', () => {
     expect((send.mock.calls[1]?.[0] as PutCommand).input.Item).not.toHaveProperty('openPk');
   });
 
+  it('rejects a migration rewrite when any scanned job state changed', async () => {
+    const { send, client } = fakeClient(); const store = new DynamoInternshipStore('jobs-table', client);
+    const expected = job();
+    const migrated = { ...expected, postingIdentity: { provider: 'unknown' as const, canonicalApplicationUrl: expected.applyUrl, aliases: [], canonicalJobId: expected.jobId } };
+    send.mockRejectedValueOnce(Object.assign(new Error('changed'), { name: 'ConditionalCheckFailedException' }));
+    await expect(store.migrateInternship(migrated, expected)).resolves.toBe(false);
+    expect((send.mock.calls[0]?.[0] as PutCommand).input).toMatchObject({
+      ConditionExpression: 'job = :expectedJob',
+      ExpressionAttributeValues: { ':expectedJob': expected },
+    });
+  });
+
   it('uses a stable opaque cursor with the open-jobs index', async () => {
     const { send, client } = fakeClient(); const store = new DynamoInternshipStore('jobs-table', client);
     send.mockResolvedValueOnce({ Items: [{ job: job() }], LastEvaluatedKey: { pk: 'JOB#next', sk: 'META' } });
@@ -50,14 +62,21 @@ describe('DynamoDB persistence contract', () => {
     send.mockResolvedValueOnce({});
     send.mockResolvedValueOnce({});
     await store.putCatalogProjection!([details], '2026-08-24T00:00:00.000Z');
-    expect((send.mock.calls[0]?.[0] as BatchWriteCommand).input.RequestItems?.['jobs-table']?.[0]).toMatchObject({ PutRequest: { Item: { projectionPk: expect.stringContaining('CATALOG_PROJECTION#'), details } } });
-    expect((send.mock.calls[1]?.[0] as PutCommand).input.Item).toMatchObject({ pk: 'CATALOG_PROJECTION', sk: 'CURRENT', groupCount: 1 });
+    expect((send.mock.calls[0]?.[0] as BatchWriteCommand).input.RequestItems?.['jobs-table']).toEqual(expect.arrayContaining([
+      expect.objectContaining({ PutRequest: { Item: expect.objectContaining({ pk: expect.stringContaining('CATALOG_PROJECTION#'), sk: expect.stringContaining('ORDER#'), details }) } }),
+      expect.objectContaining({ PutRequest: { Item: expect.objectContaining({ pk: expect.stringContaining('CATALOG_PROJECTION#'), sk: expect.stringContaining('GROUP#'), details }) } }),
+    ]));
+    expect((send.mock.calls[1]?.[0] as PutCommand).input.Item).toMatchObject({ pk: 'CATALOG_PROJECTION', sk: 'CURRENT', schemaVersion: 3, groupCount: 1 });
 
-    send.mockResolvedValueOnce({ Item: { version: 'version-a' } });
+    send.mockResolvedValueOnce({ Item: { schemaVersion: 3, version: 'version-a', generatedAt: new Date().toISOString() } });
     send.mockResolvedValueOnce({ Items: [{ details }] });
     expect(await store.listCatalogProjection!(undefined, 1)).toMatchObject({ groups: [details] });
     expect((send.mock.calls[2]?.[0] as GetCommand).input).toMatchObject({ Key: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT' }, ConsistentRead: true });
-    expect((send.mock.calls[3]?.[0] as QueryCommand).input).toMatchObject({ IndexName: 'catalogProjectionIndex', Limit: 1, ScanIndexForward: true });
+    expect((send.mock.calls[3]?.[0] as QueryCommand).input).toMatchObject({
+      TableName: 'jobs-table', ConsistentRead: true, Limit: 1, ScanIndexForward: true,
+      KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
+    });
+    expect((send.mock.calls[3]?.[0] as QueryCommand).input).not.toHaveProperty('IndexName');
   });
 
   it('advances past an expired GSI page before returning an unfiltered catalog page', async () => {

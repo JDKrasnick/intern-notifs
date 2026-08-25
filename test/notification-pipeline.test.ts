@@ -5,6 +5,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as ses from 'aws-cdk-lib/aws-ses';
 import { describe, expect, it } from 'vitest';
 import { NotificationPipeline } from '../infra/notification-pipeline.js';
+import { candidateFitsActiveBucket, EXPO_RECEIPT_DELAY_SECONDS, notificationStreamTarget } from '../src/notification-pipeline-handler.js';
 
 function pipelineStack(releaseWindow = cdk.Duration.seconds(8)) {
   const app = new cdk.App();
@@ -42,6 +43,35 @@ function pipelineStack(releaseWindow = cdk.Duration.seconds(8)) {
 }
 
 describe('NotificationPipeline', () => {
+  it('starts a fresh release when a delayed candidate reaches a processed bucket', () => {
+    const event = { createdAt: '2026-08-24T00:00:05.000Z' };
+    expect(candidateFitsActiveBucket({ bucketId: 'bucket', flushAt: '2026-08-24T00:00:08.000Z' }, event)).toBe(true);
+    expect(candidateFitsActiveBucket({ bucketId: 'bucket', flushAt: '2026-08-24T00:00:08.000Z', closedAt: '2026-08-24T00:00:09.000Z' }, event)).toBe(false);
+  });
+  it('uses the durable bucket insert as the delayed-flush outbox', () => {
+    expect(notificationStreamTarget({
+      eventID: 'bucket-insert', eventName: 'INSERT', dynamodb: { Keys: { pk: { S: 'RELEASE_BUCKET#bucket-1' } } },
+    })).toEqual({ kind: 'flush', bucketId: 'bucket-1' });
+    expect(notificationStreamTarget({
+      eventID: 'bucket-update', eventName: 'MODIFY', dynamodb: { Keys: { pk: { S: 'RELEASE_BUCKET#bucket-1' } } },
+    })).toBeUndefined();
+  });
+  it('uses a durable catalog outbox after Expo accepts a ticket', () => {
+    const claim = { claimId: 'claim-1', tombstoneId: 'tombstone-1', userId: 'user-1', channel: 'push', destinationId: 'token', releaseId: 'release-1', jobIds: ['job-1'], state: 'accepted', createdAt: '2026-08-24T00:00:00.000Z', updatedAt: '2026-08-24T00:00:01.000Z' };
+    expect(notificationStreamTarget({
+      eventID: 'receipt-outbox', eventName: 'INSERT',
+      dynamodb: {
+        Keys: { pk: { S: 'PIPELINE_RECEIPT_OUTBOX#claim-1' } },
+        NewImage: { message: { M: {
+          claim: { M: Object.fromEntries(Object.entries(claim).map(([key, value]) => [key, Array.isArray(value) ? { L: value.map((item) => ({ S: item })) } : { S: value }])) },
+          ticketId: { S: 'ticket-1' }, token: { S: 'token' },
+        } } },
+      },
+    })).toMatchObject({ kind: 'receipt', message: { ticketId: 'ticket-1', token: 'token', claim: { claimId: 'claim-1', state: 'accepted' } } });
+  });
+  it('waits fifteen minutes before checking Expo receipts', () => {
+    expect(EXPO_RECEIPT_DELAY_SECONDS).toBe(900);
+  });
   it('builds encrypted SNS/SQS fanout with 14-day dead-letter queues', () => {
     const template = Template.fromStack(pipelineStack());
     template.resourceCountIs('AWS::SNS::Topic', 2);
