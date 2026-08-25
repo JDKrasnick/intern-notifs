@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { fingerprint } from './core/normalize.js';
+import { canonicalCompanyKey, fingerprint } from './core/normalize.js';
+import { normalizeSearchTitle } from './identity/enrichment.js';
 import type { Compensation, Internship, JobRequirements, ProcessedListing, SourceOccurrence } from './types.js';
 
 const COUNT_LOCATION = /^\s*\d+\s+locations?\s*$/iu;
@@ -102,6 +103,57 @@ export function normalizeCompensation(value: string): Compensation {
   return result;
 }
 
+function normalizeIdentity(
+  identity: Internship['internshipIdentity'] | ProcessedListing['internshipIdentity'],
+  originalCompany: string,
+  company: string,
+  title: string,
+): Internship['internshipIdentity'] | ProcessedListing['internshipIdentity'] {
+  if (!identity || typeof identity !== 'object') return identity;
+  const record = identity as Record<string, unknown>;
+  const companyIdentity = record.company && typeof record.company === 'object' ? record.company as Record<string, unknown> : undefined;
+  const titleIdentity = record.title && typeof record.title === 'object' ? record.title as Record<string, unknown> : undefined;
+  if (!companyIdentity && !titleIdentity) return identity;
+  const text = (value: unknown) => typeof value === 'string'
+    ? value
+    : value && typeof value === 'object' && typeof (value as { value?: unknown }).value === 'string'
+      ? (value as { value: string }).value
+      : undefined;
+  const replaceText = (value: unknown, replacement: string, fallback?: unknown) => typeof value === 'string'
+    ? replacement
+    : value && typeof value === 'object'
+      ? { ...value, value: replacement }
+      : typeof fallback === 'string'
+        ? replacement
+        : fallback && typeof fallback === 'object'
+          ? { ...fallback, value: replacement }
+          : value;
+  const oldDisplayCompany = text(record.canonicalCompanyName) ?? text(companyIdentity?.displayName) ?? originalCompany;
+  const updateCanonical = (value: unknown) => typeof value === 'string' && value === canonicalCompanyKey(oldDisplayCompany)
+    ? canonicalCompanyKey(company)
+    : value;
+  const normalized: Record<string, unknown> = {
+    ...record,
+    ...(record.canonicalCompanyId !== undefined ? { canonicalCompanyId: updateCanonical(record.canonicalCompanyId) } : {}),
+    ...(record.canonicalCompanyName !== undefined ? { canonicalCompanyName: replaceText(record.canonicalCompanyName, company) } : {}),
+  };
+  if (companyIdentity) {
+    normalized.company = {
+      ...companyIdentity,
+      ...(companyIdentity.canonicalId !== undefined ? { canonicalId: updateCanonical(companyIdentity.canonicalId) } : {}),
+      displayName: replaceText(companyIdentity.displayName, company, oldDisplayCompany),
+    };
+  }
+  if (titleIdentity) {
+    normalized.title = {
+      ...titleIdentity,
+      display: replaceText(titleIdentity.display, title, titleIdentity.official ?? title),
+      search: replaceText(titleIdentity.search, normalizeSearchTitle(title), titleIdentity.display ?? titleIdentity.official ?? title),
+    };
+  }
+  return normalized as Internship['internshipIdentity'] | ProcessedListing['internshipIdentity'];
+}
+
 export function normalizeListing<T extends ProcessedListing | SourceOccurrence>(listing: T): T {
   const badge = badgeRequirements(listing.company, listing.title);
   const company = boundedText(cleanBadgeText(listing.company), 160) || 'Unknown company';
@@ -114,6 +166,9 @@ export function normalizeListing<T extends ProcessedListing | SourceOccurrence>(
     locations,
     location: locationSummary(locations),
     compensation: normalizeCompensation(listing.compensation.raw),
+    ...('internshipIdentity' in listing && listing.internshipIdentity
+      ? { internshipIdentity: normalizeIdentity(listing.internshipIdentity, listing.company, company, title) }
+      : {}),
     requirements: {
       requiresUsCitizenship: Boolean(listing.requirements?.requiresUsCitizenship || badge.requiresUsCitizenship),
       advancedDegreeRequired: Boolean(listing.requirements?.advancedDegreeRequired || badge.advancedDegreeRequired),
@@ -132,6 +187,7 @@ export function normalizeInternship(job: Internship): Internship {
     location: normalized.location,
     compensation: normalized.compensation,
     requirements: normalized.requirements,
+    ...(normalized.internshipIdentity ? { internshipIdentity: normalized.internshipIdentity } : {}),
     sourceReferences: references,
     fingerprint: fingerprint(normalized.company, normalized.title, normalized.location, job.season),
   };

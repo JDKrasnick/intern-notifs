@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { cleanBadgeText, locationSummary, normalizeCompensation, normalizeInternship, normalizeListing, normalizeLocations } from '../src/catalog-quality.js';
+import { groupCatalogJobs } from '../src/catalog-groups.js';
+import { buildInternshipIdentity } from '../src/identity/enrichment.js';
 import type { Internship, ProcessedListing } from '../src/types.js';
 
 const listing = (overrides: Partial<ProcessedListing> = {}): ProcessedListing => ({
@@ -19,8 +21,36 @@ describe('catalog quality normalization', () => {
   });
 
   it('cleans badges while retaining their structured meaning', () => {
-    const normalized = normalizeListing(listing({ company: '🇺🇸 Acme', title: '🎓 Advanced Degree Required · ML Intern' }));
+    const company = '🇺🇸 Acme';
+    const title = '🎓 Advanced Degree Required · ML Intern';
+    const normalized = normalizeListing(listing({
+      company,
+      title,
+      internshipIdentity: buildInternshipIdentity({
+        sourceId: 'greenhouse-acme', sourceUrl: 'https://boards.greenhouse.io/acme', observedAt: '2026-08-25T00:00:00.000Z',
+        company, title, location: 'Remote', season: 'summer-2027', seasonEvidenceStatus: 'explicit', content: "Master's degree required",
+      }),
+    }));
     expect(normalized).toMatchObject({ company: 'Acme', title: 'ML Intern', requirements: { requiresUsCitizenship: true, advancedDegreeRequired: true } });
+    expect(normalized.internshipIdentity).toMatchObject({
+      company: { canonicalId: 'acme', displayName: { value: 'Acme' } },
+      title: { display: { value: 'ML Intern' }, search: { value: 'ml intern' } },
+    });
+    const job: Internship = {
+      ...normalized, jobId: 'badge-job', normalizedUrl: normalized.applyUrl, fingerprint: 'old', sourceReferences: [normalized], open: true,
+      firstSeenAt: normalized.fetchedAt, lastSeenAt: normalized.fetchedAt, notification: { smsPending: false, digestPending: false },
+    };
+    const group = groupCatalogJobs([normalizeInternship(job)])[0]!;
+    expect(group.row).toMatchObject({ company: 'Acme', titles: ['ML Intern'], featuredRole: { title: 'ML Intern' } });
+    const legacy = normalizeInternship({
+      ...job,
+      internshipIdentity: {
+        canonicalCompanyId: 'us citizenship required acme',
+        canonicalCompanyName: 'US Citizenship Required · Acme',
+        title: { display: 'Advanced Degree Required · ML Intern', official: '🎓 Advanced Degree Required · ML Intern' },
+      },
+    });
+    expect(groupCatalogJobs([legacy])[0]?.row).toMatchObject({ company: 'Acme', titles: ['ML Intern'] });
     expect(cleanBadgeText('Acme 🇺🇸')).toBe('Acme');
   });
 

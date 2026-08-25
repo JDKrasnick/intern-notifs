@@ -202,7 +202,8 @@ function closeOccurrence(job: Internship, state: SourceOccurrenceState, now: str
     ...job,
     sourceReferences,
     technical: anyOpenTechnicalOccurrence(sourceReferences),
-    open: sourceReferences.some((reference) => reference.state === 'open'),
+    open: sourceReferences.some((reference) => reference.state === 'open')
+      && seasonAllowsOpen(job.season, job.internshipIdentity, sourceReferences, now),
     lastSeenAt: now,
   };
 }

@@ -23,6 +23,19 @@ export interface CatalogQualityBackfillReport {
 }
 
 type Repair = { row: CatalogQualityRow; value: Internship | SourceOccurrenceState; category: Category; id: string };
+type StagedRepair = {
+  id: string;
+  oldValue: string;
+  value: string;
+  urlKey?: string;
+  fingerprintKey?: string;
+  smsPending?: number;
+  digestPending?: number;
+  catalogState?: string | null;
+  catalogSortKey?: string | null;
+  searchText?: string | null;
+  sourceClasses?: string | null;
+};
 
 const provider = (sourceId: string) => /^(greenhouse|lever|ashby)-/iu.exec(sourceId)?.[1]?.toLowerCase() ?? 'community';
 const emptyCounts = (): Counts => ({});
@@ -100,6 +113,56 @@ export function catalogQualityBackfillPlan(rows: CatalogQualityRow[]) {
   return { ...plan, changed, repairToken };
 }
 
+const REPAIR_STAGE_KIND = 'catalog-quality-repair';
+const STAGE_ROWS_PER_STATEMENT = 20;
+
+function stagedRepair(repair: Repair): StagedRepair {
+  const staged: StagedRepair = {
+    id: repair.id,
+    oldValue: repair.row.value,
+    value: JSON.stringify(repair.value),
+  };
+  if (repair.row.kind !== 'internship') return staged;
+  const job = repair.value as Internship;
+  return {
+    ...staged,
+    urlKey: job.normalizedUrl,
+    fingerprintKey: job.fingerprint,
+    smsPending: job.notification.smsPending ? 1 : 0,
+    digestPending: job.notification.digestPending ? 1 : 0,
+    catalogState: job.technical === false ? null : job.open ? 'OPEN' : 'CLOSED',
+    catalogSortKey: job.technical === false ? null : job.open ? openCatalogSortKey(job) : `${job.lastSeenAt}#${job.jobId}`,
+    searchText: job.technical === false ? null : catalogSearchText(job),
+    sourceClasses: job.technical === false ? null : JSON.stringify(catalogSourceClasses(job)),
+  };
+}
+
+async function stageRepairs(db: D1Database, token: string, repairs: Repair[]): Promise<void> {
+  const stagePk = `CATALOG_QUALITY_REPAIR#${token}`;
+  const statements = [];
+  for (let offset = 0; offset < repairs.length; offset += STAGE_ROWS_PER_STATEMENT) {
+    const chunk = repairs.slice(offset, offset + STAGE_ROWS_PER_STATEMENT);
+    const values = chunk.map(() => `(?, ?, '${REPAIR_STAGE_KIND}', ?, ?, ?)`).join(', ');
+    statements.push(db.prepare(`
+      INSERT INTO catalog_items (pk, sk, kind, value, source_id, external_id)
+      VALUES ${values}
+      ON CONFLICT(pk, sk) DO UPDATE SET kind = excluded.kind, value = excluded.value,
+        source_id = excluded.source_id, external_id = excluded.external_id
+    `).bind(...chunk.flatMap((repair) => [
+      stagePk,
+      catalogQualityHash([repair.row.pk, repair.row.sk]),
+      JSON.stringify(stagedRepair(repair)),
+      repair.row.pk,
+      repair.row.sk,
+    ])));
+  }
+  if (statements.length) await db.batch(statements);
+}
+
+async function clearStagedRepairs(db: D1Database, stagePk: string): Promise<void> {
+  await db.prepare(`DELETE FROM catalog_items WHERE pk = ? AND kind = '${REPAIR_STAGE_KIND}'`).bind(stagePk).run();
+}
+
 export async function runCatalogQualityBackfill(
   db: D1Database,
   options: { apply?: boolean; repairToken?: string; expectedChanged?: number } = {},
@@ -121,21 +184,50 @@ export async function runCatalogQualityBackfill(
   if (options.repairToken !== plan.repairToken || options.expectedChanged !== plan.changed.length) {
     throw new Error('Catalog changed after dry run; use the latest repair token and exact changed-record count');
   }
-  for (const repair of plan.changed) {
-    let statement;
-    if (repair.row.kind === 'internship') {
-      const job = repair.value as Internship;
-      statement = db.prepare(`UPDATE catalog_items SET value = ?, url_key = ?, fingerprint_key = ?, sms_pending = ?, digest_pending = ?, catalog_state = ?, catalog_sort_key = ?, search_text = ?, source_classes = ? WHERE pk = ? AND sk = ? AND value = ?`)
-        .bind(JSON.stringify(job), job.normalizedUrl, job.fingerprint, job.notification.smsPending ? 1 : 0, job.notification.digestPending ? 1 : 0,
-          job.technical === false ? null : job.open ? 'OPEN' : 'CLOSED', job.technical === false ? null : job.open ? openCatalogSortKey(job) : `${job.lastSeenAt}#${job.jobId}`,
-          job.technical === false ? null : catalogSearchText(job), job.technical === false ? null : JSON.stringify(catalogSourceClasses(job)),
-          repair.row.pk, repair.row.sk, repair.row.value);
-    } else {
-      statement = db.prepare('UPDATE catalog_items SET value = ? WHERE pk = ? AND sk = ? AND value = ?')
-        .bind(JSON.stringify(repair.value), repair.row.pk, repair.row.sk, repair.row.value);
-    }
-    if ((await statement.run()).meta.changes !== 1) report.conflicts.push(repair.id);
+  if (!plan.changed.length) return report;
+  const stagePk = `CATALOG_QUALITY_REPAIR#${plan.repairToken}`;
+  await stageRepairs(db, plan.repairToken, plan.changed);
+  const applied = await db.prepare(`
+    WITH staged AS MATERIALIZED (
+      SELECT source_id AS target_pk, external_id AS target_sk, value AS repair
+      FROM catalog_items WHERE pk = ? AND kind = '${REPAIR_STAGE_KIND}'
+    ), guards AS MATERIALIZED (
+      SELECT
+        (SELECT COUNT(*) FROM staged) AS staged_count,
+        (SELECT COUNT(*) FROM staged
+          JOIN catalog_items AS current
+            ON current.pk = staged.target_pk AND current.sk = staged.target_sk
+           AND current.value = json_extract(staged.repair, '$.oldValue')) AS matching_count
+    )
+    UPDATE catalog_items AS target SET
+      value = json_extract(staged.repair, '$.value'),
+      url_key = CASE WHEN target.kind = 'internship' THEN json_extract(staged.repair, '$.urlKey') ELSE target.url_key END,
+      fingerprint_key = CASE WHEN target.kind = 'internship' THEN json_extract(staged.repair, '$.fingerprintKey') ELSE target.fingerprint_key END,
+      sms_pending = CASE WHEN target.kind = 'internship' THEN json_extract(staged.repair, '$.smsPending') ELSE target.sms_pending END,
+      digest_pending = CASE WHEN target.kind = 'internship' THEN json_extract(staged.repair, '$.digestPending') ELSE target.digest_pending END,
+      catalog_state = CASE WHEN target.kind = 'internship' THEN json_extract(staged.repair, '$.catalogState') ELSE target.catalog_state END,
+      catalog_sort_key = CASE WHEN target.kind = 'internship' THEN json_extract(staged.repair, '$.catalogSortKey') ELSE target.catalog_sort_key END,
+      search_text = CASE WHEN target.kind = 'internship' THEN json_extract(staged.repair, '$.searchText') ELSE target.search_text END,
+      source_classes = CASE WHEN target.kind = 'internship' THEN json_extract(staged.repair, '$.sourceClasses') ELSE target.source_classes END
+    FROM staged, guards
+    WHERE target.pk = staged.target_pk AND target.sk = staged.target_sk
+      AND guards.staged_count = ? AND guards.matching_count = ?
+  `).bind(stagePk, plan.changed.length, plan.changed.length).run();
+  if (applied.meta.changes !== plan.changed.length) {
+    const conflicts = await db.prepare(`
+      SELECT json_extract(staged.value, '$.id') AS id
+      FROM catalog_items AS staged
+      LEFT JOIN catalog_items AS current
+        ON current.pk = staged.source_id AND current.sk = staged.external_id
+      WHERE staged.pk = ? AND staged.kind = '${REPAIR_STAGE_KIND}'
+        AND (current.value IS NULL OR current.value <> json_extract(staged.value, '$.oldValue'))
+      ORDER BY staged.sk
+    `).bind(stagePk).all<{ id: string }>();
+    report.conflicts = conflicts.results.map((item) => item.id);
+    if (!report.conflicts.length) report.conflicts = ['catalog changed after staging'];
   }
-  report.projectionRefreshRequired = report.conflicts.length === 0;
+  try { await clearStagedRepairs(db, stagePk); }
+  catch { /* Staging rows are inert and a cleanup failure must not hide a successful atomic apply. */ }
+  report.projectionRefreshRequired = applied.meta.changes === plan.changed.length;
   return report;
 }

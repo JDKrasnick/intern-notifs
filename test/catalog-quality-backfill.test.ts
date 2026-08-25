@@ -45,27 +45,38 @@ describe('catalog quality backfill planning', () => {
     expect(catalogQualityBackfillPlan([roleRow, checkpoint]).totals.closed).toBe(0);
   });
 
-  it('rejects stale guards and reports conditional-write conflicts without outbox writes', async () => {
-    const rows: CatalogQualityRow[] = [{ pk: 'JOB#job-1', sk: 'META', kind: 'internship', value: JSON.stringify(job()) }];
+  it('atomically rejects stale guards and reports conditional-write conflicts without outbox writes', async () => {
+    const second = job(); second.jobId = 'job-2'; second.normalizedUrl = 'https://example.test/2'; second.applyUrl = second.normalizedUrl;
+    const rows: CatalogQualityRow[] = [
+      { pk: 'JOB#job-1', sk: 'META', kind: 'internship', value: JSON.stringify(job()) },
+      { pk: 'JOB#job-2', sk: 'META', kind: 'internship', value: JSON.stringify(second) },
+    ];
     const queries: string[] = [];
+    let batchCalls = 0;
     const database = {
       prepare(query: string) {
         queries.push(query);
         const statement: D1PreparedStatement = {
           bind() { return statement; },
           async first() { return null; },
-          async all<T>() { return { results: rows as T[] }; },
+          async all<T>() {
+            return { results: (/SELECT json_extract\(staged\.value, '\$\.id'\)/u.test(query) ? [{ id: 'job-2' }] : rows) as T[] };
+          },
           async run() { return { meta: { changes: 0 } }; },
         };
         return statement;
       },
-      async batch() { return []; },
+      async batch() { batchCalls += 1; return []; },
     } satisfies D1Database;
-    await expect(runCatalogQualityBackfill(database, { apply: true, repairToken: 'stale', expectedChanged: 1 })).rejects.toThrow(/changed after dry run/iu);
+    await expect(runCatalogQualityBackfill(database, { apply: true, repairToken: 'stale', expectedChanged: 2 })).rejects.toThrow(/changed after dry run/iu);
     const dryRun = await runCatalogQualityBackfill(database);
     const apply = await runCatalogQualityBackfill(database, { apply: true, repairToken: dryRun.repairToken, expectedChanged: dryRun.expectedChanged });
-    expect(apply.conflicts).toEqual(['job-1']);
+    expect(apply.conflicts).toEqual(['job-2']);
     expect(apply.projectionRefreshRequired).toBe(false);
+    expect(batchCalls).toBe(1);
+    const catalogUpdates = queries.filter((query) => /UPDATE catalog_items AS target/u.test(query));
+    expect(catalogUpdates).toHaveLength(1);
+    expect(catalogUpdates[0]).toMatch(/matching_count[\s\S]+staged_count[\s\S]+matching_count/u);
     expect(queries.every((query) => !/outbox|notification-event/iu.test(query))).toBe(true);
   });
 });
