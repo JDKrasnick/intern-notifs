@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { queueHasBacklog } from '../cloudflare/queue-backlog.js';
-import { cloudflareOperationsQueueClient, readDocumentUpload } from '../cloudflare/worker.js';
+import { cloudflareOperationsQueueClient, documentContent, readDocumentUpload } from '../cloudflare/worker.js';
+import type { Environment } from '../cloudflare/worker.js';
 import type { Queue } from '../cloudflare/types.js';
 
 const queue = (metrics: Queue['metrics']): Queue => ({
@@ -49,7 +50,7 @@ describe('Cloudflare operations queue adapter', () => {
 });
 
 describe('Cloudflare document upload bounds', () => {
-  it('rejects an oversized declared body without reading its stream', async () => {
+  it('returns 413 for an oversized declared body before quota or R2 work', async () => {
     const cancel = vi.fn();
     const body = new ReadableStream<Uint8Array>({ cancel });
     const request = new Request('https://example.test/me/documents/document-1/content', {
@@ -58,9 +59,21 @@ describe('Cloudflare document upload bounds', () => {
       body,
       duplex: 'half',
     } as RequestInit & { duplex: 'half' });
+    const all = vi.fn(async () => ({ results: [{ value: JSON.stringify({
+      userId: 'user-1', documentId: 'document-1', objectKey: 'private/user-1/document-1', contentType: 'application/pdf',
+    }) }] }));
+    const prepare = vi.fn(() => ({ bind: vi.fn(() => ({ all })) }));
+    const put = vi.fn();
 
-    await expect(readDocumentUpload(request)).resolves.toEqual({ tooLarge: true });
+    const response = await documentContent(request, {
+      DB: { prepare },
+      DOCUMENTS: { put },
+    } as unknown as Environment, 'user-1', 'document-1');
+
+    expect(response.status).toBe(413);
     expect(cancel).toHaveBeenCalledOnce();
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(put).not.toHaveBeenCalled();
   });
 
   it('cancels an undeclared body as soon as streamed bytes cross the limit', async () => {

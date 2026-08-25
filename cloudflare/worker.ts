@@ -232,7 +232,7 @@ export async function readDocumentUpload(request: Request): Promise<
   return { tooLarge: false, content: content.buffer };
 }
 
-async function documentContent(request: Request, env: Environment, userId: string, documentId: string): Promise<Response> {
+export async function documentContent(request: Request, env: Environment, userId: string, documentId: string): Promise<Response> {
   const users = new D1UserStore(env.DB);
   const document = (await users.listDocuments(userId)).find((item) => item.documentId === documentId);
   if (!document) return Response.json({ message: 'Document not found' }, { status: 404 });
