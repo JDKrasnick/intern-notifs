@@ -29,7 +29,7 @@ import * as Notifications from "expo-notifications";
 import * as DocumentPicker from "expo-document-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { ApiError, api, authenticatedRead, responseCache, sessionStorage } from "./src/api";
-import { appendGroupedCatalogPage, type GroupedCatalogPage } from "./src/catalog";
+import { appendGroupedCatalogPage, catalogCardKind, type GroupedCatalogPage } from "./src/catalog";
 import { catalogGroupAvailabilityLabel, groupedCatalogParameters } from "./src/catalog-filters";
 import { createLatestRequestGuard } from "./src/latest-request";
 import { clearSession, confirmEmail, restoreSession, signIn, signUp } from "./src/auth";
@@ -106,20 +106,34 @@ type CatalogGroupRow = {
   updatedAt: string;
   hasNewRoles: boolean;
   roleIds: string[];
+  featuredRole: CatalogGroupRole;
+  compensations: string[];
 };
 type CatalogGroupRole = {
   jobId: string;
   company: string;
   title: string;
   location: string;
+  locations: string[];
+  visibleAt: string;
   season: string;
   education: CatalogEducation;
   disciplines: string[];
   workModes: string[];
   sourceCredibility: "official" | "corroborated" | "community" | "unspecified";
+  detailUrl: string;
   officialApplyUrl: string;
   applicationUrlValidated: boolean;
   open: boolean;
+  employerCategory?: EmployerCategory;
+  requiresUsCitizenship?: boolean;
+  advancedDegreeRequired?: boolean;
+  compensation: { raw: string };
+  firstSeenAt: string;
+  lastSeenAt: string;
+  sourceReferences: Job["sourceReferences"];
+  applicationUrlValidatedAt?: string;
+  invalidApplicationUrl?: string;
 };
 type CatalogGroupDetails = { group: CatalogGroupRow; roles: CatalogGroupRole[] };
 type Application = {
@@ -195,7 +209,7 @@ const defaultAlertSettings: AlertSettings = {
   applicationReminders: true,
   followUpDays: 7,
 };
-const catalogCacheKey = "internnotifs.grouped-catalog.v3";
+const catalogCacheKey = "internnotifs.grouped-catalog.v4";
 const hiddenRolesCacheKey = "internnotifs.hidden-roles.v1";
 const nextApplicationStatuses: Record<string, Application["status"]> = {
   saved: "applied",
@@ -506,15 +520,61 @@ function JobCard({
   );
 }
 
-function CatalogGroupCard({ group, onOpen, status = "open" }: { group: CatalogGroupRow; onOpen: () => void; status?: "open" | "closed" }) {
+function catalogRoleJob(role: CatalogGroupRole): Job {
+  return {
+    jobId: role.jobId,
+    company: role.company,
+    title: role.title,
+    location: role.location,
+    season: role.season,
+    applyUrl: role.officialApplyUrl,
+    compensation: role.compensation ?? { raw: "" },
+    employerCategory: role.employerCategory,
+    requirements: {
+      requiresUsCitizenship: Boolean(role.requiresUsCitizenship),
+      advancedDegreeRequired: Boolean(role.advancedDegreeRequired),
+    },
+    open: role.open,
+    firstSeenAt: role.firstSeenAt ?? role.visibleAt,
+    lastSeenAt: role.lastSeenAt ?? role.visibleAt,
+    sourceReferences: role.sourceReferences ?? [],
+    ...(role.applicationUrlValidatedAt ? { applicationUrlValidatedAt: role.applicationUrlValidatedAt } : {}),
+    ...(role.invalidApplicationUrl ? { invalidApplicationUrl: role.invalidApplicationUrl } : {}),
+  };
+}
+
+function CatalogGroupCard({
+  group,
+  onOpenGroup,
+  onOpenRole,
+  status = "open",
+}: {
+  group: CatalogGroupRow;
+  onOpenGroup: () => void;
+  onOpenRole: (job: Job) => void;
+  status?: "open" | "closed";
+}) {
+  if (catalogCardKind(group) === "role") {
+    const job = catalogRoleJob(group.featuredRole);
+    return <JobCard job={job} onOpen={() => onOpenRole(job)} />;
+  }
   const label = catalogGroupAvailabilityLabel(group, status);
-  const education = group.education.map((item) => item.label).join(" · ");
+  const education = group.education
+    .filter((item) => item.evidence !== "unspecified")
+    .map((item) => item.label)
+    .join(" · ");
+  const featuredRole = group.featuredRole;
+  const source = sourcePresentation(featuredRole?.sourceReferences ?? []);
+  const postingTiming = featuredRole
+    ? postingTimingPresentation(featuredRole.sourceReferences ?? [], featuredRole.firstSeenAt ?? featuredRole.visibleAt)
+    : undefined;
+  const compensation = (group.compensations ?? []).filter(Boolean);
   return (
     <TouchableOpacity
       accessibilityRole="button"
       accessibilityLabel={`${group.company}, ${label}, ${group.titles.join(", ")}`}
-      accessibilityHint={group.roleCount === 1 ? "Opens this role" : "Opens every role in this group"}
-      onPress={onOpen}
+      accessibilityHint="Opens every role in this group"
+      onPress={onOpenGroup}
       style={styles.catalogGroupCard}
     >
       <View style={styles.catalogGroupTopline}>
@@ -527,9 +587,16 @@ function CatalogGroupCard({ group, onOpen, status = "open" }: { group: CatalogGr
       <Text style={styles.catalogGroupMeta} numberOfLines={2}>
         {[group.locations.slice(0, 2).join(" · "), group.seasons.join(" · ")].filter(Boolean).join("  •  ")}
       </Text>
+      {featuredRole ? <JobSource source={source} /> : null}
+      {postingTiming ? <Text style={styles.postingTiming}>{postingTiming.summary}</Text> : null}
+      {compensation.length ? (
+        <Text style={styles.pay} numberOfLines={2}>
+          {compensation.slice(0, 2).join(" · ")}{compensation.length > 2 ? ` + ${compensation.length - 2} more` : ""}
+        </Text>
+      ) : null}
       {education ? <Text style={styles.catalogGroupEducation} numberOfLines={2}>{education}</Text> : null}
       <View style={styles.jobCardAction}>
-        <Text style={styles.jobCardActionText}>{group.roleCount === 1 ? "View role" : "View roles"}</Text>
+        <Text style={styles.jobCardActionText}>View roles</Text>
         <Ionicons name="chevron-forward" size={17} color={colors.signal} />
       </View>
     </TouchableOpacity>
@@ -593,6 +660,7 @@ function CatalogGroupSheet({
                     <View style={styles.catalogGroupRoleCopy}>
                       <Text style={styles.catalogGroupRoleTitle}>{item.title}</Text>
                       <Text style={styles.catalogGroupRoleMeta}>{item.location} · {item.season}</Text>
+                      {item.compensation?.raw ? <Text style={styles.catalogGroupRolePay}>{item.compensation.raw}</Text> : null}
                     </View>
                     <Ionicons name="chevron-forward" size={18} color={colors.signal} />
                   </TouchableOpacity>
@@ -1516,7 +1584,31 @@ function LaunchInbox({
           </TouchableOpacity>
         </View>
       }
-      renderItem={({ item, index }) => <CatalogGroupCard group={item} onOpen={() => onOpenGroup(item, inbox.groups?.[index])} />}
+      renderItem={({ item, index }) => {
+        const role = catalogCardKind(item) === "role"
+          ? visibleJobs.find((job) => job.jobId === item.featuredRole.jobId)
+          : undefined;
+        if (role) {
+          return (
+            <NewRoleCard
+              job={role}
+              onOpen={() => onOpen(role)}
+              applicationStatus={applicationStatuses.get(role.jobId)}
+              index={index}
+              onSaveForWeb={() => onSaveForWeb(role)}
+              isSavingForWeb={savingJobIds.has(role.jobId)}
+              onHideLocally={() => onHideLocally(role)}
+            />
+          );
+        }
+        return (
+          <CatalogGroupCard
+            group={item}
+            onOpenGroup={() => onOpenGroup(item, inbox.groups?.[index])}
+            onOpenRole={onOpen}
+          />
+        );
+      }}
     />
   );
   return (
@@ -1670,6 +1762,7 @@ function GroupedCatalogFeed({
   onRetryLoadMore,
   onRetry,
   onOpenGroup,
+  onOpenRole,
 }: {
   groups: CatalogGroupRow[];
   query: string;
@@ -1695,6 +1788,7 @@ function GroupedCatalogFeed({
   onRetryLoadMore: () => void;
   onRetry: () => void;
   onOpenGroup: (group: CatalogGroupRow) => void;
+  onOpenRole: (job: Job) => void;
 }) {
   return (
     <>
@@ -1728,7 +1822,14 @@ function GroupedCatalogFeed({
         contentContainerStyle={styles.feedListContent}
         onEndReached={onLoadMore}
         onEndReachedThreshold={0.6}
-        renderItem={({ item }) => <CatalogGroupCard group={item} status={jobStatus} onOpen={() => onOpenGroup(item)} />}
+        renderItem={({ item }) => (
+          <CatalogGroupCard
+            group={item}
+            status={jobStatus}
+            onOpenGroup={() => onOpenGroup(item)}
+            onOpenRole={onOpenRole}
+          />
+        )}
         ListEmptyComponent={
           loading ? <CatalogInitialLoading /> : error ? (
             <View style={styles.catalogUnavailable}>
@@ -2633,6 +2734,7 @@ function AppContent() {
                 onRetryLoadMore={() => loadNextCatalogPage(true)}
                 onRetry={() => setCatalogRefresh((value) => value + 1)}
                 onOpenGroup={openCatalogGroup}
+                onOpenRole={openCatalogJob}
               />
             )
           ) : tab === "saved" ? (
@@ -2817,6 +2919,7 @@ function GuestExperience({
               onRetryLoadMore={onRetryLoadMore}
               onRetry={onRetryCatalog}
               onOpenGroup={onOpenGroup}
+              onOpenRole={onOpenJob}
             />
           ) : (
             <AccountGate
@@ -4489,7 +4592,16 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   catalogGroupTopline: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", gap: 12 },
-  catalogGroupCount: { color: colors.muted, flexShrink: 0, fontSize: 12, fontWeight: "700" },
+  catalogGroupCount: {
+    backgroundColor: colors.signalSoft,
+    borderRadius: 999,
+    color: colors.signal,
+    flexShrink: 0,
+    fontSize: 12,
+    fontWeight: "800",
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
   catalogGroupTitle: { color: colors.ink, fontSize: 18, fontWeight: "700", lineHeight: 25, marginTop: 7 },
   catalogGroupMeta: { color: colors.muted, fontSize: 14, lineHeight: 20, marginTop: 7 },
   catalogGroupEducation: { color: colors.body, fontSize: 13, lineHeight: 19, marginTop: 5 },
@@ -4518,6 +4630,7 @@ const styles = StyleSheet.create({
   catalogGroupRoleCopy: { flex: 1, paddingRight: 12 },
   catalogGroupRoleTitle: { color: colors.ink, fontSize: 16, fontWeight: "700", lineHeight: 22 },
   catalogGroupRoleMeta: { color: colors.muted, fontSize: 13, lineHeight: 19, marginTop: 3 },
+  catalogGroupRolePay: { color: colors.signal, fontSize: 13, fontWeight: "600", lineHeight: 19, marginTop: 3 },
   swipeCard: { marginBottom: 12, position: "relative" },
   swipeCardSurface: { marginBottom: 0 },
   swipeSaveAction: {

@@ -30,6 +30,9 @@ export interface CatalogGroupRow {
   updatedAt: string;
   hasNewRoles: boolean;
   roleIds: string[];
+  /** A representative full-fidelity role keeps collapsed cards informative. */
+  featuredRole: CatalogGroupRole;
+  compensations: string[];
 }
 
 export interface CatalogGroupDetails {
@@ -61,6 +64,12 @@ export interface CatalogGroupRole {
   employerCategory: EmployerCategory;
   requiresUsCitizenship: boolean;
   advancedDegreeRequired: boolean;
+  compensation: Internship['compensation'];
+  firstSeenAt: string;
+  lastSeenAt: string;
+  sourceReferences: Internship['sourceReferences'];
+  applicationUrlValidatedAt?: string;
+  invalidApplicationUrl?: string;
 }
 
 export interface CatalogGroupFilter {
@@ -238,6 +247,8 @@ function summarize(kind: CatalogGroupKind, jobs: Internship[], stableGroupId?: s
     workModes: unique(sorted.flatMap(workModesFor)),
     createdAt, updatedAt, hasNewRoles: updatedAt !== createdAt,
     roleIds: sorted.map((job) => job.jobId),
+    featuredRole: catalogGroupRole(sorted[0]!),
+    compensations: unique(sorted.map((job) => job.compensation.raw)),
   };
 }
 
@@ -300,16 +311,24 @@ function sourceCredibility(job: Internship): CatalogGroupRole['sourceCredibility
 export function catalogGroupDetails(group: BuiltGroup): CatalogGroupDetails {
   return {
     group: group.row,
-    roles: [...group.jobs].sort(compareCatalogRecency).map((job) => ({
-      jobId: job.jobId, company: job.company, title: titleFor(job), location: job.location, season: seasonFor(job),
-      locations: locationsFor(job), visibleAt: catalogVisibleAt(job),
-      education: catalogEducation(job), disciplines: disciplinesFor(job), workModes: workModesFor(job),
-      sourceCredibility: sourceCredibility(job), detailUrl: `/jobs/${encodeURIComponent(job.jobId)}`,
-      officialApplyUrl: job.applyUrl, applicationUrlValidated: Boolean(job.applicationUrlValidatedAt), open: job.open,
-      employerCategory: job.employerCategory ?? employerCategory(job.company),
-      requiresUsCitizenship: Boolean(job.requirements?.requiresUsCitizenship),
-      advancedDegreeRequired: Boolean(job.requirements?.advancedDegreeRequired),
-    })),
+    roles: [...group.jobs].sort(compareCatalogRecency).map(catalogGroupRole),
+  };
+}
+
+function catalogGroupRole(job: Internship): CatalogGroupRole {
+  return {
+    jobId: job.jobId, company: job.company, title: titleFor(job), location: job.location, season: seasonFor(job),
+    locations: locationsFor(job), visibleAt: catalogVisibleAt(job),
+    education: catalogEducation(job), disciplines: disciplinesFor(job), workModes: workModesFor(job),
+    sourceCredibility: sourceCredibility(job), detailUrl: `/jobs/${encodeURIComponent(job.jobId)}`,
+    officialApplyUrl: job.applyUrl, applicationUrlValidated: Boolean(job.applicationUrlValidatedAt), open: job.open,
+    employerCategory: job.employerCategory ?? employerCategory(job.company),
+    requiresUsCitizenship: Boolean(job.requirements?.requiresUsCitizenship),
+    advancedDegreeRequired: Boolean(job.requirements?.advancedDegreeRequired),
+    compensation: job.compensation, firstSeenAt: job.firstSeenAt, lastSeenAt: job.lastSeenAt,
+    sourceReferences: job.sourceReferences,
+    ...(job.applicationUrlValidatedAt ? { applicationUrlValidatedAt: job.applicationUrlValidatedAt } : {}),
+    ...(job.invalidApplicationUrl ? { invalidApplicationUrl: job.invalidApplicationUrl } : {}),
   };
 }
 
@@ -375,6 +394,8 @@ export function filterCatalogGroupDetails(groups: CatalogGroupDetails[], filter:
         workModes: unique(roles.flatMap((role) => role.workModes)),
         seasons: unique(roles.map((role) => role.season)),
         roleIds: roles.map((role) => role.jobId),
+        featuredRole: roles[0]!,
+        compensations: unique(roles.map((role) => role.compensation?.raw ?? '')),
         createdAt: roles.reduce((oldest, role) => role.visibleAt < oldest ? role.visibleAt : oldest, roles[0]!.visibleAt),
         updatedAt: roles.reduce((newest, role) => role.visibleAt > newest ? role.visibleAt : newest, roles[0]!.visibleAt),
         hasNewRoles: roles.some((role) => role.visibleAt !== roles[0]!.visibleAt),

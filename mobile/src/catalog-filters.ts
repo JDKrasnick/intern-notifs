@@ -26,6 +26,7 @@ export function catalogGroupAvailabilityLabel(
   status: 'open' | 'closed',
 ) {
   if (status === 'closed') return `${group.roleCount} closed role${group.roleCount === 1 ? '' : 's'}`;
+  if (group.roleCount === 1) return 'Open role';
   if (group.kind === 'employer-release') return `${group.roleCount} new role${group.roleCount === 1 ? '' : 's'}`;
   if (group.kind === 'program-group') return `${group.roleCount} role${group.roleCount === 1 ? '' : 's'} in this program`;
   return '1 open role';

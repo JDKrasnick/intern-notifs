@@ -87,6 +87,7 @@ describe('grouped catalog domain', () => {
     const filtered = filterCatalogGroupDetails([details], { disciplines: ['AI/ML'] });
     expect(filtered[0]?.group).toMatchObject({
       roleCount: 1,
+      featuredRole: { jobId: 'ml' },
       locations: ['Boston', 'Remote'],
       createdAt: '2026-08-23T12:00:00.000Z',
       updatedAt: '2026-08-23T12:00:00.000Z',
@@ -104,9 +105,16 @@ describe('grouped catalog domain', () => {
 
   it('preserves full role titles and both detail and official application actions', () => {
     const programIdentity = identity();
-    const group = groupCatalogJobs([job('one', 0, { internshipIdentity: programIdentity }), job('two', 10, { internshipIdentity: programIdentity })])[0]!;
+    const group = groupCatalogJobs([
+      job('one', 0, { internshipIdentity: programIdentity, compensation: { raw: '$42/hr' } }),
+      job('two', 10, { internshipIdentity: programIdentity, compensation: { raw: '$48/hr' } }),
+    ])[0]!;
     const details = catalogGroupDetails(group);
     expect(details.roles[0]).toMatchObject({ title: expect.stringContaining('Software Engineer Intern'), detailUrl: expect.stringContaining('/jobs/'), officialApplyUrl: expect.stringContaining('careers.example.test') });
+    expect(details.group).toMatchObject({
+      compensations: ['$48/hr', '$42/hr'],
+      featuredRole: { jobId: 'two', compensation: { raw: '$48/hr' }, firstSeenAt: '2026-08-23T12:00:10.000Z' },
+    });
   });
 
   it('keeps a program row identifier stable when a compatible role arrives later', () => {

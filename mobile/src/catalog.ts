@@ -34,3 +34,8 @@ export function appendGroupedCatalogPage<T extends { groupId: string }>(
   });
   return additions.length ? [...current, ...additions] : current;
 }
+
+/** A filtered group with one remaining role should look and behave like a role. */
+export function catalogCardKind(group: { roleCount: number; featuredRole?: unknown }) {
+  return group.roleCount === 1 && group.featuredRole ? 'role' as const : 'group' as const;
+}
