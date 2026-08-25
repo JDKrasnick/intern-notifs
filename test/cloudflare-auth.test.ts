@@ -133,4 +133,58 @@ describe('Cloudflare authentication abuse controls', () => {
     expect(response?.status).toBe(409);
     expect(prepare.mock.calls.some(([query]) => query.includes('ON CONFLICT(email) DO UPDATE'))).toBe(false);
   });
+
+  it('allows signup to retry immediately after verification email delivery fails', async () => {
+    let pending: {
+      user_id: string;
+      verified_at: null;
+      confirmation_hash: string | null;
+      confirmation_expires_at: string | null;
+    } | undefined;
+    const prepare = vi.fn((query: string) => ({
+      bind: (...values: unknown[]) => ({
+        async first() {
+          if (query.includes('SELECT attempts')) return { attempts: 1, blocked_until: null };
+          if (query.includes('SELECT user_id, verified_at')) return pending ?? null;
+          return null;
+        },
+        async run() {
+          if (query.includes('INSERT INTO auth_users')) {
+            pending = {
+              user_id: values[0] as string,
+              verified_at: null,
+              confirmation_hash: values[4] as string,
+              confirmation_expires_at: values[5] as string,
+            };
+          }
+          const current = pending;
+          if (query.includes('UPDATE auth_users SET confirmation_hash = NULL')
+            && current
+            && current.user_id === values[1]
+            && current.confirmation_hash === values[2]) {
+            pending = { ...current, confirmation_hash: null, confirmation_expires_at: null };
+          }
+          return { meta: { changes: 1 } };
+        },
+      }),
+    }));
+    const env = {
+      AUTH_SESSION_SECRET: 'a-production-length-session-secret-value',
+      RESEND_API_KEY: 'resend-key',
+      AUTH_FROM_EMAIL: 'InternNotifs <alerts@example.test>',
+      DB: { prepare },
+    } as unknown as AuthEnvironment;
+    const signup = () => handleAuthRequest(new Request('https://example.test/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'student@example.test', password: 'ValidPassword123' }),
+    }), env);
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 })));
+
+    await expect(signup()).resolves.toMatchObject({ status: 400 });
+    expect(pending?.confirmation_expires_at).toBeNull();
+    await expect(signup()).resolves.toMatchObject({ status: 201 });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
 });

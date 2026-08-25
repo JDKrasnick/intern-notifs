@@ -217,7 +217,17 @@ export async function signUp(request: Request, env: AuthEnvironment): Promise<Re
     ON CONFLICT(email) DO UPDATE SET password_hash = excluded.password_hash, password_salt = excluded.password_salt,
       confirmation_hash = excluded.confirmation_hash, confirmation_expires_at = excluded.confirmation_expires_at, updated_at = excluded.updated_at
   `).bind(userId, email, await passwordHash(password, salt), salt, confirmationHash, new Date(timestamp.getTime() + confirmationLifetimeMs).toISOString(), timestamp.toISOString(), timestamp.toISOString()).run();
-  await sendConfirmation(email, code, env);
+  try {
+    await sendConfirmation(email, code, env);
+  } catch (error) {
+    // Let the user retry immediately after a provider failure, but do not clear
+    // a newer confirmation written by a concurrent signup attempt.
+    await env.DB.prepare(`
+      UPDATE auth_users SET confirmation_hash = NULL, confirmation_expires_at = NULL, updated_at = ?
+      WHERE user_id = ? AND verified_at IS NULL AND confirmation_hash = ?
+    `).bind(new Date().toISOString(), userId, confirmationHash).run();
+    throw error;
+  }
   return json(201, { ...(env.AUTH_DEV_MODE === 'true' ? { confirmationCode: code } : {}) });
 }
 

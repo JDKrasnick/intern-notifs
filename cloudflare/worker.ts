@@ -48,6 +48,8 @@ export interface Environment extends AuthEnvironment {
 type OperationsQueueEnvironment = Pick<Environment,
   'GREENHOUSE_QUEUE' | 'LEVER_QUEUE' | 'ASHBY_QUEUE' | 'GREENHOUSE_DLQ' | 'LEVER_DLQ' | 'ASHBY_DLQ'>;
 
+const maxDocumentBytes = 5 * 1024 * 1024;
+
 export function cloudflareOperationsQueueClient(env: OperationsQueueEnvironment) {
   const queues: Record<string, Queue> = {
     greenhouse: env.GREENHOUSE_QUEUE,
@@ -197,16 +199,49 @@ function documentStorage(env: Environment): DocumentStorage {
   };
 }
 
+export async function readDocumentUpload(request: Request): Promise<
+  { tooLarge: true } | { tooLarge: false; content: ArrayBuffer }
+> {
+  const declaredLength = Number(request.headers.get('Content-Length'));
+  if (Number.isFinite(declaredLength) && declaredLength > maxDocumentBytes) {
+    await request.body?.cancel();
+    return { tooLarge: true };
+  }
+  if (!request.body) return { tooLarge: false, content: new ArrayBuffer(0) };
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  while (true) {
+    const result = await reader.read();
+    if (result.done) break;
+    length += result.value.byteLength;
+    if (length > maxDocumentBytes) {
+      await reader.cancel();
+      return { tooLarge: true };
+    }
+    chunks.push(result.value);
+  }
+
+  const content = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    content.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { tooLarge: false, content: content.buffer };
+}
+
 async function documentContent(request: Request, env: Environment, userId: string, documentId: string): Promise<Response> {
   const users = new D1UserStore(env.DB);
   const document = (await users.listDocuments(userId)).find((item) => item.documentId === documentId);
   if (!document) return Response.json({ message: 'Document not found' }, { status: 404 });
   if (request.method === 'PUT') {
-    const content = await request.arrayBuffer();
-    if (content.byteLength > 5 * 1024 * 1024) return Response.json({ message: 'Documents must be 5 MiB or smaller' }, { status: 413 });
+    const upload = await readDocumentUpload(request);
+    if (upload.tooLarge) return Response.json({ message: 'Documents must be 5 MiB or smaller' }, { status: 413 });
     const period = new Date().toISOString().slice(0, 7);
     if (!await users.claimDocumentUpload(period)) return Response.json({ message: 'Monthly document upload quota reached' }, { status: 429 });
-    await env.DOCUMENTS.put(document.objectKey, content, { httpMetadata: { contentType: document.contentType } });
+    await env.DOCUMENTS.put(document.objectKey, upload.content, { httpMetadata: { contentType: document.contentType } });
     return new Response(null, { status: 204 });
   }
   const object = await env.DOCUMENTS.get(document.objectKey);

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { queueHasBacklog } from '../cloudflare/queue-backlog.js';
-import { cloudflareOperationsQueueClient } from '../cloudflare/worker.js';
+import { cloudflareOperationsQueueClient, readDocumentUpload } from '../cloudflare/worker.js';
 import type { Queue } from '../cloudflare/types.js';
 
 const queue = (metrics: Queue['metrics']): Queue => ({
@@ -45,5 +45,53 @@ describe('Cloudflare operations queue adapter', () => {
     await expect(client.send({ input: { QueueUrl: 'greenhouse-dlq' } })).resolves.toMatchObject({
       Attributes: { ApproximateNumberOfMessages: '2' },
     });
+  });
+});
+
+describe('Cloudflare document upload bounds', () => {
+  it('rejects an oversized declared body without reading its stream', async () => {
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ cancel });
+    const request = new Request('https://example.test/me/documents/document-1/content', {
+      method: 'PUT',
+      headers: { 'Content-Length': String(5 * 1024 * 1024 + 1) },
+      body,
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+
+    await expect(readDocumentUpload(request)).resolves.toEqual({ tooLarge: true });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it('cancels an undeclared body as soon as streamed bytes cross the limit', async () => {
+    const cancel = vi.fn();
+    const chunks = [new Uint8Array(5 * 1024 * 1024), new Uint8Array(1)];
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const chunk = chunks.shift();
+        if (chunk) controller.enqueue(chunk);
+        else controller.close();
+      },
+      cancel,
+    });
+    const request = new Request('https://example.test/me/documents/document-1/content', {
+      method: 'PUT',
+      body,
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+
+    await expect(readDocumentUpload(request)).resolves.toEqual({ tooLarge: true });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it('returns a body at the exact 5 MiB boundary', async () => {
+    const request = new Request('https://example.test/me/documents/document-1/content', {
+      method: 'PUT',
+      body: new Uint8Array(5 * 1024 * 1024),
+    });
+
+    const result = await readDocumentUpload(request);
+    expect(result.tooLarge).toBe(false);
+    if (!result.tooLarge) expect(result.content.byteLength).toBe(5 * 1024 * 1024);
   });
 });
