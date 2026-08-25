@@ -11,7 +11,7 @@ import type { ApplicationSession } from './application-automation.js';
 import type { ReviewedLeverSource } from './sources/lever-config.js';
 import type { LeverOwnershipEvidence } from './sources/lever-evidence.js';
 import type { LeverCandidateProbeResult } from './sources/lever-probe.js';
-import type { CatalogGroupDetails, CatalogProjectionPage, CatalogRelease } from './catalog-groups.js';
+import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from './catalog-groups.js';
 
 export interface LeverAdmission {
   source: ReviewedLeverSource;
@@ -66,6 +66,8 @@ export interface InternshipStore {
   listCatalog?(): Promise<Internship[]>;
   putCatalogProjection?(groups: CatalogGroupDetails[], generatedAt: string): Promise<void>;
   listCatalogProjection?(cursor?: string, limit?: number): Promise<CatalogProjectionPage | undefined>;
+  /** Uses the backing store's query engine to avoid sequential projection scans for filtered catalog pages. */
+  listCatalogProjectionFiltered?(cursor: string | undefined, limit: number, filter: CatalogGroupFilter): Promise<CatalogProjectionPage | undefined>;
   getCatalogProjectionGroup?(groupId: string): Promise<CatalogGroupDetails | undefined>;
   listLeverAdmissions?(): Promise<LeverAdmission[]>;
   putLeverAdmission?(admission: LeverAdmission): Promise<void>;
@@ -152,6 +154,13 @@ export class MemoryInternshipStore implements InternshipStore {
     const offset = cursor ? Number(cursor) : 0;
     const groups = this.catalogProjection.groups.slice(offset, offset + limit);
     return { groups: structuredClone(groups), ...(offset + groups.length < this.catalogProjection.groups.length ? { cursor: String(offset + groups.length) } : {}) };
+  }
+  async listCatalogProjectionFiltered(cursor: string | undefined, limit: number, filter: CatalogGroupFilter) {
+    if (!this.catalogProjection) return undefined;
+    const offset = cursor ? Number(cursor) : 0;
+    const matching = filterCatalogGroupDetails(this.catalogProjection.groups, filter);
+    const groups = matching.slice(offset, offset + limit);
+    return { groups: structuredClone(groups), ...(offset + groups.length < matching.length ? { cursor: String(offset + groups.length) } : {}) };
   }
   async getCatalogProjectionGroup(groupId: string) {
     const value = this.catalogProjection?.groups.find((group) => group.group.groupId === groupId);
