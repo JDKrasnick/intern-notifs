@@ -6,6 +6,7 @@ export default tseslint.config(
     ignores: [
       'dist/**',
       'browser-companion/dist/**',
+      'cloudflare/dist/**',
       'cdk.out/**',
       'coverage/**',
       'node_modules/**',
@@ -35,6 +36,22 @@ export default tseslint.config(
         location: 'readonly',
         sessionStorage: 'readonly',
         window: 'readonly',
+      },
+    },
+  },
+  {
+    files: ['cloudflare/**/*.ts'],
+    languageOptions: {
+      globals: {
+        AbortSignal: 'readonly',
+        Headers: 'readonly',
+        Request: 'readonly',
+        Response: 'readonly',
+        TextEncoder: 'readonly',
+        URL: 'readonly',
+        btoa: 'readonly',
+        crypto: 'readonly',
+        fetch: 'readonly',
       },
     },
   },

@@ -1,0 +1,36 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "intern-notifs",
+  "main": "cloudflare/worker.ts",
+  "compatibility_date": "2026-08-24",
+  "compatibility_flags": ["nodejs_compat"],
+  "limits": { "cpu_ms": 30000, "subrequests": 10000 },
+  "observability": { "enabled": true },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "intern-notifs-db", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "cloudflare/migrations" }
+  ],
+  "r2_buckets": [
+    { "binding": "DOCUMENTS", "bucket_name": "intern-notifs-documents" }
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "GREENHOUSE_QUEUE", "queue": "intern-notifs-greenhouse" },
+      { "binding": "LEVER_QUEUE", "queue": "intern-notifs-lever" },
+      { "binding": "ASHBY_QUEUE", "queue": "intern-notifs-ashby" },
+      { "binding": "GITHUB_QUEUE", "queue": "intern-notifs-github" }
+    ],
+    "consumers": [
+      { "queue": "intern-notifs-greenhouse", "max_batch_size": 1, "max_retries": 2, "dead_letter_queue": "intern-notifs-greenhouse-dlq" },
+      { "queue": "intern-notifs-lever", "max_batch_size": 1, "max_retries": 2, "dead_letter_queue": "intern-notifs-lever-dlq" },
+      { "queue": "intern-notifs-ashby", "max_batch_size": 1, "max_retries": 2, "dead_letter_queue": "intern-notifs-ashby-dlq" },
+      { "queue": "intern-notifs-github", "max_batch_size": 1, "max_retries": 2, "dead_letter_queue": "intern-notifs-github-dlq" }
+    ]
+  },
+  "triggers": {
+    "crons": ["7-57/10 * * * *", "9-59/10 * * * *", "12,42 * * * *", "22,52 * * * *", "2,32 * * * *", "0 * * * *", "42 8 * * *"]
+  },
+  "vars": {
+    "PUBLIC_API_URL": "http://localhost:8787",
+    "AUTH_DEV_MODE": "false"
+  }
+}

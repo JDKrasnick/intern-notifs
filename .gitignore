@@ -2,6 +2,12 @@ node_modules/
 dist/
 browser-companion/dist/
 cdk.out/
+.terraform/
+.wrangler/
+*.tfstate
+*.tfstate.*
+*.tfvars
+cloudflare/dist/
 coverage/
 !coverage/
 coverage/*
@@ -12,6 +18,7 @@ coverage/*
 !coverage/audits/
 !coverage/audits/*.md
 .env
+.dev.vars
 mobile/.env.local
 .expo/
 .DS_Store

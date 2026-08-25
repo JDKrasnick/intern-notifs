@@ -26,10 +26,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
+      - uses: opentofu/setup-opentofu@v1
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      - run: npm run build:cloudflare
+      - run: npm run terraform:fmt
+      - run: tofu -chdir=infra/cloudflare init -backend=false
+      - run: npm run terraform:validate
   live-source-quality:
     needs: changes
     if: needs.changes.outputs.source_pipeline == 'true'

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { hasLifecycleTitleSignal } from '../core/early-career.js';
 import { isTechnicalJob } from '../core/filters.js';
 import { parseCompensation } from '../core/normalize.js';
+import { platformFetch } from '../core/platform-fetch.js';
 import { processSnapshot } from '../ingestion/processor.js';
 import { publishedLeverSources } from './lever-config.js';
 import { SourceFetchError } from './source-error.js';
@@ -179,7 +180,7 @@ export class LeverPostingsAdapter implements SourceAdapter, SourceConnector {
 
   constructor(private readonly options: LeverAdapterOptions) {
     this.id = options.id;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = options.fetchImpl ?? platformFetch;
     this.now = options.now ?? (() => new Date());
   }
 

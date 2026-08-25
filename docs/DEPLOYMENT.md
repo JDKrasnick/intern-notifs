@@ -1,5 +1,10 @@
 # Deployment and operations runbook
 
+> The active development backend is Cloudflare while the staged mobile cutover
+> is validated. Retained AWS resources remain rollback/export-only and must not
+> be deleted. The replacement Worker and Terraform configuration are documented
+> in [`cloudflare-migration.md`](cloudflare-migration.md).
+
 ## Architecture
 
 InternNotifs is an Expo mobile app with a serverless AWS backend.
@@ -7,17 +12,17 @@ InternNotifs is an Expo mobile app with a serverless AWS backend.
 | Area | Service / implementation |
 | --- | --- |
 | Mobile | Expo SDK 55, React Native, iOS first; `mobile/` |
-| Authentication | Amazon Cognito User Pool; email/password with verified email |
-| Public catalog API | API Gateway HTTP API + Lambda |
-| Private user API | Cognito JWT-authorized `/me/*` API routes |
-| Job catalog | DynamoDB `Internships` table and open-jobs index |
-| Personal data | Encrypted DynamoDB `UserData`; legacy `Applications` retained |
-| Résumés | Private, versioned, KMS-encrypted S3 objects with presigned uploads |
-| Ingestion and delivery | EventBridge Scheduler, FIFO SQS, bounded Lambda workers, Lambda notifier, Expo Push Service, SSM runtime config |
-| Infrastructure | AWS CDK in `infra/intern-notifs-stack.ts` and provider monitoring stacks |
+| Authentication | D1-backed verified email/password accounts and opaque sessions |
+| Public catalog API | Cloudflare Worker |
+| Private user API | Opaque-session-authorized `/me/*` Worker routes |
+| Job catalog | D1 indexed canonical records and grouped projections |
+| Personal data | D1 user records and releases |
+| Résumés | Private R2 objects behind authenticated Worker routes |
+| Ingestion and delivery | Cron Triggers, four Queues with DLQs, Worker consumers, Expo Push Service |
+| Infrastructure | OpenTofu with Cloudflare provider v5 in `infra/cloudflare/` |
 | CI | GitHub Actions in `.github/workflows/ci.yml` |
 
-The catalog is public. Accounts, preferences, device tokens, profiles, documents, and application tracking are private to the Cognito subject.
+The catalog is public. Accounts, preferences, device tokens, profiles, documents, and application tracking are private to the verified user identity.
 
 Greenhouse, Lever, and Ashby use dedicated half-hour EventBridge schedules,
 dispatcher Lambdas, FIFO work queues, two-minute workers, and dead-letter
@@ -44,9 +49,8 @@ timestamp semantics are measured separately from these scheduler objectives.
 - iOS bundle ID: `com.internnotifs.app`
 - App Store Connect app ID: `6792557963`
 - AWS Region: `us-east-1`
-- Public API: `https://5dx7gpfa7d.execute-api.us-east-1.amazonaws.com`
-- Cognito User Pool: `us-east-1_mHbG28HiZ`
-- Cognito mobile client: `4vuo4dqidns1fn30q3mhfabopb`
+- Active development API: `https://intern-notifs.jdkrasnick.workers.dev`
+- Retained AWS API rollback origin: `https://5dx7gpfa7d.execute-api.us-east-1.amazonaws.com`
 - Cognito operations client: the `OperationsUserPoolClientId` output from `InternNotifs`
 - Runtime configuration parameter: `/intern-notifs/runtime-config`
 

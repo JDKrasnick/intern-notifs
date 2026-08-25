@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isTechnicalJob } from '../core/filters.js';
 import { parseCompensation } from '../core/normalize.js';
+import { platformFetch } from '../core/platform-fetch.js';
 import { earlyCareerRequirements, hasLifecycleTitleSignal, htmlToText, inferSeason, inferWorkMode } from '../core/early-career.js';
 import { greenhouseApplicationUrlRejection } from './quality.js';
 import { GREENHOUSE_BOARD_API_HOST, assertBoardToken, boardIdentityUrl, validateBoardToken, type ReviewedGreenhouseSource } from './greenhouse-config.js';
@@ -290,7 +291,7 @@ export class GreenhouseBoardAdapter implements SourceAdapter, SourceConnector {
 
   constructor(private readonly options: GreenhouseAdapterOptions) {
     this.id = options.checkpointId ?? options.source.id;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = options.fetchImpl ?? platformFetch;
     this.now = options.now ?? (() => new Date());
   }
 

@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Personal internship notification and tracking foundation",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
@@ -39,12 +41,17 @@
     "migrate:source-occurrences": "tsx src/migrate-source-occurrences.ts",
     "migrate:posting-identity": "tsx src/migrate-posting-identity.ts",
     "build:browser-companion": "esbuild browser-companion/content.ts --bundle --format=iife --platform=browser --outfile=browser-companion/dist/content.js",
+    "build:cloudflare": "wrangler deploy --dry-run --outdir cloudflare/dist",
+    "cloudflare:migrate:local": "wrangler d1 migrations apply intern-notifs-db --local",
+    "cloudflare:migrate:remote": "wrangler d1 migrations apply intern-notifs-db --remote",
+    "terraform:fmt": "tofu -chdir=infra/cloudflare fmt -check -recursive",
+    "terraform:validate": "tofu -chdir=infra/cloudflare validate",
     "cdk": "cdk --app 'npx tsx infra/app.ts'"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudwatch": "^3.1090.0",
     "@aws-sdk/client-cognito-identity-provider": "^3.883.0",
     "@aws-sdk/client-dynamodb": "^3.883.0",
-    "@aws-sdk/client-cloudwatch": "^3.1090.0",
     "@aws-sdk/client-s3": "^3.883.0",
     "@aws-sdk/client-sesv2": "^3.883.0",
     "@aws-sdk/client-sns": "3.1090.0",
@@ -54,16 +61,18 @@
     "@aws-sdk/s3-request-presigner": "^3.883.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260823.1",
+    "@eslint/js": "^9.35.0",
     "@types/node": "^22.18.0",
     "aws-cdk": "^2.220.0",
     "aws-cdk-lib": "^2.220.0",
     "constructs": "^10.4.2",
     "esbuild": "^0.25.9",
     "eslint": "^9.35.0",
-    "@eslint/js": "^9.35.0",
+    "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.43.0",
-    "tsx": "^4.20.5",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "wrangler": "^4.125.0"
   }
 }

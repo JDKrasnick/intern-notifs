@@ -121,7 +121,7 @@ export async function runGreenhouseBoard(
     };
   }
 
-  const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate).poll();
+  const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate, false).poll();
   const sourceFailures = poll.failures.filter((failure) => failure.startsWith(`${source.id}:`));
   const widespreadLinkFailure = poll.processedListings > 0 && sourceFailures.length / poll.processedListings > SHADOW_LINK_FAILURE_THRESHOLD;
   if (sourceFailures.length && widespreadLinkFailure) {

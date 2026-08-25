@@ -16,12 +16,10 @@ const storage = vi.hoisted(() => {
 
 vi.mock('@react-native-async-storage/async-storage', () => ({ default: storage.api }));
 
-import { publicConfig } from '../src/public-config';
 import { sessionStorage } from '../src/session-storage';
 
 const appSessionKey = 'internnotifs.authSession';
 const legacyKey = 'internnotifs.idToken';
-const cognitoPrefix = `@MemoryStorage:CognitoIdentityServiceProvider.${publicConfig.cognitoClientId}`;
 
 beforeEach(() => {
   storage.values.clear();
@@ -29,26 +27,24 @@ beforeEach(() => {
 });
 
 describe('session storage', () => {
-  it('ignores corrupted refreshable JSON', async () => {
+  it('ignores corrupted or incomplete session JSON', async () => {
     storage.values.set(appSessionKey, '{not-json');
-    await expect(sessionStorage.getRefreshable()).resolves.toBeUndefined();
+    await expect(sessionStorage.getSession()).resolves.toBeUndefined();
+    storage.values.set(appSessionKey, JSON.stringify({ token: 'missing-expiry' }));
+    await expect(sessionStorage.getSession()).resolves.toBeUndefined();
   });
 
-  it('restores only a complete Cognito cache', async () => {
-    storage.values.set(`${cognitoPrefix}.LastAuthUser`, 'student');
-    storage.values.set(`${cognitoPrefix}.student.idToken`, 'id-token');
-    await expect(sessionStorage.getCognitoCached()).resolves.toBeUndefined();
-
-    storage.values.set(`${cognitoPrefix}.student.refreshToken`, 'refresh-token');
-    await expect(sessionStorage.getCognitoCached()).resolves.toEqual({
-      idToken: 'id-token', refreshToken: 'refresh-token', username: 'student',
-    });
+  it('persists a complete opaque session and legacy token mirror', async () => {
+    const session = { token: 'token', expiresAt: '2026-09-01T00:00:00.000Z', username: 'student@example.test' };
+    await sessionStorage.setSession(session);
+    await expect(sessionStorage.getSession()).resolves.toEqual(session);
+    expect(storage.values.get(legacyKey)).toBe('token');
   });
 
-  it('clears app credentials and Cognito cache without touching unrelated data', async () => {
-    storage.values.set(legacyKey, 'id-token');
+  it('clears app credentials and old Cognito cache without touching unrelated data', async () => {
+    storage.values.set(legacyKey, 'token');
     storage.values.set(appSessionKey, '{}');
-    storage.values.set(`${cognitoPrefix}.LastAuthUser`, 'student');
+    storage.values.set('@MemoryStorage:CognitoIdentityServiceProvider.old.LastAuthUser', 'student');
     storage.values.set('unrelated', 'keep');
     await sessionStorage.clear();
     expect(storage.values).toEqual(new Map([['unrelated', 'keep']]));

@@ -1,5 +1,6 @@
 import { applicationUrlRejection } from '../sources/quality.js';
 import { createHash } from 'node:crypto';
+import { platformFetch } from './platform-fetch.js';
 
 const requestHeaders = {
   Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -216,7 +217,7 @@ function confidenceFor(input: { html: boolean; title?: string; description?: str
  */
 export async function inspectApplicationPage(
   value: string | URL,
-  fetcher: typeof fetch = fetch,
+  fetcher: typeof fetch = platformFetch,
 ): Promise<ApplicationPageEvidence> {
   const url = typeof value === 'string' ? new URL(value) : value;
   const expectedPostingId = postingId(url);
@@ -303,7 +304,7 @@ function httpsUrl(value: string, label: string): URL {
  */
 export async function validateApplicationUrlWithEvidence(
   value: string,
-  fetcher: typeof fetch = fetch,
+  fetcher: typeof fetch = platformFetch,
   policy?: ApplicationUrlPolicy,
 ): Promise<ApplicationUrlValidation> {
   const sourceUrl = httpsUrl(canonicalApplicationUrl(value), 'Application link');
@@ -359,11 +360,11 @@ export async function validateApplicationUrlWithEvidence(
   return { url: resolved.toString(), evidence };
 }
 
-export async function validateApplicationUrl(value: string, fetcher: typeof fetch = fetch, policy?: ApplicationUrlPolicy): Promise<string> {
+export async function validateApplicationUrl(value: string, fetcher: typeof fetch = platformFetch, policy?: ApplicationUrlPolicy): Promise<string> {
   return (await validateApplicationUrlWithEvidence(value, fetcher, policy)).url;
 }
 
 /** Binds a source policy (and optional fetcher) into the single-argument validator shape. */
-export function createSourceUrlValidator(policy: ApplicationUrlPolicy, fetcher: typeof fetch = fetch): ApplicationUrlValidator {
+export function createSourceUrlValidator(policy: ApplicationUrlPolicy, fetcher: typeof fetch = platformFetch): ApplicationUrlValidator {
   return (url: string) => validateApplicationUrlWithEvidence(url, fetcher, policy);
 }

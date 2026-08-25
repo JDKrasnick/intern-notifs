@@ -59,7 +59,7 @@ function stateFor(source: OperationsSource, health: SourceHealth | undefined, ch
   if (health?.state === 'quarantined') return 'quarantined';
   const lastSuccessAt = health?.lastSuccessAt ?? checkpoint?.lastSuccessAt;
   if (!lastSuccessAt) return health?.state ?? 'never-succeeded';
-  const allowedAge = health?.pollTier === 'quiet'
+  const allowedAge = source.status === 'shadow' || health?.pollTier === 'quiet'
     ? inactiveHealthWindowMs
     : (checkpoint?.lastRowCount ?? health?.eligibleRows ?? 0) > 0 ? activeHealthWindowMs[source.provider] : inactiveHealthWindowMs;
   if (timestamp - Date.parse(lastSuccessAt) > allowedAge || health?.state === 'degraded') return 'degraded';

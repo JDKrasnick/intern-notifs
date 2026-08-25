@@ -1794,9 +1794,13 @@ function GroupedCatalogFeed({
     <>
       <View style={styles.roleFeedControls}>
         <TextInput
+          key="catalog-search"
           value={query}
           onChangeText={onQueryChange}
           accessibilityLabel="Search roles, companies, and locations"
+          autoComplete="off"
+          secureTextEntry={false}
+          textContentType="none"
           placeholder="Search roles, companies, locations"
           placeholderTextColor={colors.placeholder}
           style={styles.feedSearch}
@@ -2884,73 +2888,86 @@ function GuestExperience({
   const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
   const [query, setQuery] = useState("");
   const [showAccount, setShowAccount] = useState(false);
-  if (showAccount)
-    return (
-      <SignIn onSession={onSession} onBrowse={() => setShowAccount(false)} />
-    );
   return (
-    <SafeAreaView style={styles.screen}>
-      <View style={[styles.appShell, usesNavigationRail && styles.appShellWide]}>
-        {usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} rail /> : null}
-        <View style={styles.appMain}>
-          {tab === "feed" ? (
-            <GroupedCatalogFeed
-              groups={groups}
-              query={query}
-              onQueryChange={(value) => { setQuery(value); onSearchQueryChange(value); }}
-              source={sourceFilter}
-              onSourceChange={onSourceFilterChange}
-              employerFilter={employerFilter}
-              onEmployerFilterChange={onEmployerFilterChange}
-              jobStatus={jobStatus}
-              onJobStatusChange={onJobStatusChange}
-              filtersExpanded={filtersExpanded}
-              onFiltersExpandedChange={onFiltersExpandedChange}
-              hideUsCitizenshipRequired={hideUsCitizenshipRequired}
-              onHideUsCitizenshipRequiredChange={onHideUsCitizenshipRequiredChange}
-              hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
-              onHideAdvancedDegreeRequiredChange={onHideAdvancedDegreeRequiredChange}
-              loading={catalogInitialLoading}
-              error={catalogError}
-              loadingMore={catalogLoadingMore}
-              moreError={catalogMoreError}
-              reachedEnd={catalogReachedEnd}
-              onLoadMore={onLoadMore}
-              onRetryLoadMore={onRetryLoadMore}
-              onRetry={onRetryCatalog}
-              onOpenGroup={onOpenGroup}
-              onOpenRole={onOpenJob}
-            />
-          ) : (
-            <AccountGate
-              feature={
-                tab === "saved"
-                  ? "save and track applications"
-                  : "set up alerts and your application profile"
-              }
-              onSignIn={() => setShowAccount(true)}
-            />
-          )}
+    <View style={styles.guestRoot}>
+      <SafeAreaView
+        style={styles.screen}
+        accessibilityElementsHidden={showAccount}
+        importantForAccessibility={showAccount ? "no-hide-descendants" : "auto"}
+      >
+        <View style={[styles.appShell, usesNavigationRail && styles.appShellWide]}>
+          {usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} rail /> : null}
+          <View style={styles.appMain}>
+            <View
+              style={[styles.appMain, tab !== "feed" && styles.hiddenScreen]}
+              pointerEvents={tab === "feed" ? "auto" : "none"}
+              accessibilityElementsHidden={tab !== "feed"}
+              importantForAccessibility={tab === "feed" ? "auto" : "no-hide-descendants"}
+            >
+              <GroupedCatalogFeed
+                groups={groups}
+                query={query}
+                onQueryChange={(value) => { setQuery(value); onSearchQueryChange(value); }}
+                source={sourceFilter}
+                onSourceChange={onSourceFilterChange}
+                employerFilter={employerFilter}
+                onEmployerFilterChange={onEmployerFilterChange}
+                jobStatus={jobStatus}
+                onJobStatusChange={onJobStatusChange}
+                filtersExpanded={filtersExpanded}
+                onFiltersExpandedChange={onFiltersExpandedChange}
+                hideUsCitizenshipRequired={hideUsCitizenshipRequired}
+                onHideUsCitizenshipRequiredChange={onHideUsCitizenshipRequiredChange}
+                hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
+                onHideAdvancedDegreeRequiredChange={onHideAdvancedDegreeRequiredChange}
+                loading={catalogInitialLoading}
+                error={catalogError}
+                loadingMore={catalogLoadingMore}
+                moreError={catalogMoreError}
+                reachedEnd={catalogReachedEnd}
+                onLoadMore={onLoadMore}
+                onRetryLoadMore={onRetryLoadMore}
+                onRetry={onRetryCatalog}
+                onOpenGroup={onOpenGroup}
+                onOpenRole={onOpenJob}
+              />
+            </View>
+            {tab !== "feed" ? (
+              <AccountGate
+                feature={
+                  tab === "saved"
+                    ? "save and track applications"
+                    : "set up alerts and your application profile"
+                }
+                onSignIn={() => setShowAccount(true)}
+              />
+            ) : null}
+          </View>
+          {!usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} /> : null}
         </View>
-        {!usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} /> : null}
-      </View>
-      <JobDetailSheet
-        job={routedJob}
-        signedIn={false}
-        matchedReasons={routedJob ? routedMatchReasons : []}
-        exclusionsApplied={routedJob ? routedExclusionsApplied : false}
-        routeState={routeState}
-        onDismiss={onDismissRoute}
-        onModalDismissed={onModalDismissedRoute}
-        onRetry={onRetryRoute}
-        onApply={(job) => {
-          void openOfficialApplication(job.applyUrl);
-        }}
-        onOpenListing={(job) => {
-          void openOfficialApplication(job.applyUrl);
-        }}
-      />
-    </SafeAreaView>
+        <JobDetailSheet
+          job={routedJob}
+          signedIn={false}
+          matchedReasons={routedJob ? routedMatchReasons : []}
+          exclusionsApplied={routedJob ? routedExclusionsApplied : false}
+          routeState={routeState}
+          onDismiss={onDismissRoute}
+          onModalDismissed={onModalDismissedRoute}
+          onRetry={onRetryRoute}
+          onApply={(job) => {
+            void openOfficialApplication(job.applyUrl);
+          }}
+          onOpenListing={(job) => {
+            void openOfficialApplication(job.applyUrl);
+          }}
+        />
+      </SafeAreaView>
+      {showAccount ? (
+        <View style={styles.authOverlay}>
+          <SignIn onSession={onSession} onBrowse={() => setShowAccount(false)} />
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -3502,7 +3519,7 @@ function Profile({
       method: "PUT",
       headers: {
         "Content-Type": asset.mimeType ?? "application/pdf",
-        "x-amz-server-side-encryption": "aws:kms",
+        Authorization: `Bearer ${token}`,
       },
       body: await file.blob(),
     });
@@ -4237,6 +4254,7 @@ function SignIn({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
+  const [developmentConfirmationCode, setDevelopmentConfirmationCode] = useState(false);
   const [needsConfirmation, setNeedsConfirmation] = useState(false);
   const [createMode, setCreateMode] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -4253,13 +4271,25 @@ function SignIn({
       setBusy(false);
     }
   };
+  const createAccount = async () => {
+    const result = await signUp(email, password);
+    if (result.confirmationCode) {
+      setCode(result.confirmationCode);
+      setDevelopmentConfirmationCode(true);
+    } else {
+      setDevelopmentConfirmationCode(false);
+    }
+    setNeedsConfirmation(true);
+  };
   const title = needsConfirmation
     ? "Check your email"
     : createMode
       ? "Create your account"
       : "Sign in";
   const description = needsConfirmation
-    ? "Enter the verification code we sent to your email."
+    ? developmentConfirmationCode
+      ? "This development build filled in your verification code."
+      : "Enter the verification code we sent to your email."
     : createMode
       ? "Use an email and password to save roles and receive alerts."
       : "Sign in to pick up where you left off.";
@@ -4285,6 +4315,7 @@ function SignIn({
             <Text style={styles.authDescription}>{description}</Text>
             <Text style={styles.inputLabel}>Email</Text>
             <TextInput
+              key="auth-email"
               autoCapitalize="none"
               autoComplete="email"
               accessibilityLabel="Email"
@@ -4300,6 +4331,7 @@ function SignIn({
               <>
                 <Text style={styles.inputLabel}>Verification code</Text>
                 <TextInput
+                  key="auth-verification-code"
                   autoComplete="one-time-code"
                   accessibilityLabel="Verification code"
                   keyboardType="number-pad"
@@ -4330,6 +4362,7 @@ function SignIn({
               <>
                 <Text style={styles.inputLabel}>Password</Text>
                 <TextInput
+                  key="auth-password"
                   autoComplete={
                     createMode ? "new-password" : "current-password"
                   }
@@ -4347,8 +4380,7 @@ function SignIn({
                     if (!busy)
                       void run(async () =>
                         createMode
-                          ? (await signUp(email, password),
-                            setNeedsConfirmation(true))
+                          ? await createAccount()
                           : onSession(await signIn(email, password)),
                       );
                   }}
@@ -4367,8 +4399,7 @@ function SignIn({
                   onPress={() =>
                     void run(async () => {
                       if (createMode) {
-                        await signUp(email, password);
-                        setNeedsConfirmation(true);
+                        await createAccount();
                       } else {
                         onSession(await signIn(email, password));
                       }
@@ -4405,6 +4436,9 @@ function SignIn({
 }
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.canvas },
+  guestRoot: { flex: 1 },
+  hiddenScreen: { ...StyleSheet.absoluteFillObject, opacity: 0 },
+  authOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.canvas },
   appShell: { flex: 1 },
   appShellWide: { flexDirection: "row" },
   appMain: { flex: 1, minWidth: 0 },

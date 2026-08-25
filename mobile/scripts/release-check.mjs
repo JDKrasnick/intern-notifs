@@ -63,12 +63,6 @@ for (const name of requiredUrls) {
   if (!value || !/^https:\/\//.test(value))
     fail(`${name} must be a public HTTPS URL`);
 }
-for (const name of [
-  "EXPO_PUBLIC_COGNITO_USER_POOL_ID",
-  "EXPO_PUBLIC_COGNITO_CLIENT_ID",
-])
-  if (!process.env[name]) fail(`${name} is required`);
-
 if (!process.exitCode) {
   for (const [command, args] of [
     ["npm", ["run", "typecheck"]],

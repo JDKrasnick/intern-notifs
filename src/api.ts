@@ -56,15 +56,28 @@ async function completeCatalog(store: InternshipStore) {
 
 async function projectedCatalogPage(store: InternshipStore, cursor: string | undefined, limit: number, filter: CatalogGroupFilter) {
   if (!store.listCatalogProjection) return undefined;
+  const isDefaultBrowse = filter.status === 'open' && Object.keys(filter).length === 1;
+  const scanLimit = isDefaultBrowse ? limit : Math.max(limit, 100);
+  const groups = [];
   let next = cursor;
   do {
-    const page = await store.listCatalogProjection(next, limit);
+    const offset = Number(next ?? 0);
+    const page = await store.listCatalogProjection(next, scanLimit);
     if (!page) return undefined;
-    const groups = filterCatalogGroupDetails(page.groups, filter);
-    if (groups.length || !page.cursor) return { groups, cursor: page.cursor };
+    for (let index = 0; index < page.groups.length; index += 1) {
+      const [match] = filterCatalogGroupDetails([page.groups[index]!], filter);
+      if (!match) continue;
+      groups.push(match);
+      if (groups.length === limit) {
+        const consumed = offset + index + 1;
+        const hasMore = index + 1 < page.groups.length || page.cursor !== undefined;
+        return { groups, ...(hasMore ? { cursor: String(consumed) } : {}) };
+      }
+    }
+    if (!page.cursor) return { groups };
     next = page.cursor;
   } while (next);
-  return { groups: [] };
+  return { groups };
 }
 
 function safeSession(session: ApplicationSession) {
@@ -245,9 +258,42 @@ function requireProfile(value: Record<string, unknown>, userId: string): Applica
   return { userId, contact, location: value.location, workAuthorization: value.workAuthorization, links: value.links as Record<string, string>, education: value.education as ApplicantProfile['education'], reusableAnswers: value.reusableAnswers as Record<string, string>, ...(typeof value.resumeDocumentId === 'string' ? { resumeDocumentId: value.resumeDocumentId } : {}), ...(value.sensitive && typeof value.sensitive === 'object' ? { sensitive: value.sensitive as Record<string, unknown> } : {}), updatedAt: now() };
 }
 
-export interface ApiDependencies { jobs: InternshipStore; users: UserStore; releases?: ReleaseStore; documentsBucket?: string; userPoolId?: string; integrations?: EmployerIntegrationRegistry; s3?: S3Client; cognito?: CognitoIdentityProviderClient; now?: () => string; }
+export interface DocumentStorage {
+  createUploadUrl(document: { userId: string; documentId: string; objectKey: string; contentType: string }): Promise<string>;
+  createDownloadUrl(document: { userId: string; documentId: string; objectKey: string; contentType: string }): Promise<string>;
+  deleteObject(objectKey: string): Promise<void>;
+}
+
+export interface ApiDependencies {
+  jobs: InternshipStore;
+  users: UserStore;
+  releases?: ReleaseStore;
+  documentStorage?: DocumentStorage;
+  deleteIdentity?: (userId: string) => Promise<void>;
+  /** AWS compatibility fields retained until the Cloudflare cutover completes. */
+  documentsBucket?: string;
+  userPoolId?: string;
+  integrations?: EmployerIntegrationRegistry;
+  s3?: S3Client;
+  cognito?: CognitoIdentityProviderClient;
+  now?: () => string;
+}
 export function createApiHandler(dependencies: ApiDependencies) {
-  const integrations = dependencies.integrations ?? new EmployerIntegrationRegistry(); const s3 = dependencies.s3 ?? new S3Client({});
+  const integrations = dependencies.integrations ?? new EmployerIntegrationRegistry();
+  const documentStorage: DocumentStorage | undefined = dependencies.documentStorage ?? (dependencies.documentsBucket ? {
+    async createUploadUrl(document) {
+      const s3 = dependencies.s3 ?? new S3Client({});
+      return getSignedUrl(s3, new PutObjectCommand({ Bucket: dependencies.documentsBucket, Key: document.objectKey, ContentType: document.contentType, ServerSideEncryption: 'aws:kms' }), { expiresIn: 300 });
+    },
+    async createDownloadUrl(document) {
+      const s3 = dependencies.s3 ?? new S3Client({});
+      return getSignedUrl(s3, new GetObjectCommand({ Bucket: dependencies.documentsBucket, Key: document.objectKey }), { expiresIn: 300 });
+    },
+    async deleteObject(objectKey) {
+      const s3 = dependencies.s3 ?? new S3Client({});
+      await s3.send(new DeleteObjectCommand({ Bucket: dependencies.documentsBucket, Key: objectKey }));
+    },
+  } : undefined);
   return async (event: ApiEvent): Promise<ApiResponse> => {
     try {
       const method = event.requestContext?.http?.method ?? event.routeKey?.split(' ')[0] ?? 'GET'; const path = event.rawPath ?? event.routeKey?.split(' ')[1] ?? '/';
@@ -297,10 +343,10 @@ export function createApiHandler(dependencies: ApiDependencies) {
         const source = event.queryStringParameters?.source;
         if (source && !['all', 'direct', 'community', 'corroborated'].includes(source)) return reply(400, { message: 'source is not supported' });
         const filter = catalogFilter(event.queryStringParameters);
-        const projected = await projectedCatalogPage(dependencies.jobs, cursor, limit, filter);
-        if (projected) return reply(200, { groups: projected.groups.map((group) => group.group), ...(projected.cursor ? { cursor: projected.cursor } : {}) });
         const requestedOffset = Number(cursor ?? 0);
         if (!Number.isFinite(requestedOffset) || requestedOffset < 0 || !Number.isInteger(requestedOffset)) return reply(400, { message: 'cursor is invalid' });
+        const projected = await projectedCatalogPage(dependencies.jobs, cursor, limit, filter);
+        if (projected) return reply(200, { groups: projected.groups.map((group) => group.group), ...(projected.cursor ? { cursor: projected.cursor } : {}) });
         const grouped = filterCatalogGroups(groupCatalogJobs(await completeCatalog(dependencies.jobs), { includeClosed: true }), filter);
         const page = grouped.slice(requestedOffset, requestedOffset + limit).map((group) => group.row);
         const nextOffset = requestedOffset + page.length;
@@ -460,11 +506,11 @@ export function createApiHandler(dependencies: ApiDependencies) {
         return reply(result.statusCode, result.body);
       }
       if (method === 'GET' && path === '/me/documents') return reply(200, { documents: await dependencies.users.listDocuments(userId) });
-      if (method === 'POST' && path === '/me/documents') { if (!dependencies.documentsBucket) return reply(503, { message: 'Document storage is unavailable' }); const body = parseBody(event); if (typeof body.fileName !== 'string' || typeof body.contentType !== 'string') return reply(400, { message: 'fileName and contentType are required' }); const documentId = randomUUID(); const objectKey = `private/${userId}/${documentId}`; const uploadUrl = await getSignedUrl(s3, new PutObjectCommand({ Bucket: dependencies.documentsBucket, Key: objectKey, ContentType: body.contentType, ServerSideEncryption: 'aws:kms' }), { expiresIn: 300 }); const document = { userId, documentId, fileName: body.fileName.slice(0, 255), contentType: body.contentType, objectKey, createdAt: now() }; await dependencies.users.putDocument(document); return reply(201, { document, uploadUrl }); }
+      if (method === 'POST' && path === '/me/documents') { if (!documentStorage) return reply(503, { message: 'Document storage is unavailable' }); const body = parseBody(event); if (typeof body.fileName !== 'string' || typeof body.contentType !== 'string') return reply(400, { message: 'fileName and contentType are required' }); const documentId = randomUUID(); const objectKey = `private/${userId}/${documentId}`; const document = { userId, documentId, fileName: body.fileName.slice(0, 255), contentType: body.contentType, objectKey, createdAt: now() }; const uploadUrl = await documentStorage.createUploadUrl(document); await dependencies.users.putDocument(document); return reply(201, { document, uploadUrl }); }
       const docMatch = path.match(/^\/me\/documents\/([^/]+)$/);
-      if (method === 'GET' && docMatch) { if (!dependencies.documentsBucket) return reply(503, { message: 'Document storage is unavailable' }); const document = (await dependencies.users.listDocuments(userId)).find((item) => item.documentId === decodeURIComponent(docMatch[1])); if (!document) return reply(404, { message: 'Document not found' }); return reply(200, { document, downloadUrl: await getSignedUrl(s3, new GetObjectCommand({ Bucket: dependencies.documentsBucket, Key: document.objectKey }), { expiresIn: 300 }) }); }
-      if (method === 'DELETE' && docMatch) { const document = (await dependencies.users.listDocuments(userId)).find((item) => item.documentId === decodeURIComponent(docMatch[1])); if (!document) return reply(404, { message: 'Document not found' }); if (dependencies.documentsBucket) await s3.send(new DeleteObjectCommand({ Bucket: dependencies.documentsBucket, Key: document.objectKey })); await dependencies.users.deleteDocument(userId, document.documentId); return reply(204, {}); }
-      if (method === 'DELETE' && path === '/me') { const documents = await dependencies.users.deleteUser(userId); if (dependencies.documentsBucket) await Promise.all(documents.map((document) => s3.send(new DeleteObjectCommand({ Bucket: dependencies.documentsBucket, Key: document.objectKey })))); if (dependencies.userPoolId) await (dependencies.cognito ?? new CognitoIdentityProviderClient({})).send(new AdminDeleteUserCommand({ UserPoolId: dependencies.userPoolId, Username: userId })); return reply(204, {}); }
+      if (method === 'GET' && docMatch) { if (!documentStorage) return reply(503, { message: 'Document storage is unavailable' }); const document = (await dependencies.users.listDocuments(userId)).find((item) => item.documentId === decodeURIComponent(docMatch[1])); if (!document) return reply(404, { message: 'Document not found' }); return reply(200, { document, downloadUrl: await documentStorage.createDownloadUrl(document) }); }
+      if (method === 'DELETE' && docMatch) { const document = (await dependencies.users.listDocuments(userId)).find((item) => item.documentId === decodeURIComponent(docMatch[1])); if (!document) return reply(404, { message: 'Document not found' }); if (documentStorage) await documentStorage.deleteObject(document.objectKey); await dependencies.users.deleteDocument(userId, document.documentId); return reply(204, {}); }
+      if (method === 'DELETE' && path === '/me') { const documents = await dependencies.users.deleteUser(userId); if (documentStorage) await Promise.all(documents.map((document) => documentStorage.deleteObject(document.objectKey))); if (dependencies.deleteIdentity) await dependencies.deleteIdentity(userId); else if (dependencies.userPoolId) await (dependencies.cognito ?? new CognitoIdentityProviderClient({})).send(new AdminDeleteUserCommand({ UserPoolId: dependencies.userPoolId, Username: userId })); return reply(204, {}); }
       return reply(404, { message: 'Not found', supportedCategories: jobCategories });
     } catch (error) { return reply(400, { message: error instanceof Error ? error.message : 'Invalid request' }); }
   };

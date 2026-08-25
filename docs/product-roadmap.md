@@ -26,12 +26,18 @@
 | Human-reviewed application assistance | In progress | Headed pilot fills a supported official form, pauses for unknowns and verification, and leaves final submission to the user |
 | Headless application preparation | Planned | Isolated runner reuses proven mappings, supports live user handoff, and never bypasses verification or non-partner submission controls |
 | Trust and release readiness | Planned | Settings/deletion UI, policy pages, store disclosure inputs, and release tests complete |
+| Cloudflare platform migration | In progress | Cloudflare infrastructure is live, the source backfill and grouped D1 projection are verified, the production mobile environment targets the Worker, and retained AWS rollback data is preserved |
 | Closed beta | Planned | 30–50 student test cohort and agreed success metrics |
 | Public release | Planned | TestFlight/Play validation complete and catalog reliability meets target |
 
 ## Immediate backlog
 
 ### Codex
+
+- [x] Implement the Cloudflare replacement substrate with Workers, D1, R2, Queues, Cron Triggers, provider v5 Terraform, Cloudflare-native mobile authentication, and local end-to-end smoke coverage.
+- [x] Provision the Cloudflare account, apply remote D1 migrations and Worker secrets, verify the source backfill, and cut the production mobile environment over with an AWS rollback window.
+- [x] Bound sparse grouped-catalog filter scans, reconcile legacy notification markers through durable Expo receipts, and isolate iOS search accessibility state from secure authentication fields.
+- [ ] Export any recoverable AWS development data after the suspended account is reactivated; do not block the source-backed development cutover on that export.
 
 - [ ] Continuously discover and verify the broadest practical employer set, then prioritize active sources by technical early-career relevance and international/student-friendly coverage.
 - [x] Define source-admission, attribution, removal, and source-quality policies.
@@ -79,6 +85,8 @@
 - [ ] Prototype an isolated headless runner after the headed pilot establishes reliable field mappings.
 
 ### Product owner
+
+- [ ] Reactivate AWS account `628031636041` long enough to export retained development data and approve the final Cloudflare cutover; do not delete retained resources during migration.
 
 - [ ] Connect a GitHub account/repository with permission to create a GitHub Project and issues.
 - [ ] Create a deploy-only AWS role or Identity Center permission set; stop using root credentials for deployment.

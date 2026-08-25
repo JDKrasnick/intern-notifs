@@ -130,6 +130,36 @@ describe('shared source operations', () => {
     expect(row).toMatchObject({ state: 'healthy', pollTier: 'quiet', eligibleRows: 0 });
   });
 
+  it('uses the shadow freshness window even when a shadow source found eligible rows', async () => {
+    const store = new MemoryInternshipStore();
+    const source = reviewedGreenhouseSources.find((candidate) => candidate.status === 'shadow')!;
+    await store.putCheckpoint({
+      sourceId: `shadow-${source.id}`,
+      successfulFetches: 1,
+      lastRowCount: 1,
+      lastSuccessAt: '2026-07-30T17:00:00.000Z',
+    });
+    await store.putSourceHealth({
+      sourceId: source.id,
+      provider: 'greenhouse',
+      region: 'unknown',
+      state: 'healthy',
+      sourceStatus: 'active',
+      pollTier: 'active',
+      pollTierMode: 'automatic',
+      lastAttemptAt: '2026-07-30T17:00:00.000Z',
+      lastSuccessAt: '2026-07-30T17:00:00.000Z',
+      eligibleRows: 1,
+      consecutiveFailures: 0,
+      durationMs: 1,
+    });
+
+    const response = await createSourceOperationsHandler(dependencies(store).value)(event('/operations/sources'));
+    const row = JSON.parse(response.body).sources.find(({ source: candidate }: { source: { sourceId: string } }) => candidate.sourceId === source.id);
+
+    expect(row).toMatchObject({ state: 'healthy', eligibleRows: 1 });
+  });
+
   it('tracks monthly monitoring checks for all provider fleets', async () => {
     const store = new MemoryInternshipStore();
     const setup = dependencies(store);
