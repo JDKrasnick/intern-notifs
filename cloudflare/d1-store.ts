@@ -292,7 +292,14 @@ export class D1InternshipStore implements InternshipStore {
     if (filter.workModes?.length) exactArrayFilter('$.workModes', filter.workModes);
     if (filter.locations?.length) {
       const patterns = filter.locations.map(likePattern);
-      roleClauses.push(`(${patterns.map(() => "lower(coalesce(json_extract(role.value, '$.location'), '')) LIKE ? ESCAPE '\\'").join(' OR ')})`);
+      const searchableLocations = `CASE
+        WHEN json_type(role.value, '$.locations') = 'array' THEN coalesce((
+          SELECT group_concat(location.value, ' ')
+          FROM json_each(role.value, '$.locations') AS location
+        ), '')
+        ELSE coalesce(json_extract(role.value, '$.location'), '')
+      END`;
+      roleClauses.push(`(${patterns.map(() => `lower(${searchableLocations}) LIKE ? ESCAPE '\\'`).join(' OR ')})`);
       values.push(...patterns);
     }
     const rows = await this.db.prepare(`
