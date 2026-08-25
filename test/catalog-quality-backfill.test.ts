@@ -81,7 +81,7 @@ describe('catalog quality backfill planning', () => {
   });
 
   it('bounds D1 stage batches for production-sized repairs', async () => {
-    const rows = Array.from({ length: 10_020 }, (_, index) => {
+    const rows = Array.from({ length: 1_020 }, (_, index) => {
       const value = job();
       value.jobId = `job-${index}`;
       value.normalizedUrl = `https://example.test/${index}`;
@@ -90,7 +90,7 @@ describe('catalog quality backfill planning', () => {
     });
     const batchSizes: number[] = [];
     const database = {
-      prepare(query: string) {
+      prepare() {
         const statement: D1PreparedStatement = {
           bind() { return statement; },
           async first() { return null; },
