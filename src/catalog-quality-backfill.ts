@@ -115,6 +115,7 @@ export function catalogQualityBackfillPlan(rows: CatalogQualityRow[]) {
 
 const REPAIR_STAGE_KIND = 'catalog-quality-repair';
 const STAGE_ROWS_PER_STATEMENT = 20;
+const STAGE_STATEMENTS_PER_BATCH = 25;
 
 function stagedRepair(repair: Repair): StagedRepair {
   const staged: StagedRepair = {
@@ -139,24 +140,28 @@ function stagedRepair(repair: Repair): StagedRepair {
 
 async function stageRepairs(db: D1Database, token: string, repairs: Repair[]): Promise<void> {
   const stagePk = `CATALOG_QUALITY_REPAIR#${token}`;
-  const statements = [];
-  for (let offset = 0; offset < repairs.length; offset += STAGE_ROWS_PER_STATEMENT) {
-    const chunk = repairs.slice(offset, offset + STAGE_ROWS_PER_STATEMENT);
-    const values = chunk.map(() => `(?, ?, '${REPAIR_STAGE_KIND}', ?, ?, ?)`).join(', ');
-    statements.push(db.prepare(`
-      INSERT INTO catalog_items (pk, sk, kind, value, source_id, external_id)
-      VALUES ${values}
-      ON CONFLICT(pk, sk) DO UPDATE SET kind = excluded.kind, value = excluded.value,
-        source_id = excluded.source_id, external_id = excluded.external_id
-    `).bind(...chunk.flatMap((repair) => [
-      stagePk,
-      catalogQualityHash([repair.row.pk, repair.row.sk]),
-      JSON.stringify(stagedRepair(repair)),
-      repair.row.pk,
-      repair.row.sk,
-    ])));
+  const repairsPerBatch = STAGE_ROWS_PER_STATEMENT * STAGE_STATEMENTS_PER_BATCH;
+  for (let batchOffset = 0; batchOffset < repairs.length; batchOffset += repairsPerBatch) {
+    const batch = repairs.slice(batchOffset, batchOffset + repairsPerBatch);
+    const statements = [];
+    for (let offset = 0; offset < batch.length; offset += STAGE_ROWS_PER_STATEMENT) {
+      const chunk = batch.slice(offset, offset + STAGE_ROWS_PER_STATEMENT);
+      const values = chunk.map(() => `(?, ?, '${REPAIR_STAGE_KIND}', ?, ?, ?)`).join(', ');
+      statements.push(db.prepare(`
+        INSERT INTO catalog_items (pk, sk, kind, value, source_id, external_id)
+        VALUES ${values}
+        ON CONFLICT(pk, sk) DO UPDATE SET kind = excluded.kind, value = excluded.value,
+          source_id = excluded.source_id, external_id = excluded.external_id
+      `).bind(...chunk.flatMap((repair) => [
+        stagePk,
+        catalogQualityHash([repair.row.pk, repair.row.sk]),
+        JSON.stringify(stagedRepair(repair)),
+        repair.row.pk,
+        repair.row.sk,
+      ])));
+    }
+    await db.batch(statements);
   }
-  if (statements.length) await db.batch(statements);
 }
 
 async function clearStagedRepairs(db: D1Database, stagePk: string): Promise<void> {

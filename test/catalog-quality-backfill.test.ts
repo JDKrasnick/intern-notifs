@@ -79,4 +79,31 @@ describe('catalog quality backfill planning', () => {
     expect(catalogUpdates[0]).toMatch(/matching_count[\s\S]+staged_count[\s\S]+matching_count/u);
     expect(queries.every((query) => !/outbox|notification-event/iu.test(query))).toBe(true);
   });
+
+  it('bounds D1 stage batches for production-sized repairs', async () => {
+    const rows = Array.from({ length: 10_020 }, (_, index) => {
+      const value = job();
+      value.jobId = `job-${index}`;
+      value.normalizedUrl = `https://example.test/${index}`;
+      value.applyUrl = value.normalizedUrl;
+      return { pk: `JOB#${value.jobId}`, sk: 'META', kind: 'internship', value: JSON.stringify(value) } satisfies CatalogQualityRow;
+    });
+    const batchSizes: number[] = [];
+    const database = {
+      prepare(query: string) {
+        const statement: D1PreparedStatement = {
+          bind() { return statement; },
+          async first() { return null; },
+          async all<T>() { return { results: rows as T[] }; },
+          async run() { return { meta: { changes: rows.length } }; },
+        };
+        return statement;
+      },
+      async batch(statements: D1PreparedStatement[]) { batchSizes.push(statements.length); return []; },
+    } satisfies D1Database;
+    const dryRun = await runCatalogQualityBackfill(database);
+    await runCatalogQualityBackfill(database, { apply: true, repairToken: dryRun.repairToken, expectedChanged: dryRun.expectedChanged });
+    expect(batchSizes.length).toBeGreaterThan(1);
+    expect(Math.max(...batchSizes)).toBeLessThanOrEqual(25);
+  });
 });
