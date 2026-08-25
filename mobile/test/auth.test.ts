@@ -22,7 +22,7 @@ vi.mock('../src/session-storage', () => ({
   },
 }));
 
-import { clearSession, restoreSession, signIn, signUp } from '../src/auth';
+import { clearSession, restoreSession, signIn, signOut, signUp } from '../src/auth';
 
 const future = () => new Date(Date.now() + 60 * 60 * 1_000).toISOString();
 
@@ -97,5 +97,26 @@ describe('Cloudflare session restoration', () => {
     mocks.stored = { token: 'user-b-token', expiresAt: future(), username: 'student-b@example.test' };
     await expect(clearSession('user-a-token')).resolves.toBe(false);
     expect(mocks.clear).not.toHaveBeenCalled();
+  });
+
+  it('revokes the server session before clearing it locally', async () => {
+    mocks.stored = { token: 'current-token', expiresAt: future(), username: 'student@example.test' };
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
+
+    await expect(signOut()).resolves.toBeUndefined();
+
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/auth/signout'), {
+      method: 'POST',
+      headers: { Authorization: 'Bearer current-token' },
+    });
+    expect(mocks.clear).toHaveBeenCalledOnce();
+  });
+
+  it('still clears the local session when revocation is offline', async () => {
+    mocks.stored = { token: 'current-token', expiresAt: future(), username: 'student@example.test' };
+    vi.mocked(fetch).mockRejectedValue(new TypeError('offline'));
+
+    await expect(signOut()).resolves.toBeUndefined();
+    expect(mocks.clear).toHaveBeenCalledOnce();
   });
 });

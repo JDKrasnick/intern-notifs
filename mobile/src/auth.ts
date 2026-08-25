@@ -85,6 +85,25 @@ export async function clearSession(expectedToken?: string) {
   return true;
 }
 
+/** Revokes the current server session when reachable, then always signs out locally. */
+export async function signOut(expectedToken?: string): Promise<void> {
+  const stored = await sessionStorage.getSession();
+  const token = expectedToken ?? stored?.token;
+  try {
+    if (token) {
+      await fetch(`${baseUrl}/auth/signout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    }
+  } catch {
+    // Local sign-out must still complete while offline. The server session will
+    // expire normally if revocation cannot be delivered.
+  } finally {
+    await clearSession(token);
+  }
+}
+
 export async function signIn(email: string, password: string): Promise<string> {
   const username = normalizedEmail(email);
   const expectedGeneration = ++authGeneration;

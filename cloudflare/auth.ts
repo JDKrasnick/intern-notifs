@@ -145,6 +145,19 @@ export async function signIn(request: Request, env: AuthEnvironment): Promise<Re
   return json(200, { token, expiresAt: new Date(timestamp.getTime() + sessionLifetimeMs).toISOString() });
 }
 
+export async function signOut(request: Request, env: AuthEnvironment): Promise<Response> {
+  const authorization = request.headers.get('Authorization');
+  if (authorization?.startsWith('Bearer ')) {
+    const token = authorization.slice('Bearer '.length);
+    if (token) {
+      await env.DB.prepare('DELETE FROM auth_sessions WHERE token_hash = ?')
+        .bind(await sha256(`${sessionSecret(env)}:${token}`)).run();
+    }
+  }
+  // Signing out is idempotent and does not reveal whether a token was valid.
+  return new Response(null, { status: 204 });
+}
+
 export async function authenticatedUser(request: Request, env: AuthEnvironment): Promise<string | undefined> {
   const authorization = request.headers.get('Authorization');
   if (!authorization?.startsWith('Bearer ')) return undefined;
@@ -171,6 +184,7 @@ export async function handleAuthRequest(request: Request, env: AuthEnvironment):
     if (request.method === 'POST' && path === '/auth/signup') return await signUp(request, env);
     if (request.method === 'POST' && path === '/auth/confirm') return await confirmEmail(request, env);
     if (request.method === 'POST' && path === '/auth/signin') return await signIn(request, env);
+    if (request.method === 'POST' && path === '/auth/signout') return await signOut(request, env);
     return undefined;
   } catch (error) {
     return json(400, { message: error instanceof Error ? error.message : 'Invalid request' });
