@@ -17,7 +17,10 @@
       { "binding": "GREENHOUSE_QUEUE", "queue": "intern-notifs-greenhouse" },
       { "binding": "LEVER_QUEUE", "queue": "intern-notifs-lever" },
       { "binding": "ASHBY_QUEUE", "queue": "intern-notifs-ashby" },
-      { "binding": "GITHUB_QUEUE", "queue": "intern-notifs-github" }
+      { "binding": "GITHUB_QUEUE", "queue": "intern-notifs-github" },
+      { "binding": "GREENHOUSE_DLQ", "queue": "intern-notifs-greenhouse-dlq" },
+      { "binding": "LEVER_DLQ", "queue": "intern-notifs-lever-dlq" },
+      { "binding": "ASHBY_DLQ", "queue": "intern-notifs-ashby-dlq" }
     ],
     "consumers": [
       { "queue": "intern-notifs-greenhouse", "max_batch_size": 1, "max_retries": 2, "dead_letter_queue": "intern-notifs-greenhouse-dlq" },

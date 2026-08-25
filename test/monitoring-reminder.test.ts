@@ -60,4 +60,22 @@ describe('monitoring reminder', () => {
     await expect(handler()).resolves.toMatchObject({ sent: false, pending: 0 });
     expect(sent).toBe(false);
   });
+
+  it('labels unavailable alarm telemetry without counting it as healthy or alarming', async () => {
+    const messages: Array<{ text: string }> = [];
+    const handler = createMonitoringReminderHandler({
+      operationsApiUrl: 'https://operations.test',
+      operationsKey: 'secret',
+      dashboardUrl: 'https://monitoring.example.com',
+      fetcher: async () => Response.json({
+        ...overview,
+        productionMetrics: { ...overview.productionMetrics, activeAlarms: null, processingMessages: null },
+      }),
+      emailSender: { async send(_subject, text) { messages.push({ text }); } },
+    });
+
+    await expect(handler()).resolves.toMatchObject({ sent: true, attentionSignals: 7 });
+    expect(messages[0]?.text).toContain('Active alarms: unavailable');
+    expect(messages[0]?.text).toContain('unavailable processing');
+  });
 });

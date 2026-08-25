@@ -48,6 +48,7 @@ export default tseslint.config(
         Request: 'readonly',
         Response: 'readonly',
         TextEncoder: 'readonly',
+        TextDecoder: 'readonly',
         URL: 'readonly',
         btoa: 'readonly',
         crypto: 'readonly',

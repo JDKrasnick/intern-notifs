@@ -33,6 +33,7 @@ import { ApiError, api, authenticatedRead, responseCache, sessionStorage } from 
 import { appendGroupedCatalogPage, catalogCardKind, type GroupedCatalogPage } from "./src/catalog";
 import { catalogGroupAvailabilityLabel, groupedCatalogParameters } from "./src/catalog-filters";
 import { createLatestRequestGuard } from "./src/latest-request";
+import { uploadDocumentContent } from "./src/document-upload";
 import { clearSession, confirmEmail, restoreSession, signIn, signOut, signUp } from "./src/auth";
 import {
   clearApplicationFollowUp,
@@ -3535,13 +3536,17 @@ function Profile({
       }),
     });
     const file = await fetch(asset.uri);
-    await fetch(response.uploadUrl, {
-      method: "PUT",
-      headers: {
-        "Content-Type": asset.mimeType ?? "application/pdf",
-        Authorization: `Bearer ${token}`,
-      },
+    await uploadDocumentContent({
+      uploadUrl: response.uploadUrl,
+      token,
+      contentType: asset.mimeType ?? "application/pdf",
       body: await file.blob(),
+    }, {
+      deleteMetadata: () => api(
+        `/me/documents/${encodeURIComponent(response.document.documentId)}`,
+        token,
+        { method: "DELETE" },
+      ),
     });
     setProfile((current) => ({
       ...current,

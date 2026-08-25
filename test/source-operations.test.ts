@@ -100,6 +100,26 @@ describe('shared source operations', () => {
     expect(body.checklist).toMatchObject({ period: '2026-07', completed: 0, total: 8, complete: false });
   });
 
+  it('marks alarm telemetry unavailable instead of reporting a fabricated healthy zero', async () => {
+    const store = new MemoryInternshipStore();
+    const setup = dependencies(store);
+    const response = await createSourceOperationsHandler({
+      ...setup.value,
+      alarmTelemetry: { status: 'unavailable', reason: 'Cloudflare alert state is not exposed.' },
+      queueTelemetry: { status: 'partial', reason: 'Only total backlog is exposed.' },
+    })(event('/operations/sources'));
+    const body = JSON.parse(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(body.productionMetrics.activeAlarms).toBeNull();
+    expect(body.productionMetrics.processingMessages).toBeNull();
+    expect(body.fleet.queueTelemetry).toEqual({ status: 'partial', reason: 'Only total backlog is exposed.' });
+    expect(body.fleet.alarmTelemetry).toEqual({
+      status: 'unavailable',
+      reason: 'Cloudflare alert state is not exposed.',
+    });
+  });
+
   it('retains the quiet classification for published source health', async () => {
     const store = new MemoryInternshipStore();
     const source = reviewedGreenhouseSources.find((candidate) => candidate.status === 'published')!;

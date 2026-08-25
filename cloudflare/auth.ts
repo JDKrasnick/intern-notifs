@@ -5,6 +5,15 @@ const encoder = new TextEncoder();
 const passwordIterations = 100_000;
 const sessionLifetimeMs = 30 * 24 * 60 * 60 * 1_000;
 const confirmationLifetimeMs = 30 * 60 * 1_000;
+const maxAuthBodyBytes = 16 * 1_024;
+const maxPasswordLength = 128;
+
+type RateLimitPolicy = { limit: number; windowMs: number; blockMs: number };
+const rateLimitPolicies = {
+  signup: { ip: { limit: 10, windowMs: 60 * 60_000, blockMs: 60 * 60_000 }, account: { limit: 3, windowMs: 60 * 60_000, blockMs: 60 * 60_000 } },
+  confirm: { ip: { limit: 30, windowMs: 15 * 60_000, blockMs: 60 * 60_000 }, account: { limit: 6, windowMs: 15 * 60_000, blockMs: 30 * 60_000 } },
+  signin: { ip: { limit: 30, windowMs: 15 * 60_000, blockMs: 60 * 60_000 }, account: { limit: 10, windowMs: 15 * 60_000, blockMs: 30 * 60_000 } },
+} as const;
 
 export interface AuthEnvironment {
   DB: D1Database;
@@ -23,6 +32,13 @@ type AuthUserRow = {
   confirmation_hash: string | null;
   confirmation_expires_at: string | null;
 };
+
+class AuthRateLimitError extends Error {
+  constructor(readonly retryAfterSeconds: number) {
+    super('Too many authentication attempts. Try again later.');
+    this.name = 'AuthRateLimitError';
+  }
+}
 
 function base64Url(bytes: Uint8Array): string {
   let binary = '';
@@ -64,9 +80,14 @@ function normalizeEmail(value: unknown): string {
 }
 
 function requirePassword(value: unknown): string {
-  if (typeof value !== 'string' || value.length < 12 || !/[a-z]/u.test(value) || !/[A-Z]/u.test(value) || !/\d/u.test(value)) {
-    throw new Error('Password must be at least 12 characters with upper-case, lower-case, and numeric characters');
+  if (typeof value !== 'string' || value.length < 12 || value.length > maxPasswordLength || !/[a-z]/u.test(value) || !/[A-Z]/u.test(value) || !/\d/u.test(value)) {
+    throw new Error(`Password must be 12 to ${maxPasswordLength} characters with upper-case, lower-case, and numeric characters`);
   }
+  return value;
+}
+
+function signInPassword(value: unknown): string {
+  if (typeof value !== 'string' || !value || value.length > maxPasswordLength) throw new Error('Password is required');
   return value;
 }
 
@@ -87,7 +108,32 @@ async function sendConfirmation(email: string, code: string, env: AuthEnvironmen
 }
 
 async function body(request: Request): Promise<Record<string, unknown>> {
-  try { return await request.json() as Record<string, unknown>; } catch { throw new Error('Request body must be valid JSON'); }
+  const declaredLength = Number(request.headers.get('Content-Length'));
+  if (Number.isFinite(declaredLength) && declaredLength > maxAuthBodyBytes) throw new Error('Request body is too large');
+  if (!request.body) throw new Error('Request body must be valid JSON');
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  while (true) {
+    const result = await reader.read();
+    if (result.done) break;
+    length += result.value.byteLength;
+    if (length > maxAuthBodyBytes) {
+      await reader.cancel();
+      throw new Error('Request body is too large');
+    }
+    chunks.push(result.value);
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error();
+    return parsed as Record<string, unknown>;
+  } catch {
+    throw new Error('Request body must be valid JSON');
+  }
 }
 
 const json = (status: number, value: unknown) => new Response(JSON.stringify(value), {
@@ -95,16 +141,75 @@ const json = (status: number, value: unknown) => new Response(JSON.stringify(val
   headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
 });
 
+async function rateLimitKey(env: AuthEnvironment, scope: string, subject: string): Promise<string> {
+  return sha256(`${sessionSecret(env)}:rate-limit:${scope}:${subject}`);
+}
+
+export async function consumeAuthRateLimit(
+  env: AuthEnvironment,
+  scope: string,
+  subject: string,
+  policy: RateLimitPolicy,
+  nowMs = Date.now(),
+): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  const key = await rateLimitKey(env, scope, subject);
+  const resetBefore = nowMs - policy.windowMs;
+  await env.DB.prepare(`
+    INSERT INTO auth_rate_limits (key, window_started_at, attempts, blocked_until)
+    VALUES (?, ?, 0, NULL) ON CONFLICT(key) DO NOTHING
+  `).bind(key, nowMs).run();
+  await env.DB.prepare(`
+    UPDATE auth_rate_limits SET
+      blocked_until = CASE
+        WHEN blocked_until IS NOT NULL AND blocked_until > ? THEN blocked_until
+        WHEN window_started_at <= ? THEN NULL
+        WHEN attempts + 1 > ? THEN ?
+        ELSE NULL
+      END,
+      attempts = CASE WHEN window_started_at <= ? THEN 1 ELSE attempts + 1 END,
+      window_started_at = CASE WHEN window_started_at <= ? THEN ? ELSE window_started_at END
+    WHERE key = ?
+  `).bind(nowMs, resetBefore, policy.limit, nowMs + policy.blockMs, resetBefore, resetBefore, nowMs, key).run();
+  const row = await env.DB.prepare('SELECT attempts, blocked_until FROM auth_rate_limits WHERE key = ?')
+    .bind(key).first<{ attempts: number; blocked_until: number | null }>();
+  const blockedUntil = row?.blocked_until ?? 0;
+  return {
+    allowed: row !== null && row.attempts <= policy.limit && blockedUntil <= nowMs,
+    retryAfterSeconds: Math.max(1, Math.ceil((blockedUntil - nowMs) / 1_000)),
+  };
+}
+
+async function enforceAuthRateLimits(
+  request: Request,
+  email: string,
+  operation: keyof typeof rateLimitPolicies,
+  env: AuthEnvironment,
+): Promise<void> {
+  const policy = rateLimitPolicies[operation];
+  const subjects: Array<{ scope: string; value: string; policy: RateLimitPolicy }> = [];
+  const ip = request.headers.get('CF-Connecting-IP')?.trim();
+  if (ip) subjects.push({ scope: `${operation}:ip`, value: ip, policy: policy.ip });
+  subjects.push({ scope: `${operation}:account`, value: email, policy: policy.account });
+  for (const subject of subjects) {
+    const result = await consumeAuthRateLimit(env, subject.scope, subject.value, subject.policy);
+    if (!result.allowed) throw new AuthRateLimitError(result.retryAfterSeconds);
+  }
+}
+
 export async function signUp(request: Request, env: AuthEnvironment): Promise<Response> {
   const input = await body(request);
   const email = normalizeEmail(input.email);
   const password = requirePassword(input.password);
+  await enforceAuthRateLimits(request, email, 'signup', env);
   const timestamp = new Date();
   const salt = randomToken(16);
   const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, '0');
   const confirmationHash = await sha256(`${sessionSecret(env)}:${code}`);
-  const existing = await env.DB.prepare('SELECT user_id, verified_at FROM auth_users WHERE email = ?').bind(email).first<{ user_id: string; verified_at: string | null }>();
+  const existing = await env.DB.prepare('SELECT user_id, verified_at, confirmation_expires_at FROM auth_users WHERE email = ?').bind(email).first<{ user_id: string; verified_at: string | null; confirmation_expires_at: string | null }>();
   if (existing?.verified_at) return json(409, { message: 'An account already exists for this email' });
+  if (existing?.confirmation_expires_at && Date.parse(existing.confirmation_expires_at) > timestamp.getTime()) {
+    return json(409, { message: 'A verification code was already sent. Wait for it to expire before creating the account again.' });
+  }
   const userId = existing?.user_id ?? crypto.randomUUID();
   await env.DB.prepare(`
     INSERT INTO auth_users (user_id, email, password_hash, password_salt, confirmation_hash, confirmation_expires_at, created_at, updated_at)
@@ -120,6 +225,8 @@ export async function confirmEmail(request: Request, env: AuthEnvironment): Prom
   const input = await body(request);
   const email = normalizeEmail(input.email);
   if (typeof input.code !== 'string') throw new Error('Verification code is required');
+  await enforceAuthRateLimits(request, email, 'confirm', env);
+  if (!/^\d{6}$/u.test(input.code.trim())) return json(400, { message: 'Verification code is invalid or expired' });
   const user = await env.DB.prepare('SELECT * FROM auth_users WHERE email = ?').bind(email).first<AuthUserRow>();
   const submitted = await sha256(`${sessionSecret(env)}:${input.code.trim()}`);
   if (!user?.confirmation_hash || !user.confirmation_expires_at || Date.parse(user.confirmation_expires_at) <= Date.now() || !constantTimeEqual(user.confirmation_hash, submitted)) {
@@ -133,9 +240,10 @@ export async function confirmEmail(request: Request, env: AuthEnvironment): Prom
 export async function signIn(request: Request, env: AuthEnvironment): Promise<Response> {
   const input = await body(request);
   const email = normalizeEmail(input.email);
-  if (typeof input.password !== 'string') throw new Error('Password is required');
+  const password = signInPassword(input.password);
+  await enforceAuthRateLimits(request, email, 'signin', env);
   const user = await env.DB.prepare('SELECT * FROM auth_users WHERE email = ?').bind(email).first<AuthUserRow>();
-  const candidate = user ? await passwordHash(input.password, user.password_salt) : await passwordHash(input.password, randomToken(16));
+  const candidate = user ? await passwordHash(password, user.password_salt) : await passwordHash(password, randomToken(16));
   if (!user || !constantTimeEqual(user.password_hash, candidate)) return json(401, { message: 'Email or password is incorrect' });
   if (!user.verified_at) return json(403, { message: 'Verify your email before signing in' });
   const token = randomToken();
@@ -172,9 +280,11 @@ export async function deleteAuthUser(userId: string, env: AuthEnvironment): Prom
 
 export async function cleanupExpiredAuth(env: AuthEnvironment): Promise<void> {
   const timestamp = new Date().toISOString();
+  const rateLimitCutoff = Date.now() - 7 * 24 * 60 * 60_000;
   await env.DB.batch([
     env.DB.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').bind(timestamp),
     env.DB.prepare('UPDATE auth_users SET confirmation_hash = NULL, confirmation_expires_at = NULL WHERE confirmation_expires_at <= ?').bind(timestamp),
+    env.DB.prepare('DELETE FROM auth_rate_limits WHERE window_started_at <= ? AND (blocked_until IS NULL OR blocked_until <= ?)').bind(rateLimitCutoff, Date.now()),
   ]);
 }
 
@@ -187,6 +297,11 @@ export async function handleAuthRequest(request: Request, env: AuthEnvironment):
     if (request.method === 'POST' && path === '/auth/signout') return await signOut(request, env);
     return undefined;
   } catch (error) {
+    if (error instanceof AuthRateLimitError) {
+      const response = json(429, { message: error.message });
+      response.headers.set('Retry-After', String(error.retryAfterSeconds));
+      return response;
+    }
     return json(400, { message: error instanceof Error ? error.message : 'Invalid request' });
   }
 }

@@ -25,6 +25,9 @@ export interface Environment extends AuthEnvironment {
   LEVER_QUEUE: Queue;
   ASHBY_QUEUE: Queue;
   GITHUB_QUEUE: Queue;
+  GREENHOUSE_DLQ: Queue;
+  LEVER_DLQ: Queue;
+  ASHBY_DLQ: Queue;
   PUBLIC_API_URL: string;
   RESEND_API_KEY?: string;
   AUTH_FROM_EMAIL?: string;
@@ -40,6 +43,41 @@ export interface Environment extends AuthEnvironment {
   LEVER_QUEUE_ID: string;
   ASHBY_QUEUE_ID: string;
   GITHUB_QUEUE_ID: string;
+}
+
+type OperationsQueueEnvironment = Pick<Environment,
+  'GREENHOUSE_QUEUE' | 'LEVER_QUEUE' | 'ASHBY_QUEUE' | 'GREENHOUSE_DLQ' | 'LEVER_DLQ' | 'ASHBY_DLQ'>;
+
+export function cloudflareOperationsQueueClient(env: OperationsQueueEnvironment) {
+  const queues: Record<string, Queue> = {
+    greenhouse: env.GREENHOUSE_QUEUE,
+    lever: env.LEVER_QUEUE,
+    ashby: env.ASHBY_QUEUE,
+    'greenhouse-dlq': env.GREENHOUSE_DLQ,
+    'lever-dlq': env.LEVER_DLQ,
+    'ashby-dlq': env.ASHBY_DLQ,
+  };
+  return {
+    async send(command: { input?: { QueueUrl?: string; MessageBody?: string } }) {
+      const input = command.input;
+      const queue = input?.QueueUrl ? queues[input.QueueUrl] : undefined;
+      if (!queue) throw new Error(`Cloudflare queue ${JSON.stringify(input?.QueueUrl)} is not configured`);
+      if (input?.MessageBody) {
+        await queue.send(JSON.parse(input.MessageBody));
+        return {};
+      }
+      if (!queue.metrics) throw new Error(`Cloudflare queue metrics are unavailable for ${input?.QueueUrl}`);
+      const metrics = await queue.metrics();
+      return {
+        Attributes: {
+          // Cloudflare exposes one real-time backlog total rather than SQS's
+          // visible/in-flight split. The operations response marks processing
+          // telemetry unavailable instead of fabricating that split.
+          ApproximateNumberOfMessages: String(metrics.backlogCount),
+        },
+      };
+    },
+  };
 }
 
 const corsHeaders = {
@@ -230,15 +268,7 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
     return withCors(Response.json({ queued }));
   }
   if (url.pathname.startsWith('/operations/') || url.pathname.startsWith('/internal/operations/')) {
-    const queueClient = {
-      async send(command: { input?: { QueueUrl?: string; MessageBody?: string } }) {
-        const input = command.input;
-        if (!input?.MessageBody) return { Attributes: { ApproximateNumberOfMessages: '0', ApproximateNumberOfMessagesNotVisible: '0' } };
-        const queue = input.QueueUrl === 'greenhouse' ? env.GREENHOUSE_QUEUE : input.QueueUrl === 'lever' ? env.LEVER_QUEUE : env.ASHBY_QUEUE;
-        await queue.send(JSON.parse(input.MessageBody));
-        return {};
-      },
-    };
+    const queueClient = cloudflareOperationsQueueClient(env);
     const cloudwatch = { async send() { return { MetricAlarms: [] }; } };
     const operations = createSourceOperationsHandler({
       store: new D1InternshipStore(env.DB),
@@ -250,6 +280,14 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
       },
       sqs: queueClient as never,
       cloudwatch: cloudwatch as never,
+      alarmTelemetry: {
+        status: 'unavailable',
+        reason: 'Cloudflare alert policy state is not exposed to this Worker; queue and DLQ counts are live.',
+      },
+      queueTelemetry: {
+        status: 'partial',
+        reason: 'queuedMessages is the live total backlog; Cloudflare does not expose a waiting-versus-processing split.',
+      },
     });
     const result = await operations({
       requestContext: { http: { method: request.method } },
