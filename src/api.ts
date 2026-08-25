@@ -55,8 +55,9 @@ async function completeCatalog(store: InternshipStore) {
 }
 
 async function projectedCatalogPage(store: InternshipStore, cursor: string | undefined, limit: number, filter: CatalogGroupFilter) {
-  if (!store.listCatalogProjection) return undefined;
   const isDefaultBrowse = filter.status === 'open' && Object.keys(filter).length === 1;
+  if (!isDefaultBrowse && store.listCatalogProjectionFiltered) return store.listCatalogProjectionFiltered(cursor, limit, filter);
+  if (!store.listCatalogProjection) return undefined;
   const scanLimit = isDefaultBrowse ? limit : Math.max(limit, 100);
   const groups = [];
   let next = cursor;
@@ -338,6 +339,8 @@ export function createApiHandler(dependencies: ApiDependencies) {
         const requestedLimit = Number(event.queryStringParameters?.limit ?? 25);
         const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 50) : 25;
         const cursor = event.queryStringParameters?.cursor;
+        const status = event.queryStringParameters?.status;
+        if (status && status !== 'open' && status !== 'closed') return reply(400, { message: 'status must be open or closed' });
         const query = event.queryStringParameters?.q?.trim();
         if (query && query.length > 120) return reply(400, { message: 'q must be 120 characters or fewer' });
         const source = event.queryStringParameters?.source;
@@ -354,6 +357,8 @@ export function createApiHandler(dependencies: ApiDependencies) {
       }
       const catalogGroupMatch = path.match(/^\/catalog\/groups\/([^/]+)$/);
       if (method === 'GET' && catalogGroupMatch) {
+        const status = event.queryStringParameters?.status;
+        if (status && status !== 'open' && status !== 'closed') return reply(400, { message: 'status must be open or closed' });
         const groupId = decodeURIComponent(catalogGroupMatch[1]!);
         const projected = await dependencies.jobs.getCatalogProjectionGroup?.(groupId);
         if (projected) {

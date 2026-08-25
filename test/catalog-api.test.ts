@@ -35,6 +35,33 @@ const event = (method: string, path: string, queryStringParameters?: Record<stri
 const body = <T>(response: { body: string }) => JSON.parse(response.body) as T;
 
 describe('grouped catalog API', () => {
+  it('rejects unsupported availability states for catalog rows and details', async () => {
+    const jobs = new MemoryInternshipStore();
+    await jobs.putInternship(job('one', 0));
+    const details = groupCatalogJobs(await jobs.listCatalog()).map(catalogGroupDetails);
+    await jobs.putCatalogProjection(details, new Date().toISOString());
+    const handler = createApiHandler({ jobs, users: new MemoryUserStore() });
+    const invalidList = await handler(event('GET', '/catalog', { status: 'invalid' }));
+    const invalidDetail = await handler(event('GET', `/catalog/groups/${details[0]!.group.groupId}`, { status: 'invalid' }));
+    expect(invalidList.statusCode).toBe(400);
+    expect(invalidDetail.statusCode).toBe(400);
+  });
+
+  it('uses the backing store filtered projection path without sequential scans', async () => {
+    const jobs = new MemoryInternshipStore();
+    await jobs.putInternship({ ...job('software', 0), internshipIdentity: identity('Software Intern', 'software') });
+    await jobs.putInternship({ ...job('ml', 10, 'Machine Learning Intern'), internshipIdentity: identity('Machine Learning Intern', 'ai-ml') });
+    await jobs.putCatalogProjection(groupCatalogJobs(await jobs.listCatalog()).map(catalogGroupDetails), new Date().toISOString());
+    let filteredReads = 0;
+    const filtered = jobs.listCatalogProjectionFiltered.bind(jobs);
+    jobs.listCatalogProjectionFiltered = async (...args) => { filteredReads += 1; return filtered(...args); };
+    jobs.listCatalogProjection = async () => { throw new Error('filtered requests should not scan projection pages'); };
+    const response = await createApiHandler({ jobs, users: new MemoryUserStore() })(event('GET', '/catalog', { q: 'machine' }));
+    expect(response.statusCode).toBe(200);
+    expect(body<{ groups: Array<{ titles: string[] }> }>(response).groups).toMatchObject([{ titles: ['Machine Learning Intern'] }]);
+    expect(filteredReads).toBe(1);
+  });
+
   it('lists public rows, recomputes filtered summaries, and opens complete group details', async () => {
     const jobs = new MemoryInternshipStore();
     await jobs.putInternship({ ...job('swe', 0), internshipIdentity: identity('Software Intern swe', 'software') });

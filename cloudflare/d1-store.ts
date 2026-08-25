@@ -6,7 +6,7 @@ import { employerCategory } from '../src/core/employers.js';
 import type { ApplicationSession } from '../src/application-automation.js';
 import { resolvePostingAliases, type AliasResolution } from '../src/identity/posting.js';
 import type { InternshipStore, LeverAdmission, ReleaseStore, UserStore, CatalogQuery } from '../src/store.js';
-import type { CatalogGroupDetails, CatalogProjectionPage, CatalogRelease } from '../src/catalog-groups.js';
+import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from '../src/catalog-groups.js';
 import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from '../src/types.js';
 import type { D1Database } from './types.js';
 
@@ -25,6 +25,14 @@ function cursorOffset(cursor?: string): number {
   if (!cursor) return 0;
   const value = Number(cursor);
   return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function likePattern(value: string): string {
+  return `%${value.toLowerCase().replace(/[\\%_]/g, '\\$&')}%`;
+}
+
+function placeholders(values: readonly unknown[]): string {
+  return values.map(() => '?').join(', ');
 }
 
 export class D1InternshipStore implements InternshipStore {
@@ -230,6 +238,77 @@ export class D1InternshipStore implements InternshipStore {
     const rows = await this.db.prepare("SELECT value FROM catalog_items WHERE pk = ? AND kind = 'catalog-projection' ORDER BY catalog_sort_key ASC LIMIT ? OFFSET ?")
       .bind(`CATALOG_PROJECTION#${pointer.version}`, limit + 1, offset).all<JsonRow>();
     const groups = rows.results.slice(0, limit).map((row) => JSON.parse(row.value) as CatalogGroupDetails);
+    return { groups, ...(rows.results.length > limit ? { cursor: String(offset + limit) } : {}) };
+  }
+  async listCatalogProjectionFiltered(cursor: string | undefined, limit: number, filter: CatalogGroupFilter): Promise<CatalogProjectionPage | undefined> {
+    const pointer = await this.get<{ version: string; generatedAt: string; schemaVersion: number }>('CATALOG_PROJECTION', 'CURRENT');
+    if (!pointer || pointer.schemaVersion !== 3 || Date.now() - Date.parse(pointer.generatedAt) > 24 * 60 * 60 * 1_000) return undefined;
+    const offset = cursorOffset(cursor);
+    const roleClauses = ["json_extract(role.value, '$.open') = ?"];
+    const values: unknown[] = [filter.status === 'closed' ? 0 : 1];
+    if (filter.query?.trim()) {
+      roleClauses.push(`lower(
+        coalesce(json_extract(role.value, '$.company'), '') || ' ' ||
+        coalesce(json_extract(role.value, '$.title'), '') || ' ' ||
+        coalesce(json_extract(role.value, '$.location'), '') || ' ' ||
+        coalesce(json_extract(role.value, '$.season'), '')
+      ) LIKE ? ESCAPE '\\'`);
+      values.push(likePattern(filter.query.trim()));
+    }
+    if (filter.source && filter.source !== 'all') {
+      const credibility = filter.source === 'direct'
+        ? ['official', 'corroborated']
+        : filter.source === 'community'
+          ? ['community', 'corroborated']
+          : ['corroborated'];
+      roleClauses.push(`json_extract(role.value, '$.sourceCredibility') IN (${placeholders(credibility)})`);
+      values.push(...credibility);
+    }
+    if (filter.employerCategories?.length) {
+      roleClauses.push(`json_extract(role.value, '$.employerCategory') IN (${placeholders(filter.employerCategories)})`);
+      values.push(...filter.employerCategories);
+    }
+    if (filter.hideUsCitizenshipRequired) roleClauses.push("coalesce(json_extract(role.value, '$.requiresUsCitizenship'), 0) = 0");
+    if (filter.hideAdvancedDegreeRequired) roleClauses.push("coalesce(json_extract(role.value, '$.advancedDegreeRequired'), 0) = 0");
+    const exactArrayFilter = (path: string, requested: string[]) => {
+      const normalized = requested.map((value) => value.toLowerCase());
+      roleClauses.push(`EXISTS (SELECT 1 FROM json_each(role.value, '${path}') AS item WHERE lower(item.value) IN (${placeholders(normalized)}))`);
+      values.push(...normalized);
+    };
+    if (filter.disciplines?.length) exactArrayFilter('$.disciplines', filter.disciplines);
+    if (filter.seasons?.length) {
+      const normalized = filter.seasons.map((value) => value.toLowerCase());
+      roleClauses.push(`lower(json_extract(role.value, '$.season')) IN (${placeholders(normalized)})`);
+      values.push(...normalized);
+    }
+    if (filter.educationLevels?.length) {
+      const normalized = filter.educationLevels.map((value) => value.toLowerCase());
+      roleClauses.push(`(
+        json_extract(role.value, '$.education.evidence') = 'unspecified'
+        OR EXISTS (SELECT 1 FROM json_each(role.value, '$.education.levels') AS level WHERE lower(level.value) IN (${placeholders(normalized)}))
+      )`);
+      values.push(...normalized);
+    }
+    if (filter.workModes?.length) exactArrayFilter('$.workModes', filter.workModes);
+    if (filter.locations?.length) {
+      const patterns = filter.locations.map(likePattern);
+      roleClauses.push(`(${patterns.map(() => "lower(coalesce(json_extract(role.value, '$.location'), '')) LIKE ? ESCAPE '\\'").join(' OR ')})`);
+      values.push(...patterns);
+    }
+    const rows = await this.db.prepare(`
+      SELECT projection.value
+      FROM catalog_items AS projection
+      WHERE projection.pk = ?
+        AND projection.kind = 'catalog-projection'
+        AND EXISTS (
+          SELECT 1 FROM json_each(projection.value, '$.roles') AS role
+          WHERE ${roleClauses.join('\n            AND ')}
+        )
+      ORDER BY projection.catalog_sort_key ASC
+      LIMIT ? OFFSET ?
+    `).bind(`CATALOG_PROJECTION#${pointer.version}`, ...values, limit + 1, offset).all<JsonRow>();
+    const candidates = rows.results.slice(0, limit).map((row) => JSON.parse(row.value) as CatalogGroupDetails);
+    const groups = filterCatalogGroupDetails(candidates, filter);
     return { groups, ...(rows.results.length > limit ? { cursor: String(offset + limit) } : {}) };
   }
   async getCatalogProjectionGroup(groupId: string): Promise<CatalogGroupDetails | undefined> {
