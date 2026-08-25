@@ -31,6 +31,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { ApiError, api, authenticatedRead, responseCache, sessionStorage } from "./src/api";
 import { appendGroupedCatalogPage, catalogCardKind, type GroupedCatalogPage } from "./src/catalog";
+import { boundedCatalogText, compactLocations, presentCatalogRole, seasonLabel } from "./src/catalog-quality";
 import { catalogGroupAvailabilityLabel, groupedCatalogParameters } from "./src/catalog-filters";
 import { createLatestRequestGuard } from "./src/latest-request";
 import { uploadDocumentContent } from "./src/document-upload";
@@ -72,6 +73,7 @@ type Job = {
   company: string;
   title: string;
   location: string;
+  locations?: string[];
   season: string;
   applyUrl: string;
   compensation: { raw: string };
@@ -368,6 +370,7 @@ function JobCard({
   isSavingForWeb?: boolean;
   onHideLocally?: () => void;
 }) {
+  const display = presentCatalogRole(job);
   const motionAllowed = useContext(MotionAllowedContext);
   const source = sourcePresentation(job.sourceReferences);
   const translateX = useRef(new Animated.Value(0)).current;
@@ -465,7 +468,7 @@ function JobCard({
       >
         <TouchableOpacity
           accessibilityRole="button"
-          accessibilityLabel={`${recencyBadge ? `${recencyBadge} role, ` : ""}${job.title} at ${job.company}, ${job.location}, ${postingTiming.summary}, ${source.primary}${source.corroboration ? ", corroborated by a community listing" : ""}${applicationStatus ? `, ${applicationStatus}` : ""}`}
+          accessibilityLabel={`${recencyBadge ? `${recencyBadge} role, ` : ""}${display.title} at ${display.company}, ${display.location}, ${postingTiming.summary}, ${source.primary}${source.corroboration ? ", corroborated by a community listing" : ""}${applicationStatus ? `, ${applicationStatus}` : ""}`}
           accessibilityHint={
             canSaveForWeb && canHideLocally
               ? "Swipe left to save this role for the web app, or swipe right to hide it on this device."
@@ -489,7 +492,7 @@ function JobCard({
           onPress={onOpen}
         >
           <View style={styles.jobCompanyRow}>
-            <Text style={styles.company}>{job.company}</Text>
+            <Text style={styles.company} numberOfLines={1}>{display.company}</Text>
             {recencyBadge ? (
               <View style={styles.newSpark} accessibilityLabel={`${recencyBadge} role`}>
                 <Ionicons name="sparkles-outline" size={13} color={colors.signal} />
@@ -497,15 +500,15 @@ function JobCard({
               </View>
             ) : null}
           </View>
-          <Text style={styles.title}>{job.title}</Text>
-          <Text style={styles.muted}>
-            {job.location} · {job.season}
+          <Text style={styles.title} numberOfLines={2}>{display.title}</Text>
+          <Text style={styles.muted} numberOfLines={2}>
+            {display.location} · {display.season}
           </Text>
           <JobSource source={source} />
           <Text style={styles.postingTiming}>{postingTiming.summary}</Text>
           {!job.open ? <Text style={styles.closedStatus}>Closed</Text> : null}
-          {job.compensation.raw ? (
-            <Text style={styles.pay}>{job.compensation.raw}</Text>
+          {display.compensation ? (
+            <Text style={styles.pay} numberOfLines={2}>{display.compensation}</Text>
           ) : null}
           {applicationStatus ? (
             <View style={styles.jobApplicationStatus}>
@@ -528,6 +531,7 @@ function catalogRoleJob(role: CatalogGroupRole): Job {
     company: role.company,
     title: role.title,
     location: role.location,
+    locations: role.locations,
     season: role.season,
     applyUrl: role.officialApplyUrl,
     compensation: role.compensation ?? { raw: "" },
@@ -571,23 +575,26 @@ function CatalogGroupCard({
     ? postingTimingPresentation(featuredRole.sourceReferences ?? [], featuredRole.firstSeenAt ?? featuredRole.visibleAt)
     : undefined;
   const compensation = (group.compensations ?? []).filter(Boolean);
+  const groupCompany = boundedCatalogText(group.company, 160);
+  const groupTitles = group.titles.map((title) => boundedCatalogText(title, 240)).filter(Boolean);
+  const groupLocation = compactLocations(group.locations);
   return (
     <TouchableOpacity
       accessibilityRole="button"
-      accessibilityLabel={`${group.company}, ${label}, ${group.titles.join(", ")}`}
+      accessibilityLabel={`${groupCompany}, ${label}, ${boundedCatalogText(groupTitles.join(", "), 480)}`}
       accessibilityHint="Opens every role in this group"
       onPress={onOpenGroup}
       style={styles.catalogGroupCard}
     >
       <View style={styles.catalogGroupTopline}>
-        <Text style={styles.company}>{group.company}</Text>
+        <Text style={styles.company} numberOfLines={1}>{groupCompany}</Text>
         <Text style={styles.catalogGroupCount}>{label}</Text>
       </View>
       <Text style={styles.catalogGroupTitle} numberOfLines={group.roleCount === 1 ? 2 : 3}>
-        {group.titles.join(" · ")}
+        {groupTitles.join(" · ")}
       </Text>
       <Text style={styles.catalogGroupMeta} numberOfLines={2}>
-        {[group.locations.slice(0, 2).join(" · "), group.seasons.join(" · ")].filter(Boolean).join("  •  ")}
+        {[groupLocation, group.seasons.map(seasonLabel).join(" · ")].filter(Boolean).join("  •  ")}
       </Text>
       {featuredRole ? <JobSource source={source} /> : null}
       {postingTiming ? <Text style={styles.postingTiming}>{postingTiming.summary}</Text> : null}
@@ -640,7 +647,7 @@ function CatalogGroupSheet({
           ) : details ? (
             <>
               <View style={styles.catalogGroupSheetHeader}>
-                <Text style={styles.sheetTitle}>{details.group.company}</Text>
+                <Text style={styles.sheetTitle}>{boundedCatalogText(details.group.company, 160)}</Text>
                 <Text style={styles.sheetCompany}>
                   {details.group.roleCount} {details.roles.every((role) => role.open) ? "open " : details.roles.every((role) => !role.open) ? "closed " : ""}role{details.group.roleCount === 1 ? "" : "s"}
                 </Text>
@@ -655,14 +662,14 @@ function CatalogGroupSheet({
                 renderItem={({ item }) => (
                   <TouchableOpacity
                     accessibilityRole="button"
-                    accessibilityLabel={`${item.title}, ${item.location}`}
+                    accessibilityLabel={`${boundedCatalogText(item.title, 240)}, ${compactLocations(item.locations, item.location)}`}
                     onPress={() => onOpenRole(item.jobId)}
                     style={styles.catalogGroupRole}
                   >
                     <View style={styles.catalogGroupRoleCopy}>
-                      <Text style={styles.catalogGroupRoleTitle}>{item.title}</Text>
-                      <Text style={styles.catalogGroupRoleMeta}>{item.location} · {item.season}</Text>
-                      {item.compensation?.raw ? <Text style={styles.catalogGroupRolePay}>{item.compensation.raw}</Text> : null}
+                      <Text style={styles.catalogGroupRoleTitle} numberOfLines={2}>{boundedCatalogText(item.title, 240)}</Text>
+                      <Text style={styles.catalogGroupRoleMeta} numberOfLines={2}>{compactLocations(item.locations, item.location)} · {seasonLabel(item.season)}</Text>
+                      {item.compensation?.raw ? <Text style={styles.catalogGroupRolePay} numberOfLines={2}>{boundedCatalogText(item.compensation.raw, 160)}</Text> : null}
                     </View>
                     <Ionicons name="chevron-forward" size={18} color={colors.signal} />
                   </TouchableOpacity>
@@ -795,7 +802,8 @@ function JobDetailSheet({
   }, [motionAllowed, sheetOffset, visible]);
 
   const role = job ?? displayedJob.current;
-  const details = [role?.location, role?.season, role?.compensation.raw]
+  const roleDisplay = role ? presentCatalogRole(role) : undefined;
+  const details = [roleDisplay?.location, roleDisplay?.season, roleDisplay?.compensation]
     .filter(Boolean)
     .join(" · ");
   const actionLabel = !role?.open
@@ -845,8 +853,8 @@ function JobDetailSheet({
           ) : role ? (
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetContent}>
               <Text style={styles.sheetEyebrow}>{role.open ? "Role details" : "Closed role"}</Text>
-              <Text style={styles.sheetTitle}>{role.title}</Text>
-              <Text style={styles.sheetCompany}>{role.company}</Text>
+              <Text style={styles.sheetTitle}>{roleDisplay?.title}</Text>
+              <Text style={styles.sheetCompany}>{roleDisplay?.company}</Text>
               <Text style={styles.sheetDetail}>{details}</Text>
               <View style={styles.sheetTrustBlock}>
                 <Text style={styles.sheetTrustPrimary}>{source.primary}</Text>

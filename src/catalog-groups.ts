@@ -191,6 +191,7 @@ function safeProgramKey(job: Internship) {
 }
 
 function locationsFor(job: Internship) {
+  if (job.locations?.length) return unique(job.locations);
   const structured = identityFor(job)?.locations?.map((location) => typeof location === 'string' ? location : location.displayName ?? location.name ?? '') ?? [];
   return unique(structured.length ? structured : job.location.split(/\s*(?:;|\||\n)\s*/));
 }

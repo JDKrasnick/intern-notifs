@@ -197,6 +197,25 @@ describe('snapshot reconciliation', () => {
     expect((await store.getSourceOccurrences('source-a'))[0]).toMatchObject({ present: true, consecutiveOmissions: 0 });
   });
 
+  it('prefers cleaned official evidence over community display fields', async () => {
+    const store = new MemoryInternshipStore();
+    const community = new MutableAdapter('community-list', [listing('community-list', {
+      company: 'Community Acme', title: 'SWE Intern', location: 'Unspecified',
+    })]);
+    await new IngestionRunner([community], store).run();
+    const official = new MutableAdapter('greenhouse-acme', [listing('greenhouse-acme', {
+      company: '🇺🇸 Acme', title: '🎓 Advanced Degree Required · Software Engineering Intern', location: 'NYC',
+    })]);
+    await new IngestionRunner([official], store).run();
+    expect([...store.jobs.values()][0]).toMatchObject({
+      company: 'Acme', title: 'Software Engineering Intern', location: 'New York, NY',
+      requirements: { requiresUsCitizenship: true, advancedDegreeRequired: true },
+    });
+    community.rows = [listing('community-list', { company: 'Bad community value', title: 'Bad title', location: 'Unspecified' })];
+    await new IngestionRunner([community], store).run();
+    expect([...store.jobs.values()][0]).toMatchObject({ company: 'Acme', title: 'Software Engineering Intern', location: 'New York, NY' });
+  });
+
   it('does not advance a checkpoint or duplicate an outbox event after a partial write failure', async () => {
     class FailingStore extends MemoryInternshipStore {
       fail = true;

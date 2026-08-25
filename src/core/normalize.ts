@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Compensation } from '../types.js';
 import { companyWeight } from '../config/weights.js';
 import { canonicalizePostingUrl, exactPostingKey } from '../identity/posting.js';
+import { normalizeCompensation } from '../catalog-quality.js';
 
 const clean = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
 const corporateSuffixes = new Set(['co', 'company', 'corp', 'corporation', 'inc', 'incorporated', 'limited', 'llc', 'ltd', 'plc']);
@@ -71,13 +72,7 @@ export function jobId(normalizedUrl: string, key: string): string {
 }
 
 export function parseCompensation(raw: string): Compensation {
-  const normalized = raw.replace(/,/g, '').replace(/\s+/g, ' ').trim();
-  const hourly = [...normalized.matchAll(/\$?\s*(\d+(?:\.\d+)?)\s*(?:-|–|to)?\s*\$?\s*(\d+(?:\.\d+)?)?\s*(?:\/|per\s*)?(?:hr|hour)\b/gi)]
-    .map((match) => Number(match[2] ?? match[1]));
-  if (hourly.length) return { raw, maxHourlyUSD: Math.max(...hourly) };
-  const annual = [...normalized.matchAll(/\$\s*(\d+(?:\.\d+)?)\s*(?:-|–|to)?\s*\$?\s*(\d+(?:\.\d+)?)?\s*(?:\/|per\s*)?(?:year|yr|annum)\b/gi)]
-    .map((match) => Number(match[2] ?? match[1]) / 2080);
-  return annual.length ? { raw, maxHourlyUSD: Math.max(...annual) } : { raw };
+  return normalizeCompensation(raw);
 }
 
 export function score(company: string, compensation: Compensation): number {

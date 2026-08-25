@@ -24,6 +24,38 @@ InternNotifs is an Expo mobile app with a serverless AWS backend.
 
 The catalog is public. Accounts, preferences, device tokens, profiles, documents, and application tracking are private to the verified user identity.
 
+## Catalog quality D1 repair
+
+Deploy the Worker code before inspecting or repairing legacy catalog values. The
+command defaults to a read-only scan and reports before/after field counts by
+provider, changed/closed/unchanged/unrepairable totals, sample job IDs, and a
+deterministic token. Save that complete production report for owner approval:
+
+```bash
+export CATALOG_API_URL=https://intern-notifs.jdkrasnick.workers.dev
+export OPERATIONS_SHARED_SECRET='use-the-deployed-operations-secret'
+npm run migrate:catalog-quality
+```
+
+Apply only after approval, with both guards copied from the same dry run. The
+Worker rescans before writing, conditionally updates exact JSON values, emits no
+outbox events, and refuses stale guards. Any concurrent conflict stops the
+grouped projection refresh and requires a new dry run:
+
+```bash
+npm run migrate:catalog-quality -- --apply \
+  --repair-token EXACT_TOKEN \
+  --expected-changed EXACT_COUNT
+```
+
+A conflict-free apply rebuilds the grouped projection and includes a verification
+audit in its response. Run the standalone dry run once more; it must report zero
+changed or closed records. Confirm `GET /jobs`, `GET /catalog`, and a sampled
+`GET /catalog/groups/{groupId}` return the preserved job IDs, compact `location`
+summaries, structured `locations`, bounded compensation, and unchanged
+notification flags. Never store the operations secret in shell history, Git, or
+documentation.
+
 Greenhouse, Lever, and Ashby use dedicated half-hour EventBridge schedules,
 dispatcher Lambdas, FIFO work queues, two-minute workers, and dead-letter
 queues. Published boards are checked every thirty minutes whether active or

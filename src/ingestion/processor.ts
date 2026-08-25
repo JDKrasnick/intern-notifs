@@ -3,6 +3,7 @@ import { assessTechnicalRole } from '../core/filters.js';
 import { parseCompensation } from '../core/normalize.js';
 import { isTruncatedTitle, repairTitle } from '../core/role-title.js';
 import { buildInternshipIdentity } from '../identity/enrichment.js';
+import { normalizeListing, normalizeLocations, locationSummary } from '../catalog-quality.js';
 import { applicationUrlRejection } from '../sources/quality.js';
 import type {
   JobRequirements,
@@ -56,7 +57,8 @@ export function processPosting(
     return { decision: { externalId: posting.externalId, outcome: 'filtered', reason: 'not-early-career' } };
   }
   const company = htmlToText(posting.employer.name);
-  const location = posting.locations.map(htmlToText).filter(Boolean).join(' / ') || 'Unspecified';
+  const locations = normalizeLocations(posting.locations.map(htmlToText).filter(Boolean));
+  const location = locationSummary(locations);
   const titleSeason = inferSeason(title, '');
   const season = titleSeason !== 'ongoing' ? titleSeason : posting.seasonHint ?? inferSeason('', content);
   const classificationTitle = [title, ...(posting.classificationTags ?? []).map(htmlToText)].filter(Boolean).join(' ');
@@ -68,7 +70,7 @@ export function processPosting(
   // A structured provider field is authoritative; prose only fills the gap when
   // the source declares nothing usable.
   const workMode = inferWorkMode(posting.declaredWorkMode) ?? inferWorkMode(`${location} ${content}`);
-  const listing: ProcessedListing = {
+  const listing: ProcessedListing = normalizeListing({
     sourceId: posting.sourceId,
     externalId: posting.externalId,
     document: posting.document ?? posting.externalId,
@@ -77,6 +79,7 @@ export function processPosting(
     company,
     title,
     location,
+    locations,
     season,
     ...(titleSeason === 'ongoing' && posting.seasonHintAuthority === 'source-default'
       ? { seasonSource: 'source-default' as const }
@@ -106,7 +109,7 @@ export function processPosting(
     fetchedAt: posting.fetchedAt,
     technical: assessment.technical,
     ...(title === sourceTitle ? {} : { titleRepaired: true }),
-  };
+  });
   // A non-technical early-career role is still worth keeping: it is persisted,
   // stays out of every catalog index and alert, and remains available if the
   // catalog's scope ever widens.

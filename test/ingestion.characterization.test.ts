@@ -32,7 +32,7 @@ describe('legacy ingestion characterization', () => {
       location: 'New York, NY',
       season: 'summer-2027',
       applyUrl: 'https://jobs.lever.co/acme/lever-role-1/apply',
-      compensation: { raw: 'Applicants must be a U.S. citizen. Pays $40-$50/hour.   ', maxHourlyUSD: 50 },
+      compensation: { raw: '$40-$50/hour', minHourlyUSD: 40, maxHourlyUSD: 50 },
       requirements: { requiresUsCitizenship: true, advancedDegreeRequired: false },
       state: 'open',
       postedAt: '2026-07-03T09:46:40.000Z',
@@ -54,7 +54,8 @@ describe('legacy ingestion characterization', () => {
       season: 'summer-2027',
       applyUrl: 'https://job-boards.greenhouse.io/acmerobotics/jobs/5001',
       compensation: {
-        raw: 'Join our platform team. Applicants must be a U.S. citizen. Pays $45/hour.',
+        raw: '$45/hour',
+        minHourlyUSD: 45,
         maxHourlyUSD: 45,
       },
       requirements: { requiresUsCitizenship: true, advancedDegreeRequired: false },
@@ -82,7 +83,7 @@ describe('legacy ingestion characterization', () => {
       location: 'Remote',
       season: 'summer-2027',
       applyUrl: 'https://careers.example.test/ai?utm_source=list',
-      compensation: { raw: '$42/hr', maxHourlyUSD: 42 },
+      compensation: { raw: '$42/hr', minHourlyUSD: 42, maxHourlyUSD: 42 },
       requirements: { requiresUsCitizenship: true, advancedDegreeRequired: false },
       state: 'open',
       postedAt: '2026-07-28',
@@ -127,15 +128,14 @@ describe('neutral boundary parity', () => {
     expect(processed).toEqual({
       ...legacy,
       ...additions,
-      externalId: 'lever-role-1',
-      compensation: { ...legacy.compensation, raw: legacy.compensation.raw.trimEnd() },
+      externalId: 'lever-role-1', locations: ['New York, NY'],
     });
   });
 
   it('produces the legacy Greenhouse listing from the connector and shared processor', () => {
     const legacy = mapGreenhouseJob(technicalInternship, acmeSource, fetchedAt, 3)!;
     const posting = mapGreenhouseSourcedPosting(technicalInternship, acmeSource, fetchedAt, 3)!;
-    expect(processPosting(posting).listing).toEqual({ ...legacy, ...additions, externalId: '5001' });
+    expect(processPosting(posting).listing).toEqual({ ...legacy, ...additions, externalId: '5001', locations: ['New York, NY (Hybrid)'] });
   });
 
   it('attaches explicit season and education evidence before reconciliation', () => {
