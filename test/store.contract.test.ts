@@ -1,6 +1,6 @@
 import type { BatchWriteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it, vi } from 'vitest';
-import { createDynamoDocumentClient, DynamoInternshipStore, DynamoUserStore, MemoryUserStore } from '../src/store.js';
+import { createDynamoDocumentClient, deletedUserTombstoneKey, DynamoInternshipStore, DynamoUserStore, MemoryUserStore } from '../src/store.js';
 import { buildPostingIdentity } from '../src/identity/posting.js';
 import { catalogGroupDetails, groupCatalogJobs } from '../src/catalog-groups.js';
 import type { DeliveryReceipt, Internship } from '../src/types.js';
@@ -192,17 +192,32 @@ describe('DynamoDB persistence contract', () => {
 
   it('deletes every user-owned item after returning the document list for object cleanup', async () => {
     const { send, client } = fakeClient(); const store = new DynamoUserStore('users-table', client);
+    send.mockResolvedValueOnce({});
     send.mockResolvedValueOnce({ Items: [{ value: { userId: 'student-a', documentId: 'document-1', objectKey: 'private/student-a/document-1' } }] });
-    send.mockResolvedValueOnce({ Items: [{ pk: 'USER#student-a', sk: 'PREFERENCES' }, { pk: 'USER#student-a', sk: 'DOCUMENT#document-1' }] });
+    send.mockResolvedValueOnce({ Items: [
+      { pk: 'USER#student-a', sk: 'PREFERENCES' },
+      { pk: 'USER#student-a', sk: 'DOCUMENT#document-1' },
+      { pk: 'USER#student-a', sk: 'DELIVERY#claim-1' },
+      { pk: 'USER#student-a', sk: 'DELIVERY_TOMBSTONE#tombstone-1' },
+      { pk: 'USER#student-a', sk: 'PIPELINE_RECEIPT_OUTBOX#claim-1#ticket-1' },
+    ] });
     const documents = await store.deleteUser('student-a');
     expect(documents).toMatchObject([{ documentId: 'document-1' }]);
-    expect(send.mock.calls.slice(0, 2).map(([command]) => (command as QueryCommand).input)).toEqual([
+    expect((send.mock.calls[0]?.[0] as PutCommand).input).toEqual({
+      TableName: 'users-table',
+      Item: { ...deletedUserTombstoneKey('student-a'), kind: 'deleted-user-tombstone' },
+    });
+    expect(deletedUserTombstoneKey('student-a').pk).not.toContain('student-a');
+    expect(send.mock.calls.slice(1, 3).map(([command]) => (command as QueryCommand).input)).toEqual([
       expect.objectContaining({ KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)' }),
       expect.objectContaining({ KeyConditionExpression: 'pk = :pk' }),
     ]);
-    expect(send.mock.calls.slice(2).map(([command]) => (command as { input: unknown }).input)).toEqual([
+    expect(send.mock.calls.slice(3).map(([command]) => (command as { input: unknown }).input)).toEqual([
       expect.objectContaining({ Key: { pk: 'USER#student-a', sk: 'PREFERENCES' } }),
       expect.objectContaining({ Key: { pk: 'USER#student-a', sk: 'DOCUMENT#document-1' } }),
+      expect.objectContaining({ Key: { pk: 'USER#student-a', sk: 'DELIVERY#claim-1' } }),
+      expect.objectContaining({ Key: { pk: 'USER#student-a', sk: 'DELIVERY_TOMBSTONE#tombstone-1' } }),
+      expect.objectContaining({ Key: { pk: 'USER#student-a', sk: 'PIPELINE_RECEIPT_OUTBOX#claim-1#ticket-1' } }),
     ]);
   });
 
@@ -219,5 +234,6 @@ describe('DynamoDB persistence contract', () => {
     await store.putReceipt({ userId: 'student-a', jobId: 'job-1', token: 'ExponentPushToken[token]', status: 'pending', ticketId: 'ticket', createdAt: '2026-07-19T00:00:00.000Z', updatedAt: '2026-07-19T00:00:00.000Z' });
     await store.deleteUser('student-a');
     expect(await store.getReceipt('student-a', 'job-1', 'ExponentPushToken[token]')).toBeUndefined();
+    expect(store.deletedUsers).toContain(deletedUserTombstoneKey('student-a').pk);
   });
 });

@@ -31,6 +31,11 @@ export function createDynamoDocumentClient(client = new DynamoDBClient({})): Dyn
   return DynamoDBDocumentClient.from(client, { marshallOptions: { removeUndefinedValues: true } });
 }
 
+/** Opaque marker that prevents queued delivery work from recreating a deleted account. */
+export function deletedUserTombstoneKey(userId: string) {
+  return { pk: `DELETED_USER#${createHash('sha256').update(userId).digest('hex')}`, sk: 'TOMBSTONE' } as const;
+}
+
 export type { CatalogSource } from './catalog-fields.js';
 export type CatalogQuery = { query?: string; source?: CatalogSource };
 
@@ -564,6 +569,7 @@ export class DynamoReleaseStore implements ReleaseStore {
 
 export class MemoryUserStore implements UserStore {
   readonly preferences = new Map<string, UserPreferences>(); readonly devices = new Map<string, DeviceToken>(); readonly profiles = new Map<string, ApplicantProfile>(); readonly applications = new Map<string, ApplicationRecord>(); readonly sessions = new Map<string, ApplicationSession>(); readonly documents = new Map<string, UserDocument>(); readonly receipts = new Map<string, DeliveryReceipt>();
+  readonly deletedUsers = new Set<string>();
   async getPreferences(userId: string) { return this.preferences.get(userId); } async putPreferences(value: UserPreferences) { this.preferences.set(value.userId, structuredClone(value)); }
   async activePreferences() { return [...this.preferences.values()].filter((value) => value.alertsEnabled && value.onboardingComplete).map((value) => structuredClone(value)); }
   async activeDevices() { return [...this.devices.values()].filter((d) => d.active).map((d) => structuredClone(d)); }
@@ -587,7 +593,7 @@ export class MemoryUserStore implements UserStore {
   }
   async pendingReceipts() { return [...this.receipts.values()].filter((receipt) => receipt.status === 'pending' && receipt.ticketId).map((receipt) => structuredClone(receipt)); }
   async retryableReceipts() { return [...this.receipts.values()].filter((receipt) => receipt.status === 'retryable').map((receipt) => structuredClone(receipt)); }
-  async deleteUser(userId: string) { const docs = await this.listDocuments(userId); for (const map of [this.preferences, this.profiles]) map.delete(userId); for (const [key] of this.devices) if (key.startsWith(`${userId}#`)) this.devices.delete(key); for (const [key] of this.applications) if (key.startsWith(`${userId}#`)) this.applications.delete(key); for (const [key] of this.sessions) if (key.startsWith(`${userId}#`)) this.sessions.delete(key); for (const [key] of this.documents) if (key.startsWith(`${userId}#`)) this.documents.delete(key); for (const [key] of this.receipts) if (key.startsWith(`${userId}#`)) this.receipts.delete(key); return docs; }
+  async deleteUser(userId: string) { this.deletedUsers.add(deletedUserTombstoneKey(userId).pk); const docs = await this.listDocuments(userId); for (const map of [this.preferences, this.profiles]) map.delete(userId); for (const [key] of this.devices) if (key.startsWith(`${userId}#`)) this.devices.delete(key); for (const [key] of this.applications) if (key.startsWith(`${userId}#`)) this.applications.delete(key); for (const [key] of this.sessions) if (key.startsWith(`${userId}#`)) this.sessions.delete(key); for (const [key] of this.documents) if (key.startsWith(`${userId}#`)) this.documents.delete(key); for (const [key] of this.receipts) if (key.startsWith(`${userId}#`)) this.receipts.delete(key); return docs; }
 }
 
 type UserItem = { pk: string; sk: string; kind: string; value: unknown; activePk?: string; tokenPk?: string; receiptPk?: string; alertPk?: string; activeSessionPk?: string; expiresAtEpoch?: number };
@@ -668,5 +674,15 @@ export class DynamoUserStore implements UserStore {
   }
   async pendingReceipts() { return (await this.queryAll({ TableName: this.tableName, IndexName: 'pendingReceiptsIndex', KeyConditionExpression: 'receiptPk = :pending', ExpressionAttributeValues: { ':pending': 'PENDING' } })).map((item) => item.value as DeliveryReceipt); }
   async retryableReceipts() { return (await this.queryAll({ TableName: this.tableName, IndexName: 'pendingReceiptsIndex', KeyConditionExpression: 'receiptPk = :retryable', ExpressionAttributeValues: { ':retryable': 'RETRYABLE' } })).map((item) => item.value as DeliveryReceipt); }
-  async deleteUser(userId: string) { const documents = await this.listDocuments(userId); const items = await this.queryAll({ TableName: this.tableName, KeyConditionExpression: 'pk = :pk', ExpressionAttributeValues: { ':pk': `USER#${userId}` } }); await Promise.all(items.map((item) => this.client.send(new DeleteCommand({ TableName: this.tableName, Key: { pk: item.pk, sk: item.sk } })))); return documents; }
+  async deleteUser(userId: string) {
+    const deletionKey = deletedUserTombstoneKey(userId);
+    await this.client.send(new PutCommand({
+      TableName: this.tableName,
+      Item: { ...deletionKey, kind: 'deleted-user-tombstone' },
+    }));
+    const documents = await this.listDocuments(userId);
+    const items = await this.queryAll({ TableName: this.tableName, KeyConditionExpression: 'pk = :pk', ExpressionAttributeValues: { ':pk': `USER#${userId}` } });
+    await Promise.all(items.map((item) => this.client.send(new DeleteCommand({ TableName: this.tableName, Key: { pk: item.pk, sk: item.sk } }))));
+    return documents;
+  }
 }

@@ -129,6 +129,20 @@ export class NotificationPipeline extends Construct {
       reportBatchItemFailures: true,
       onFailure: new lambdaEventSources.SqsDlq(streamFailureQueue),
     }));
+    this.streamPublisher.addEventSource(new lambdaEventSources.DynamoEventSource(props.usersTable, {
+      // Start at the beginning of the newly enabled stream so an outbox written
+      // while this mapping is being deployed cannot be stranded.
+      startingPosition: lambda.StartingPosition.TRIM_HORIZON,
+      batchSize: 10,
+      bisectBatchOnError: false,
+      retryAttempts: 3,
+      reportBatchItemFailures: true,
+      onFailure: new lambdaEventSources.SqsDlq(streamFailureQueue),
+      filters: [lambda.FilterCriteria.filter({
+        eventName: lambda.FilterRule.isEqual('INSERT'),
+        dynamodb: { Keys: { sk: { S: lambda.FilterRule.beginsWith('PIPELINE_RECEIPT_OUTBOX#') } } },
+      })],
+    }));
 
     const consume = (handler: lambda.IFunction, source: sqs.IQueue) => handler.addEventSource(new lambdaEventSources.SqsEventSource(source, {
       batchSize: 10,
@@ -142,6 +156,7 @@ export class NotificationPipeline extends Construct {
     consume(this.receiptWorker, this.receiptQueue);
 
     props.catalogTable.grantStreamRead(this.streamPublisher);
+    props.usersTable.grantStreamRead(this.streamPublisher);
     this.candidateTopic.grantPublish(this.streamPublisher);
     props.catalogTable.grantReadWriteData(this.aggregationWorker);
     props.catalogTable.grant(this.aggregationWorker, 'dynamodb:TransactWriteItems');
@@ -151,8 +166,6 @@ export class NotificationPipeline extends Construct {
     this.intentTopic.grantPublish(this.flushWorker);
     props.usersTable.grantReadWriteData(this.pushWorker);
     props.usersTable.grant(this.pushWorker, 'dynamodb:TransactWriteItems');
-    props.catalogTable.grantWriteData(this.pushWorker);
-    props.catalogTable.grant(this.pushWorker, 'dynamodb:TransactWriteItems');
     props.usersTable.grantReadWriteData(this.emailWorker);
     props.usersTable.grant(this.emailWorker, 'dynamodb:TransactWriteItems');
     props.usersTable.grantReadWriteData(this.receiptWorker);

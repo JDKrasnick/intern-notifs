@@ -6,7 +6,7 @@ import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { createCandidateRelease, createNotificationIntents, deliveryClaimId, logicalTombstoneId, renderReleaseEmail, renderReleasePush, type DeliveryClaim, type NotificationIntent } from './release-notifications.js';
 import { canonicalCompanyKey } from './core/normalize.js';
 import { classifyAwsServiceFailure, classifyExpoPushFailure, ExpoPushPublisher, SesEmailSender } from './notifications.js';
-import { createDynamoDocumentClient, DynamoInternshipStore, DynamoReleaseStore, DynamoUserStore } from './store.js';
+import { createDynamoDocumentClient, deletedUserTombstoneKey, DynamoInternshipStore, DynamoReleaseStore, DynamoUserStore } from './store.js';
 import type { NotificationEvent } from './types.js';
 import { loadGroupedNotificationCohort } from './grouped-notification-cohort.js';
 
@@ -64,9 +64,10 @@ export function notificationStreamTarget(record: StreamRecord):
   | { kind: 'receipt'; message: { claim: DeliveryClaim; ticketId: string; token: string } }
   | undefined {
   const pk = record.dynamodb?.Keys?.pk?.S;
+  const sk = record.dynamodb?.Keys?.sk?.S;
   if (record.eventName !== 'INSERT' || !pk) return undefined;
   if (pk.startsWith('RELEASE_BUCKET#')) return { kind: 'flush', bucketId: pk.slice('RELEASE_BUCKET#'.length) };
-  if (pk.startsWith('PIPELINE_RECEIPT_OUTBOX#')) {
+  if (pk.startsWith('PIPELINE_RECEIPT_OUTBOX#') || (pk.startsWith('USER#') && sk?.startsWith('PIPELINE_RECEIPT_OUTBOX#'))) {
     const message = unmarshall(record.dynamodb?.NewImage?.message) as { claim: DeliveryClaim; ticketId: string; token: string } | undefined;
     return message ? { kind: 'receipt', message } : undefined;
   }
@@ -228,8 +229,12 @@ async function claimDelivery(intent: NotificationIntent, destinationId: string):
   const now = new Date().toISOString();
   const claim: DeliveryClaim = { claimId, tombstoneId, userId: intent.release.userId, channel: intent.channel, destinationId, releaseId: intent.release.releaseId, jobIds, state: 'claimed', createdAt: now, updatedAt: now };
   try {
-    const writes: NonNullable<ConstructorParameters<typeof TransactWriteCommand>[0]['TransactItems']> = [{ Put: { TableName: usersTable, Item: { pk: `DELIVERY#${claimId}`, sk: 'CLAIM', claim }, ConditionExpression: 'attribute_not_exists(pk)' } }];
-    if (intent.channel === 'email') writes.push({ Put: { TableName: usersTable, Item: { pk: `DELIVERY_TOMBSTONE#${tombstoneId}`, sk: 'CLAIM', createdAt: now }, ConditionExpression: 'attribute_not_exists(pk)' } });
+    const userKey = `USER#${claim.userId}`;
+    const writes: NonNullable<ConstructorParameters<typeof TransactWriteCommand>[0]['TransactItems']> = [
+      { ConditionCheck: { TableName: usersTable, Key: deletedUserTombstoneKey(claim.userId), ConditionExpression: 'attribute_not_exists(pk)' } },
+      { Put: { TableName: usersTable, Item: { pk: userKey, sk: `DELIVERY#${claimId}`, kind: 'delivery-claim', claim }, ConditionExpression: 'attribute_not_exists(pk)' } },
+    ];
+    if (intent.channel === 'email') writes.push({ Put: { TableName: usersTable, Item: { pk: userKey, sk: `DELIVERY_TOMBSTONE#${tombstoneId}`, kind: 'delivery-tombstone', createdAt: now }, ConditionExpression: 'attribute_not_exists(pk)' } });
     await documentClient.send(new TransactWriteCommand({ TransactItems: writes }));
     return claim;
   } catch (error) {
@@ -238,28 +243,37 @@ async function claimDelivery(intent: NotificationIntent, destinationId: string):
   }
 }
 
-async function transitionClaim(claim: DeliveryClaim, state: DeliveryClaim['state'], providerId?: string) {
-  await documentClient.send(new UpdateCommand({
-    TableName: usersTable, Key: { pk: `DELIVERY#${claim.claimId}`, sk: 'CLAIM' },
-    UpdateExpression: `SET claim.#state = :state, claim.updatedAt = :now${providerId ? ', claim.providerId = :providerId' : ''}`,
-    ExpressionAttributeNames: { '#state': 'state' },
-    ExpressionAttributeValues: { ':state': state, ':now': new Date().toISOString(), ...(providerId ? { ':providerId': providerId } : {}) },
-  }));
+export async function transitionClaim(claim: DeliveryClaim, state: DeliveryClaim['state'], providerId?: string, client = documentClient) {
+  try {
+    await client.send(new UpdateCommand({
+      TableName: usersTable, Key: { pk: `USER#${claim.userId}`, sk: `DELIVERY#${claim.claimId}` },
+      UpdateExpression: `SET claim.#state = :state, claim.updatedAt = :now${providerId ? ', claim.providerId = :providerId' : ''}`,
+      ConditionExpression: 'attribute_exists(pk)',
+      ExpressionAttributeNames: { '#state': 'state' },
+      ExpressionAttributeValues: { ':state': state, ':now': new Date().toISOString(), ...(providerId ? { ':providerId': providerId } : {}) },
+    }));
+    return true;
+  } catch (error) {
+    if ((error as { name?: string }).name === 'ConditionalCheckFailedException') return false;
+    throw error;
+  }
 }
 
 async function acceptPushWithReceiptOutbox(claim: DeliveryClaim, ticketId: string, token: string) {
   const updatedAt = new Date().toISOString();
   const accepted = { ...claim, state: 'accepted' as const, providerId: ticketId, updatedAt };
   await documentClient.send(new TransactWriteCommand({ TransactItems: [
+    { ConditionCheck: { TableName: usersTable, Key: deletedUserTombstoneKey(claim.userId), ConditionExpression: 'attribute_not_exists(pk)' } },
     { Update: {
-      TableName: usersTable, Key: { pk: `DELIVERY#${claim.claimId}`, sk: 'CLAIM' },
+      TableName: usersTable, Key: { pk: `USER#${claim.userId}`, sk: `DELIVERY#${claim.claimId}` },
       UpdateExpression: 'SET claim = :claim', ConditionExpression: 'claim.#state = :claimed',
       ExpressionAttributeNames: { '#state': 'state' }, ExpressionAttributeValues: { ':claim': accepted, ':claimed': 'claimed' },
     } },
     { Put: {
-      TableName: catalogTable,
+      TableName: usersTable,
       Item: {
-        pk: `PIPELINE_RECEIPT_OUTBOX#${claim.claimId}`, sk: ticketId,
+        pk: `USER#${claim.userId}`, sk: `PIPELINE_RECEIPT_OUTBOX#${claim.claimId}#${ticketId}`,
+        kind: 'pipeline-receipt-outbox',
         message: { claim: accepted, ticketId, token },
         expiresAtEpoch: Math.floor(Date.now() / 1_000) + 24 * 60 * 60,
       },
@@ -270,12 +284,12 @@ async function acceptPushWithReceiptOutbox(claim: DeliveryClaim, ticketId: strin
 
 async function abandonRetryableClaim(claim: DeliveryClaim) {
   const writes: NonNullable<ConstructorParameters<typeof TransactWriteCommand>[0]['TransactItems']> = [{ Delete: {
-    TableName: usersTable, Key: { pk: `DELIVERY#${claim.claimId}`, sk: 'CLAIM' },
+    TableName: usersTable, Key: { pk: `USER#${claim.userId}`, sk: `DELIVERY#${claim.claimId}` },
     ConditionExpression: 'claim.#state = :claimed',
     ExpressionAttributeNames: { '#state': 'state' }, ExpressionAttributeValues: { ':claimed': 'claimed' },
   } }];
   if (claim.channel === 'email') writes.push({ Delete: {
-    TableName: usersTable, Key: { pk: `DELIVERY_TOMBSTONE#${claim.tombstoneId}`, sk: 'CLAIM' },
+    TableName: usersTable, Key: { pk: `USER#${claim.userId}`, sk: `DELIVERY_TOMBSTONE#${claim.tombstoneId}` },
   } });
   await documentClient.send(new TransactWriteCommand({ TransactItems: writes }));
 }
@@ -343,7 +357,7 @@ async function receiptWorker(event: SqsEvent) {
     const message = JSON.parse(record.body) as { claim: DeliveryClaim; ticketId: string; token: string };
     const receipt = (await publisher.receipts([message.ticketId]))[message.ticketId];
     if (!receipt) throw new Error('Expo receipt is not ready');
-    await transitionClaim(message.claim, receipt.status === 'ok' ? 'delivered' : 'definitive-failure', message.ticketId);
+    if (!await transitionClaim(message.claim, receipt.status === 'ok' ? 'delivered' : 'definitive-failure', message.ticketId)) return;
     if (receipt.details?.error === 'DeviceNotRegistered') {
       const device = (await users.activeDevices()).find((candidate) => candidate.userId === message.claim.userId && candidate.token === message.token);
       if (device) await users.putDevice({ ...device, active: false, updatedAt: new Date().toISOString() });

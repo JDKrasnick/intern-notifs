@@ -2278,64 +2278,6 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
             },
             {
               "Action": [
-                "dynamodb:BatchWriteItem",
-                "dynamodb:PutItem",
-                "dynamodb:UpdateItem",
-                "dynamodb:DeleteItem",
-                "dynamodb:DescribeTable",
-              ],
-              "Effect": "Allow",
-              "Resource": [
-                {
-                  "Fn::GetAtt": [
-                    "InternshipsB67F358B",
-                    "Arn",
-                  ],
-                },
-                {
-                  "Fn::Join": [
-                    "",
-                    [
-                      {
-                        "Fn::GetAtt": [
-                          "InternshipsB67F358B",
-                          "Arn",
-                        ],
-                      },
-                      "/index/*",
-                    ],
-                  ],
-                },
-              ],
-            },
-            {
-              "Action": "dynamodb:TransactWriteItems",
-              "Effect": "Allow",
-              "Resource": [
-                {
-                  "Fn::GetAtt": [
-                    "InternshipsB67F358B",
-                    "Arn",
-                  ],
-                },
-                {
-                  "Fn::Join": [
-                    "",
-                    [
-                      {
-                        "Fn::GetAtt": [
-                          "InternshipsB67F358B",
-                          "Arn",
-                        ],
-                      },
-                      "/index/*",
-                    ],
-                  ],
-                },
-              ],
-            },
-            {
-              "Action": [
                 "sqs:SendMessage",
                 "sqs:GetQueueAttributes",
                 "sqs:GetQueueUrl",
@@ -2600,6 +2542,44 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
       },
       "Type": "AWS::Lambda::EventSourceMapping",
     },
+    "NotificationStreamPublisherDynamoDBEventSourceSnapshotUserData908113F45608D08D": {
+      "Properties": {
+        "BatchSize": 10,
+        "BisectBatchOnFunctionError": false,
+        "DestinationConfig": {
+          "OnFailure": {
+            "Destination": {
+              "Fn::GetAtt": [
+                "NotificationPipelineStreamFailureQueueFDB2D8CA",
+                "Arn",
+              ],
+            },
+          },
+        },
+        "EventSourceArn": {
+          "Fn::GetAtt": [
+            "UserData6A2E227B",
+            "StreamArn",
+          ],
+        },
+        "FilterCriteria": {
+          "Filters": [
+            {
+              "Pattern": "{"eventName":["INSERT"],"dynamodb":{"Keys":{"sk":{"S":[{"prefix":"PIPELINE_RECEIPT_OUTBOX#"}]}}}}",
+            },
+          ],
+        },
+        "FunctionName": {
+          "Ref": "NotificationStreamPublisherEE4F6704",
+        },
+        "FunctionResponseTypes": [
+          "ReportBatchItemFailures",
+        ],
+        "MaximumRetryAttempts": 3,
+        "StartingPosition": "TRIM_HORIZON",
+      },
+      "Type": "AWS::Lambda::EventSourceMapping",
+    },
     "NotificationStreamPublisherEE4F6704": {
       "DependsOn": [
         "NotificationStreamPublisherServiceRoleDefaultPolicyF8CE35C2",
@@ -2711,6 +2691,20 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
               "Resource": {
                 "Fn::GetAtt": [
                   "InternshipsB67F358B",
+                  "StreamArn",
+                ],
+              },
+            },
+            {
+              "Action": [
+                "dynamodb:DescribeStream",
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator",
+              ],
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "UserData6A2E227B",
                   "StreamArn",
                 ],
               },
@@ -4297,6 +4291,9 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         },
         "SSESpecification": {
           "SSEEnabled": true,
+        },
+        "StreamSpecification": {
+          "StreamViewType": "NEW_AND_OLD_IMAGES",
         },
         "TimeToLiveSpecification": {
           "AttributeName": "expiresAtEpoch",

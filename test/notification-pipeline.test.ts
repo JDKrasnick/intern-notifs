@@ -3,9 +3,10 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as ses from 'aws-cdk-lib/aws-ses';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { NotificationPipeline } from '../infra/notification-pipeline.js';
-import { candidateFitsActiveBucket, EXPO_RECEIPT_DELAY_SECONDS, notificationStreamTarget } from '../src/notification-pipeline-handler.js';
+import { candidateFitsActiveBucket, EXPO_RECEIPT_DELAY_SECONDS, notificationStreamTarget, transitionClaim } from '../src/notification-pipeline-handler.js';
+import type { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
 function pipelineStack(releaseWindow = cdk.Duration.seconds(8)) {
   const app = new cdk.App();
@@ -16,6 +17,7 @@ function pipelineStack(releaseWindow = cdk.Duration.seconds(8)) {
   });
   const usersTable = new dynamodb.Table(stack, 'Users', {
     partitionKey: { name: 'pk', type: dynamodb.AttributeType.STRING },
+    stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
   });
   const handler = (id: string) => new lambda.Function(stack, id, {
     runtime: lambda.Runtime.NODEJS_22_X,
@@ -56,18 +58,27 @@ describe('NotificationPipeline', () => {
       eventID: 'bucket-update', eventName: 'MODIFY', dynamodb: { Keys: { pk: { S: 'RELEASE_BUCKET#bucket-1' } } },
     })).toBeUndefined();
   });
-  it('uses a durable catalog outbox after Expo accepts a ticket', () => {
+  it('uses a user-owned durable outbox after Expo accepts a ticket', () => {
     const claim = { claimId: 'claim-1', tombstoneId: 'tombstone-1', userId: 'user-1', channel: 'push', destinationId: 'token', releaseId: 'release-1', jobIds: ['job-1'], state: 'accepted', createdAt: '2026-08-24T00:00:00.000Z', updatedAt: '2026-08-24T00:00:01.000Z' };
     expect(notificationStreamTarget({
       eventID: 'receipt-outbox', eventName: 'INSERT',
       dynamodb: {
-        Keys: { pk: { S: 'PIPELINE_RECEIPT_OUTBOX#claim-1' } },
+        Keys: { pk: { S: 'USER#user-1' }, sk: { S: 'PIPELINE_RECEIPT_OUTBOX#claim-1#ticket-1' } },
         NewImage: { message: { M: {
           claim: { M: Object.fromEntries(Object.entries(claim).map(([key, value]) => [key, Array.isArray(value) ? { L: value.map((item) => ({ S: item })) } : { S: value }])) },
           ticketId: { S: 'ticket-1' }, token: { S: 'token' },
         } } },
       },
     })).toMatchObject({ kind: 'receipt', message: { ticketId: 'ticket-1', token: 'token', claim: { claimId: 'claim-1', state: 'accepted' } } });
+  });
+  it('does not recreate a delivery claim when a late receipt arrives after account deletion', async () => {
+    const claim = { claimId: 'claim-1', tombstoneId: 'tombstone-1', userId: 'user-1', channel: 'push' as const, destinationId: 'token', releaseId: 'release-1', jobIds: ['job-1'], state: 'accepted' as const, createdAt: '2026-08-24T00:00:00.000Z', updatedAt: '2026-08-24T00:00:01.000Z' };
+    const send = vi.fn().mockRejectedValue(Object.assign(new Error('deleted'), { name: 'ConditionalCheckFailedException' }));
+    await expect(transitionClaim(claim, 'delivered', 'ticket-1', { send } as unknown as DynamoDBDocumentClient)).resolves.toBe(false);
+    expect((send.mock.calls[0]?.[0] as UpdateCommand).input).toMatchObject({
+      Key: { pk: 'USER#user-1', sk: 'DELIVERY#claim-1' },
+      ConditionExpression: 'attribute_exists(pk)',
+    });
   });
   it('waits fifteen minutes before checking Expo receipts', () => {
     expect(EXPO_RECEIPT_DELAY_SECONDS).toBe(900);
@@ -102,13 +113,18 @@ describe('NotificationPipeline', () => {
 
   it('uses partial batches, bounded retries and queue-age alarms', () => {
     const template = Template.fromStack(pipelineStack());
-    template.resourceCountIs('AWS::Lambda::EventSourceMapping', 6);
+    template.resourceCountIs('AWS::Lambda::EventSourceMapping', 7);
     template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
       StartingPosition: 'LATEST',
       BatchSize: 10,
       MaximumRetryAttempts: 3,
       FunctionResponseTypes: ['ReportBatchItemFailures'],
       DestinationConfig: { OnFailure: { Destination: Match.anyValue() } },
+    });
+    template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
+      StartingPosition: 'TRIM_HORIZON',
+      FilterCriteria: { Filters: [{ Pattern: Match.stringLikeRegexp('PIPELINE_RECEIPT_OUTBOX') }] },
+      EventSourceArn: Match.anyValue(),
     });
     template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
       BatchSize: 10,
