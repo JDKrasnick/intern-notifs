@@ -437,7 +437,7 @@ export class DynamoInternshipStore implements InternshipStore {
     }
     await this.client.send(new PutCommand({
       TableName: this.tableName,
-      Item: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT', schemaVersion: 3, version, generatedAt, groupCount: groups.length },
+      Item: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT', schemaVersion: 4, version, generatedAt, groupCount: groups.length },
     }));
   }
   async listCatalogProjection(cursor?: string, limit = 25): Promise<CatalogProjectionPage | undefined> {
@@ -445,7 +445,7 @@ export class DynamoInternshipStore implements InternshipStore {
     const pointer = decoded ? undefined : await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT' }, ConsistentRead: true }));
     const version = decoded?.version ?? pointer?.Item?.version as string | undefined;
     const schemaVersion = decoded?.schemaVersion ?? pointer?.Item?.schemaVersion as number | undefined;
-    if (!version || schemaVersion !== 3) return undefined;
+    if (!version || schemaVersion !== 4) return undefined;
     const generatedAt = decoded?.generatedAt ?? pointer?.Item?.generatedAt as string | undefined;
     if (generatedAt && Date.now() - Date.parse(generatedAt) > 24 * 60 * 60 * 1_000) return undefined;
     const result = await this.client.send(new QueryCommand({
@@ -467,7 +467,7 @@ export class DynamoInternshipStore implements InternshipStore {
     const pointer = await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT' }, ConsistentRead: true }));
     const version = pointer.Item?.version as string | undefined;
     const generatedAt = pointer.Item?.generatedAt as string | undefined;
-    if (!version || pointer.Item?.schemaVersion !== 3 || !generatedAt || Date.now() - Date.parse(generatedAt) > 24 * 60 * 60 * 1_000) return undefined;
+    if (!version || pointer.Item?.schemaVersion !== 4 || !generatedAt || Date.now() - Date.parse(generatedAt) > 24 * 60 * 60 * 1_000) return undefined;
     const result = await this.client.send(new GetCommand({
       TableName: this.tableName,
       Key: { pk: `CATALOG_PROJECTION#${version}`, sk: `GROUP#${groupId}` },

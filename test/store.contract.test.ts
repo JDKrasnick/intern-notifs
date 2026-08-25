@@ -66,9 +66,9 @@ describe('DynamoDB persistence contract', () => {
       expect.objectContaining({ PutRequest: { Item: expect.objectContaining({ pk: expect.stringContaining('CATALOG_PROJECTION#'), sk: expect.stringContaining('ORDER#'), details }) } }),
       expect.objectContaining({ PutRequest: { Item: expect.objectContaining({ pk: expect.stringContaining('CATALOG_PROJECTION#'), sk: expect.stringContaining('GROUP#'), details }) } }),
     ]));
-    expect((send.mock.calls[1]?.[0] as PutCommand).input.Item).toMatchObject({ pk: 'CATALOG_PROJECTION', sk: 'CURRENT', schemaVersion: 3, groupCount: 1 });
+    expect((send.mock.calls[1]?.[0] as PutCommand).input.Item).toMatchObject({ pk: 'CATALOG_PROJECTION', sk: 'CURRENT', schemaVersion: 4, groupCount: 1 });
 
-    send.mockResolvedValueOnce({ Item: { schemaVersion: 3, version: 'version-a', generatedAt: new Date().toISOString() } });
+    send.mockResolvedValueOnce({ Item: { schemaVersion: 4, version: 'version-a', generatedAt: new Date().toISOString() } });
     send.mockResolvedValueOnce({ Items: [{ details }] });
     expect(await store.listCatalogProjection!(undefined, 1)).toMatchObject({ groups: [details] });
     expect((send.mock.calls[2]?.[0] as GetCommand).input).toMatchObject({ Key: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT' }, ConsistentRead: true });
