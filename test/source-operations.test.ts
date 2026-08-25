@@ -100,6 +100,26 @@ describe('shared source operations', () => {
     expect(body.checklist).toMatchObject({ period: '2026-07', completed: 0, total: 8, complete: false });
   });
 
+  it('marks alarm telemetry unavailable instead of reporting a fabricated healthy zero', async () => {
+    const store = new MemoryInternshipStore();
+    const setup = dependencies(store);
+    const response = await createSourceOperationsHandler({
+      ...setup.value,
+      alarmTelemetry: { status: 'unavailable', reason: 'Cloudflare alert state is not exposed.' },
+      queueTelemetry: { status: 'partial', reason: 'Only total backlog is exposed.' },
+    })(event('/operations/sources'));
+    const body = JSON.parse(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(body.productionMetrics.activeAlarms).toBeNull();
+    expect(body.productionMetrics.processingMessages).toBeNull();
+    expect(body.fleet.queueTelemetry).toEqual({ status: 'partial', reason: 'Only total backlog is exposed.' });
+    expect(body.fleet.alarmTelemetry).toEqual({
+      status: 'unavailable',
+      reason: 'Cloudflare alert state is not exposed.',
+    });
+  });
+
   it('retains the quiet classification for published source health', async () => {
     const store = new MemoryInternshipStore();
     const source = reviewedGreenhouseSources.find((candidate) => candidate.status === 'published')!;
@@ -128,6 +148,36 @@ describe('shared source operations', () => {
     const row = JSON.parse(response.body).sources.find(({ source: candidate }: { source: { sourceId: string } }) => candidate.sourceId === source.id);
 
     expect(row).toMatchObject({ state: 'healthy', pollTier: 'quiet', eligibleRows: 0 });
+  });
+
+  it('uses the shadow freshness window even when a shadow source found eligible rows', async () => {
+    const store = new MemoryInternshipStore();
+    const source = reviewedGreenhouseSources.find((candidate) => candidate.status === 'shadow')!;
+    await store.putCheckpoint({
+      sourceId: `shadow-${source.id}`,
+      successfulFetches: 1,
+      lastRowCount: 1,
+      lastSuccessAt: '2026-07-30T17:00:00.000Z',
+    });
+    await store.putSourceHealth({
+      sourceId: source.id,
+      provider: 'greenhouse',
+      region: 'unknown',
+      state: 'healthy',
+      sourceStatus: 'active',
+      pollTier: 'active',
+      pollTierMode: 'automatic',
+      lastAttemptAt: '2026-07-30T17:00:00.000Z',
+      lastSuccessAt: '2026-07-30T17:00:00.000Z',
+      eligibleRows: 1,
+      consecutiveFailures: 0,
+      durationMs: 1,
+    });
+
+    const response = await createSourceOperationsHandler(dependencies(store).value)(event('/operations/sources'));
+    const row = JSON.parse(response.body).sources.find(({ source: candidate }: { source: { sourceId: string } }) => candidate.sourceId === source.id);
+
+    expect(row).toMatchObject({ state: 'healthy', eligibleRows: 1 });
   });
 
   it('tracks monthly monitoring checks for all provider fleets', async () => {

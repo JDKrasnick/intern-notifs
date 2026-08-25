@@ -3,7 +3,7 @@ PODS:
     - ExpoModulesCore
   - EXConstants (55.0.17):
     - ExpoModulesCore
-  - Expo (55.0.28):
+  - Expo (55.0.29):
     - ExpoModulesCore
     - hermes-engine
     - RCTRequired
@@ -28,7 +28,7 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
-  - ExpoAsset (55.0.18):
+  - ExpoAsset (55.0.19):
     - ExpoModulesCore
   - ExpoDevice (55.0.19):
     - ExpoModulesCore
@@ -36,7 +36,7 @@ PODS:
     - ExpoModulesCore
   - ExpoDomWebView (55.0.6):
     - ExpoModulesCore
-  - ExpoFileSystem (55.0.24):
+  - ExpoFileSystem (55.0.25):
     - ExpoModulesCore
   - ExpoFont (55.0.8):
     - ExpoModulesCore
@@ -75,7 +75,7 @@ PODS:
     - ReactCommon
   - ExpoNotifications (55.0.25):
     - ExpoModulesCore
-  - ExpoSplashScreen (55.0.23):
+  - ExpoSplashScreen (55.0.24):
     - ExpoModulesCore
   - ExpoWebBrowser (55.0.18):
     - ExpoModulesCore
@@ -1861,8 +1861,6 @@ PODS:
     - React-utils (= 0.83.6)
     - ReactNativeDependencies
   - ReactNativeDependencies (0.83.6)
-  - RNAWSCognito (6.3.20):
-    - React-Core
   - RNCAsyncStorage (2.2.0):
     - hermes-engine
     - RCTRequired
@@ -1891,14 +1889,14 @@ DEPENDENCIES:
   - EXApplication (from `../node_modules/expo-application/ios`)
   - EXConstants (from `../node_modules/expo-constants/ios`)
   - Expo (from `../node_modules/expo`)
-  - ExpoAsset (from `../node_modules/expo/node_modules/expo-asset/ios`)
+  - ExpoAsset (from `../node_modules/expo-asset/ios`)
   - ExpoDevice (from `../node_modules/expo-device/ios`)
   - ExpoDocumentPicker (from `../node_modules/expo-document-picker/ios`)
-  - "ExpoDomWebView (from `../node_modules/expo/node_modules/@expo/log-box/node_modules/@expo/dom-webview/ios`)"
-  - ExpoFileSystem (from `../node_modules/expo/node_modules/expo-file-system/ios`)
+  - "ExpoDomWebView (from `../node_modules/@expo/dom-webview/ios`)"
+  - ExpoFileSystem (from `../node_modules/expo-file-system/ios`)
   - ExpoFont (from `../node_modules/expo-font/ios`)
   - ExpoKeepAwake (from `../node_modules/expo/node_modules/expo-keep-awake/ios`)
-  - "ExpoLogBox (from `../node_modules/expo/node_modules/@expo/log-box`)"
+  - "ExpoLogBox (from `../node_modules/@expo/log-box`)"
   - ExpoModulesCore (from `../node_modules/expo-modules-core`)
   - ExpoModulesJSI (from `../node_modules/expo-modules-core`)
   - ExpoNotifications (from `../node_modules/expo-notifications/ios`)
@@ -1977,7 +1975,6 @@ DEPENDENCIES:
   - ReactCodegen (from `build/generated/ios/ReactCodegen`)
   - ReactCommon/turbomodule/core (from `../node_modules/react-native/ReactCommon`)
   - ReactNativeDependencies (from `../node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec`)
-  - RNAWSCognito (from `../node_modules/amazon-cognito-identity-js`)
   - "RNCAsyncStorage (from `../node_modules/@react-native-async-storage/async-storage`)"
   - Yoga (from `../node_modules/react-native/ReactCommon/yoga`)
 
@@ -1989,21 +1986,21 @@ EXTERNAL SOURCES:
   Expo:
     :path: "../node_modules/expo"
   ExpoAsset:
-    :path: "../node_modules/expo/node_modules/expo-asset/ios"
+    :path: "../node_modules/expo-asset/ios"
   ExpoDevice:
     :path: "../node_modules/expo-device/ios"
   ExpoDocumentPicker:
     :path: "../node_modules/expo-document-picker/ios"
   ExpoDomWebView:
-    :path: "../node_modules/expo/node_modules/@expo/log-box/node_modules/@expo/dom-webview/ios"
+    :path: "../node_modules/@expo/dom-webview/ios"
   ExpoFileSystem:
-    :path: "../node_modules/expo/node_modules/expo-file-system/ios"
+    :path: "../node_modules/expo-file-system/ios"
   ExpoFont:
     :path: "../node_modules/expo-font/ios"
   ExpoKeepAwake:
     :path: "../node_modules/expo/node_modules/expo-keep-awake/ios"
   ExpoLogBox:
-    :path: "../node_modules/expo/node_modules/@expo/log-box"
+    :path: "../node_modules/@expo/log-box"
   ExpoModulesCore:
     :path: "../node_modules/expo-modules-core"
   ExpoModulesJSI:
@@ -2159,8 +2156,6 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native/ReactCommon"
   ReactNativeDependencies:
     :podspec: "../node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec"
-  RNAWSCognito:
-    :path: "../node_modules/amazon-cognito-identity-js"
   RNCAsyncStorage:
     :path: "../node_modules/@react-native-async-storage/async-storage"
   Yoga:
@@ -2169,22 +2164,22 @@ EXTERNAL SOURCES:
 SPEC CHECKSUMS:
   EXApplication: 62f11f3b27bbeb132b4fceaa4e7275dd0fd39cb7
   EXConstants: 49a092f564eb895b79ab416f53ba54f7e6935197
-  Expo: d46141026ac8a783abeb4339ab16a713fb9c4c65
-  ExpoAsset: 42278ae3d585ab9bf5a223e7979d5365c348cffc
+  Expo: 54104ce19614fd826d6f2327a1a6c405798174d5
+  ExpoAsset: 3ed03b277e3c0d095671a6fdaaf158cb275361a0
   ExpoDevice: a574891cc954723e53062a2d69ec55f6d8196641
   ExpoDocumentPicker: 8f1356ab2ac5b67aeaafc4c14b3719ceb480c099
   ExpoDomWebView: b2e9d601f9cb77d3c97da73234e175b64be91928
-  ExpoFileSystem: b16ad358dff1dd561f561d8ca0bf22cf00ddad40
+  ExpoFileSystem: 8d5b2404ef2e839136146812d0036485d3ed8198
   ExpoFont: a7e34a75bdfb703fa07a0e87807f836236608c76
   ExpoKeepAwake: d0eb7a0719500d2a43fbf29b6f79e84d70c75ebf
   ExpoLogBox: 4bb2f041d3281b8c27ed494fae3b6f217ba79857
   ExpoModulesCore: 998d0fbf7f687b1ff715b87cec779fc92be628ac
   ExpoModulesJSI: 964334271fc77832736f66ee1785761cdc778dbe
   ExpoNotifications: ca16befd83d0a6ee07f6b4e40dccfb9148708700
-  ExpoSplashScreen: 6b96ff01e0f7bf9a0ca66858b9996853b129e6be
+  ExpoSplashScreen: be95d9eaf02fd68b7a9430c86dcc197edfcf8bc6
   ExpoWebBrowser: b10b2e9f3552fe1c75aa2fa518f78ce8b213c439
   FBLazyVector: 427fa1856a481856091061293ce865a75aa4f20f
-  hermes-engine: fad3b8d6451181b3463d80962db87ca01dfc2e7d
+  hermes-engine: 59c8f231f3111dab8538ccf322a9facee32f526e
   RCTDeprecation: 9502b5eb8e3c9eb75ff5a333b2c591bab9d91e28
   RCTRequired: 0268a5d86aef1defea2e04289d74fdf3570197c1
   RCTSwiftUI: cff211c5e4d94e491dda240d663b8effd25296d7
@@ -2193,7 +2188,7 @@ SPEC CHECKSUMS:
   React: 9b033c7a99e1c8eec40960b6b2e6844e011e8bd1
   React-callinvoker: f64c8d57f45173835b6b9891cda27f1625551972
   React-Core: 341863a2597c4a2320f916b4232d280cb8a28e4b
-  React-Core-prebuilt: debf3e4d68962ee3c11a4ef87560949d95523a55
+  React-Core-prebuilt: b2628d0a604fa71749d6e44d9ebdaa1e896184ba
   React-CoreModules: 9370769c9b2b1732c58960687f4d50d9d3510efc
   React-cxxreact: 41ae74bd9eab80af9c5da6a9b4934eb97e2c7569
   React-debug: eb0f19ff879ad3870dc760b6c21ad56cbb3e4b98
@@ -2254,8 +2249,7 @@ SPEC CHECKSUMS:
   ReactAppDependencyProvider: 3ec8fc5d32ad422f5b805523a5a5ea5556d8b3a2
   ReactCodegen: 169fa6c4ad3c3065f98fa2364bf95e9a21c3afec
   ReactCommon: ba28cd4e7d9e24014d2772a80e32da020c732b00
-  ReactNativeDependencies: e49f9a430b3932d2477e527147c4bdc4d8c4f78c
-  RNAWSCognito: 76b1ab3fba45a5084c066738b822728a02226d46
+  ReactNativeDependencies: ff6ce78fdd0661397057117bc93f2c5b8400f87b
   RNCAsyncStorage: 3a4f5e2777dae1688b781a487923a08569e27fe4
   Yoga: e41d64347f52d634dd8c2f6bac33f95081959fd3
 

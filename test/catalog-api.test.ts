@@ -72,6 +72,27 @@ describe('grouped catalog API', () => {
     expect(body<{ groups: Array<{ roleCount: number }> }>(response)).toMatchObject({ groups: [{ roleCount: 1 }] });
   });
 
+  it('fills sparse filtered pages with bounded projection reads and preserves the source cursor', async () => {
+    const jobs = new MemoryInternshipStore();
+    const roles = Array.from({ length: 230 }, (_, index) => ({
+      ...job(`role-${index}`, index % 60),
+      company: `Company ${index}`,
+      ...(index === 120 || index === 205 ? { open: false } : {}),
+    }));
+    await jobs.putCatalogProjection(groupCatalogJobs(roles, { includeClosed: true }).map(catalogGroupDetails), new Date().toISOString());
+    const reads: Array<{ cursor?: string; limit?: number }> = [];
+    const readProjection = jobs.listCatalogProjection.bind(jobs);
+    jobs.listCatalogProjection = async (cursor, limit) => { reads.push({ cursor, limit }); return readProjection(cursor, limit); };
+    const handler = createApiHandler({ jobs, users: new MemoryUserStore() });
+    const first = body<{ groups: Array<{ roleIds: string[] }>; cursor?: string }>(await handler(event('GET', '/catalog', { status: 'closed', limit: '1' })));
+    const second = body<{ groups: Array<{ roleIds: string[] }>; cursor?: string }>(await handler(event('GET', '/catalog', { status: 'closed', limit: '1', cursor: first.cursor! })));
+    expect(first.groups).toHaveLength(1);
+    expect(second.groups).toHaveLength(1);
+    expect(second.groups[0]!.roleIds).not.toEqual(first.groups[0]!.roleIds);
+    expect(reads.every((read) => read.limit === 100)).toBe(true);
+    expect(reads.length).toBeLessThanOrEqual(4);
+  });
+
   it('preserves availability, employer, and explicit-requirement browse filters', async () => {
     const jobs = new MemoryInternshipStore();
     await jobs.putInternship({ ...job('open', 0), employerCategory: 'normal' });

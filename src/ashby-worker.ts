@@ -307,7 +307,7 @@ export async function runAshbyBoard(
     }
   }
 
-  const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate).poll({
+  const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate, false).poll({
     runId: message.runId,
     allowCompleteEmptySnapshot: true,
   });

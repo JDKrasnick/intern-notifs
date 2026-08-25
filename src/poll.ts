@@ -273,6 +273,7 @@ export class IngestionRunner {
     private readonly now: () => Date = () => new Date(),
     private readonly filter?: JobFilter,
     private readonly validateApplicationUrl?: ApplicationUrlValidator,
+    private readonly validateCatalogApplicationUrl: ApplicationUrlValidator | false | undefined = validateApplicationUrl,
   ) {}
 
   private async quarantine(job: Internship) {
@@ -285,7 +286,8 @@ export class IngestionRunner {
   }
 
   private async validateUnverifiedOpenJobs(report: PollReport) {
-    if (!this.validateApplicationUrl || !this.store.listOpen) return;
+    if (!this.validateCatalogApplicationUrl || !this.store.listOpen) return;
+    const validateCatalogApplicationUrl = this.validateCatalogApplicationUrl;
     let cursor: string | undefined;
     do {
       const page = await this.store.listOpen(cursor, 100, 'open');
@@ -296,7 +298,7 @@ export class IngestionRunner {
         const job = jobs[nextJob++];
         if (!job) return;
         try {
-          await this.validateApplicationUrl!(job.applyUrl);
+          await validateCatalogApplicationUrl(job.applyUrl);
           await this.store.putInternship({ ...job, applicationUrlValidatedAt: this.now().toISOString() });
         } catch (error) {
           // A refused read or a timeout says nothing about the posting; only a

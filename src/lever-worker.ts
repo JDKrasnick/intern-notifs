@@ -273,7 +273,7 @@ export async function runLeverBoard(
     }
   }
 
-  const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate).poll({ runId: message.runId });
+  const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate, false).poll({ runId: message.runId });
   if (poll.failures.length) throw new Error(poll.failures.join('; '));
   const publishedHealth = await dependencies.store.getSourceHealth(source.id);
   if (publishedHealth) {

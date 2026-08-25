@@ -20,6 +20,7 @@ import {
   Switch,
   Text,
   TextInput,
+  type TextInputProps,
   TouchableOpacity,
   useWindowDimensions,
   View,
@@ -32,7 +33,8 @@ import { ApiError, api, authenticatedRead, responseCache, sessionStorage } from 
 import { appendGroupedCatalogPage, catalogCardKind, type GroupedCatalogPage } from "./src/catalog";
 import { catalogGroupAvailabilityLabel, groupedCatalogParameters } from "./src/catalog-filters";
 import { createLatestRequestGuard } from "./src/latest-request";
-import { clearSession, confirmEmail, restoreSession, signIn, signUp } from "./src/auth";
+import { uploadDocumentContent } from "./src/document-upload";
+import { clearSession, confirmEmail, restoreSession, signIn, signOut, signUp } from "./src/auth";
 import {
   clearApplicationFollowUp,
   notifyApplicationProgress,
@@ -1244,7 +1246,7 @@ function CompanyCoverageDisclosure() {
           <Text style={styles.coverageExplanation}>
             Search the tracked company universe. Community-feed evidence and reviewed employer sources are labeled separately.
           </Text>
-          <TextInput
+          <PlainTextInput
             value={query}
             onChangeText={setQuery}
             accessibilityLabel="Search company coverage"
@@ -1793,10 +1795,14 @@ function GroupedCatalogFeed({
   return (
     <>
       <View style={styles.roleFeedControls}>
-        <TextInput
+        <PlainTextInput
+          key="catalog-search"
           value={query}
           onChangeText={onQueryChange}
           accessibilityLabel="Search roles, companies, and locations"
+          autoComplete="off"
+          secureTextEntry={false}
+          textContentType="none"
           placeholder="Search roles, companies, locations"
           placeholderTextColor={colors.placeholder}
           style={styles.feedSearch}
@@ -1990,6 +1996,7 @@ function AppContent() {
   const [ready, setReady] = useState(false);
   const [sessionRecoveryMessage, setSessionRecoveryMessage] = useState<string>();
   const sessionRequestId = useRef(0);
+  const privateRequestId = useRef(0);
   const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
   const [preferences, setPreferences] = useState<Preference>();
   const [preferenceError, setPreferenceError] = useState<string>();
@@ -2038,20 +2045,47 @@ function AppContent() {
   const catalogRequestGeneration = useRef(0);
   const catalogRequestInFlight = useRef(false);
   const groupRequestGuard = useRef(createLatestRequestGuard());
+  const clearPrivateState = () => {
+    privateRequestId.current += 1;
+    setPreferences(undefined);
+    setPreferenceError(undefined);
+    setApplications([]);
+    setSavingJobIds(new Set());
+    launchRequestId.current += 1;
+    launchRequestToken.current = undefined;
+    setLaunchInbox(undefined);
+    setShowLaunchInbox(false);
+    setLaunchLoaded(false);
+    setLaunchToken(undefined);
+  };
+  const acceptSessionToken = (value: string) => {
+    if (tokenRef.current !== value) clearPrivateState();
+    tokenRef.current = value;
+    setToken(value);
+  };
+  const finishLocalSignOut = () => {
+    sessionRequestId.current += 1;
+    tokenRef.current = undefined;
+    clearPrivateState();
+    setToken(undefined);
+    setSessionRecoveryMessage(undefined);
+  };
+  const endSession = async () => {
+    const currentToken = tokenRef.current;
+    finishLocalSignOut();
+    await signOut(currentToken);
+  };
   const recoverSession = async (forceRefresh = false) => {
     const requestId = ++sessionRequestId.current;
     const result = await restoreSession({ forceRefresh });
     if (sessionRequestId.current !== requestId) return result;
     if (result.status === "authenticated") {
-      tokenRef.current = result.token;
-      setToken(result.token);
+      acceptSessionToken(result.token);
       setSessionRecoveryMessage(undefined);
     } else if (result.status === "temporarily_unavailable") {
       setSessionRecoveryMessage(result.message);
     } else {
-      tokenRef.current = undefined;
-      setToken(undefined);
-      setSessionRecoveryMessage(undefined);
+      finishLocalSignOut();
     }
     return result;
   };
@@ -2178,26 +2212,27 @@ function AppContent() {
       });
   };
   const acceptRefreshedToken = (requestId: number, value: string) => {
-    if (sessionRequestId.current !== requestId) return;
-    tokenRef.current = value;
-    setToken(value);
+    if (privateRequestId.current !== requestId) return;
+    acceptSessionToken(value);
   };
   const load = async () => {
-    if (!tokenRef.current) return;
+    const requestToken = tokenRef.current;
+    if (!requestToken) return;
     setPreferenceError(undefined);
-    const requestId = sessionRequestId.current;
+    const requestId = privateRequestId.current;
     try {
       const [pref, apps] = await Promise.all([
         authenticatedRead<Preference>("/me/preferences", { onToken: (value) => acceptRefreshedToken(requestId, value) }),
         authenticatedRead<{ applications: Application[] }>("/me/applications", { onToken: (value) => acceptRefreshedToken(requestId, value) }),
       ]);
+      if (privateRequestId.current !== requestId || tokenRef.current !== requestToken) return;
       setPreferences(pref);
       setApplications(apps.applications);
     } catch (error) {
+      if (privateRequestId.current !== requestId || tokenRef.current !== requestToken) return;
       if (error instanceof ApiError && error.kind === "unauthorized") {
-        tokenRef.current = undefined;
-        setToken(undefined);
-        setPreferenceError(undefined);
+        finishLocalSignOut();
+        await clearSession(requestToken);
         return;
       }
       setPreferenceError(
@@ -2533,10 +2568,7 @@ function AppContent() {
         message={sessionRecoveryMessage}
         onRetry={() => void recoverSession(true)}
         onContinueBrowsing={() => {
-          sessionRequestId.current += 1;
-          tokenRef.current = undefined;
-          setToken(undefined);
-          setSessionRecoveryMessage(undefined);
+          void endSession();
         }}
       />
     );
@@ -2582,8 +2614,7 @@ function AppContent() {
         onSession={async (idToken) => {
           await sessionStorage.set(idToken);
           sessionRequestId.current += 1;
-          tokenRef.current = idToken;
-          setToken(idToken);
+          acceptSessionToken(idToken);
         }}
       />
       <CatalogGroupSheet
@@ -2607,10 +2638,7 @@ function AppContent() {
           });
         }}
         onSignOut={() => {
-          sessionRequestId.current += 1;
-          void clearSession();
-          tokenRef.current = undefined;
-          setToken(undefined);
+          void endSession();
         }}
       />
     );
@@ -2755,10 +2783,7 @@ function AppContent() {
               onRestoreHiddenRole={restoreHiddenRole}
               onPreferencesChanged={(updated) => setPreferences(updated)}
               onSignOut={async () => {
-                sessionRequestId.current += 1;
-                await clearSession();
-                tokenRef.current = undefined;
-                setToken(undefined);
+                await endSession();
               }}
             />
           )}
@@ -2884,73 +2909,86 @@ function GuestExperience({
   const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
   const [query, setQuery] = useState("");
   const [showAccount, setShowAccount] = useState(false);
-  if (showAccount)
-    return (
-      <SignIn onSession={onSession} onBrowse={() => setShowAccount(false)} />
-    );
   return (
-    <SafeAreaView style={styles.screen}>
-      <View style={[styles.appShell, usesNavigationRail && styles.appShellWide]}>
-        {usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} rail /> : null}
-        <View style={styles.appMain}>
-          {tab === "feed" ? (
-            <GroupedCatalogFeed
-              groups={groups}
-              query={query}
-              onQueryChange={(value) => { setQuery(value); onSearchQueryChange(value); }}
-              source={sourceFilter}
-              onSourceChange={onSourceFilterChange}
-              employerFilter={employerFilter}
-              onEmployerFilterChange={onEmployerFilterChange}
-              jobStatus={jobStatus}
-              onJobStatusChange={onJobStatusChange}
-              filtersExpanded={filtersExpanded}
-              onFiltersExpandedChange={onFiltersExpandedChange}
-              hideUsCitizenshipRequired={hideUsCitizenshipRequired}
-              onHideUsCitizenshipRequiredChange={onHideUsCitizenshipRequiredChange}
-              hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
-              onHideAdvancedDegreeRequiredChange={onHideAdvancedDegreeRequiredChange}
-              loading={catalogInitialLoading}
-              error={catalogError}
-              loadingMore={catalogLoadingMore}
-              moreError={catalogMoreError}
-              reachedEnd={catalogReachedEnd}
-              onLoadMore={onLoadMore}
-              onRetryLoadMore={onRetryLoadMore}
-              onRetry={onRetryCatalog}
-              onOpenGroup={onOpenGroup}
-              onOpenRole={onOpenJob}
-            />
-          ) : (
-            <AccountGate
-              feature={
-                tab === "saved"
-                  ? "save and track applications"
-                  : "set up alerts and your application profile"
-              }
-              onSignIn={() => setShowAccount(true)}
-            />
-          )}
+    <View style={styles.guestRoot}>
+      <SafeAreaView
+        style={styles.screen}
+        accessibilityElementsHidden={showAccount}
+        importantForAccessibility={showAccount ? "no-hide-descendants" : "auto"}
+      >
+        <View style={[styles.appShell, usesNavigationRail && styles.appShellWide]}>
+          {usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} rail /> : null}
+          <View style={styles.appMain}>
+            <View
+              style={[styles.appMain, tab !== "feed" && styles.hiddenScreen]}
+              pointerEvents={tab === "feed" ? "auto" : "none"}
+              accessibilityElementsHidden={tab !== "feed"}
+              importantForAccessibility={tab === "feed" ? "auto" : "no-hide-descendants"}
+            >
+              <GroupedCatalogFeed
+                groups={groups}
+                query={query}
+                onQueryChange={(value) => { setQuery(value); onSearchQueryChange(value); }}
+                source={sourceFilter}
+                onSourceChange={onSourceFilterChange}
+                employerFilter={employerFilter}
+                onEmployerFilterChange={onEmployerFilterChange}
+                jobStatus={jobStatus}
+                onJobStatusChange={onJobStatusChange}
+                filtersExpanded={filtersExpanded}
+                onFiltersExpandedChange={onFiltersExpandedChange}
+                hideUsCitizenshipRequired={hideUsCitizenshipRequired}
+                onHideUsCitizenshipRequiredChange={onHideUsCitizenshipRequiredChange}
+                hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
+                onHideAdvancedDegreeRequiredChange={onHideAdvancedDegreeRequiredChange}
+                loading={catalogInitialLoading}
+                error={catalogError}
+                loadingMore={catalogLoadingMore}
+                moreError={catalogMoreError}
+                reachedEnd={catalogReachedEnd}
+                onLoadMore={onLoadMore}
+                onRetryLoadMore={onRetryLoadMore}
+                onRetry={onRetryCatalog}
+                onOpenGroup={onOpenGroup}
+                onOpenRole={onOpenJob}
+              />
+            </View>
+            {tab !== "feed" ? (
+              <AccountGate
+                feature={
+                  tab === "saved"
+                    ? "save and track applications"
+                    : "set up alerts and your application profile"
+                }
+                onSignIn={() => setShowAccount(true)}
+              />
+            ) : null}
+          </View>
+          {!usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} /> : null}
         </View>
-        {!usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} /> : null}
-      </View>
-      <JobDetailSheet
-        job={routedJob}
-        signedIn={false}
-        matchedReasons={routedJob ? routedMatchReasons : []}
-        exclusionsApplied={routedJob ? routedExclusionsApplied : false}
-        routeState={routeState}
-        onDismiss={onDismissRoute}
-        onModalDismissed={onModalDismissedRoute}
-        onRetry={onRetryRoute}
-        onApply={(job) => {
-          void openOfficialApplication(job.applyUrl);
-        }}
-        onOpenListing={(job) => {
-          void openOfficialApplication(job.applyUrl);
-        }}
-      />
-    </SafeAreaView>
+        <JobDetailSheet
+          job={routedJob}
+          signedIn={false}
+          matchedReasons={routedJob ? routedMatchReasons : []}
+          exclusionsApplied={routedJob ? routedExclusionsApplied : false}
+          routeState={routeState}
+          onDismiss={onDismissRoute}
+          onModalDismissed={onModalDismissedRoute}
+          onRetry={onRetryRoute}
+          onApply={(job) => {
+            void openOfficialApplication(job.applyUrl);
+          }}
+          onOpenListing={(job) => {
+            void openOfficialApplication(job.applyUrl);
+          }}
+        />
+      </SafeAreaView>
+      {showAccount ? (
+        <View style={styles.authOverlay}>
+          <SignIn onSession={onSession} onBrowse={() => setShowAccount(false)} />
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -3085,7 +3123,7 @@ function Onboarding({
           <Text style={styles.inputLabel}>
             Specific keywords <Text style={styles.optionalLabel}>(optional)</Text>
           </Text>
-          <TextInput
+          <PlainTextInput
             style={styles.formInput}
             value={keywords}
             onChangeText={setKeywords}
@@ -3498,13 +3536,17 @@ function Profile({
       }),
     });
     const file = await fetch(asset.uri);
-    await fetch(response.uploadUrl, {
-      method: "PUT",
-      headers: {
-        "Content-Type": asset.mimeType ?? "application/pdf",
-        "x-amz-server-side-encryption": "aws:kms",
-      },
+    await uploadDocumentContent({
+      uploadUrl: response.uploadUrl,
+      token,
+      contentType: asset.mimeType ?? "application/pdf",
       body: await file.blob(),
+    }, {
+      deleteMetadata: () => api(
+        `/me/documents/${encodeURIComponent(response.document.documentId)}`,
+        token,
+        { method: "DELETE" },
+      ),
     });
     setProfile((current) => ({
       ...current,
@@ -3748,7 +3790,7 @@ function Profile({
       </Text>
       <Text style={styles.profileSectionLabel}>Contact</Text>
       <Text style={styles.inputLabel}>First name</Text>
-      <TextInput
+      <PlainTextInput
         style={styles.search}
         accessibilityLabel="First name"
         placeholder="First name"
@@ -3757,7 +3799,7 @@ function Profile({
         onChangeText={(firstName) => updateContact({ firstName })}
       />
       <Text style={styles.inputLabel}>Last name</Text>
-      <TextInput
+      <PlainTextInput
         style={styles.search}
         accessibilityLabel="Last name"
         placeholder="Last name"
@@ -3766,7 +3808,7 @@ function Profile({
         onChangeText={(lastName) => updateContact({ lastName })}
       />
       <Text style={styles.inputLabel}>Email</Text>
-      <TextInput
+      <PlainTextInput
         style={styles.search}
         accessibilityLabel="Email"
         placeholder="you@example.com"
@@ -3775,7 +3817,7 @@ function Profile({
         onChangeText={(email) => updateContact({ email })}
       />
       <Text style={styles.inputLabel}>Phone</Text>
-      <TextInput
+      <PlainTextInput
         style={styles.search}
         accessibilityLabel="Phone"
         placeholder="Phone number"
@@ -3785,7 +3827,7 @@ function Profile({
         onChangeText={(phone) => updateContact({ phone })}
       />
       <Text style={styles.inputLabel}>Location</Text>
-      <TextInput
+      <PlainTextInput
         style={styles.search}
         accessibilityLabel="Location"
         placeholder="Location"
@@ -3794,7 +3836,7 @@ function Profile({
         onChangeText={(location) => setProfile({ ...profile, location })}
       />
       <Text style={styles.inputLabel}>Work authorization</Text>
-      <TextInput
+      <PlainTextInput
         style={styles.search}
         accessibilityLabel="Work authorization"
         placeholder="Work authorization"
@@ -3928,7 +3970,7 @@ function Profile({
       <View style={styles.timeRow}>
         <View style={styles.timeField}>
           <Text style={styles.inputLabel}>Start</Text>
-          <TextInput
+          <PlainTextInput
             style={styles.search}
             accessibilityLabel="Quiet hours start"
             value={quietStart}
@@ -3943,7 +3985,7 @@ function Profile({
         </View>
         <View style={styles.timeField}>
           <Text style={styles.inputLabel}>End</Text>
-          <TextInput
+          <PlainTextInput
             style={styles.search}
             accessibilityLabel="Quiet hours end"
             value={quietEnd}
@@ -3958,7 +4000,7 @@ function Profile({
         </View>
       </View>
       <Text style={styles.inputLabel}>Timezone</Text>
-      <TextInput
+      <PlainTextInput
         style={styles.search}
         accessibilityLabel="Quiet hours timezone"
         value={quietTimezone}
@@ -3998,7 +4040,7 @@ function Profile({
         ))}
       </View>
       <Text style={styles.inputLabel}>Include keywords</Text>
-      <TextInput
+      <PlainTextInput
         style={styles.search}
         accessibilityLabel="Include keywords"
         value={includeKeywords}
@@ -4037,7 +4079,7 @@ function Profile({
         ))}
       </View>
       <Text style={styles.inputLabel}>Exclude keywords</Text>
-      <TextInput
+      <PlainTextInput
         style={styles.search}
         accessibilityLabel="Exclude keywords"
         value={excludeKeywords}
@@ -4074,7 +4116,7 @@ function Profile({
         Supported placeholders: {pushPlaceholders.join(", ")}.
       </Text>
       <Text style={styles.inputLabel}>Notification title</Text>
-      <TextInput
+      <PlainTextInput
         style={styles.search}
         accessibilityLabel="Notification title"
         placeholder="Title: {shortTitle} — {company}"
@@ -4086,7 +4128,7 @@ function Profile({
         }}
       />
       <Text style={styles.inputLabel}>Notification description</Text>
-      <TextInput
+      <PlainTextInput
         style={[styles.search, styles.multiline]}
         accessibilityLabel="Notification description"
         placeholder="Description: {location} · {season}\nSource: {source}\n{url}"
@@ -4099,7 +4141,7 @@ function Profile({
         multiline
       />
       <Text style={styles.inputLabel}>Role abbreviations</Text>
-      <TextInput
+      <PlainTextInput
         style={[styles.search, styles.multiline]}
         accessibilityLabel="Role abbreviations"
         placeholder="Role abbreviations, one per line: software engineer = SWE"
@@ -4132,7 +4174,7 @@ function Profile({
         />
       </View>
       <Text style={styles.inputLabel}>Follow up after (days)</Text>
-      <TextInput
+      <PlainTextInput
         style={styles.search}
         accessibilityLabel="Follow up after days"
         value={followUpDays}
@@ -4227,6 +4269,11 @@ function AuthButton({
   );
 }
 
+/** Explicitly resets native secure-entry state when iOS recycles text views. */
+function PlainTextInput(props: TextInputProps) {
+  return <TextInput {...props} secureTextEntry={false} />;
+}
+
 function SignIn({
   onSession,
   onBrowse,
@@ -4237,6 +4284,7 @@ function SignIn({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
+  const [developmentConfirmationCode, setDevelopmentConfirmationCode] = useState(false);
   const [needsConfirmation, setNeedsConfirmation] = useState(false);
   const [createMode, setCreateMode] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -4253,13 +4301,25 @@ function SignIn({
       setBusy(false);
     }
   };
+  const createAccount = async () => {
+    const result = await signUp(email, password);
+    if (result.confirmationCode) {
+      setCode(result.confirmationCode);
+      setDevelopmentConfirmationCode(true);
+    } else {
+      setDevelopmentConfirmationCode(false);
+    }
+    setNeedsConfirmation(true);
+  };
   const title = needsConfirmation
     ? "Check your email"
     : createMode
       ? "Create your account"
       : "Sign in";
   const description = needsConfirmation
-    ? "Enter the verification code we sent to your email."
+    ? developmentConfirmationCode
+      ? "This development build filled in your verification code."
+      : "Enter the verification code we sent to your email."
     : createMode
       ? "Use an email and password to save roles and receive alerts."
       : "Sign in to pick up where you left off.";
@@ -4284,7 +4344,8 @@ function SignIn({
             <Text style={styles.authTitle}>{title}</Text>
             <Text style={styles.authDescription}>{description}</Text>
             <Text style={styles.inputLabel}>Email</Text>
-            <TextInput
+            <PlainTextInput
+              key="auth-email"
               autoCapitalize="none"
               autoComplete="email"
               accessibilityLabel="Email"
@@ -4299,7 +4360,8 @@ function SignIn({
             {needsConfirmation ? (
               <>
                 <Text style={styles.inputLabel}>Verification code</Text>
-                <TextInput
+                <PlainTextInput
+                  key="auth-verification-code"
                   autoComplete="one-time-code"
                   accessibilityLabel="Verification code"
                   keyboardType="number-pad"
@@ -4330,6 +4392,7 @@ function SignIn({
               <>
                 <Text style={styles.inputLabel}>Password</Text>
                 <TextInput
+                  key="auth-password"
                   autoComplete={
                     createMode ? "new-password" : "current-password"
                   }
@@ -4347,8 +4410,7 @@ function SignIn({
                     if (!busy)
                       void run(async () =>
                         createMode
-                          ? (await signUp(email, password),
-                            setNeedsConfirmation(true))
+                          ? await createAccount()
                           : onSession(await signIn(email, password)),
                       );
                   }}
@@ -4367,8 +4429,7 @@ function SignIn({
                   onPress={() =>
                     void run(async () => {
                       if (createMode) {
-                        await signUp(email, password);
-                        setNeedsConfirmation(true);
+                        await createAccount();
                       } else {
                         onSession(await signIn(email, password));
                       }
@@ -4405,6 +4466,9 @@ function SignIn({
 }
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.canvas },
+  guestRoot: { flex: 1 },
+  hiddenScreen: { ...StyleSheet.absoluteFillObject, opacity: 0 },
+  authOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.canvas },
   appShell: { flex: 1 },
   appShellWide: { flexDirection: "row" },
   appMain: { flex: 1, minWidth: 0 },

@@ -43,6 +43,8 @@ export interface RuntimeDependencies {
   linkValidator?: ApplicationUrlValidator;
   /** Owner cohort excluded from legacy delivery while the grouped pipeline is measured. */
   groupedPipelineUserIds?: ReadonlySet<string> | '*';
+  /** Per-source queue runs already validate their incoming listings. */
+  validateCatalogOnPoll?: boolean;
 }
 
 export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies: RuntimeDependencies) {
@@ -53,6 +55,7 @@ export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies
       undefined,
       undefined,
       dependencies.linkValidator ?? validateApplicationUrlWithEvidence,
+      dependencies.validateCatalogOnPoll === false ? false : undefined,
     ).poll();
     if (dependencies.userStore) {
       const publisher = dependencies.expoPublisher ?? new ExpoPushPublisher();

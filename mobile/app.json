@@ -40,9 +40,6 @@
       "expo-font"
     ],
     "extra": {
-      "apiUrl": "${EXPO_PUBLIC_API_URL}",
-      "cognitoUserPoolId": "${EXPO_PUBLIC_COGNITO_USER_POOL_ID}",
-      "cognitoClientId": "${EXPO_PUBLIC_COGNITO_CLIENT_ID}",
       "eas": {
         "projectId": "b9b09ef1-a482-4875-a5f4-ff963488cd3e"
       }

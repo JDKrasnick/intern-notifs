@@ -220,7 +220,10 @@ function disciplinesFor(job: Internship) {
 
 function groupId(kind: CatalogGroupKind, jobs: Internship[]) {
   const chronological = [...jobs].sort((left, right) => timestamp(left) - timestamp(right));
-  const programKey = safeProgramKey(chronological[0]!);
+  // A release can contain roles that also have a structured program identity.
+  // Keep its namespace tied to the observed employer burst so a remaining
+  // program role cannot overwrite the release in a materialized projection.
+  const programKey = kind === 'employer-release' ? undefined : safeProgramKey(chronological[0]!);
   const stable = programKey
     ? programKey
     : kind === 'employer-release'

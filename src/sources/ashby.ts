@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { processSnapshot } from '../ingestion/processor.js';
+import { platformFetch } from '../core/platform-fetch.js';
 import type { ProcessedSnapshot, SourceAdapter, SourceCheckpoint, SourceConnector, SourceFetchResult, SourceSnapshot, SourcedPosting } from '../types.js';
 import { reviewedAshbySources } from './ashby-config.js';
 import { ASHBY_API_HOST, ASHBY_API_VERSION } from './ashby-probe.js';
@@ -182,7 +183,7 @@ export class AshbyPostingsAdapter implements SourceAdapter, SourceConnector {
       throw new Error('AshbyPostingsAdapter requires a reviewed global Ashby source');
     }
     this.id = options.source.id;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = options.fetchImpl ?? platformFetch;
     this.now = options.now ?? (() => new Date());
   }
 

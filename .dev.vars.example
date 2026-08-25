@@ -1,0 +1,9 @@
+# Copy to .dev.vars for local Worker development. Never commit real values.
+AUTH_SESSION_SECRET=replace-with-at-least-32-random-bytes
+OPERATIONS_SHARED_SECRET=replace-with-a-separate-random-value
+AUTH_DEV_MODE=true
+BILLING_WEBHOOK_SECRET=replace-with-a-long-random-secret
+CLOUDFLARE_SHUTDOWN_TOKEN=replace-with-a-cloudflare-api-token
+RESEND_API_KEY=
+AUTH_FROM_EMAIL=
+DIGEST_TO_EMAIL=

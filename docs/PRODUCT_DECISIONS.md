@@ -11,13 +11,13 @@ An account is requested only when a person chooses a feature that stores or pers
 - résumé and reusable application profile; or
 - using that data on another device.
 
-This is intentionally not an anonymous shared account. Private data continues to be scoped to a Cognito user once someone elects to create an account.
+This is intentionally not an anonymous shared account. Private data is scoped to a verified Cloudflare-authenticated user once someone elects to create an account.
 
 ## Authentication roadmap
 
-- **Now:** email/password sign-up with email verification, used only after a user opts into private features.
-- **Next (iPhone):** Sign in with Apple, backed by Cognito federation. See `FRONTEND_DESIGN.md` for the required Apple and AWS setup.
-- **Later:** Google sign-in through the same Cognito federation layer.
+- **Now:** Cloudflare-backed email/password sign-up with email verification, used only after a user opts into private features.
+- **Next (iPhone):** Sign in with Apple, integrated with the Cloudflare identity boundary. See `FRONTEND_DESIGN.md` for the product constraints.
+- **Later:** Google sign-in through the same provider-neutral identity boundary.
 
 Google sign-in should not be enabled by itself on iOS; when it is offered, Sign in with Apple must also be offered to satisfy Apple's equivalent-login policy. Apple and Google keys stay server-side and are never included in the Expo app.
 

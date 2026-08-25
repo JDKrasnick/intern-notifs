@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { defaultSources } from '../src/sources/index.js';
-import { qualityPolicyFor, verifySourceQuality } from '../src/sources/quality.js';
+import { liveSourceFetchFailure, qualityPolicyFor, verifySourceQuality } from '../src/sources/quality.js';
 
 function outputPath() {
   const at = process.argv.indexOf('--output');
@@ -33,7 +33,10 @@ async function main() {
     }
   }));
   const report = verifySourceQuality(inputs);
-  for (const input of inputs) if ('fetchFailure' in input) report.failures.push(`${input.policy.id}: live fetch failed after retries: ${input.fetchFailure}`);
+  for (const input of inputs) if ('fetchFailure' in input) {
+    const failure = liveSourceFetchFailure(input.policy, input.fetchFailure);
+    if (failure) report.failures.push(failure);
+  }
   const destination = outputPath();
   await mkdir(dirname(destination), { recursive: true });
   await writeFile(destination, `${JSON.stringify(report, null, 2)}\n`);

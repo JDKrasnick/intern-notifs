@@ -59,7 +59,7 @@ function stateFor(source: OperationsSource, health: SourceHealth | undefined, ch
   if (health?.state === 'quarantined') return 'quarantined';
   const lastSuccessAt = health?.lastSuccessAt ?? checkpoint?.lastSuccessAt;
   if (!lastSuccessAt) return health?.state ?? 'never-succeeded';
-  const allowedAge = health?.pollTier === 'quiet'
+  const allowedAge = source.status === 'shadow' || health?.pollTier === 'quiet'
     ? inactiveHealthWindowMs
     : (checkpoint?.lastRowCount ?? health?.eligibleRows ?? 0) > 0 ? activeHealthWindowMs[source.provider] : inactiveHealthWindowMs;
   if (timestamp - Date.parse(lastSuccessAt) > allowedAge || health?.state === 'degraded') return 'degraded';
@@ -194,6 +194,8 @@ export interface SourceOperationsDependencies {
   cloudwatch?: CloudWatchClient;
   ssm?: SSMClient;
   now?: () => Date;
+  alarmTelemetry?: { status: 'available' | 'unavailable'; reason?: string };
+  queueTelemetry?: { status: 'available' | 'partial'; reason?: string };
 }
 
 function parseBody(event: ApiEvent): Record<string, unknown> {
@@ -509,13 +511,17 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
       for (const alarm of fleetRows.flatMap((row) => row.alarms)) {
         if (alarm.name) alarmsByName.set(alarm.name, alarm);
       }
-      const fleet = {
-        queue: fleetRows.reduce((total, row) => ({
+      const queueTelemetry = dependencies.queueTelemetry ?? { status: 'available' as const };
+      const queue = fleetRows.reduce((total, row) => ({
           waiting: total.waiting + row.queue.waiting,
           processing: total.processing + row.queue.processing,
           deadLettered: total.deadLettered + row.queue.deadLettered,
-        }), { waiting: 0, processing: 0, deadLettered: 0 }),
+        }), { waiting: 0, processing: 0, deadLettered: 0 });
+      const fleet = {
+        queue: { ...queue, processing: queueTelemetry.status === 'available' ? queue.processing : null },
+        queueTelemetry,
         alarms: [...alarmsByName.values()],
+        alarmTelemetry: dependencies.alarmTelemetry ?? { status: 'available' as const },
       };
       const cutoff = timestamp - 24 * 60 * 60_000;
       const failedExtractions24h = healthRecords.reduce((total, record) => total + (record.recentRuns ?? [])
@@ -526,7 +532,9 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         staleSources: rows.filter((row) => row.state === 'degraded' || row.state === 'never-succeeded').length,
         quarantinedSources: rows.filter((row) => row.state === 'quarantined').length,
         pausedSources: rows.filter((row) => row.sourceStatus === 'paused').length,
-        activeAlarms: fleet.alarms.filter((alarm) => alarm.state === 'ALARM').length,
+        activeAlarms: fleet.alarmTelemetry.status === 'available'
+          ? fleet.alarms.filter((alarm) => alarm.state === 'ALARM').length
+          : null,
         queuedMessages: fleet.queue.waiting,
         processingMessages: fleet.queue.processing,
         legacyPendingNotifications,

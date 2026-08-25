@@ -171,4 +171,23 @@ describe('polling', () => {
     expect(preserved?.invalidApplicationUrl).toBeUndefined();
     expect(report.failures).toContain('catalog: legacy-role: Application link returned HTTP 403');
   });
+
+  it('lets per-source workers validate incoming listings without applying their host policy to the catalog', async () => {
+    const store = new MemoryInternshipStore();
+    await legacyOpenRole(store);
+    await store.putCheckpoint({ sourceId: 'one', successfulFetches: 1, lastRowCount: 0 });
+    const validated: string[] = [];
+    const incoming = listing('https://jobs.example.com/incoming');
+    const report = await new Poller(
+      [new Adapter('one', [incoming])], store, undefined, undefined,
+      async (url) => {
+        validated.push(url);
+        return { url, evidence: { url, confidence: { score: 100, level: 'high', recommendation: 'alert-eligible', signals: ['source policy'] } } };
+      },
+      false,
+    ).poll();
+    expect(report.failures).toEqual([]);
+    expect(validated).toEqual([incoming.applyUrl]);
+    expect((await store.getJob('legacy-role'))?.open).toBe(true);
+  });
 });

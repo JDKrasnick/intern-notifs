@@ -125,6 +125,21 @@ describe('grouped catalog domain', () => {
     expect(groupCatalogJobs(original)[0]!.row.groupId).toBe(groupCatalogJobs([...original, job('three', 20, { internshipIdentity: programIdentity })])[0]!.row.groupId);
   });
 
+  it('keeps a structured employer release distinct from a remaining program role', () => {
+    const programIdentity = identity();
+    const groups = groupCatalogJobs([
+      job('one', 0, { internshipIdentity: programIdentity }),
+      job('two', 1, { internshipIdentity: programIdentity }),
+      job('three', 2, { internshipIdentity: programIdentity }),
+      job('four', 3, { internshipIdentity: programIdentity }),
+      job('five', 4, { internshipIdentity: programIdentity }),
+      job('six', 5, { internshipIdentity: programIdentity }),
+      job('later', 20, { internshipIdentity: programIdentity }),
+    ]);
+    expect(groups.map(({ row }) => row.kind)).toEqual(['individual', 'employer-release']);
+    expect(new Set(groups.map(({ row }) => row.groupId)).size).toBe(2);
+  });
+
   it('does not combine different program types or evidence-poor seasons', () => {
     const groups = groupCatalogJobs([
       job('internship', 0, { internshipIdentity: identity() }),

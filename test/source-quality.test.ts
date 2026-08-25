@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { verifySourceQuality } from '../src/sources/quality.js';
+import { liveSourceFetchFailure, verifySourceQuality } from '../src/sources/quality.js';
 import type { RawListing } from '../src/types.js';
 
 function row(applyUrl: string, row = 1): RawListing {
@@ -25,6 +25,8 @@ describe('source-quality policy', () => {
     const previous = { sourceId: 'fixture', successfulFetches: 2, lastRowCount: 12 };
     expect(quality({ id: 'fixture', sourceClass: 'curated' }, [], previous).failures.join(' ')).toContain('suspicious zero-row');
     expect(quality({ id: 'fixture', sourceClass: 'curated', dormant: true }, [], previous).failures).toEqual([]);
+    expect(liveSourceFetchFailure({ id: 'fixture', sourceClass: 'curated', dormant: true }, new Error('404'))).toBeUndefined();
+    expect(liveSourceFetchFailure({ id: 'active', sourceClass: 'curated' }, new Error('404'))).toContain('active: live fetch failed');
   });
   it('requires curated URL diversity and limits host concentration', () => {
     const report = quality({ id: 'fixture', sourceClass: 'curated' }, [row('https://jobs.example.test/1'), row('https://jobs.example.test/2', 2)]);

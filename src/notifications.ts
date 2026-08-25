@@ -2,6 +2,7 @@ import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { createHash } from 'node:crypto';
 import { evaluateJobFilter, inferJobFocuses, type FilterMatchReason, type JobFocus } from './core/filters.js';
 import { postingIdentityKey, score } from './core/normalize.js';
+import { platformFetch } from './core/platform-fetch.js';
 import type { DeliveryReceipt, Internship } from './types.js';
 import type { InternshipStore, UserStore } from './store.js';
 import { matchesJobFilter } from './core/filters.js';
@@ -92,7 +93,7 @@ function deliveryContext(job: Internship, userId: string, token: string, platfor
 }
 /** Minimal Expo Push Service client: Expo handles APNs/FCM credential delivery. */
 export class ExpoPushPublisher {
-  constructor(private readonly endpoint = 'https://exp.host/--/api/v2/push/send', private readonly fetcher: typeof fetch = fetch) {}
+  constructor(private readonly endpoint = 'https://exp.host/--/api/v2/push/send', private readonly fetcher: typeof fetch = platformFetch) {}
   async publish(token: string, message: PushMessage): Promise<ExpoPushTicket> {
     const response = await this.fetcher(this.endpoint, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ to: token, sound: 'default', priority: 'high', title: message.title, body: message.body, data: message.data ?? { jobId: message.click }, channelId: 'job-alerts' }), signal: AbortSignal.timeout(PUSH_REQUEST_TIMEOUT_MS) });
     if (!response.ok) throw new ExpoPushHttpError(response.status);
@@ -288,8 +289,33 @@ export async function retryExpoPushNotifications(
   return { sent, skipped, failed };
 }
 
+/**
+ * Reconciles the legacy notification marker with the durable Expo receipt
+ * pipeline. New-role delivery is idempotent per device, so replaying a bounded
+ * set closes migration gaps without duplicating already accepted pushes.
+ */
+export async function drainPendingExpoNotifications(
+  jobs: InternshipStore,
+  users: UserStore,
+  publisher: ExpoPushPublisher,
+  now: () => Date = () => new Date(),
+): Promise<{
+  processed: number;
+  delivery: Awaited<ReturnType<typeof sendNewJobNotifications>>;
+  receipts: Awaited<ReturnType<typeof inspectExpoPushReceipts>>;
+  retries: Awaited<ReturnType<typeof retryExpoPushNotifications>>;
+}> {
+  const pending = rankInternships(await jobs.pendingSms()).slice(0, MAX_LEGACY_PUSH_JOBS_PER_RUN);
+  const delivery = await sendNewJobNotifications(pending, users, publisher, now);
+  const sentAt = now().toISOString();
+  for (const job of pending) await jobs.markSmsSent(job.jobId, sentAt);
+  const receipts = await inspectExpoPushReceipts(users, publisher, now);
+  const retries = await retryExpoPushNotifications(jobs, users, publisher, now);
+  return { processed: pending.length, delivery, receipts, retries };
+}
+
 export class NtfyPublisher implements PushPublisher {
-  constructor(private readonly topic: string, private readonly endpoint = 'https://ntfy.sh', private readonly fetcher: typeof fetch = fetch) {}
+  constructor(private readonly topic: string, private readonly endpoint = 'https://ntfy.sh', private readonly fetcher: typeof fetch = platformFetch) {}
   async publish(message: PushMessage) {
     const response = await this.fetcher(this.endpoint.replace(/\/$/, ''), {
       method: 'POST',

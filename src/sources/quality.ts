@@ -182,6 +182,12 @@ export function qualityPolicyFor(sourceId: string): SourceQualityPolicy {
   return policy ?? { id: sourceId, sourceClass: 'curated', minimumDistinctApplicationHosts: 1, maximumApplicationHostShare: 1 };
 }
 
+/** A declared dormant source may be unavailable without making the live CI audit fail. */
+export function liveSourceFetchFailure(policy: SourceQualityPolicy, error: unknown): string | undefined {
+  if (policy.dormant) return undefined;
+  return `${policy.id}: live fetch failed after retries: ${error instanceof Error ? error.message : String(error)}`;
+}
+
 /** Shared runtime guard so sources cannot silently accept a parser-zero regression. */
 export function sourceQualityFailures(
   result: SourceFetchResult,

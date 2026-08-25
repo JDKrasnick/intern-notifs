@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryInternshipStore, MemoryUserStore } from '../src/store.js';
-import { compactRoleTitle, ExpoPushPublisher, MAX_LEGACY_PUSH_JOBS_PER_RUN, notificationSourceLabel, NtfyPublisher, renderPushTemplate, sendDigest, sendNewJobNotifications, sendPendingNotifications, summaryChunks, type PushMessage } from '../src/notifications.js';
+import { compactRoleTitle, drainPendingExpoNotifications, ExpoPushPublisher, MAX_LEGACY_PUSH_JOBS_PER_RUN, notificationSourceLabel, NtfyPublisher, renderPushTemplate, sendDigest, sendNewJobNotifications, sendPendingNotifications, summaryChunks, type PushMessage } from '../src/notifications.js';
 import type { Internship } from '../src/types.js';
 
 function job(index: number, company = 'Unknown'): Internship { return { jobId: `j${index}`, company, title: `Role ${index}`, location: 'NYC', season: 'summer-2027', applyUrl: `https://apply.example.com/${index}`, normalizedUrl: `https://apply.example.com/${index}`, fingerprint: String(index), compensation: { raw: '$50/hr', maxHourlyUSD: 50 }, sourceReferences: [{ sourceId: 'x', document: 'README', sourceUrl: 'x', row: index, company, title: `Role ${index}`, location: 'NYC', season: 'summer-2027', applyUrl: `https://apply.example.com/${index}`, compensation: { raw: '' }, state: 'open' }], open: true, firstSeenAt: `2026-01-0${index}T00:00:00Z`, lastSeenAt: '2026-01-01T00:00:00Z', notification: { smsPending: true, digestPending: true } }; }
@@ -27,6 +27,23 @@ describe('notifications', () => {
     for (let index = 1; index <= MAX_LEGACY_PUSH_JOBS_PER_RUN + 2; index += 1) await store.putInternship(job(index));
     await sendPendingNotifications(store, { publish: async () => undefined });
     expect(await store.pendingSms()).toHaveLength(2);
+  });
+  it('drains legacy markers through the idempotent Expo receipt pipeline in bounded runs', async () => {
+    const store = new MemoryInternshipStore(); const users = new MemoryUserStore(); let sends = 0;
+    for (let index = 1; index <= MAX_LEGACY_PUSH_JOBS_PER_RUN + 2; index += 1) await store.putInternship(job(index));
+    await users.putPreferences({ userId: 'user-1', filter: {}, alertsEnabled: true, onboardingComplete: true, updatedAt: '2026-08-25T00:00:00.000Z' });
+    await users.putDevice({ userId: 'user-1', token: 'ExponentPushToken[test]', platform: 'ios', active: true, createdAt: '2026-08-25T00:00:00.000Z', updatedAt: '2026-08-25T00:00:00.000Z' });
+    const publisher = new ExpoPushPublisher('https://push.example.test', async (url) => {
+      if (String(url).includes('getReceipts')) {
+        return new Response(JSON.stringify({ data: Object.fromEntries(Array.from({ length: sends }, (_, index) => [`ticket-${index + 1}`, { status: 'ok' }])) }), { status: 200 });
+      }
+      sends += 1;
+      return new Response(JSON.stringify({ data: { id: `ticket-${sends}`, status: 'ok' } }), { status: 200 });
+    });
+    const result = await drainPendingExpoNotifications(store, users, publisher, () => new Date('2026-08-25T12:00:00.000Z'));
+    expect(result).toMatchObject({ processed: MAX_LEGACY_PUSH_JOBS_PER_RUN, delivery: { sent: MAX_LEGACY_PUSH_JOBS_PER_RUN, failed: 0 }, receipts: { ok: MAX_LEGACY_PUSH_JOBS_PER_RUN }, retries: { sent: 0, failed: 0 } });
+    expect(await store.pendingSms()).toHaveLength(2);
+    expect(sends).toBe(MAX_LEGACY_PUSH_JOBS_PER_RUN);
   });
   it('only marks a digest after SES accepts it', async () => {
     const store = new MemoryInternshipStore(); await store.putInternship(job(1));

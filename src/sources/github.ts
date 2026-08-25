@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { parseInternshipMarkdown, type MarkdownParseOptions } from '../core/markdown.js';
 import { normalizeUrl } from '../core/normalize.js';
+import { platformFetch } from '../core/platform-fetch.js';
 import { processSnapshot } from '../ingestion/processor.js';
 import { applicationUrlRejection } from './quality.js';
 import { parseQuantInternshipMarkdown } from './quant.js';
@@ -48,7 +49,7 @@ type TransitionalMarkdownResult = SourceSnapshot & SourceFetchResult;
 export class GitHubMarkdownAdapter implements SourceAdapter, SourceConnector {
   readonly id: string;
   private readonly fetchImpl: typeof fetch;
-  constructor(private readonly options: GitHubAdapterOptions) { this.id = options.id; this.fetchImpl = options.fetchImpl ?? fetch; }
+  constructor(private readonly options: GitHubAdapterOptions) { this.id = options.id; this.fetchImpl = options.fetchImpl ?? platformFetch; }
 
   async fetch(previous?: SourceCheckpoint): Promise<TransitionalMarkdownResult> {
     const rawListings: RawListing[] = []; const rejectedApplicationUrls: Array<{ row: number; url: string; reason: string }> = []; const documentEtags = { ...previous?.documentEtags }; let etag: string | undefined; let allUnchanged = true;
