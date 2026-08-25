@@ -57,18 +57,37 @@ export function candidateFitsActiveBucket(
 }
 
 export const EXPO_RECEIPT_DELAY_SECONDS = 15 * 60;
+export const MAX_EXPO_RECEIPT_CHECKS = 8;
+
+export interface ReceiptMessage {
+  claim: DeliveryClaim;
+  ticketId: string;
+  token: string;
+  receiptCheckAttempt?: number;
+  /** The accepted-ticket transaction needs repair before receipt lookup. */
+  handoffPending?: boolean;
+}
+
+export function expoReceiptRetryDelaySeconds(attempt: number) {
+  return Math.min(EXPO_RECEIPT_DELAY_SECONDS, 60 * 2 ** Math.min(Math.max(attempt, 0), 4));
+}
+
+export function nextReceiptCheck(message: ReceiptMessage): ReceiptMessage | undefined {
+  const attempt = message.receiptCheckAttempt ?? 0;
+  return attempt >= MAX_EXPO_RECEIPT_CHECKS ? undefined : { ...message, receiptCheckAttempt: attempt + 1 };
+}
 
 export function notificationStreamTarget(record: StreamRecord):
   | { kind: 'flush'; bucketId: string }
   | { kind: 'candidate'; notification: NotificationEvent }
-  | { kind: 'receipt'; message: { claim: DeliveryClaim; ticketId: string; token: string } }
+  | { kind: 'receipt'; message: ReceiptMessage }
   | undefined {
   const pk = record.dynamodb?.Keys?.pk?.S;
   const sk = record.dynamodb?.Keys?.sk?.S;
   if (record.eventName !== 'INSERT' || !pk) return undefined;
   if (pk.startsWith('RELEASE_BUCKET#')) return { kind: 'flush', bucketId: pk.slice('RELEASE_BUCKET#'.length) };
   if (pk.startsWith('PIPELINE_RECEIPT_OUTBOX#') || (pk.startsWith('USER#') && sk?.startsWith('PIPELINE_RECEIPT_OUTBOX#'))) {
-    const message = unmarshall(record.dynamodb?.NewImage?.message) as { claim: DeliveryClaim; ticketId: string; token: string } | undefined;
+    const message = unmarshall(record.dynamodb?.NewImage?.message) as ReceiptMessage | undefined;
     return message ? { kind: 'receipt', message } : undefined;
   }
   if (!pk.startsWith('OUTBOX#')) return undefined;
@@ -259,10 +278,11 @@ export async function transitionClaim(claim: DeliveryClaim, state: DeliveryClaim
   }
 }
 
-async function acceptPushWithReceiptOutbox(claim: DeliveryClaim, ticketId: string, token: string) {
+async function acceptPushWithReceiptOutbox(claim: DeliveryClaim, ticketId: string, token: string): Promise<boolean> {
   const updatedAt = new Date().toISOString();
   const accepted = { ...claim, state: 'accepted' as const, providerId: ticketId, updatedAt };
-  await documentClient.send(new TransactWriteCommand({ TransactItems: [
+  const outboxKey = { pk: `USER#${claim.userId}`, sk: `PIPELINE_RECEIPT_OUTBOX#${claim.claimId}#${ticketId}` };
+  const write = () => documentClient.send(new TransactWriteCommand({ TransactItems: [
     { ConditionCheck: { TableName: usersTable, Key: deletedUserTombstoneKey(claim.userId), ConditionExpression: 'attribute_not_exists(pk)' } },
     { Update: {
       TableName: usersTable, Key: { pk: `USER#${claim.userId}`, sk: `DELIVERY#${claim.claimId}` },
@@ -271,15 +291,48 @@ async function acceptPushWithReceiptOutbox(claim: DeliveryClaim, ticketId: strin
     } },
     { Put: {
       TableName: usersTable,
-      Item: {
-        pk: `USER#${claim.userId}`, sk: `PIPELINE_RECEIPT_OUTBOX#${claim.claimId}#${ticketId}`,
-        kind: 'pipeline-receipt-outbox',
-        message: { claim: accepted, ticketId, token },
-        expiresAtEpoch: Math.floor(Date.now() / 1_000) + 24 * 60 * 60,
-      },
+      Item: { ...outboxKey, kind: 'pipeline-receipt-outbox', message: { claim: accepted, ticketId, token }, expiresAtEpoch: Math.floor(Date.now() / 1_000) + 24 * 60 * 60 },
       ConditionExpression: 'attribute_not_exists(pk)',
     } },
   ] }));
+  try {
+    await write();
+    return true;
+  } catch (error) {
+    if ((error as { name?: string }).name !== 'TransactionCanceledException') throw error;
+    // A client timeout can occur after DynamoDB commits both writes. Read the
+    // durable state before retrying so the repair path is safe and idempotent.
+    const [claimResult, outboxResult] = await Promise.all([
+      documentClient.send(new GetCommand({ TableName: usersTable, Key: { pk: `USER#${claim.userId}`, sk: `DELIVERY#${claim.claimId}` }, ConsistentRead: true })),
+      documentClient.send(new GetCommand({ TableName: usersTable, Key: outboxKey, ConsistentRead: true })),
+    ]);
+    if (outboxResult.Item) return true;
+    const storedClaim = claimResult.Item?.claim as DeliveryClaim | undefined;
+    if (!storedClaim) return false;
+    if (storedClaim.state !== 'accepted' || storedClaim.providerId !== ticketId) throw error;
+    // The claim was accepted but the outbox row is missing. Repair that
+    // durable handoff before acknowledging the push queue message.
+    await documentClient.send(new TransactWriteCommand({ TransactItems: [
+      { ConditionCheck: { TableName: usersTable, Key: deletedUserTombstoneKey(claim.userId), ConditionExpression: 'attribute_not_exists(pk)' } },
+      { Put: {
+        TableName: usersTable,
+        Item: { ...outboxKey, kind: 'pipeline-receipt-outbox', message: { claim: storedClaim, ticketId, token }, expiresAtEpoch: Math.floor(Date.now() / 1_000) + 24 * 60 * 60 },
+        ConditionExpression: 'attribute_not_exists(pk)',
+      } },
+    ] }));
+    return true;
+  }
+}
+
+async function retryReceipt(message: ReceiptMessage) {
+  const next = nextReceiptCheck(message);
+  if (!next) return false;
+  await sqs.send(new SendMessageCommand({
+    QueueUrl: process.env.RECEIPT_QUEUE_URL,
+    MessageBody: JSON.stringify(next),
+    DelaySeconds: expoReceiptRetryDelaySeconds(message.receiptCheckAttempt ?? 0),
+  }));
+  return true;
 }
 
 async function abandonRetryableClaim(claim: DeliveryClaim) {
@@ -308,7 +361,16 @@ async function deliverPush(intent: NotificationIntent) {
         if (ticket.details?.error === 'DeviceNotRegistered') await users.putDevice({ ...device, active: false, updatedAt: new Date().toISOString() });
       } else if (!ticket.id) await transitionClaim(claim, 'unknown');
       else {
-        await acceptPushWithReceiptOutbox(claim, ticket.id, device.token);
+        try {
+          await acceptPushWithReceiptOutbox(claim, ticket.id, device.token);
+        } catch {
+          // The provider accepted the push. If the claim/outbox transaction
+          // was ambiguous, let the receipt worker repair it without replaying
+          // the provider call or creating a second delivery claim.
+          if (!await retryReceipt({ claim, ticketId: ticket.id, token: device.token, handoffPending: true })) {
+            await transitionClaim(claim, 'unknown', ticket.id);
+          }
+        }
       }
     } catch (error) {
       const failure = classifyExpoPushFailure(error);
@@ -354,9 +416,29 @@ async function emailWorker(event: SqsEvent) {
 async function receiptWorker(event: SqsEvent) {
   const publisher = new ExpoPushPublisher();
   return handleSqs(event, async (record) => {
-    const message = JSON.parse(record.body) as { claim: DeliveryClaim; ticketId: string; token: string };
-    const receipt = (await publisher.receipts([message.ticketId]))[message.ticketId];
-    if (!receipt) throw new Error('Expo receipt is not ready');
+    const message = JSON.parse(record.body) as ReceiptMessage;
+    if (message.handoffPending) {
+      try {
+        if (!await acceptPushWithReceiptOutbox(message.claim, message.ticketId, message.token)) return;
+      } catch {
+        if (await retryReceipt(message)) return;
+        await transitionClaim(message.claim, 'unknown', message.ticketId);
+        return;
+      }
+    }
+    let receipt;
+    try {
+      receipt = (await publisher.receipts([message.ticketId]))[message.ticketId];
+    } catch {
+      if (await retryReceipt({ ...message, handoffPending: undefined })) return;
+      await transitionClaim(message.claim, 'unknown', message.ticketId);
+      return;
+    }
+    if (!receipt) {
+      if (await retryReceipt({ ...message, handoffPending: undefined })) return;
+      await transitionClaim(message.claim, 'unknown', message.ticketId);
+      return;
+    }
     if (!await transitionClaim(message.claim, receipt.status === 'ok' ? 'delivered' : 'definitive-failure', message.ticketId)) return;
     if (receipt.details?.error === 'DeviceNotRegistered') {
       const device = (await users.activeDevices()).find((candidate) => candidate.userId === message.claim.userId && candidate.token === message.token);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildInternshipIdentity,
   educationAudienceLabel,
   educationAudienceMatches,
   deriveTitleFields,
@@ -15,6 +16,28 @@ const evidence = (source: FieldProvenance['source'], evidenceCode: string): Fiel
 });
 
 describe('provider-neutral field enrichment', () => {
+  it('builds a durable grouping identity from one official ATS posting', () => {
+    const identity = buildInternshipIdentity({
+      sourceId: 'greenhouse-acme',
+      sourceUrl: 'https://boards.greenhouse.io/acme/jobs/42',
+      observedAt: '2026-08-24T00:00:00.000Z',
+      company: 'Acme, Inc.',
+      title: 'Software Engineering Intern, Summer 2027',
+      location: 'New York, NY / Remote',
+      season: 'summer-2027',
+      seasonEvidenceStatus: 'explicit',
+      content: "Currently enrolled in a bachelor's or master's program.",
+      workMode: 'hybrid',
+    });
+    expect(identity).toMatchObject({
+      company: { canonicalId: 'acme' },
+      programType: { value: 'internship' },
+      season: { term: 'summer', year: 2027, evidenceStatus: 'explicit' },
+      education: { levels: ['masters', 'undergraduate'], evidenceStatus: 'explicit' },
+      locations: [{ name: 'New York, NY', workMode: 'hybrid' }, { name: 'Remote', workMode: 'hybrid' }],
+    });
+  });
+
   it('prefers official structured evidence and retains corroboration for the winning value', () => {
     expect(mergeProvenancedValues([
       { value: 'Engineer Intern', provenance: [evidence('reviewed-community', 'table-title')] },

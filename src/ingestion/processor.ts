@@ -2,6 +2,7 @@ import { earlyCareerRequirements, hasLifecycleTitleSignal, htmlToText, inferSeas
 import { assessTechnicalRole } from '../core/filters.js';
 import { parseCompensation } from '../core/normalize.js';
 import { isTruncatedTitle, repairTitle } from '../core/role-title.js';
+import { buildInternshipIdentity } from '../identity/enrichment.js';
 import { applicationUrlRejection } from '../sources/quality.js';
 import type {
   JobRequirements,
@@ -87,6 +88,21 @@ export function processPosting(
     ...(posting.publishedAt ? { postedAt: posting.publishedAt } : {}),
     ...(posting.providerTimestamp ? { providerTimestamp: posting.providerTimestamp } : {}),
     ...(workMode ? { workMode } : {}),
+    internshipIdentity: buildInternshipIdentity({
+      sourceId: posting.sourceId,
+      sourceUrl: posting.sourceUrl,
+      observedAt: posting.fetchedAt,
+      company,
+      companyId: posting.employer.id,
+      title,
+      location,
+      season,
+      seasonEvidenceStatus: titleSeason !== 'ongoing' || posting.seasonHintAuthority === 'posting'
+        ? 'explicit'
+        : season !== 'ongoing' ? 'inferred' : 'unspecified',
+      content,
+      ...(workMode ? { workMode } : {}),
+    }),
     fetchedAt: posting.fetchedAt,
     technical: assessment.technical,
     ...(title === sourceTitle ? {} : { titleRepaired: true }),

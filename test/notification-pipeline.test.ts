@@ -5,7 +5,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as ses from 'aws-cdk-lib/aws-ses';
 import { describe, expect, it, vi } from 'vitest';
 import { NotificationPipeline } from '../infra/notification-pipeline.js';
-import { candidateFitsActiveBucket, EXPO_RECEIPT_DELAY_SECONDS, notificationStreamTarget, transitionClaim } from '../src/notification-pipeline-handler.js';
+import { candidateFitsActiveBucket, EXPO_RECEIPT_DELAY_SECONDS, expoReceiptRetryDelaySeconds, MAX_EXPO_RECEIPT_CHECKS, nextReceiptCheck, notificationStreamTarget, transitionClaim } from '../src/notification-pipeline-handler.js';
 import type { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
 function pipelineStack(releaseWindow = cdk.Duration.seconds(8)) {
@@ -82,6 +82,19 @@ describe('NotificationPipeline', () => {
   });
   it('waits fifteen minutes before checking Expo receipts', () => {
     expect(EXPO_RECEIPT_DELAY_SECONDS).toBe(900);
+  });
+  it('bounds receipt retries and backs them off instead of sending a receipt to the DLQ while pending', () => {
+    const message = {
+      claim: { claimId: 'claim-1' } as never,
+      ticketId: 'ticket-1',
+      token: 'token',
+      handoffPending: true,
+    };
+    expect(nextReceiptCheck(message)).toMatchObject({ receiptCheckAttempt: 1, handoffPending: true });
+    expect(nextReceiptCheck({ ...message, receiptCheckAttempt: MAX_EXPO_RECEIPT_CHECKS })).toBeUndefined();
+    expect(expoReceiptRetryDelaySeconds(0)).toBe(60);
+    expect(expoReceiptRetryDelaySeconds(4)).toBe(900);
+    expect(expoReceiptRetryDelaySeconds(99)).toBe(900);
   });
   it('builds encrypted SNS/SQS fanout with 14-day dead-letter queues', () => {
     const template = Template.fromStack(pipelineStack());

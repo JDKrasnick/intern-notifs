@@ -113,7 +113,11 @@ describe('legacy ingestion characterization', () => {
 
 describe('neutral boundary parity', () => {
   /** The neutral boundary adds identity and the persisted classification decision. */
-  const additions = { externalId: expect.any(String) as unknown as string, technical: true };
+  const additions = {
+    externalId: expect.any(String) as unknown as string,
+    technical: true,
+    internshipIdentity: expect.any(Object) as unknown as object,
+  };
 
   it('produces the legacy Lever listing from the connector and shared processor', () => {
     const legacy = mapLeverPosting(leverPosting, leverOptions, fetchedAt, 7)!;
@@ -132,5 +136,17 @@ describe('neutral boundary parity', () => {
     const legacy = mapGreenhouseJob(technicalInternship, acmeSource, fetchedAt, 3)!;
     const posting = mapGreenhouseSourcedPosting(technicalInternship, acmeSource, fetchedAt, 3)!;
     expect(processPosting(posting).listing).toEqual({ ...legacy, ...additions, externalId: '5001' });
+  });
+
+  it('attaches explicit season and education evidence before reconciliation', () => {
+    const posting = mapGreenhouseSourcedPosting(technicalInternship, acmeSource, fetchedAt, 3)!;
+    const processed = processPosting({
+      ...posting,
+      content: [{ kind: 'requirements', format: 'plain', value: "Currently enrolled in a bachelor's or master's program." }],
+    }).listing!;
+    expect(processed.internshipIdentity).toMatchObject({
+      season: { term: 'summer', year: 2027, evidenceStatus: 'explicit' },
+      education: { levels: ['masters', 'undergraduate'], evidenceStatus: 'explicit' },
+    });
   });
 });

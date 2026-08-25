@@ -435,6 +435,8 @@ export interface ProcessedListing extends SourceOccurrence {
   seasonSource?: 'posting' | 'source-default';
   /** Exact provider-aware identity resolved before reconciliation. */
   postingIdentity?: PostingIdentity;
+  /** Descriptive identity used for program grouping and audience filtering. */
+  internshipIdentity?: InternshipIdentity;
 }
 
 /** @deprecated Use `ProcessedListing`; retained only while callers migrate. */
