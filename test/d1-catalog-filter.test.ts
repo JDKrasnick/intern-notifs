@@ -1,3 +1,4 @@
+import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
@@ -27,7 +28,56 @@ function job(jobId: string, title: string): Internship {
   };
 }
 
+type SqliteValue = string | number | bigint | null | Uint8Array;
+
+function sqliteD1(database: DatabaseSync): D1Database {
+  const prepared = (query: string, values: unknown[] = []): D1PreparedStatement => {
+    const statement: StatementSync = database.prepare(query);
+    const bound = values as SqliteValue[];
+    return {
+      bind(...next: unknown[]) { return prepared(query, next); },
+      async first<T>() { return (statement.get(...bound) as T | undefined) ?? null; },
+      async all<T>() { return { results: statement.all(...bound) as T[] }; },
+      async run() { return { meta: { changes: Number(statement.run(...bound).changes) } }; },
+    };
+  };
+  return {
+    prepare(query: string) { return prepared(query); },
+    async batch(statements: D1PreparedStatement[]) { return Promise.all(statements.map((statement) => statement.run())); },
+  };
+}
+
 describe('D1 filtered catalog projection', () => {
+  it('matches normalized role locations when the raw label is generic', async () => {
+    const database = new DatabaseSync(':memory:');
+    database.exec(`
+      CREATE TABLE catalog_items (
+        pk TEXT NOT NULL,
+        sk TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        value TEXT NOT NULL,
+        catalog_sort_key TEXT,
+        PRIMARY KEY (pk, sk)
+      )
+    `);
+    const details = catalogGroupDetails(groupCatalogJobs([job('location', 'Software Engineering Intern')])[0]!);
+    details.roles[0]!.location = 'Multiple Locations';
+    details.roles[0]!.locations = ['Ithaca, NY'];
+    const generatedAt = new Date().toISOString();
+    const insert = database.prepare('INSERT INTO catalog_items (pk, sk, kind, value, catalog_sort_key) VALUES (?, ?, ?, ?, ?)');
+    insert.run('CATALOG_PROJECTION', 'CURRENT', 'catalog-projection-pointer', JSON.stringify({ version: 'version-a', generatedAt, schemaVersion: 3 }), null);
+    insert.run('CATALOG_PROJECTION#version-a', `GROUP#${details.group.groupId}`, 'catalog-projection', JSON.stringify(details), '00000000');
+
+    try {
+      const page = await new D1InternshipStore(sqliteD1(database)).listCatalogProjectionFiltered(undefined, 25, {
+        status: 'open', locations: ['Ithaca'],
+      });
+      expect(page?.groups).toMatchObject([{ roles: [{ jobId: 'location', locations: ['Ithaca, NY'] }] }]);
+    } finally {
+      database.close();
+    }
+  });
+
   it('filters roles in one projection query and returns a matched-page cursor', async () => {
     const details = groupCatalogJobs([
       job('software', 'Software Engineering Intern'),
