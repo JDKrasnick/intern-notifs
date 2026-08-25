@@ -34,8 +34,10 @@
     "migrate:open-index": "tsx src/migrate-open-index.ts",
     "migrate:catalog-recency": "tsx src/migrate-catalog-recency.ts",
     "audit:catalog-index": "tsx src/migrate-open-index.ts",
+    "notifications:log": "tsx scripts/notification-log.ts",
     "migrate:catalog-search": "tsx src/migrate-catalog-search.ts",
     "migrate:source-occurrences": "tsx src/migrate-source-occurrences.ts",
+    "migrate:posting-identity": "tsx src/migrate-posting-identity.ts",
     "build:browser-companion": "esbuild browser-companion/content.ts --bundle --format=iife --platform=browser --outfile=browser-companion/dist/content.js",
     "cdk": "cdk --app 'npx tsx infra/app.ts'"
   },
@@ -45,6 +47,7 @@
     "@aws-sdk/client-cloudwatch": "^3.1090.0",
     "@aws-sdk/client-s3": "^3.883.0",
     "@aws-sdk/client-sesv2": "^3.883.0",
+    "@aws-sdk/client-sns": "3.1090.0",
     "@aws-sdk/client-sqs": "3.1090.0",
     "@aws-sdk/client-ssm": "^3.883.0",
     "@aws-sdk/lib-dynamodb": "^3.883.0",

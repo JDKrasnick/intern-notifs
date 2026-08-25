@@ -29,6 +29,8 @@ export interface UserPreferences {
   userId: string;
   filter: JobFilter;
   alertsEnabled: boolean;
+  /** Email is a separate channel and is never inferred from push opt-in. */
+  emailAlertsEnabled?: boolean;
   onboardingComplete: boolean;
   /**
    * The bounded timestamp used by the signed-in launch inbox. A missing value
@@ -84,6 +86,8 @@ export interface UserDocument {
 export interface DeliveryReceipt {
   userId: string;
   jobId: string;
+  /** Hash of the strong provider posting identity; absent on legacy receipts. */
+  dedupeKey?: string;
   token: string;
   ticketId?: string;
   status: 'pending' | 'retryable' | 'ok' | 'error';
@@ -91,6 +95,8 @@ export interface DeliveryReceipt {
   lastErrorCode?: string;
   lastErrorMessage?: string;
   lastErrorAt?: string;
+  /** Provider-aware state; `status` remains during the legacy receipt migration. */
+  deliveryState?: 'claimed' | 'accepted' | 'delivered' | 'definitive-failure' | 'unknown';
   createdAt: string;
   updatedAt: string;
 }
@@ -245,6 +251,112 @@ export interface ProviderTimestamp {
   semantics: 'published' | 'updated';
 }
 
+/** Ordered from most to least authoritative for provider-neutral enrichment. */
+export type EvidenceSource =
+  | 'official-ats'
+  | 'official-json-ld'
+  | 'official-page'
+  | 'reviewed-community'
+  | 'deterministic-inference';
+
+/** A compact reference to why a field has its current value. Full descriptions are never stored here. */
+export interface FieldProvenance {
+  source: EvidenceSource;
+  sourceId: string;
+  sourceUrl?: string;
+  evidenceCode: string;
+  contentHash?: string;
+  observedAt?: string;
+}
+
+export interface ProvenancedValue<T> {
+  value: T;
+  provenance: FieldProvenance[];
+}
+
+export type InternshipProgramType = 'internship' | 'co-op' | 'apprenticeship' | 'new-grad' | 'entry-level';
+export type SeasonTerm = 'spring' | 'summer' | 'fall' | 'winter';
+export type SeasonEvidenceStatus = 'explicit' | 'inferred' | 'unspecified';
+
+export interface SeasonIdentity {
+  term?: SeasonTerm;
+  year?: number;
+  evidenceStatus: SeasonEvidenceStatus;
+  provenance: FieldProvenance[];
+}
+
+export type EducationLevel = 'undergraduate' | 'masters' | 'mba' | 'doctoral';
+export type MinimumDegree = 'none' | 'high-school' | 'associates' | 'bachelors' | 'masters' | 'doctoral';
+export type EducationEvidenceStatus = 'explicit' | 'unspecified' | 'conflicting';
+
+export interface GraduationDateWindow {
+  /** Inclusive ISO-8601 year-month (`YYYY-MM`) or date (`YYYY-MM-DD`). */
+  start?: string;
+  /** Inclusive ISO-8601 year-month (`YYYY-MM`) or date (`YYYY-MM-DD`). */
+  end?: string;
+}
+
+/**
+ * Audience and minimum qualification are deliberately separate. An empty
+ * `levels` list with `unspecified` matches every user and must be shown as
+ * "Education level not specified by employer."
+ */
+export interface EducationAudience {
+  levels: EducationLevel[];
+  graduationDateWindow?: GraduationDateWindow;
+  minimumDegree?: MinimumDegree;
+  evidenceStatus: EducationEvidenceStatus;
+  provenance: FieldProvenance[];
+}
+
+export type DisciplineTag = 'software' | 'ai-ml' | 'data' | 'infrastructure-cloud' | 'security' | 'quant' | 'product' | 'technical-design';
+export type WorkMode = 'remote' | 'hybrid' | 'onsite' | 'unspecified';
+
+export interface InternshipLocation {
+  name: string;
+  workMode: WorkMode;
+  provenance: FieldProvenance[];
+}
+
+/** Descriptive grouping identity. None of these fields alone proves an exact duplicate. */
+export interface InternshipIdentity {
+  company: {
+    canonicalId: string;
+    displayName: ProvenancedValue<string>;
+  };
+  programType: ProvenancedValue<InternshipProgramType>;
+  season: SeasonIdentity;
+  education: EducationAudience;
+  title: {
+    official: ProvenancedValue<string>;
+    display: ProvenancedValue<string>;
+    search: ProvenancedValue<string>;
+  };
+  disciplines: Array<ProvenancedValue<DisciplineTag>>;
+  locations: InternshipLocation[];
+}
+
+export type PostingProvider = 'greenhouse' | 'lever' | 'ashby' | 'workday' | 'bytedance' | 'unknown';
+export type PostingAliasKind = 'provider-posting' | 'employer-requisition' | 'provider-route' | 'official-url' | 'application-url';
+
+export interface PostingAlias {
+  kind: PostingAliasKind;
+  value: string;
+  sourceUrl?: string;
+}
+
+/** Exact requisition identity. It is intentionally independent from `InternshipIdentity`. */
+export interface PostingIdentity {
+  provider: PostingProvider;
+  tenant?: string;
+  providerPostingId?: string;
+  employerRequisitionId?: string;
+  employerRequisitionAuthoritative?: boolean;
+  canonicalApplicationUrl: string;
+  aliases: PostingAlias[];
+  canonicalJobId: string;
+}
+
 export interface Compensation {
   raw: string;
   maxHourlyUSD?: number;
@@ -321,6 +433,10 @@ export interface ProcessedListing extends SourceOccurrence {
   titleRepaired?: boolean;
   /** Whether the season came from this posting or a list-wide default. */
   seasonSource?: 'posting' | 'source-default';
+  /** Exact provider-aware identity resolved before reconciliation. */
+  postingIdentity?: PostingIdentity;
+  /** Descriptive identity used for program grouping and audience filtering. */
+  internshipIdentity?: InternshipIdentity;
 }
 
 /** @deprecated Use `ProcessedListing`; retained only while callers migrate. */
@@ -415,6 +531,10 @@ export interface Internship {
   season: string;
   applyUrl: string;
   normalizedUrl: string;
+  /** Lazily attached exact identity; absent on legacy rows. */
+  postingIdentity?: PostingIdentity;
+  /** Legacy/rollout rows may retain the earlier loose enrichment document until observed again. */
+  internshipIdentity?: InternshipIdentity | Record<string, unknown>;
   /** Present only after the official destination has resolved successfully. */
   applicationUrlValidatedAt?: string;
   /** Version of employer-page metadata extraction applied to this role. */

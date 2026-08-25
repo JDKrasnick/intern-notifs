@@ -1,6 +1,7 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
+import { createHash } from 'node:crypto';
 import { evaluateJobFilter, inferJobFocuses, type FilterMatchReason, type JobFocus } from './core/filters.js';
-import { score } from './core/normalize.js';
+import { postingIdentityKey, score } from './core/normalize.js';
 import type { DeliveryReceipt, Internship } from './types.js';
 import type { InternshipStore, UserStore } from './store.js';
 import { matchesJobFilter } from './core/filters.js';
@@ -14,7 +15,9 @@ export interface PushMessage {
   body: string;
   click?: string;
   tags?: string[];
-  data?: { destination: 'job'; jobId: string; url: string; matchedFilters: { reasons: FilterMatchReason[]; exclusionsApplied: boolean } };
+  data?:
+    | { destination: 'job'; jobId: string; url: string; matchedFilters: { reasons: FilterMatchReason[]; exclusionsApplied: boolean } }
+    | { destination: 'release'; releaseId: string; url: string };
 }
 export interface PushPublisher { publish(message: PushMessage): Promise<void>; }
 
@@ -23,12 +26,76 @@ export const MAX_LEGACY_PUSH_JOBS_PER_RUN = 10;
 
 export interface ExpoPushTicket { id?: string; status: 'ok' | 'error'; details?: { error?: string }; message?: string; }
 export const MAX_EXPO_PUSH_ATTEMPTS = 3;
+export class ExpoPushHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`Expo Push Service rejected notification with HTTP ${status}`);
+    this.name = 'ExpoPushHttpError';
+  }
+}
+
+function retryableExpoHttpStatus(status: number) {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+export type ProviderFailureKind = 'retryable' | 'definitive-failure' | 'unknown';
+
+export function classifyExpoPushFailure(error: unknown): ProviderFailureKind {
+  if (!(error instanceof ExpoPushHttpError)) return 'unknown';
+  return retryableExpoHttpStatus(error.status) ? 'retryable' : 'definitive-failure';
+}
+
+export function classifyAwsServiceFailure(error: unknown): ProviderFailureKind {
+  const status = (error as { $metadata?: { httpStatusCode?: number } } | undefined)?.$metadata?.httpStatusCode;
+  if (status === undefined) return 'unknown';
+  return retryableExpoHttpStatus(status) ? 'retryable' : 'definitive-failure';
+}
+export type NotificationDeliveryEvent = {
+  event: 'notification_sent' | 'notification_failed' | 'notification_skipped_duplicate' | 'push_receipt_confirmed' | 'push_receipt_failed';
+  occurredAt: string;
+  jobId: string;
+  recipientKey: string;
+  platform?: 'ios' | 'android';
+  company?: string;
+  title?: string;
+  renderedTitle?: string;
+  location?: string;
+  season?: string;
+  normalizedUrl?: string;
+  sourceIds?: string[];
+  reason?: string;
+};
+export type NotificationDeliveryLogger = (event: NotificationDeliveryEvent) => void;
+
+const defaultDeliveryLogger: NotificationDeliveryLogger = (event) => console.log(JSON.stringify(event));
+function recipientKey(userId: string, token: string) { return createHash('sha256').update(`${userId}\0${token}`).digest('hex').slice(0, 16); }
+export function notificationDedupeKey(job: Pick<Internship, 'jobId' | 'normalizedUrl' | 'postingIdentity'>) {
+  if (job.postingIdentity?.canonicalJobId) {
+    return createHash('sha256').update(`posting-v1:${job.postingIdentity.canonicalJobId}`).digest('hex');
+  }
+  try { return postingIdentityKey(job.normalizedUrl); }
+  catch { return createHash('sha256').update(`job:${job.jobId}`).digest('hex'); }
+}
+function emitDeliveryEvent(logger: NotificationDeliveryLogger, event: NotificationDeliveryEvent) { try { logger(event); } catch { /* Logging must never change delivery behavior. */ } }
+function deliveryContext(job: Internship, userId: string, token: string, platform: 'ios' | 'android', renderedTitle: string) {
+  return {
+    jobId: job.jobId,
+    recipientKey: recipientKey(userId, token),
+    platform,
+    company: job.company,
+    title: job.title,
+    renderedTitle,
+    location: job.location,
+    season: job.season,
+    normalizedUrl: job.normalizedUrl,
+    sourceIds: [...new Set(job.sourceReferences.map((source) => source.sourceId))].sort(),
+  };
+}
 /** Minimal Expo Push Service client: Expo handles APNs/FCM credential delivery. */
 export class ExpoPushPublisher {
   constructor(private readonly endpoint = 'https://exp.host/--/api/v2/push/send', private readonly fetcher: typeof fetch = fetch) {}
   async publish(token: string, message: PushMessage): Promise<ExpoPushTicket> {
     const response = await this.fetcher(this.endpoint, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ to: token, sound: 'default', priority: 'high', title: message.title, body: message.body, data: message.data ?? { jobId: message.click }, channelId: 'job-alerts' }), signal: AbortSignal.timeout(PUSH_REQUEST_TIMEOUT_MS) });
-    if (!response.ok) throw new Error(`Expo Push Service rejected notification with HTTP ${response.status}`);
+    if (!response.ok) throw new ExpoPushHttpError(response.status);
     const body = await response.json() as { data?: ExpoPushTicket | ExpoPushTicket[] };
     const ticket = Array.isArray(body.data) ? body.data[0] : body.data;
     if (!ticket) throw new Error('Expo Push Service returned no ticket');
@@ -62,35 +129,68 @@ function nativePushMessage(job: Internship, filter: Parameters<typeof evaluateJo
  * Delivers each new listing to matching opted-in users. Receipts are written before
  * sending so a poll retry cannot fan out duplicate pushes to the same device.
  */
-export async function sendNewJobNotifications(jobs: Internship[], users: UserStore, publisher: ExpoPushPublisher, now: () => Date = () => new Date()): Promise<{ sent: number; skipped: number; failed: number }> {
+export async function sendNewJobNotifications(
+  jobs: Internship[],
+  users: UserStore,
+  publisher: ExpoPushPublisher,
+  now: () => Date = () => new Date(),
+  logger: NotificationDeliveryLogger = defaultDeliveryLogger,
+  options: { excludeUserIds?: ReadonlySet<string>; excludeAllUsers?: boolean } = {},
+): Promise<{ sent: number; skipped: number; failed: number }> {
   let sent = 0; let skipped = 0; let failed = 0;
   const devices = await users.activeDevices();
   const preferences = new Map<string, Awaited<ReturnType<UserStore['getPreferences']>>>();
   for (const job of jobs) for (const device of devices) {
+    if (options.excludeAllUsers || options.excludeUserIds?.has(device.userId)) { skipped += 1; continue; }
     let preference = preferences.get(device.userId);
     if (!preference) { preference = await users.getPreferences(device.userId); preferences.set(device.userId, preference); }
     if (!preference?.alertsEnabled || !preference.onboardingComplete || !matchesJobFilter(job, preference.filter)) { skipped += 1; continue; }
-    const existing = await users.getReceipt(device.userId, job.jobId, device.token);
-    if (existing?.status === 'ok' || existing?.status === 'pending' || existing?.status === 'retryable') { skipped += 1; continue; }
-    const timestamp = now().toISOString(); const receipt: DeliveryReceipt = { userId: device.userId, jobId: job.jobId, token: device.token, status: 'pending', attempts: (existing?.attempts ?? 0) + 1, createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp };
-    await users.putReceipt(receipt);
+    const message = nativePushMessage(job, preference.filter, preference.push);
+    const context = deliveryContext(job, device.userId, device.token, device.platform, message.title);
+    const dedupeKey = notificationDedupeKey(job);
+    // Check the old job-ID key during the rolling migration so a previously
+    // delivered role is not resent merely because its receipt key was hardened.
+    const existing = await users.getReceipt(device.userId, dedupeKey, device.token)
+      ?? await users.getReceipt(device.userId, job.jobId, device.token);
+    if (existing?.status === 'ok' || existing?.status === 'pending' || existing?.deliveryState === 'definitive-failure') {
+      emitDeliveryEvent(logger, { event: 'notification_skipped_duplicate', occurredAt: now().toISOString(), ...context, reason: `existing_${existing.status}_receipt` });
+      skipped += 1; continue;
+    }
+    const timestamp = now().toISOString(); const receipt: DeliveryReceipt = { userId: device.userId, jobId: job.jobId, dedupeKey, token: device.token, status: 'pending', attempts: (existing?.attempts ?? 0) + 1, deliveryState: 'claimed', createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp };
+    if (!await users.claimReceipt(receipt)) {
+      emitDeliveryEvent(logger, { event: 'notification_skipped_duplicate', occurredAt: now().toISOString(), ...context, reason: 'concurrent_delivery_claim' });
+      skipped += 1; continue;
+    }
     try {
-      const ticket = await publisher.publish(device.token, nativePushMessage(job, preference.filter, preference.push));
-      // A successful Expo response without a ticket cannot be reconciled; leave it retryable.
-      const status = ticket.status === 'ok' && ticket.id ? 'pending' : 'error';
-      const respondedAt = now().toISOString();
+      const ticket = await publisher.publish(device.token, message);
+      // An ok response without a ticket is ambiguous: Expo may have accepted it,
+      // so the permanent claim remains but automated delivery never retries it.
+      const accepted = ticket.status === 'ok' && Boolean(ticket.id);
+      const ambiguous = ticket.status === 'ok' && !ticket.id;
+      const status = accepted || ambiguous ? 'pending' : 'error';
+      await users.putReceipt({ ...receipt, ticketId: ticket.id, status, deliveryState: accepted ? 'accepted' : ambiguous ? 'unknown' : 'definitive-failure', updatedAt: now().toISOString() });
+      if (accepted) { emitDeliveryEvent(logger, { event: 'notification_sent', occurredAt: now().toISOString(), ...context }); sent += 1; }
+      else {
+        emitDeliveryEvent(logger, { event: 'notification_failed', occurredAt: now().toISOString(), ...context, reason: ambiguous ? 'ambiguous_provider_acceptance' : ticket.details?.error ?? ticket.message ?? 'expo_ticket_error' });
+        failed += 1; if (ticket.details?.error === 'DeviceNotRegistered') await users.putDevice({ ...device, active: false, updatedAt: now().toISOString() });
+      }
+    } catch (error) {
+      const failure = classifyExpoPushFailure(error);
+      const explicitHttpFailure = failure !== 'unknown';
+      const retryable = failure === 'retryable' && (receipt.attempts ?? 1) < MAX_EXPO_PUSH_ATTEMPTS;
+      // Timeouts and connection failures cannot prove whether Expo accepted the
+      // request. Explicit HTTP responses did not yield a ticket and are safe to
+      // classify for bounded retry or permanent rejection.
       await users.putReceipt({
         ...receipt,
-        ticketId: ticket.id,
-        status: status === 'error' && ticket.details?.error !== 'DeviceNotRegistered' ? 'retryable' : status,
-        ...(status === 'error' ? { lastErrorCode: ticket.details?.error ?? 'ExpoRejected', lastErrorMessage: ticket.message?.slice(0, 500), lastErrorAt: respondedAt } : {}),
-        updatedAt: respondedAt,
+        status: explicitHttpFailure ? retryable ? 'retryable' : 'error' : 'pending',
+        deliveryState: explicitHttpFailure ? retryable ? 'claimed' : 'definitive-failure' : 'unknown',
+        lastErrorCode: error instanceof ExpoPushHttpError ? `ExpoHttp${error.status}` : 'TransportAmbiguous',
+        lastErrorMessage: (error instanceof Error ? error.message : String(error)).slice(0, 500),
+        lastErrorAt: now().toISOString(),
+        updatedAt: now().toISOString(),
       });
-      if (status === 'pending') sent += 1;
-      else { failed += 1; if (ticket.details?.error === 'DeviceNotRegistered') await users.putDevice({ ...device, active: false, updatedAt: now().toISOString() }); }
-    } catch (error) {
-      const failedAt = now().toISOString();
-      await users.putReceipt({ ...receipt, status: 'retryable', lastErrorCode: 'TransportError', lastErrorMessage: (error instanceof Error ? error.message : String(error)).slice(0, 500), lastErrorAt: failedAt, updatedAt: failedAt });
+      emitDeliveryEvent(logger, { event: 'notification_failed', occurredAt: now().toISOString(), ...context, reason: error instanceof Error ? error.message.slice(0, 240) : 'unknown_transport_error' });
       failed += 1;
     }
   }
@@ -98,29 +198,47 @@ export async function sendNewJobNotifications(jobs: Internship[], users: UserSto
 }
 
 /** Expo tickets are accepted asynchronously; this reconciliation deactivates invalid tokens. */
-export async function inspectExpoPushReceipts(users: UserStore, publisher: ExpoPushPublisher, now: () => Date = () => new Date()): Promise<{ ok: number; invalid: number; retryable: number; pending: number }> {
+export async function inspectExpoPushReceipts(users: UserStore, publisher: ExpoPushPublisher, now: () => Date = () => new Date(), logger: NotificationDeliveryLogger = defaultDeliveryLogger): Promise<{ ok: number; invalid: number; retryable: number; pending: number }> {
   const receipts = await users.pendingReceipts(); const byId = await publisher.receipts(receipts.map((receipt) => receipt.ticketId).filter((id): id is string => Boolean(id))); let ok = 0; let invalid = 0; let pending = 0;
-  let retryable = 0;
+  const retryable = 0;
   for (const receipt of receipts) {
     const result = receipt.ticketId ? byId[receipt.ticketId] : undefined;
     if (!result) { pending += 1; continue; }
-    if (result.status === 'ok') { await users.putReceipt({ ...receipt, status: 'ok', updatedAt: now().toISOString() }); ok += 1; continue; }
-    const failedAt = now().toISOString();
-    const terminal = result.details?.error === 'DeviceNotRegistered' || (receipt.attempts ?? 1) >= MAX_EXPO_PUSH_ATTEMPTS;
-    await users.putReceipt({ ...receipt, status: terminal ? 'error' : 'retryable', lastErrorCode: result.details?.error ?? 'ExpoReceiptError', lastErrorMessage: result.message?.slice(0, 500), lastErrorAt: failedAt, updatedAt: failedAt });
+    if (result.status === 'ok') { await users.putReceipt({ ...receipt, status: 'ok', deliveryState: 'delivered', updatedAt: now().toISOString() }); emitDeliveryEvent(logger, { event: 'push_receipt_confirmed', occurredAt: now().toISOString(), jobId: receipt.jobId, recipientKey: recipientKey(receipt.userId, receipt.token) }); ok += 1; continue; }
+    await users.putReceipt({ ...receipt, status: 'error', deliveryState: 'definitive-failure', updatedAt: now().toISOString() });
+    emitDeliveryEvent(logger, { event: 'push_receipt_failed', occurredAt: now().toISOString(), jobId: receipt.jobId, recipientKey: recipientKey(receipt.userId, receipt.token), reason: result.details?.error ?? result.message ?? 'expo_receipt_error' });
     if (result.details?.error === 'DeviceNotRegistered') {
       const device = (await users.activeDevices()).find((candidate) => candidate.userId === receipt.userId && candidate.token === receipt.token);
       if (device) await users.putDevice({ ...device, active: false, updatedAt: now().toISOString() });
       invalid += 1;
-    } else if (!terminal) retryable += 1;
+    }
   }
   return { ok, invalid, retryable, pending };
 }
 
-export async function retryExpoPushNotifications(jobs: InternshipStore, users: UserStore, publisher: ExpoPushPublisher, now: () => Date = () => new Date()): Promise<{ sent: number; skipped: number; failed: number }> {
+export async function retryExpoPushNotifications(
+  jobs: InternshipStore,
+  users: UserStore,
+  publisher: ExpoPushPublisher,
+  now: () => Date = () => new Date(),
+  options: { excludeUserIds?: ReadonlySet<string>; excludeAllUsers?: boolean } = {},
+): Promise<{ sent: number; skipped: number; failed: number }> {
   let sent = 0; let skipped = 0; let failed = 0;
   const devices = new Map((await users.activeDevices()).map((device) => [`${device.userId}\u0000${device.token}`, device]));
   for (const receipt of await users.retryableReceipts()) {
+    if (options.excludeAllUsers || options.excludeUserIds?.has(receipt.userId)) {
+      await users.putReceipt({
+        ...receipt,
+        status: 'error',
+        deliveryState: 'definitive-failure',
+        lastErrorCode: 'GroupedPipelineCohort',
+        lastErrorMessage: 'Legacy retry suppressed after grouped delivery activation',
+        lastErrorAt: now().toISOString(),
+        updatedAt: now().toISOString(),
+      });
+      skipped += 1;
+      continue;
+    }
     const attempts = receipt.attempts ?? 1;
     const job = await jobs.getJob(receipt.jobId);
     const preference = await users.getPreferences(receipt.userId);
@@ -141,6 +259,7 @@ export async function retryExpoPushNotifications(jobs: InternshipStore, users: U
         ticketId: ticket.id,
         attempts: attempts + 1,
         status: accepted ? 'pending' : invalid || attempts + 1 >= MAX_EXPO_PUSH_ATTEMPTS ? 'error' : 'retryable',
+        deliveryState: accepted ? 'accepted' : invalid || attempts + 1 >= MAX_EXPO_PUSH_ATTEMPTS ? 'definitive-failure' : 'claimed',
         ...(!accepted ? { lastErrorCode: ticket.details?.error ?? 'ExpoRejected', lastErrorMessage: ticket.message?.slice(0, 500), lastErrorAt: attemptedAt } : {}),
         updatedAt: attemptedAt,
       });
@@ -150,7 +269,19 @@ export async function retryExpoPushNotifications(jobs: InternshipStore, users: U
         failed += 1;
       }
     } catch (error) {
-      await users.putReceipt({ ...receipt, attempts: attempts + 1, status: attempts + 1 >= MAX_EXPO_PUSH_ATTEMPTS ? 'error' : 'retryable', lastErrorCode: 'TransportError', lastErrorMessage: (error instanceof Error ? error.message : String(error)).slice(0, 500), lastErrorAt: attemptedAt, updatedAt: attemptedAt });
+      const failure = classifyExpoPushFailure(error);
+      const explicitHttpFailure = failure !== 'unknown';
+      const retryable = failure === 'retryable' && attempts + 1 < MAX_EXPO_PUSH_ATTEMPTS;
+      await users.putReceipt({
+        ...receipt,
+        attempts: attempts + 1,
+        status: explicitHttpFailure ? retryable ? 'retryable' : 'error' : 'pending',
+        deliveryState: explicitHttpFailure ? retryable ? 'claimed' : 'definitive-failure' : 'unknown',
+        lastErrorCode: error instanceof ExpoPushHttpError ? `ExpoHttp${error.status}` : 'TransportAmbiguous',
+        lastErrorMessage: (error instanceof Error ? error.message : String(error)).slice(0, 500),
+        lastErrorAt: attemptedAt,
+        updatedAt: attemptedAt,
+      });
       failed += 1;
     }
   }

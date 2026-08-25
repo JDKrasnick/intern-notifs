@@ -47,9 +47,9 @@ describe('a full day of internship discovery', () => {
       role(6, 'QuantCo', 'Quantitative Trading Intern', 'New York, NY', 'https://careers.example.test/quantco/trading'),
     ];
     const secondaryCopies = [
-      role(7, 'Northstar, Inc.', 'Full Stack Software Engineer Intern', 'NYC', 'https://boards.example.test/northstar/full-stack'),
-      role(8, 'ModelWorks Incorporated', 'Machine Learning Internship', 'Remote US', 'https://boards.example.test/modelworks/ml'),
-      role(9, 'QuantCo Corp.', 'Quantitative Trading Internship', 'New York City', 'https://boards.example.test/quantco/trading'),
+      role(7, 'Northstar, Inc.', 'Full Stack Software Engineer Intern', 'NYC', 'https://careers.example.test/northstar/full-stack?utm_source=secondary'),
+      role(8, 'ModelWorks Incorporated', 'Machine Learning Internship', 'Remote US', 'https://careers.example.test/modelworks/ml?utm_source=secondary'),
+      role(9, 'QuantCo Corp.', 'Quantitative Trading Internship', 'New York City', 'https://careers.example.test/quantco/trading?utm_source=secondary'),
     ].map((listing) => ({ ...listing, sourceId: 'secondary', document: 'OFFSEASON.md' }));
     const discovered = await new Poller([new Adapter('primary', midday), new Adapter('secondary', secondaryCopies)], jobs, at('2026-07-19T12:00:00.000Z')).poll();
     expect(discovered.failures).toEqual([]);

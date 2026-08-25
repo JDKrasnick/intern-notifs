@@ -150,6 +150,93 @@ baseline roles. Also verify a signed-in opening interval does not return any
 repaired baseline job IDs. Production execution is an operator action separate
 from deployment and this code change.
 
+### Posting identity, receipt, and grouped-catalog migration
+
+Run this guarded migration before enabling the grouped notification stream for
+existing users. It scans open catalog roles and every retained delivery receipt,
+claims only exact provider/URL aliases, consolidates exact duplicate open rows,
+rewrites affected source-occurrence job IDs, and copies receipt tombstones to
+the hardened posting key. It also indexes existing opted-in preferences for the
+grouped release workers. The migration never creates an outbox event and never
+sends a notification.
+
+Validate the assumed role first, then export both physical table names. The
+default command is read-only:
+
+```bash
+AWS_PROFILE=intern-notifs aws sts get-caller-identity
+export AWS_PROFILE=intern-notifs
+export INTERNSHIPS_TABLE="$(aws cloudformation describe-stacks --stack-name InternNotifs --query 'Stacks[0].Outputs[?OutputKey==`InternshipsTableName`].OutputValue | [0]' --output text)"
+export USERS_TABLE="$(aws cloudformation describe-stacks --stack-name InternNotifs --query 'Stacks[0].Outputs[?OutputKey==`UserDataTableName`].OutputValue | [0]' --output text)"
+AWS_PROFILE=intern-notifs npm run migrate:posting-identity
+```
+
+Review every reported conflict and the exact duplicate count. Do not apply with
+any conflicts. Apply only with the deterministic token from that same dry run:
+
+```bash
+AWS_PROFILE=intern-notifs npm run migrate:posting-identity -- \
+  --apply --expected-repair-token EXACT_TOKEN
+```
+
+The apply is idempotent: alias claims converge on the preserved oldest job,
+colliding receipt rows select the strongest delivery tombstone deterministically,
+and legacy receipt rows remain available during rollback. Application collisions
+retain the furthest workflow state rather than allowing a newer saved/applied
+alias to erase interview or offer progress. Catalog rewrites and duplicate
+deletes are conditional on the dry-run snapshot, so concurrent ingestion stops
+the apply and requires a fresh token instead of being overwritten. After the infrastructure deployment,
+wait for `CatalogGroupProjectionSchedule` or invoke the notifier once with
+`{"command":"refresh-catalog-groups"}`. Verify `GET /catalog?limit=1` and one
+returned `/catalog/groups/{groupId}` before enabling an owner cohort.
+Set the deployment parameter to a comma-separated list of reviewed Cognito user
+IDs for that cohort. The main stack publishes the same versioned cohort to
+`/intern-notifs/grouped-notification-user-ids`; the Greenhouse, Lever, and Ashby
+workers read that parameter so a cohort user cannot receive both legacy and
+grouped delivery. Leave it blank to keep every user on legacy delivery; use `*`
+only after cohort measurement approves the global cutover. Every legacy and
+grouped sender reads this same SSM value at runtime. First deploy the new code
+with an empty cohort, then deploy all three provider stacks. Wait for in-flight
+poll and delivery queues to drain before the final parameter-only activation so
+one discovery event cannot straddle the cohort boundary:
+
+```bash
+npm run cdk -- deploy InternNotifs --parameters GroupedNotificationUserIds=
+npm run cdk -- deploy InternNotifsGreenhouse InternNotifsLever InternNotifsAshby
+npm run cdk -- deploy InternNotifs --parameters GroupedNotificationUserIds=OWNER_COGNITO_USER_ID
+```
+
+## Notification delivery log
+
+Delivery receipts are the durable record of attempted Expo pushes. Reconstruct
+the privacy-safe delivery timeline by resolving the retained tables from the
+`InternNotifs` stack, then running:
+
+```bash
+export AWS_PROFILE=intern-notifs
+export INTERNSHIPS_TABLE="$(aws cloudformation describe-stacks --stack-name InternNotifs --query 'Stacks[0].Outputs[?OutputKey==`InternshipsTableName`].OutputValue | [0]' --output text)"
+export USERS_TABLE="$(aws cloudformation describe-stacks --stack-name InternNotifs --query 'Stacks[0].Outputs[?OutputKey==`UserDataTableName`].OutputValue | [0]' --output text)"
+npm run notifications:log -- --since 2026-08-11T00:00:00.000Z
+```
+
+Use `--company TikTok` for a case-insensitive company filter and `--limit 100`
+to bound returned entries. The report includes current receipt status, the full
+role identity, the title users saw, source IDs, strong duplicate application
+identities, softer cross-location role families, and repeated rendered titles.
+It deliberately excludes user IDs, push tokens, and Expo ticket IDs.
+
+New deployments also emit structured `notification_sent`,
+`notification_failed`, `notification_skipped_duplicate`,
+`push_receipt_confirmed`, and `push_receipt_failed` CloudWatch events. The
+`recipientKey` is a short one-way hash used only to correlate delivery events.
+
+Delivery deduplication uses a confidence ladder. Known Greenhouse, Lever,
+Ashby, Workday, TikTok, and ByteDance URLs are keyed by provider and immutable
+posting ID, then protected by a conditional DynamoDB claim. Unknown providers
+fall back to the fully normalized application URL. Employer/title/season role
+families intentionally remain diagnostic-only so regional requisitions are not
+silently discarded.
+
 ## AWS deployment
 
 Use the configured `intern-notifs` assumed role from the AWS CLI. Confirm the active identity before every deployment:

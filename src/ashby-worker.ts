@@ -9,6 +9,7 @@ import { DynamoInternshipStore, DynamoUserStore, type InternshipStore, type User
 import type { SourceCheckpoint, SourceFetchResult } from './types.js';
 import type { AshbyWorkMessage } from './ashby-dispatch.js';
 import { processFifoBatch } from './sqs-fifo-batch.js';
+import { legacyDeliveryExclusions, loadGroupedNotificationCohort, type GroupedNotificationCohort } from './grouped-notification-cohort.js';
 
 const SHADOW_CHECKPOINT_PREFIX = 'shadow-';
 const SHADOW_LINK_CONCURRENCY = 4;
@@ -43,6 +44,7 @@ export interface AshbyBoardDependencies {
   sources?: ReviewedAshbySource[];
   fetchImpl?: typeof fetch;
   linkValidator?: ApplicationUrlValidator;
+  groupedNotificationCohort?: GroupedNotificationCohort;
   sleep?: (milliseconds: number) => Promise<void>;
 }
 
@@ -324,6 +326,9 @@ export async function runAshbyBoard(
       poll.newJobs.filter((job) => job.technical !== false),
       dependencies.userStore,
       dependencies.publisher ?? new ExpoPushPublisher(),
+      undefined,
+      undefined,
+      legacyDeliveryExclusions(dependencies.groupedNotificationCohort ?? new Set()),
     )
     : { sent: 0, skipped: 0, failed: 0 };
   return {
@@ -371,8 +376,11 @@ export async function handler(
   const tableName = process.env.INTERNSHIPS_TABLE;
   const usersTable = process.env.USERS_TABLE;
   if (!tableName || !usersTable) throw new Error('INTERNSHIPS_TABLE and USERS_TABLE are required');
+  const cohortParameterName = process.env.GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME;
+  if (!cohortParameterName) throw new Error('GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME is required');
   return processAshbyQueue(event, {
     store: new DynamoInternshipStore(tableName),
     userStore: new DynamoUserStore(usersTable),
+    groupedNotificationCohort: await loadGroupedNotificationCohort(cohortParameterName),
   }, context);
 }

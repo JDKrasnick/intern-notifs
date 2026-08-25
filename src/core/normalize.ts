@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { Compensation } from '../types.js';
 import { companyWeight } from '../config/weights.js';
+import { canonicalizePostingUrl, exactPostingKey } from '../identity/posting.js';
 
-const tracking = new Set(['fbclid', 'gclid', 'mc_cid', 'mc_eid', 'ref', 'source', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content']);
 const clean = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
 const corporateSuffixes = new Set(['co', 'company', 'corp', 'corporation', 'inc', 'incorporated', 'limited', 'llc', 'ltd', 'plc']);
 
@@ -15,7 +15,7 @@ const corporateSuffixes = new Set(['co', 'company', 'corp', 'corporation', 'inc'
 function identityTerms(value: string) {
   return value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
 }
-function canonicalCompany(value: string) {
+export function canonicalCompanyKey(value: string) {
   const terms = identityTerms(value);
   while (terms.length > 1 && corporateSuffixes.has(terms.at(-1)!)) terms.pop();
   return terms.join(' ');
@@ -34,16 +34,29 @@ function canonicalLocation(value: string) {
 function canonicalSeason(value: string) { return identityTerms(value).join(' '); }
 
 export function normalizeUrl(input: string): string {
-  const url = new URL(input.trim());
-  url.hostname = url.hostname.toLowerCase();
-  url.hash = '';
-  for (const key of [...url.searchParams.keys()]) if (tracking.has(key.toLowerCase()) || key.toLowerCase().startsWith('utm_')) url.searchParams.delete(key);
-  url.searchParams.sort();
-  return url.toString().replace(/\/$/, '');
+  return canonicalizePostingUrl(input);
+}
+
+/**
+ * Strong identity for one application posting. Known ATS routes use their
+ * immutable posting ID; unknown providers fall back to the normalized URL.
+ * This intentionally does not use title or location similarity.
+ */
+export function postingIdentity(input: string): string {
+  return exactPostingKey(input);
+}
+
+export function postingIdentityKey(input: string): string {
+  return createHash('sha256').update(postingIdentity(input)).digest('hex');
 }
 
 export function fingerprint(company: string, title: string, location: string, season: string): string {
-  return createHash('sha256').update([canonicalCompany(company), canonicalTitle(title), canonicalLocation(location), canonicalSeason(season)].join('|')).digest('hex');
+  return createHash('sha256').update([canonicalCompanyKey(company), canonicalTitle(title), canonicalLocation(location), canonicalSeason(season)].join('|')).digest('hex');
+}
+
+/** Soft grouping key for operator review; never sufficient for a hard merge. */
+export function roleFamilyFingerprint(company: string, title: string, season: string): string {
+  return createHash('sha256').update([canonicalCompanyKey(company), canonicalTitle(title), canonicalSeason(season)].join('|')).digest('hex');
 }
 
 /** A migration-safe lookup order for records written before canonical role identity keys. */

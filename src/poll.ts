@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { assessApplicationPageForListing, canonicalApplicationUrl, type ApplicationUrlValidator } from './core/application-url.js';
 import { boardReference, reachabilityFromFailure, reachabilityFromSignals, verifyApplication, type AttributionBasis, type Reachability } from './core/application-verification.js';
 import { inferSeason } from './core/early-career.js';
-import { fingerprintCandidates, normalizeUrl } from './core/normalize.js';
+import { normalizeUrl } from './core/normalize.js';
+import { buildPostingIdentity } from './identity/posting.js';
 import { isTechnicalJob, type JobFilter } from './core/filters.js';
 import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
 import { evaluateSourceFreshness } from './ingestion/monitoring.js';
@@ -354,11 +355,23 @@ export class IngestionRunner {
       let validatingLink = false;
       try {
         const normalizedUrl = normalizeUrl(listing.applyUrl);
+        const identity = buildPostingIdentity({ applicationUrl: listing.applyUrl });
+        // A legacy row may be adopted only through its exact canonical URL.
+        // Title/location fingerprints are search hints, not proof that two
+        // employer requisitions are the same posting.
         existing = await this.store.findByUrl(normalizedUrl);
-        for (const candidate of fingerprintCandidates(listing.company, listing.title, listing.location, listing.season)) {
-          if (existing) break;
-          existing = await this.store.findByFingerprint(candidate);
+        const identityResolution = await this.store.claimPostingIdentity(identity, existing?.jobId);
+        if (identityResolution.outcome === 'quarantine') {
+          failures[slot] = `${listing.sourceId}: row ${listing.row}: posting identity conflict (${identityResolution.reason})`;
+          return;
         }
+        if (!existing || existing.jobId !== identityResolution.canonicalJobId) {
+          existing = await this.store.getJob(identityResolution.canonicalJobId);
+        }
+        listing = {
+          ...listing,
+          postingIdentity: { ...identity, canonicalJobId: identityResolution.canonicalJobId },
+        };
         const attribution = await this.attribute(listing);
         if (listing.seasonSource === 'source-default'
           && existing?.applicationPageMetadataVersion === applicationPageMetadataVersion) {

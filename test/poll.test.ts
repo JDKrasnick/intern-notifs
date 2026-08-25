@@ -63,10 +63,27 @@ describe('polling', () => {
     await new Poller([new Adapter('two', [listing('https://jobs.example.com/a?utm_source=two', 'two')])], store).poll();
     expect(store.jobs.size).toBe(1); expect([...store.jobs.values()][0].sourceReferences).toHaveLength(2);
   });
-  it('uses the company/title/location/season fingerprint when apply URLs differ', async () => {
+  it('keeps evidence-poor roles separate when their apply URLs differ', async () => {
     const store = new MemoryInternshipStore(); await new Poller([new Adapter('one', [listing('https://jobs.example.com/a')])], store).poll();
     await new Poller([new Adapter('two', [listing('https://careers.example.net/a', 'two')])], store).poll();
+    expect(store.jobs.size).toBe(2);
+  });
+  it('keeps distinct provider requisitions even when every display field matches', async () => {
+    const store = new MemoryInternshipStore();
+    await new Poller([new Adapter('one', [listing('https://job-boards.greenhouse.io/acme/jobs/100')])], store).poll();
+    await new Poller([new Adapter('two', [listing('https://job-boards.greenhouse.io/acme/jobs/101', 'two')])], store).poll();
+    expect(store.jobs.size).toBe(2);
+    expect([...store.jobs.values()].map((job) => job.postingIdentity?.providerPostingId).sort()).toEqual(['100', '101']);
+  });
+  it('converges reviewed URL variants on one provider posting identity', async () => {
+    const store = new MemoryInternshipStore();
+    await new Poller([new Adapter('one', [listing('https://boards.greenhouse.io/acme?gh_jid=100')])], store).poll();
+    await new Poller([new Adapter('two', [listing('https://job-boards.greenhouse.io/acme/jobs/100', 'two')])], store).poll();
     expect(store.jobs.size).toBe(1);
+    expect([...store.jobs.values()][0]).toMatchObject({
+      postingIdentity: { provider: 'greenhouse', tenant: 'acme', providerPostingId: '100' },
+      sourceReferences: [{ sourceId: 'one' }, { sourceId: 'two' }],
+    });
   });
   it('persists TikTok source aliases as their canonical job URL', async () => {
     const store = new MemoryInternshipStore();
