@@ -11,9 +11,9 @@
 		335BB01F3D7D3EF625AA7BF6 /* libPods-InternNotifs.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 54EF93FF1D99C8BE49720EB3 /* libPods-InternNotifs.a */; };
 		358A7AD49E74F1FB6BACDDBD /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E928E35E4272D40FACEEB19 /* ExpoModulesProvider.swift */; };
 		3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */; };
+		A92F48AA2F4C40B28ECA1001 /* TextInputRecyclingFix.mm in Sources */ = {isa = PBXBuildFile; fileRef = A92F48AA2F4C40B28ECA1002 /* TextInputRecyclingFix.mm */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
-		A92F48AA2F4C40B28ECA1001 /* TextInputRecyclingFix.mm in Sources */ = {isa = PBXBuildFile; fileRef = A92F48AA2F4C40B28ECA1002 /* TextInputRecyclingFix.mm */; };
 		FBD92BC895F35CC739BEC3DC /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9F9DFBFF48DAD7FF71CC2236 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
@@ -26,12 +26,12 @@
 		54EF93FF1D99C8BE49720EB3 /* libPods-InternNotifs.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-InternNotifs.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		5B393D431E1D4E4557DA6783 /* Pods-InternNotifs.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-InternNotifs.release.xcconfig"; path = "Target Support Files/Pods-InternNotifs/Pods-InternNotifs.release.xcconfig"; sourceTree = "<group>"; };
 		9F9DFBFF48DAD7FF71CC2236 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = InternNotifs/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A92F48AA2F4C40B28ECA1002 /* TextInputRecyclingFix.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = TextInputRecyclingFix.mm; path = InternNotifs/TextInputRecyclingFix.mm; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = InternNotifs/SplashScreen.storyboard; sourceTree = "<group>"; };
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = InternNotifs/AppDelegate.swift; sourceTree = "<group>"; };
 		F11748442D0722820044C1D9 /* InternNotifs-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "InternNotifs-Bridging-Header.h"; path = "InternNotifs/InternNotifs-Bridging-Header.h"; sourceTree = "<group>"; };
-		A92F48AA2F4C40B28ECA1002 /* TextInputRecyclingFix.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = TextInputRecyclingFix.mm; path = InternNotifs/TextInputRecyclingFix.mm; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
