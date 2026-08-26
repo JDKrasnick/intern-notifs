@@ -15,6 +15,7 @@ import { reviewedLeverSources } from '../src/sources/lever-config.js';
 import { defaultSources } from '../src/sources/index.js';
 import type { SourceCheckpoint, SourceHealth } from '../src/types.js';
 import { authenticatedInstallation, authenticatedUser, cleanupExpiredAuth, consumeAuthRateLimit, createInstallation, deleteAuthUser, handleAuthRequest, type AuthEnvironment } from './auth.js';
+import { runCatalogQualityBackfill } from '../src/catalog-quality-backfill.js';
 import { D1InternshipStore, D1ReleaseStore, D1UserStore } from './d1-store.js';
 import { queueHasBacklog } from './queue-backlog.js';
 import type { MessageBatch, Queue, R2Bucket, ScheduledController } from './types.js';
@@ -280,6 +281,21 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
       return withCors(Response.json({ ...result, applied: apply }));
     } catch (error) {
       return withCors(Response.json({ message: error instanceof Error ? error.message : 'Notification recovery failed' }, { status: 409 }));
+    }
+  }
+  if (request.method === 'POST' && url.pathname === '/internal/catalog-quality-backfill') {
+    if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
+    const input = await request.json().catch(() => ({})) as { apply?: boolean; repairToken?: string; expectedChanged?: number };
+    try {
+      const report = await runCatalogQualityBackfill(env.DB, input);
+      if (input.apply && report.projectionRefreshRequired) {
+        await refreshCatalogProjection(new D1InternshipStore(env.DB));
+        const verified = await runCatalogQualityBackfill(env.DB);
+        return withCors(Response.json({ ...report, verification: verified }));
+      }
+      return withCors(Response.json(report, { status: report.conflicts.length ? 409 : 200 }));
+    } catch (error) {
+      return withCors(Response.json({ message: error instanceof Error ? error.message : 'Backfill failed' }, { status: 409 }));
     }
   }
   if (request.method === 'POST' && url.pathname === '/internal/poll-source') {

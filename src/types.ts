@@ -359,7 +359,10 @@ export interface PostingIdentity {
 
 export interface Compensation {
   raw: string;
+  minHourlyUSD?: number;
   maxHourlyUSD?: number;
+  minAnnualUSD?: number;
+  maxAnnualUSD?: number;
 }
 
 /** Source-declared constraints; absence never implies that a constraint does not exist. */
@@ -375,6 +378,7 @@ export interface SourceOccurrence extends SourceReference {
   company: string;
   title: string;
   location: string;
+  locations?: string[];
   season: string;
   applyUrl: string;
   compensation: Compensation;
@@ -528,6 +532,7 @@ export interface Internship {
   company: string;
   title: string;
   location: string;
+  locations?: string[];
   season: string;
   applyUrl: string;
   normalizedUrl: string;
