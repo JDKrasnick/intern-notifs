@@ -1619,6 +1619,15 @@ function LaunchInbox({
           />
         );
       }}
+      ListFooterComponent={
+        <TouchableOpacity
+          accessibilityRole="button"
+          onPress={onViewAll}
+          style={[styles.inboxViewAll, styles.inboxViewAllFooter]}
+        >
+          <Text style={styles.inboxViewAllText}>View all internships</Text>
+        </TouchableOpacity>
+      }
     />
   );
   return (
@@ -2053,6 +2062,10 @@ function AppContent() {
   const catalogRequestGeneration = useRef(0);
   const catalogRequestInFlight = useRef(false);
   const groupRequestGuard = useRef(createLatestRequestGuard());
+  const changeTab = (nextTab: "feed" | "saved" | "profile") => {
+    setTab(nextTab);
+    if (nextTab === "feed") setShowLaunchInbox(false);
+  };
   const clearPrivateState = () => {
     privateRequestId.current += 1;
     setPreferences(undefined);
@@ -2727,7 +2740,7 @@ function AppContent() {
   return (
     <SafeAreaView style={styles.screen}>
       <View style={[styles.appShell, usesNavigationRail && styles.appShellWide]}>
-        {usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} rail /> : null}
+        {usesNavigationRail ? <TabNavigation active={tab} onChange={changeTab} rail /> : null}
         <View style={styles.appMain}>
           {tab === "feed" ? (
             launchInbox && showLaunchInbox ? (
@@ -2796,7 +2809,7 @@ function AppContent() {
             />
           )}
         </View>
-        {!usesNavigationRail ? <TabNavigation active={tab} onChange={setTab} /> : null}
+        {!usesNavigationRail ? <TabNavigation active={tab} onChange={changeTab} /> : null}
       </View>
       <JobDetailSheet
         job={selectedJob}

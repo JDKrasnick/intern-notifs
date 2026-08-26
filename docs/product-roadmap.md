@@ -46,6 +46,7 @@
 - [x] Add signed-in swipe-left save for later, synced to the responsive web Saved queue and official-form handoff.
 - [x] Add local swipe-right hide with Undo and Profile-based restore.
 - [x] Add cursor-based endless scrolling through every role in the selected availability catalog.
+- [x] Let notification recipients leave grouped new-match releases for the full catalog from either the release footer or the Roles tab.
 - [x] Repair catalog index drift and add a guarded operator repair, daily full-table invariant audit, metric, and alarm for open, closed, and nontechnical jobs.
 - [ ] Complete issue #99 catalog quality hardening and backfill.
   - [x] Add shared catalog normalization, structured locations/pay, defensive mobile presentation, and the guarded D1 repair workflow.
