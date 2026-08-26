@@ -23,7 +23,7 @@ function sqliteD1(database: DatabaseSync): D1Database {
 }
 
 describe('D1 notification recovery', () => {
-  it('previews with an exact-count guard and never requeues a job that has a receipt', async () => {
+  it('previews with an exact candidate-set guard and never requeues a job that has a receipt', async () => {
     const database = new DatabaseSync(':memory:');
     database.exec(`
       CREATE TABLE catalog_items (pk TEXT, sk TEXT, kind TEXT, value TEXT, catalog_state TEXT, sms_pending INTEGER, PRIMARY KEY (pk, sk));
@@ -36,11 +36,11 @@ describe('D1 notification recovery', () => {
     const store = new D1InternshipStore(sqliteD1(database));
 
     await expect(store.recoverUndeliveredNotifications({ since: '2026-08-25T00:00:00.000Z', limit: 100, apply: false }))
-      .resolves.toEqual({ candidates: 1, requeued: 0 });
-    await expect(store.recoverUndeliveredNotifications({ since: '2026-08-25T00:00:00.000Z', limit: 100, apply: true, expectedCount: 2 }))
-      .rejects.toThrow('expected 2 candidates but found 1');
-    await expect(store.recoverUndeliveredNotifications({ since: '2026-08-25T00:00:00.000Z', limit: 100, apply: true, expectedCount: 1 }))
-      .resolves.toEqual({ candidates: 1, requeued: 1 });
+      .resolves.toEqual({ candidates: 1, candidateJobIds: ['job-1'], requeued: 0 });
+    await expect(store.recoverUndeliveredNotifications({ since: '2026-08-25T00:00:00.000Z', limit: 100, apply: true, expectedCandidateJobIds: ['job-2'] }))
+      .rejects.toThrow('candidate set changed');
+    await expect(store.recoverUndeliveredNotifications({ since: '2026-08-25T00:00:00.000Z', limit: 100, apply: true, expectedCandidateJobIds: ['job-1'] }))
+      .resolves.toEqual({ candidates: 1, candidateJobIds: ['job-1'], requeued: 1 });
     const recovered = database.prepare("SELECT value, sms_pending FROM catalog_items WHERE pk = 'JOB#job-1'").get() as { value: string; sms_pending: number };
     expect(recovered.sms_pending).toBe(1);
     expect(JSON.parse(recovered.value).notification).toEqual({ smsPending: true, digestPending: true });
@@ -48,7 +48,34 @@ describe('D1 notification recovery', () => {
     database.prepare('UPDATE catalog_items SET sms_pending = 0 WHERE pk = ?').run('JOB#job-1');
     database.prepare('INSERT INTO user_items VALUES (?, ?, ?, ?)').run('user-1', 'RECEIPT#job-1', 'receipt', JSON.stringify({ jobId: 'job-1' }));
     await expect(store.recoverUndeliveredNotifications({ since: '2026-08-25T00:00:00.000Z', limit: 100, apply: false }))
-      .resolves.toEqual({ candidates: 0, requeued: 0 });
+      .resolves.toEqual({ candidates: 0, candidateJobIds: [], requeued: 0 });
+    database.close();
+  });
+
+  it('rejects apply when the candidate identity changes without changing the count', async () => {
+    const database = new DatabaseSync(':memory:');
+    database.exec(`
+      CREATE TABLE catalog_items (pk TEXT, sk TEXT, kind TEXT, value TEXT, catalog_state TEXT, sms_pending INTEGER, PRIMARY KEY (pk, sk));
+      CREATE TABLE user_items (user_id TEXT, item_key TEXT, kind TEXT, value TEXT, PRIMARY KEY (user_id, item_key));
+    `);
+    const addCandidate = (jobId: string, createdAt: string) => {
+      const job = { jobId, notification: { smsPending: false, digestPending: true } };
+      const event = { eventId: `event-${jobId}`, sourceId: 'source', externalId: jobId, jobId, kind: 'new-job', createdAt };
+      database.prepare('INSERT INTO catalog_items VALUES (?, ?, ?, ?, ?, ?)').run(`JOB#${jobId}`, 'META', 'internship', JSON.stringify(job), 'OPEN', 0);
+      database.prepare('INSERT INTO catalog_items VALUES (?, ?, ?, ?, ?, ?)').run(`OUTBOX#${jobId}`, 'EVENT', 'notification-event', JSON.stringify(event), null, 0);
+    };
+    addCandidate('job-1', '2026-08-25T12:00:00.000Z');
+    const store = new D1InternshipStore(sqliteD1(database));
+    const preview = await store.recoverUndeliveredNotifications({ since: '2026-08-25T00:00:00.000Z', limit: 1, apply: false });
+    expect(preview.candidateJobIds).toEqual(['job-1']);
+
+    database.prepare('INSERT INTO user_items VALUES (?, ?, ?, ?)').run('user-1', 'RECEIPT#job-1', 'receipt', JSON.stringify({ jobId: 'job-1' }));
+    addCandidate('job-2', '2026-08-25T13:00:00.000Z');
+
+    await expect(store.recoverUndeliveredNotifications({
+      since: '2026-08-25T00:00:00.000Z', limit: 1, apply: true, expectedCandidateJobIds: preview.candidateJobIds,
+    })).rejects.toThrow('candidate set changed');
+    expect((database.prepare("SELECT sms_pending FROM catalog_items WHERE pk = 'JOB#job-2'").get() as { sms_pending: number }).sms_pending).toBe(0);
     database.close();
   });
 });

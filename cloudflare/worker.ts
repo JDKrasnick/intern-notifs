@@ -263,20 +263,24 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
   }
   if (request.method === 'POST' && url.pathname === '/internal/recover-notifications') {
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
-    const body = await request.json().catch(() => null) as { since?: unknown; limit?: unknown; apply?: unknown; expectedCount?: unknown } | null;
+    const body = await request.json().catch(() => null) as { since?: unknown; limit?: unknown; apply?: unknown; expectedCandidateJobIds?: unknown } | null;
     const since = typeof body?.since === 'string' ? body.since : '';
     const limit = body?.limit === undefined ? 100 : body.limit;
     const apply = body?.apply === true;
     if (!since || Number.isNaN(Date.parse(since)) || typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 100) {
       return withCors(Response.json({ message: 'since must be an ISO timestamp and limit must be an integer from 1 to 100' }, { status: 400 }));
     }
-    if (apply && (typeof body?.expectedCount !== 'number' || !Number.isInteger(body.expectedCount) || body.expectedCount < 0)) {
-      return withCors(Response.json({ message: 'expectedCount is required when apply is true' }, { status: 400 }));
+    const expectedCandidateJobIds = body?.expectedCandidateJobIds;
+    if (apply && (!Array.isArray(expectedCandidateJobIds)
+      || expectedCandidateJobIds.length > 100
+      || expectedCandidateJobIds.some((jobId) => typeof jobId !== 'string' || !jobId || jobId.length > 512)
+      || new Set(expectedCandidateJobIds).size !== expectedCandidateJobIds.length)) {
+      return withCors(Response.json({ message: 'expectedCandidateJobIds must be the exact unique job-ID array from preview when apply is true' }, { status: 400 }));
     }
     try {
       const result = await new D1InternshipStore(env.DB).recoverUndeliveredNotifications({
         since: new Date(since).toISOString(), limit, apply,
-        ...(typeof body?.expectedCount === 'number' ? { expectedCount: body.expectedCount } : {}),
+        ...(Array.isArray(expectedCandidateJobIds) ? { expectedCandidateJobIds: expectedCandidateJobIds as string[] } : {}),
       });
       return withCors(Response.json({ ...result, applied: apply }));
     } catch (error) {

@@ -186,8 +186,8 @@ export class D1InternshipStore implements InternshipStore {
     since: string;
     limit: number;
     apply: boolean;
-    expectedCount?: number;
-  }): Promise<{ candidates: number; requeued: number }> {
+    expectedCandidateJobIds?: string[];
+  }): Promise<{ candidates: number; candidateJobIds: string[]; requeued: number }> {
     const result = await this.db.prepare(`
       SELECT json_extract(event.value, '$.jobId') AS jobId
       FROM catalog_items AS event
@@ -204,13 +204,15 @@ export class D1InternshipStore implements InternshipStore {
             AND json_extract(receipt.value, '$.jobId') = json_extract(event.value, '$.jobId')
         )
       GROUP BY job.pk
-      ORDER BY MAX(json_extract(event.value, '$.createdAt')) DESC
+      ORDER BY MAX(json_extract(event.value, '$.createdAt')) DESC, job.pk ASC
       LIMIT ?
     `).bind(input.since, input.limit).all<{ jobId: string }>();
     const candidates = result.results.map(({ jobId }) => jobId);
-    if (!input.apply) return { candidates: candidates.length, requeued: 0 };
-    if (input.expectedCount === undefined || input.expectedCount !== candidates.length) {
-      throw new Error(`Notification recovery expected ${input.expectedCount ?? 'an explicit count'} candidates but found ${candidates.length}`);
+    if (!input.apply) return { candidates: candidates.length, candidateJobIds: candidates, requeued: 0 };
+    if (!input.expectedCandidateJobIds
+      || input.expectedCandidateJobIds.length !== candidates.length
+      || input.expectedCandidateJobIds.some((jobId, index) => jobId !== candidates[index])) {
+      throw new Error('Notification recovery candidate set changed; preview again before applying');
     }
     const statements = candidates.map((jobId) => this.db.prepare(`
       UPDATE catalog_items
@@ -223,7 +225,11 @@ export class D1InternshipStore implements InternshipStore {
         )
     `).bind(`JOB#${jobId}`, jobId));
     const updates = statements.length ? await this.db.batch(statements) : [];
-    return { candidates: candidates.length, requeued: updates.reduce((total, update) => total + update.meta.changes, 0) };
+    return {
+      candidates: candidates.length,
+      candidateJobIds: candidates,
+      requeued: updates.reduce((total, update) => total + update.meta.changes, 0),
+    };
   }
 
   async listOpen(cursor?: string, limit = 25, status: 'open' | 'closed' = 'open', query: CatalogQuery = {}): Promise<{ jobs: Internship[]; cursor?: string }> {

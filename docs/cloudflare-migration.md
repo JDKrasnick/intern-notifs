@@ -194,10 +194,23 @@ curl --fail-with-body --silent --show-error \
 unset OPERATIONS_SHARED_SECRET
 ```
 
-The preview returns `candidates` and changes nothing. Re-run the same request
-with `"apply":true` and `"expectedCount":<the exact preview count>` only after
-confirming at least one opted-in physical device is registered. The operation
-requeues only open jobs that have a durable notification event and no delivery
-receipt for any device; the expected-count guard rejects a changed candidate
-set. Use small batches to avoid a burst of old alerts, and preview again before
-each batch until it returns zero.
+The preview returns `candidates` plus the ordered `candidateJobIds` array and
+changes nothing. Re-run the same request with `"apply":true` and
+`"expectedCandidateJobIds":<the exact preview array>` only after confirming at
+least one opted-in physical device is registered. The operation requeues only
+open jobs that have a durable notification event and no delivery receipt for
+any device; the exact-ID guard rejects a changed candidate set even if its size
+is unchanged. Use small batches to avoid a burst of old alerts, and preview
+again before each batch until it returns zero.
+
+### Migrate legacy account-owned mobile alerts
+
+The first signed-in launch after this release checks for a legacy account alert
+preference. If the installation already has alerts, it only retires the legacy
+flag. Otherwise, on a physical device with notification permission, the client
+registers that device's current Expo token to its anonymous installation,
+copies the legacy filter and alert settings, and only then disables the retired
+account alert flag. Every step is idempotent, and a failed attempt leaves the
+account flag in place for a later launch. Do not move device rows between users
+manually: an installation observed in D1 may belong to a simulator or a
+different device.

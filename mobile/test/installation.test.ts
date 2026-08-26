@@ -24,15 +24,19 @@ beforeEach(() => {
   mocks.api.mockReset();
 });
 
-describe('installation-scoped settings', () => {
-  it('creates one anonymous installation and reuses it for settings writes', async () => {
+describe('installation-scoped state', () => {
+  it('creates one anonymous installation and reuses it for settings and opening writes', async () => {
     mocks.api
       .mockResolvedValueOnce({ token: 'installation-token' })
-      .mockResolvedValueOnce({ alertsEnabled: true });
+      .mockResolvedValueOnce({ alertsEnabled: true })
+      .mockResolvedValueOnce({ jobs: [], total: 0 });
 
     await expect(installationApi('/preferences', { method: 'PUT', body: '{}' }))
       .resolves.toEqual({ alertsEnabled: true });
+    await expect(installationApi('/opening', { method: 'POST' }))
+      .resolves.toEqual({ jobs: [], total: 0 });
     expect(mocks.api).toHaveBeenNthCalledWith(1, '/installations', '', { method: 'POST' });
     expect(mocks.api).toHaveBeenNthCalledWith(2, '/installation/preferences', 'installation-token', { method: 'PUT', body: '{}' });
+    expect(mocks.api).toHaveBeenNthCalledWith(3, '/installation/opening', 'installation-token', { method: 'POST' });
   });
 });

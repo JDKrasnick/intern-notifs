@@ -36,6 +36,7 @@ import { catalogGroupAvailabilityLabel, groupedCatalogParameters } from "./src/c
 import { createLatestRequestGuard } from "./src/latest-request";
 import { uploadDocumentContent } from "./src/document-upload";
 import { installationApi } from "./src/installation";
+import { migrateLegacyAccountAlerts } from "./src/legacy-alert-migration";
 import { clearSession, confirmEmail, restoreSession, signIn, signOut, signUp } from "./src/auth";
 import {
   clearApplicationFollowUp,
@@ -2052,9 +2053,9 @@ function AppContent() {
   const [launchInbox, setLaunchInbox] = useState<LaunchInbox>();
   const [showLaunchInbox, setShowLaunchInbox] = useState(false);
   const [launchLoaded, setLaunchLoaded] = useState(false);
-  const [launchToken, setLaunchToken] = useState<string>();
   const launchRequestToken = useRef<string | undefined>(undefined);
   const launchRequestId = useRef(0);
+  const legacyAlertMigrationToken = useRef<string | undefined>(undefined);
   const catalogGroupsRef = useRef<CatalogGroupRow[]>([]);
   const catalogCursorRef = useRef<string | undefined>(undefined);
   const catalogRequestGeneration = useRef(0);
@@ -2064,12 +2065,6 @@ function AppContent() {
     privateRequestId.current += 1;
     setApplications([]);
     setSavingJobIds(new Set());
-    launchRequestId.current += 1;
-    launchRequestToken.current = undefined;
-    setLaunchInbox(undefined);
-    setShowLaunchInbox(false);
-    setLaunchLoaded(false);
-    setLaunchToken(undefined);
   };
   const acceptSessionToken = (value: string) => {
     if (tokenRef.current !== value) clearPrivateState();
@@ -2272,18 +2267,41 @@ function AppContent() {
     if (token) void load();
   }, [token]);
   useEffect(() => {
-    if (token !== launchToken) {
-      launchRequestToken.current = undefined;
-      setLaunchInbox(undefined);
-      setShowLaunchInbox(false);
-      setLaunchLoaded(false);
-      setLaunchToken(token);
-      return;
-    }
-    if (!token || !preferences?.onboardingComplete || launchLoaded || launchRequestToken.current === token) return;
-    launchRequestToken.current = token;
+    if (!token || !preferences || legacyAlertMigrationToken.current === token) return;
+    legacyAlertMigrationToken.current = token;
+    const accountToken = token;
+    const requestId = privateRequestId.current;
+    void api<Preference>("/me/preferences", accountToken)
+      .then(async (legacyPreferences) => {
+        const updated = await migrateLegacyAccountAlerts({
+          installation: preferences,
+          legacyAccount: legacyPreferences,
+          register: registerForJobAlerts,
+          saveInstallation: (migration) => installationApi<Preference>("/preferences", {
+            method: "PUT",
+            body: JSON.stringify(migration),
+          }),
+          // Retire the account-owned flag only after the device token and
+          // preferences are durably installation-owned. A failed retirement is
+          // safe to retry on the next launch because every prior step is idempotent.
+          retireLegacyAccount: () => api<Preference>("/me/preferences", accountToken, {
+            method: "PUT",
+            body: JSON.stringify({ alertsEnabled: false }),
+          }),
+        });
+        if (updated && privateRequestId.current === requestId && tokenRef.current === accountToken) {
+          setPreferences(updated);
+        }
+      })
+      // Legacy migration is best-effort; the normal installation settings UI
+      // remains available if the account session or push service is unavailable.
+      .catch(() => undefined);
+  }, [preferences, token]);
+  useEffect(() => {
+    if (!preferences?.onboardingComplete || launchLoaded || launchRequestToken.current === "installation") return;
+    launchRequestToken.current = "installation";
     const requestId = ++launchRequestId.current;
-    void api<LaunchInbox>("/me/opening", token, { method: "POST" })
+    void installationApi<LaunchInbox>("/opening", { method: "POST" })
       .then((inbox) => {
         if (launchRequestId.current === requestId) {
           setLaunchInbox(inbox.total ? inbox : undefined);
@@ -2301,7 +2319,7 @@ function AppContent() {
       .finally(() => {
         if (launchRequestId.current === requestId) setLaunchLoaded(true);
       });
-  }, [launchLoaded, launchToken, preferences?.onboardingComplete, token]);
+  }, [launchLoaded, preferences?.onboardingComplete]);
   const presentDestination = (destination: AppDestination) => {
     if (destination.kind === "saved") {
       setTab("saved");
