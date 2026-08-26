@@ -2,8 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { SendMessageBatchCommand, SQSClient, type SendMessageBatchRequestEntry } from '@aws-sdk/client-sqs';
 import { reviewedAshbySources, type ReviewedAshbySource } from './sources/ashby-config.js';
 import { DynamoInternshipStore } from './store.js';
-import { isProviderSourceDue, SOURCE_POLL_CADENCE } from './source-poll-cadence.js';
+import { SOURCE_POLL_CADENCE } from './source-poll-cadence.js';
 import type { SourceCheckpoint, SourceHealth } from './types.js';
+import { ashbyWorkMessages, isAshbySourceDue } from './provider-dispatch-messages.js';
+
+export { ashbyWorkMessages, isAshbySourceDue } from './provider-dispatch-messages.js';
 
 export const ASHBY_DISPATCH_BATCH_SIZE = 10;
 export const ASHBY_POLL_INTERVAL_MS = SOURCE_POLL_CADENCE.publishedIntervalMs;
@@ -41,29 +44,6 @@ function chunks<T>(items: T[], size: number): T[][] {
   const result: T[][] = [];
   for (let index = 0; index < items.length; index += size) result.push(items.slice(index, index + size));
   return result;
-}
-
-export function ashbyWorkMessages(
-  sources: ReviewedAshbySource[] = reviewedAshbySources,
-  scheduledAt = new Date(),
-  runId?: string,
-): AshbyWorkMessage[] {
-  const timestamp = scheduledAt.toISOString();
-  return sources.map((source) => ({
-    version: 1,
-    sourceId: source.id,
-    scheduledAt: timestamp,
-    ...(runId ? { runId } : {}),
-  }));
-}
-
-export function isAshbySourceDue(
-  source: ReviewedAshbySource,
-  checkpoint: SourceCheckpoint | undefined,
-  now: Date,
-  health?: SourceHealth,
-): boolean {
-  return isProviderSourceDue(source.id, source.status, checkpoint, now, health);
 }
 
 function emitFreshness(source: ReviewedAshbySource, health: SourceHealth | undefined, checkpoint: SourceCheckpoint | undefined, now: Date) {

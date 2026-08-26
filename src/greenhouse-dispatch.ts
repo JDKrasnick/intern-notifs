@@ -1,8 +1,11 @@
 import { SendMessageBatchCommand, SQSClient, type SendMessageBatchRequestEntry } from '@aws-sdk/client-sqs';
 import { reviewedGreenhouseSources, type ReviewedGreenhouseSource } from './sources/greenhouse-config.js';
 import { DynamoInternshipStore } from './store.js';
-import { isProviderSourceDue, SOURCE_POLL_CADENCE } from './source-poll-cadence.js';
+import { SOURCE_POLL_CADENCE } from './source-poll-cadence.js';
 import type { SourceCheckpoint, SourceHealth } from './types.js';
+import { greenhouseWorkMessages, isGreenhouseSourceDue } from './provider-dispatch-messages.js';
+
+export { greenhouseWorkMessages, isGreenhouseSourceDue } from './provider-dispatch-messages.js';
 
 export const GREENHOUSE_DISPATCH_BATCH_SIZE = 10;
 export const GREENHOUSE_POLL_INTERVAL_MS = SOURCE_POLL_CADENCE.publishedIntervalMs;
@@ -37,23 +40,6 @@ function chunks<T>(items: T[], size: number): T[][] {
   const result: T[][] = [];
   for (let index = 0; index < items.length; index += size) result.push(items.slice(index, index + size));
   return result;
-}
-
-export function greenhouseWorkMessages(
-  sources: ReviewedGreenhouseSource[] = reviewedGreenhouseSources,
-  scheduledAt = new Date(),
-): GreenhouseWorkMessage[] {
-  const timestamp = scheduledAt.toISOString();
-  return sources.map((source) => ({ version: 1, sourceId: source.id, scheduledAt: timestamp }));
-}
-
-export function isGreenhouseSourceDue(
-  source: ReviewedGreenhouseSource,
-  checkpoint: SourceCheckpoint | undefined,
-  now: Date,
-  health?: SourceHealth,
-): boolean {
-  return isProviderSourceDue(source.id, source.status, checkpoint, now, health);
 }
 
 async function dueSources(

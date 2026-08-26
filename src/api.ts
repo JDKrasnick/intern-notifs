@@ -1,9 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { DeleteObjectCommand, GetObjectCommand, S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { CognitoIdentityProviderClient, AdminDeleteUserCommand } from '@aws-sdk/client-cognito-identity-provider';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { jobCategories, matchesJobFilter, parseJobFilter } from './core/filters.js';
-import { DynamoInternshipStore, DynamoReleaseStore, DynamoUserStore, type InternshipStore, type ReleaseStore, type UserStore } from './store.js';
+import type { InternshipStore, ReleaseStore, UserStore } from './store.js';
 import type { ApplicantProfile, ApplicationRecord, ApplicationStatus, DeviceToken, UserPreferences } from './types.js';
 import { EmployerIntegrationRegistry } from './providers.js';
 import { assistanceAvailability } from './application-assistance.js';
@@ -271,30 +268,12 @@ export interface ApiDependencies {
   releases?: ReleaseStore;
   documentStorage?: DocumentStorage;
   deleteIdentity?: (userId: string) => Promise<void>;
-  /** AWS compatibility fields retained until the Cloudflare cutover completes. */
-  documentsBucket?: string;
-  userPoolId?: string;
   integrations?: EmployerIntegrationRegistry;
-  s3?: S3Client;
-  cognito?: CognitoIdentityProviderClient;
   now?: () => string;
 }
 export function createApiHandler(dependencies: ApiDependencies) {
   const integrations = dependencies.integrations ?? new EmployerIntegrationRegistry();
-  const documentStorage: DocumentStorage | undefined = dependencies.documentStorage ?? (dependencies.documentsBucket ? {
-    async createUploadUrl(document) {
-      const s3 = dependencies.s3 ?? new S3Client({});
-      return getSignedUrl(s3, new PutObjectCommand({ Bucket: dependencies.documentsBucket, Key: document.objectKey, ContentType: document.contentType, ServerSideEncryption: 'aws:kms' }), { expiresIn: 300 });
-    },
-    async createDownloadUrl(document) {
-      const s3 = dependencies.s3 ?? new S3Client({});
-      return getSignedUrl(s3, new GetObjectCommand({ Bucket: dependencies.documentsBucket, Key: document.objectKey }), { expiresIn: 300 });
-    },
-    async deleteObject(objectKey) {
-      const s3 = dependencies.s3 ?? new S3Client({});
-      await s3.send(new DeleteObjectCommand({ Bucket: dependencies.documentsBucket, Key: objectKey }));
-    },
-  } : undefined);
+  const documentStorage = dependencies.documentStorage;
   return async (event: ApiEvent): Promise<ApiResponse> => {
     try {
       const method = event.requestContext?.http?.method ?? event.routeKey?.split(' ')[0] ?? 'GET'; const path = event.rawPath ?? event.routeKey?.split(' ')[1] ?? '/';
@@ -515,10 +494,8 @@ export function createApiHandler(dependencies: ApiDependencies) {
       const docMatch = path.match(/^\/me\/documents\/([^/]+)$/);
       if (method === 'GET' && docMatch) { if (!documentStorage) return reply(503, { message: 'Document storage is unavailable' }); const document = (await dependencies.users.listDocuments(userId)).find((item) => item.documentId === decodeURIComponent(docMatch[1])); if (!document) return reply(404, { message: 'Document not found' }); return reply(200, { document, downloadUrl: await documentStorage.createDownloadUrl(document) }); }
       if (method === 'DELETE' && docMatch) { const document = (await dependencies.users.listDocuments(userId)).find((item) => item.documentId === decodeURIComponent(docMatch[1])); if (!document) return reply(404, { message: 'Document not found' }); if (documentStorage) await documentStorage.deleteObject(document.objectKey); await dependencies.users.deleteDocument(userId, document.documentId); return reply(204, {}); }
-      if (method === 'DELETE' && path === '/me') { const documents = await dependencies.users.deleteUser(userId); if (documentStorage) await Promise.all(documents.map((document) => documentStorage.deleteObject(document.objectKey))); if (dependencies.deleteIdentity) await dependencies.deleteIdentity(userId); else if (dependencies.userPoolId) await (dependencies.cognito ?? new CognitoIdentityProviderClient({})).send(new AdminDeleteUserCommand({ UserPoolId: dependencies.userPoolId, Username: userId })); return reply(204, {}); }
+      if (method === 'DELETE' && path === '/me') { const documents = await dependencies.users.deleteUser(userId); if (documentStorage) await Promise.all(documents.map((document) => documentStorage.deleteObject(document.objectKey))); if (dependencies.deleteIdentity) await dependencies.deleteIdentity(userId); return reply(204, {}); }
       return reply(404, { message: 'Not found', supportedCategories: jobCategories });
     } catch (error) { return reply(400, { message: error instanceof Error ? error.message : 'Invalid request' }); }
   };
 }
-
-export const handler = createApiHandler({ jobs: new DynamoInternshipStore(process.env.INTERNSHIPS_TABLE ?? ''), users: new DynamoUserStore(process.env.USERS_TABLE ?? ''), releases: new DynamoReleaseStore(process.env.USERS_TABLE ?? ''), documentsBucket: process.env.DOCUMENTS_BUCKET, userPoolId: process.env.USER_POOL_ID });

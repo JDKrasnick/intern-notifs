@@ -1,11 +1,8 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
-import { CloudWatchClient, DescribeAlarmsCommand } from '@aws-sdk/client-cloudwatch';
-import { GetQueueAttributesCommand, SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
-import { GetParametersByPathCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { reviewedGreenhouseSources } from './sources/greenhouse-config.js';
 import { reviewedLeverSources, type ReviewedLeverSource } from './sources/lever-config.js';
 import { reviewedAshbySources, type ReviewedAshbySource } from './sources/ashby-config.js';
-import { DynamoInternshipStore, type InternshipStore } from './store.js';
+import type { InternshipStore } from './store.js';
 import { acceptLeverAdmission, listLeverCandidates, verifyLeverAdmission, type LeverAdmissionInput } from './lever-admission.js';
 import { monitoringChecklistItems, monitoringPeriod, publicMonitoringChecklist } from './monitoring-checklist.js';
 import { occurrenceStatus } from './ingestion/monitoring.js';
@@ -41,6 +38,19 @@ type OperationsSource =
   | (ReviewedLeverSource & { provider: 'lever' })
   | (ReviewedAshbySource & { provider: 'ashby' });
 type FleetConfiguration = Partial<Record<Provider, { queueUrl: string; deadLetterQueueUrl: string }>>;
+
+type QueueAttributesOutput = { Attributes?: Record<string, string> };
+type AlarmsOutput = { MetricAlarms?: Array<{ AlarmName?: string; StateValue?: string; StateUpdatedTimestamp?: Date; AlarmDescription?: string }> };
+type ParametersOutput = { Parameters?: Array<{ Name?: string; Value?: string }> };
+
+export class OperationsCommand<Output = unknown> {
+  declare readonly output?: Output;
+  constructor(readonly operation: 'get-queue-attributes' | 'send-message' | 'describe-alarms' | 'get-parameters-by-path', readonly input: Record<string, unknown>) {}
+}
+
+export interface OperationsClient {
+  send<Output>(command: OperationsCommand<Output>): Promise<Output>;
+}
 
 function header(event: ApiEvent, name: string): string | undefined {
   const match = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === name.toLowerCase());
@@ -114,19 +124,19 @@ function publicSource(
 async function fleetStatus(
   provider: Provider,
   configuration: NonNullable<FleetConfiguration[Provider]>,
-  sqs: SQSClient,
-  cloudwatch: CloudWatchClient,
+  sqs: OperationsClient,
+  cloudwatch: OperationsClient,
 ) {
   const [queue, deadLetter, alarms] = await Promise.all([
-    sqs.send(new GetQueueAttributesCommand({
+    sqs.send(new OperationsCommand<QueueAttributesOutput>('get-queue-attributes', {
       QueueUrl: configuration.queueUrl,
       AttributeNames: ['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible'],
     })),
-    sqs.send(new GetQueueAttributesCommand({
+    sqs.send(new OperationsCommand<QueueAttributesOutput>('get-queue-attributes', {
       QueueUrl: configuration.deadLetterQueueUrl,
       AttributeNames: ['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible'],
     })),
-    cloudwatch.send(new DescribeAlarmsCommand({
+    cloudwatch.send(new OperationsCommand<AlarmsOutput>('describe-alarms', {
       AlarmNamePrefix: `InternNotifs${provider[0]!.toUpperCase()}${provider.slice(1)}-`,
     })),
   ]);
@@ -147,8 +157,8 @@ async function fleetStatus(
   };
 }
 
-async function applicationAlarms(cloudwatch: CloudWatchClient) {
-  const response = await cloudwatch.send(new DescribeAlarmsCommand({ AlarmNamePrefix: 'InternNotifs-' }));
+async function applicationAlarms(cloudwatch: OperationsClient) {
+  const response = await cloudwatch.send(new OperationsCommand<AlarmsOutput>('describe-alarms', { AlarmNamePrefix: 'InternNotifs-' }));
   return (response.MetricAlarms ?? []).map((alarm) => ({
     name: alarm.AlarmName,
     state: alarm.StateValue,
@@ -159,11 +169,12 @@ async function applicationAlarms(cloudwatch: CloudWatchClient) {
 
 async function providerFleets(
   configured: FleetConfiguration,
-  ssm: SSMClient,
+  ssm: OperationsClient | undefined,
   parameterPrefix?: string,
 ): Promise<FleetConfiguration> {
   if (!parameterPrefix || (configured.greenhouse && configured.lever && configured.ashby)) return configured;
-  const response = await ssm.send(new GetParametersByPathCommand({
+  if (!ssm) throw new Error('Provider parameter lookup is not configured');
+  const response = await ssm.send(new OperationsCommand<ParametersOutput>('get-parameters-by-path', {
     Path: parameterPrefix,
     Recursive: true,
     WithDecryption: false,
@@ -190,9 +201,9 @@ export interface SourceOperationsDependencies {
   queueUrl?: string;
   deadLetterQueueUrl?: string;
   parameterPrefix?: string;
-  sqs?: SQSClient;
-  cloudwatch?: CloudWatchClient;
-  ssm?: SSMClient;
+  sqs?: OperationsClient;
+  cloudwatch?: OperationsClient;
+  ssm?: OperationsClient;
   now?: () => Date;
   alarmTelemetry?: { status: 'available' | 'unavailable'; reason?: string };
   queueTelemetry?: { status: 'available' | 'partial'; reason?: string };
@@ -436,7 +447,7 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
             lever: undefined,
             ashby: undefined,
           },
-          dependencies.ssm ?? new SSMClient({}),
+          dependencies.ssm,
           dependencies.parameterPrefix,
         );
         const fleet = configuredFleets[source.provider];
@@ -447,7 +458,8 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         }
         const runId = `${action === 'recover' ? 'recovery' : 'operator'}-${randomUUID()}`;
         try {
-          await (dependencies.sqs ?? new SQSClient({})).send(new SendMessageCommand({
+          if (!dependencies.sqs) throw new Error('Provider queue operations are not configured');
+          await dependencies.sqs.send(new OperationsCommand('send-message', {
             QueueUrl: fleet.queueUrl,
             MessageBody: JSON.stringify({ version: 1, sourceId, scheduledAt: changedAt, force: true, ...(source.provider !== 'greenhouse' ? { runId } : {}) }),
             MessageGroupId: sourceId,
@@ -493,15 +505,17 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
           lever: undefined,
           ashby: undefined,
         },
-        dependencies.ssm ?? new SSMClient({}),
+        dependencies.ssm,
         dependencies.parameterPrefix,
       );
-      const cloudwatch = dependencies.cloudwatch ?? new CloudWatchClient({});
+      if (!dependencies.sqs || !dependencies.cloudwatch) throw new Error('Fleet telemetry clients are not configured');
+      const sqs = dependencies.sqs;
+      const cloudwatch = dependencies.cloudwatch;
       const [fleetRows, allApplicationAlarms, legacyPendingNotifications] = await Promise.all([
         Promise.all(
         (Object.entries(configuredFleets) as Array<[Provider, FleetConfiguration[Provider]]>)
           .flatMap(([provider, configuration]) => configuration
-            ? [fleetStatus(provider, configuration, dependencies.sqs ?? new SQSClient({}), cloudwatch)]
+            ? [fleetStatus(provider, configuration, sqs, cloudwatch)]
             : []),
         ),
         applicationAlarms(cloudwatch),
@@ -565,24 +579,5 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
   };
 }
 
-/** Backward-compatible name retained for existing imports and the stable stack. */
+/** Backward-compatible name retained for existing imports. */
 export const createGreenhouseOperationsHandler = createSourceOperationsHandler;
-
-const tableName = process.env.INTERNSHIPS_TABLE;
-const queueUrl = process.env.GREENHOUSE_QUEUE_URL;
-const deadLetterQueueUrl = process.env.GREENHOUSE_DEAD_LETTER_QUEUE_URL;
-const sharedSecret = process.env.OPERATIONS_SHARED_SECRET;
-const parameterPrefix = process.env.OPERATIONS_PROVIDER_PARAMETER_PREFIX;
-
-export const handler = async (event: ApiEvent) => {
-  if (!tableName || !sharedSecret || ((!queueUrl || !deadLetterQueueUrl) && !parameterPrefix)) {
-    return reply(500, { code: 'OPERATIONS_NOT_CONFIGURED', message: 'Source operations data is not configured.' });
-  }
-  return createSourceOperationsHandler({
-    store: new DynamoInternshipStore(tableName),
-    queueUrl,
-    deadLetterQueueUrl,
-    parameterPrefix,
-    sharedSecret,
-  })(event);
-};

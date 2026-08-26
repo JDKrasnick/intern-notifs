@@ -1,6 +1,7 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { describe, expect, it, vi } from 'vitest';
-import { NtfyPublisher, sendDigest, sendPendingNotifications, SesEmailSender, type EmailSender, type PushMessage, type PushPublisher } from '../src/notifications.js';
+import { SesEmailSender } from '../src/aws-email.js';
+import { NtfyPublisher, sendDigest, sendPendingNotifications, type EmailSender, type PushMessage, type PushPublisher } from '../src/notifications.js';
 import { Poller } from '../src/poll.js';
 import { MemoryInternshipStore } from '../src/store.js';
 import type { RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult } from '../src/types.js';

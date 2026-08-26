@@ -5,11 +5,11 @@ import { reviewedAshbySources, type ReviewedAshbySource } from './sources/ashby-
 import { AshbyPostingsAdapter } from './sources/ashby.js';
 import { SourceFetchError } from './sources/source-error.js';
 import { failedSourceHealth, safeDiagnostic, successfulSourceHealth } from './source-health.js';
-import { DynamoInternshipStore, DynamoUserStore, type InternshipStore, type UserStore } from './store.js';
+import type { InternshipStore, UserStore } from './store.js';
 import type { SourceCheckpoint, SourceFetchResult } from './types.js';
-import type { AshbyWorkMessage } from './ashby-dispatch.js';
+import type { ProviderWorkMessage as AshbyWorkMessage } from './provider-dispatch-messages.js';
 import { processFifoBatch } from './sqs-fifo-batch.js';
-import { legacyDeliveryExclusions, loadGroupedNotificationCohort, type GroupedNotificationCohort } from './grouped-notification-cohort.js';
+import { legacyDeliveryExclusions, type GroupedNotificationCohort } from './grouped-notification.js';
 
 const SHADOW_CHECKPOINT_PREFIX = 'shadow-';
 const SHADOW_LINK_CONCURRENCY = 4;
@@ -367,20 +367,4 @@ export async function processAshbyQueue(
       throw error;
     }
   });
-}
-
-export async function handler(
-  event: QueueEvent,
-  context?: { awsRequestId?: string },
-): Promise<{ batchItemFailures: Array<{ itemIdentifier: string }> }> {
-  const tableName = process.env.INTERNSHIPS_TABLE;
-  const usersTable = process.env.USERS_TABLE;
-  if (!tableName || !usersTable) throw new Error('INTERNSHIPS_TABLE and USERS_TABLE are required');
-  const cohortParameterName = process.env.GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME;
-  if (!cohortParameterName) throw new Error('GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME is required');
-  return processAshbyQueue(event, {
-    store: new DynamoInternshipStore(tableName),
-    userStore: new DynamoUserStore(usersTable),
-    groupedNotificationCohort: await loadGroupedNotificationCohort(cohortParameterName),
-  }, context);
 }

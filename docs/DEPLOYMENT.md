@@ -1,13 +1,15 @@
 # Deployment and operations runbook
 
-> The active development backend is Cloudflare while the staged mobile cutover
-> is validated. Retained AWS resources remain rollback/export-only and must not
-> be deleted. The replacement Worker and Terraform configuration are documented
+> The active production backend is Cloudflare. Retained AWS resources are
+> inaccessible, export-only historical resources and must not be deleted. The
+> Worker and Terraform configuration are documented
 > in [`cloudflare-migration.md`](cloudflare-migration.md).
 
 ## Architecture
 
-InternNotifs is an Expo mobile app with a serverless AWS backend.
+InternNotifs is an Expo mobile app with a Cloudflare Workers backend. The old
+AWS implementation is retained in source only for a possible data export if
+account access is ever restored; it is not an operational deployment target.
 
 | Area | Service / implementation |
 | --- | --- |
@@ -56,15 +58,15 @@ summaries, structured `locations`, bounded compensation, and unchanged
 notification flags. Never store the operations secret in shell history, Git, or
 documentation.
 
-Greenhouse, Lever, and Ashby use dedicated half-hour EventBridge schedules,
-dispatcher Lambdas, FIFO work queues, two-minute workers, and dead-letter
-queues. Published boards are checked every thirty minutes whether active or
-quiet; shadow boards are staggered across three-hour checks. See
+Greenhouse, Lever, and Ashby use Worker Cron Triggers, provider Queues, Worker
+consumers, and dead-letter queues. Published boards are checked every thirty
+minutes whether active or quiet; shadow boards are staggered across three-hour
+checks. See
 [`greenhouse/architecture.md`](greenhouse/architecture.md) for the complete
 shadow, promotion, retry, and alarm flow.
 
-The seven GitHub community feeds run through the general poll Lambda every ten
-minutes. Shadow checkpoints remain isolated and cannot publish jobs or
+The seven GitHub community feeds run through a dedicated Cloudflare Queue every
+ten minutes. Shadow checkpoints remain isolated and cannot publish jobs or
 notifications.
 
 The direct-provider discovery-latency objective is a normal maximum of thirty
@@ -80,11 +82,11 @@ timestamp semantics are measured separately from these scheduler objectives.
 - EAS project ID: `b9b09ef1-a482-4875-a5f4-ff963488cd3e`
 - iOS bundle ID: `com.internnotifs.app`
 - App Store Connect app ID: `6792557963`
-- AWS Region: `us-east-1`
 - Active development API: `https://intern-notifs.jdkrasnick.workers.dev`
-- Retained AWS API rollback origin: `https://5dx7gpfa7d.execute-api.us-east-1.amazonaws.com`
-- Cognito operations client: the `OperationsUserPoolClientId` output from `InternNotifs`
-- Runtime configuration parameter: `/intern-notifs/runtime-config`
+- Historical AWS Region (inaccessible): `us-east-1`
+- Historical AWS API origin (not a rollback): `https://5dx7gpfa7d.execute-api.us-east-1.amazonaws.com`
+- Historical Cognito operations client: the `OperationsUserPoolClientId` output from `InternNotifs`
+- Historical runtime parameter: `/intern-notifs/runtime-config`
 
 These are not credentials. Do not record Apple private keys, API keys, Expo tokens, password values, or personal Apple Account emails here.
 
@@ -101,7 +103,15 @@ local iOS build. Expo Doctor's generic `appConfigFieldsNotSyncedCheck` is
 disabled for this documented manually managed workflow; its package-version
 and all other checks remain enabled.
 
-## Catalog index audit and repair
+## Retained AWS implementation (inaccessible and non-operational)
+
+The owner no longer has AWS account access. The remaining sections through the
+EAS environment guide are retained only to identify historical resources if
+read-only access is restored for a final export or inventory. Do not use them as
+a current deployment or rollback path. The GitHub AWS polling/digest workflows
+and their repository credentials were removed on 2026-08-26.
+
+### Catalog index audit and repair
 
 The public catalog reads DynamoDB's `openJobsIndex`, so the stored job state and
 the sparse open/closed index attributes must agree. A daily scheduled audit
@@ -255,7 +265,7 @@ npm run cdk -- deploy InternNotifsGreenhouse InternNotifsLever InternNotifsAshby
 npm run cdk -- deploy InternNotifs --parameters GroupedNotificationUserIds=OWNER_COGNITO_USER_ID
 ```
 
-## Notification delivery log
+### Notification delivery log
 
 Delivery receipts are the durable record of attempted Expo pushes. Reconstruct
 the privacy-safe delivery timeline by resolving the retained tables from the
@@ -285,8 +295,6 @@ posting ID, then protected by a conditional DynamoDB claim. Unknown providers
 fall back to the fully normalized application URL. Employer/title/season role
 families intentionally remain diagnostic-only so regional requisitions are not
 silently discarded.
-
-## AWS deployment
 
 Use the configured `intern-notifs` assumed role from the AWS CLI. Confirm the active identity before every deployment:
 

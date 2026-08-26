@@ -65,7 +65,7 @@ export class LeverMonitoringStack extends cdk.Stack {
     queue.grantSendMessages(dispatcher);
     internships.grantReadWriteData(dispatcher);
     const worker = new lambdaNodejs.NodejsFunction(this, 'LeverWorker', {
-      entry: 'src/lever-worker.ts',
+      entry: 'src/lever-worker-lambda.ts',
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.minutes(2),

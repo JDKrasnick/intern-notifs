@@ -1,12 +1,10 @@
 import { createApiHandler, type DocumentStorage } from '../src/api.js';
-import { ashbyWorkMessages, isAshbySourceDue } from '../src/ashby-dispatch.js';
+import { ashbyWorkMessages, greenhouseWorkMessages, isAshbySourceDue, isGreenhouseSourceDue, isLeverSourceDue, leverWorkMessages } from '../src/provider-dispatch-messages.js';
 import { processAshbyQueue } from '../src/ashby-worker.js';
-import { greenhouseWorkMessages, isGreenhouseSourceDue } from '../src/greenhouse-dispatch.js';
 import { processGreenhouseQueue } from '../src/greenhouse-worker.js';
-import { isLeverSourceDue, leverWorkMessages } from '../src/lever-dispatch.js';
 import { processLeverQueue } from '../src/lever-worker.js';
 import { drainPendingExpoNotifications, ExpoPushPublisher, type EmailSender } from '../src/notifications.js';
-import { runRuntimeCommand } from '../src/runtime.js';
+import { runRuntimeCommand } from '../src/runtime-core.js';
 import { catalogGroupDetails, groupCatalogJobs } from '../src/catalog-groups.js';
 import { createSourceOperationsHandler } from '../src/greenhouse-operations-api.js';
 import { reviewedAshbySources } from '../src/sources/ashby-config.js';
@@ -487,7 +485,7 @@ async function refreshCatalogProjection(store: D1InternshipStore) {
   };
 }
 
-async function scheduledHandler(event: ScheduledController, env: Environment): Promise<void> {
+export async function scheduledHandler(event: ScheduledController, env: Environment): Promise<void> {
   if (await isShutdown(env)) return;
   const store = new D1InternshipStore(env.DB);
   if (event.cron === '7-57/10 * * * *') {
@@ -516,7 +514,10 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
   if (event.cron === '0 * * * *') {
     const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }).format(new Date(event.scheduledTime)));
     if (hour !== 9 && hour !== 17) return;
-    if (!env.RESEND_API_KEY || !env.AUTH_FROM_EMAIL || !env.DIGEST_TO_EMAIL) throw new Error('Digest email is not configured');
+    if (!env.RESEND_API_KEY || !env.AUTH_FROM_EMAIL || !env.DIGEST_TO_EMAIL) {
+      console.log(JSON.stringify({ event: 'digest_skipped_not_configured' }));
+      return;
+    }
     await runRuntimeCommand('digest', {
       store,
       config: { sesFrom: env.AUTH_FROM_EMAIL, sesTo: env.DIGEST_TO_EMAIL },

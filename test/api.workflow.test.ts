@@ -2,6 +2,7 @@ import { AdminDeleteUserCommand, CognitoIdentityProviderClient } from '@aws-sdk/
 import { DeleteObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { describe, expect, it, vi } from 'vitest';
 import { createApiHandler } from '../src/api.js';
+import { createAwsApiHandler } from '../src/aws-api.js';
 import { MemoryInternshipStore, MemoryUserStore } from '../src/store.js';
 import type { Internship } from '../src/types.js';
 
@@ -131,7 +132,7 @@ describe('public catalog and authenticated applicant workflow', () => {
     const cognito = new CognitoIdentityProviderClient({ region: 'us-east-1', credentials });
     const s3Send = vi.spyOn(s3, 'send').mockResolvedValue({ $metadata: {} } as never);
     const cognitoSend = vi.spyOn(cognito, 'send').mockResolvedValue({ $metadata: {} } as never);
-    const handler = createApiHandler({ jobs: new MemoryInternshipStore(), users, documentsBucket: 'private-documents', userPoolId: 'pool-id', s3, cognito });
+    const handler = createAwsApiHandler({ jobs: new MemoryInternshipStore(), users, documentsBucket: 'private-documents', userPoolId: 'pool-id', s3, cognito });
 
     const created = await handler(event('student-a', 'POST', '/me/documents', { fileName: 'résumé.pdf', contentType: 'application/pdf' }));
     expect(created.statusCode).toBe(201);

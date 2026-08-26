@@ -111,7 +111,7 @@ export class InternNotifsStack extends cdk.Stack {
     notificationPipeline.receiptQueue.grantSendMessages(streamPublisher);
     notificationPipeline.pushQueue.grantSendMessages(pushWorker);
     notificationPipeline.emailQueue.grantSendMessages(emailWorker);
-    const apiHandler = new lambdaNodejs.NodejsFunction(this, 'PublicApi', { entry: 'src/api.ts', handler: 'handler', runtime: lambda.Runtime.NODEJS_22_X, timeout: cdk.Duration.seconds(29), memorySize: 512, environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName, DOCUMENTS_BUCKET: documents.bucketName, USER_POOL_ID: userPool.userPoolId }, bundling: { externalModules: [] } });
+    const apiHandler = new lambdaNodejs.NodejsFunction(this, 'PublicApi', { entry: 'src/aws-api.ts', handler: 'handler', runtime: lambda.Runtime.NODEJS_22_X, timeout: cdk.Duration.seconds(29), memorySize: 512, environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName, DOCUMENTS_BUCKET: documents.bucketName, USER_POOL_ID: userPool.userPoolId }, bundling: { externalModules: [] } });
     apiHandler.addToRolePolicy(new iam.PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:DeleteItem', 'dynamodb:Query'], resources: [internships.tableArn, `${internships.tableArn}/index/*`, users.tableArn, `${users.tableArn}/index/*`] }));
     documents.grantReadWrite(apiHandler); userPool.grant(apiHandler, 'cognito-idp:AdminDeleteUser');
     const api = new apigatewayv2.HttpApi(this, 'PublicHttpApi', { corsPreflight: { allowHeaders: ['Authorization', 'Content-Type'], allowMethods: [apigatewayv2.CorsHttpMethod.ANY], allowOrigins: ['*'], maxAge: cdk.Duration.days(1) } });

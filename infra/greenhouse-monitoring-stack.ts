@@ -72,7 +72,7 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
     queue.grantSendMessages(dispatcher);
     internships.grantReadData(dispatcher);
     const worker = new lambdaNodejs.NodejsFunction(this, 'GreenhouseWorker', {
-      entry: 'src/greenhouse-worker.ts',
+      entry: 'src/greenhouse-worker-lambda.ts',
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.minutes(2),
@@ -96,7 +96,7 @@ export class GreenhouseMonitoringStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
     const operationsHandler = new lambdaNodejs.NodejsFunction(this, 'GreenhouseOperationsApi', {
-      entry: 'src/greenhouse-operations-api.ts',
+      entry: 'src/aws-greenhouse-operations-api.ts',
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.seconds(29),

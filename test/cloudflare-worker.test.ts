@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { queueHasBacklog } from '../cloudflare/queue-backlog.js';
-import { cloudflareOperationsQueueClient, documentContent, readDocumentUpload } from '../cloudflare/worker.js';
+import { cloudflareOperationsQueueClient, documentContent, readDocumentUpload, scheduledHandler } from '../cloudflare/worker.js';
 import type { Environment } from '../cloudflare/worker.js';
 import type { Queue } from '../cloudflare/types.js';
 
@@ -23,6 +23,20 @@ describe('Cloudflare scheduled dispatch cost guard', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await expect(queueHasBacklog(queue(async () => { throw new Error('metrics unavailable'); }), 'greenhouse')).resolves.toBe(false);
     vi.restoreAllMocks();
+  });
+
+  it('skips the optional owner digest when no recipient is configured', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const first = vi.fn(async () => null);
+    const prepare = vi.fn(() => ({ first }));
+
+    await scheduledHandler({
+      cron: '0 * * * *',
+      scheduledTime: Date.parse('2026-08-26T13:00:00.000Z'),
+    }, { DB: { prepare } } as unknown as Environment);
+
+    expect(log).toHaveBeenCalledWith(JSON.stringify({ event: 'digest_skipped_not_configured' }));
+    log.mockRestore();
   });
 });
 

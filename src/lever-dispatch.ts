@@ -2,8 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { SendMessageBatchCommand, SQSClient, type SendMessageBatchRequestEntry } from '@aws-sdk/client-sqs';
 import { reviewedLeverSources, type ReviewedLeverSource } from './sources/lever-config.js';
 import { DynamoInternshipStore, type LeverAdmission } from './store.js';
-import { isProviderSourceDue, SOURCE_POLL_CADENCE } from './source-poll-cadence.js';
+import { SOURCE_POLL_CADENCE } from './source-poll-cadence.js';
 import type { SourceCheckpoint, SourceHealth } from './types.js';
+import { isLeverSourceDue, leverWorkMessages } from './provider-dispatch-messages.js';
+
+export { isLeverSourceDue, leverWorkMessages } from './provider-dispatch-messages.js';
 
 export const LEVER_DISPATCH_BATCH_SIZE = 10;
 export const LEVER_POLL_INTERVAL_MS = SOURCE_POLL_CADENCE.publishedIntervalMs;
@@ -42,29 +45,6 @@ function chunks<T>(items: T[], size: number): T[][] {
   const result: T[][] = [];
   for (let index = 0; index < items.length; index += size) result.push(items.slice(index, index + size));
   return result;
-}
-
-export function leverWorkMessages(
-  sources: ReviewedLeverSource[] = reviewedLeverSources,
-  scheduledAt = new Date(),
-  runId?: string,
-): LeverWorkMessage[] {
-  const timestamp = scheduledAt.toISOString();
-  return sources.map((source) => ({
-    version: 1,
-    sourceId: source.id,
-    scheduledAt: timestamp,
-    ...(runId ? { runId } : {}),
-  }));
-}
-
-export function isLeverSourceDue(
-  source: ReviewedLeverSource,
-  checkpoint: SourceCheckpoint | undefined,
-  now: Date,
-  health?: SourceHealth,
-): boolean {
-  return isProviderSourceDue(source.id, source.status, checkpoint, now, health);
 }
 
 function emitFreshness(source: ReviewedLeverSource, health: SourceHealth | undefined, checkpoint: SourceCheckpoint | undefined, now: Date) {

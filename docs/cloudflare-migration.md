@@ -180,13 +180,21 @@ upload/download, all three provider queues, DLQs, Cron events, and operations
 replay against the deployed Worker.
 
 Set `EXPO_PUBLIC_API_URL` to the Cloudflare custom hostname and produce a test
-build. Keep AWS retained and the previous mobile configuration available during
-the observation window. Rollback changes the mobile/API hostname back to the AWS
-endpoint; it does not delete Cloudflare or AWS data.
+build. Cloudflare is now the only operational backend. Roll back a Worker release
+with Cloudflare Versions; the retained AWS endpoint is inaccessible and is not a
+usable application rollback.
 
-Only after the observation window and an owner-approved export should AWS
-schedules be disabled. Destruction of retained DynamoDB tables, Cognito users,
-or S3 documents is a separate, explicit operation and is not part of cutover.
+The repository's legacy AWS polling and digest workflows are disabled, and
+their GitHub AWS/SES configuration was removed on 2026-08-26 because the owner
+no longer has AWS access. The retained AWS control plane cannot be inspected or
+used as an operational rollback until access is restored. Destruction of any
+retained DynamoDB tables, Cognito users, or S3 documents remains a separate,
+explicit operation and is not part of cutover.
+
+The optional owner digest runs only when `DIGEST_TO_EMAIL`, `AUTH_FROM_EMAIL`,
+and `RESEND_API_KEY` are configured. Without all three, the scheduled event
+records `digest_skipped_not_configured` and exits successfully; account
+verification email remains independent and continues to use Resend.
 
 ## Recover notification markers consumed before device registration
 

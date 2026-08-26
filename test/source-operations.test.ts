@@ -1,7 +1,5 @@
-import { DescribeAlarmsCommand, type CloudWatchClient } from '@aws-sdk/client-cloudwatch';
-import { SendMessageCommand, type SQSClient } from '@aws-sdk/client-sqs';
 import { describe, expect, it } from 'vitest';
-import { createSourceOperationsHandler } from '../src/greenhouse-operations-api.js';
+import { createSourceOperationsHandler, OperationsCommand, type OperationsClient } from '../src/greenhouse-operations-api.js';
 import { reviewedGreenhouseSources } from '../src/sources/greenhouse-config.js';
 import { reviewedLeverSources } from '../src/sources/lever-config.js';
 import { reviewedAshbySources } from '../src/sources/ashby-config.js';
@@ -31,16 +29,16 @@ function dependencies(store: MemoryInternshipStore) {
       sqs: {
         async send(command: unknown) {
           commands.push(command);
-          if (command instanceof SendMessageCommand) return {};
+          if (command instanceof OperationsCommand && command.operation === 'send-message') return {};
           return { Attributes: { ApproximateNumberOfMessages: '0', ApproximateNumberOfMessagesNotVisible: '0' } };
         },
-      } as unknown as SQSClient,
+      } as OperationsClient,
       cloudwatch: { async send(command: unknown) {
-        if (command instanceof DescribeAlarmsCommand && command.input.AlarmNamePrefix === 'InternNotifs-') {
+        if (command instanceof OperationsCommand && command.operation === 'describe-alarms' && command.input.AlarmNamePrefix === 'InternNotifs-') {
           return { MetricAlarms: [{ AlarmName: 'InternNotifs-PollDuration', StateValue: 'ALARM', AlarmDescription: 'Poll duration is near timeout.' }] };
         }
         return { MetricAlarms: [] };
-      } } as unknown as CloudWatchClient,
+      } } as OperationsClient,
       now: () => new Date('2026-07-30T20:00:00.000Z'),
     },
   };
@@ -212,7 +210,7 @@ describe('shared source operations', () => {
 
     const replayed = await handler(event(`/operations/sources/${source.id}/actions`, 'POST', { action: 'replay' }));
     expect(replayed.statusCode).toBe(202);
-    const replay = setup.commands.find((command) => command instanceof SendMessageCommand) as SendMessageCommand;
+    const replay = setup.commands.find((command) => command instanceof OperationsCommand && command.operation === 'send-message') as OperationsCommand;
     expect(replay.input).toMatchObject({
       QueueUrl: 'https://sqs.test/lever.fifo',
       MessageGroupId: source.id,
@@ -243,9 +241,9 @@ describe('shared source operations', () => {
       `/operations/sources/${source.id}/actions`, 'POST', { action: 'replay' },
     ));
     expect(response.statusCode).toBe(202);
-    const replay = setup.commands.find((command) => command instanceof SendMessageCommand) as SendMessageCommand;
+    const replay = setup.commands.find((command) => command instanceof OperationsCommand && command.operation === 'send-message') as OperationsCommand;
     expect(replay.input).toMatchObject({ QueueUrl: 'https://sqs.test/ashby.fifo', MessageGroupId: source.id });
-    expect(JSON.parse(replay.input.MessageBody!)).toMatchObject({ version: 1, sourceId: source.id, force: true, runId: expect.any(String) });
+    expect(JSON.parse(String(replay.input.MessageBody))).toMatchObject({ version: 1, sourceId: source.id, force: true, runId: expect.any(String) });
   });
 
   it('quarantines an Ashby source and queues a paused validation recovery', async () => {
@@ -269,9 +267,9 @@ describe('shared source operations', () => {
     expect(await store.getSourceHealth(source.id)).toMatchObject({
       state: 'quarantined', sourceStatus: 'paused', incidentState: 'acknowledged',
     });
-    const command = setup.commands.find((candidate) => candidate instanceof SendMessageCommand) as SendMessageCommand;
+    const command = setup.commands.find((candidate) => candidate instanceof OperationsCommand && candidate.operation === 'send-message') as OperationsCommand;
     expect(command.input).toMatchObject({ QueueUrl: 'https://sqs.test/ashby.fifo', MessageGroupId: source.id });
-    expect(JSON.parse(command.input.MessageBody!)).toMatchObject({ force: true, runId: expect.stringMatching(/^recovery-/) });
+    expect(JSON.parse(String(command.input.MessageBody))).toMatchObject({ force: true, runId: expect.stringMatching(/^recovery-/) });
   });
 
   it('rejects recovery for a source that is not quarantined', async () => {
@@ -313,10 +311,10 @@ describe('shared source operations', () => {
     ));
     const failingSqs = {
       async send(command: unknown) {
-        if (command instanceof SendMessageCommand) throw new Error('SQS unavailable');
+        if (command instanceof OperationsCommand && command.operation === 'send-message') throw new Error('SQS unavailable');
         return {};
       },
-    } as unknown as SQSClient;
+    } as OperationsClient;
 
     const response = await createSourceOperationsHandler({ ...setup.value, sqs: failingSqs })(event(
       `/operations/sources/${source.id}/actions`, 'POST', { action: 'recover' },

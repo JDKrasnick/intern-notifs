@@ -2,7 +2,8 @@
 import { defaultSources } from './sources/index.js';
 import { Poller } from './poll.js';
 import { DynamoInternshipStore, MemoryInternshipStore } from './store.js';
-import { ExpoPushPublisher, sendDigest, SesEmailSender } from './notifications.js';
+import { SesEmailSender } from './aws-email.js';
+import { ExpoPushPublisher, sendDigest } from './notifications.js';
 import { validateApplicationUrl } from './core/application-url.js';
 import { admitGreenhouseSource, findReviewedGreenhouseSource } from './sources/greenhouse-config.js';
 import { probeGreenhouseCandidate } from './sources/greenhouse.js';

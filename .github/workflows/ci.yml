@@ -32,6 +32,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build:cloudflare
+      - run: npm run check:cloudflare-boundary
       - run: npm run terraform:fmt
       - run: tofu -chdir=infra/cloudflare init -backend=false
       - run: npm run terraform:validate

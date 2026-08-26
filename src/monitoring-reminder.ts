@@ -1,4 +1,5 @@
-import { SesEmailSender, type EmailSender } from './notifications.js';
+import { SesEmailSender } from './aws-email.js';
+import type { EmailSender } from './notifications.js';
 
 type Checklist = {
   period: string;
