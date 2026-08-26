@@ -19,6 +19,12 @@ export interface AshbyOwnershipEvidence extends EmployerCareersEvidence {
     approvedAt: string;
     reason: string;
   };
+  /** Explicit owner review when the current first-party site has no careers link to the otherwise verified board. */
+  firstPartyLinkRequirementOverride?: {
+    approvedBy: string;
+    approvedAt: string;
+    reason: string;
+  };
   allowedApplicationHosts: ReviewedApplicationHost[];
 }
 
@@ -48,6 +54,7 @@ export function ashbyEvidenceViolations(evidence: AshbyOwnershipEvidence): strin
   if (!validateAshbyBoardName(evidence.boardKey)) violations.push(`boardKey ${JSON.stringify(evidence.boardKey)} is invalid`);
   if (evidence.apiRegion !== 'global') violations.push('apiRegion must be global');
   const roleOverride = evidence.initialRoleRequirementOverride;
+  const linkOverride = evidence.firstPartyLinkRequirementOverride;
   if (!Number.isInteger(evidence.initialTechnicalEarlyCareerRoles) || evidence.initialTechnicalEarlyCareerRoles < 0) {
     violations.push('initial technical early-career role count must be a non-negative integer');
   } else if (evidence.initialTechnicalEarlyCareerRoles < 1 && !roleOverride) {
@@ -57,6 +64,11 @@ export function ashbyEvidenceViolations(evidence: AshbyOwnershipEvidence): strin
     if (!roleOverride.approvedBy.trim()) violations.push('initial-role override lacks approver');
     if (Number.isNaN(Date.parse(roleOverride.approvedAt))) violations.push('initial-role override approvedAt is invalid');
     if (!roleOverride.reason.trim()) violations.push('initial-role override lacks a reason');
+  }
+  if (linkOverride) {
+    if (!linkOverride.approvedBy.trim()) violations.push('first-party-link override lacks approver');
+    if (Number.isNaN(Date.parse(linkOverride.approvedAt))) violations.push('first-party-link override approvedAt is invalid');
+    if (!linkOverride.reason.trim()) violations.push('first-party-link override lacks a reason');
   }
   if (Number.isNaN(Date.parse(evidence.verifiedAt))) violations.push('verifiedAt is not a parseable timestamp');
   const careersHost = httpsHost(evidence.careersUrl);
@@ -70,8 +82,8 @@ export function ashbyEvidenceViolations(evidence: AshbyOwnershipEvidence): strin
   if (ashbyBoardNameFromUrl(evidence.observedJobUrl) !== evidence.boardKey) violations.push('observedJobUrl does not identify boardKey');
   if (!evidence.evidenceExcerpt.trim()) violations.push('evidenceExcerpt is empty');
   else if (evidence.evidenceExcerpt.length > MAX_EXCERPT_LENGTH) violations.push(`evidenceExcerpt exceeds ${MAX_EXCERPT_LENGTH} characters`);
-  else if (!excerptProvesAshbyBoard(evidence.evidenceExcerpt, evidence.boardKey)) violations.push('evidenceExcerpt does not contain the exact Ashby board link');
-  else if (!evidence.evidenceExcerpt.includes(evidence.exactBoardUrl)) violations.push('evidenceExcerpt does not contain exactBoardUrl verbatim');
+  else if (!linkOverride && !excerptProvesAshbyBoard(evidence.evidenceExcerpt, evidence.boardKey)) violations.push('evidenceExcerpt does not contain the exact Ashby board link');
+  else if (!linkOverride && !evidence.evidenceExcerpt.includes(evidence.exactBoardUrl)) violations.push('evidenceExcerpt does not contain exactBoardUrl verbatim');
   if (!evidence.allowedApplicationHosts.length) violations.push('allowedApplicationHosts is empty');
   const seen = new Set<string>();
   for (const entry of evidence.allowedApplicationHosts) {

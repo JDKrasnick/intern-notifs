@@ -1,0 +1,19 @@
+{
+  "provider": "ashby",
+  "boardKey": "voleon",
+  "apiRegion": "global",
+  "careersUrl": "https://voleon.com/jobs",
+  "firstPartyEvidenceUrl": "https://voleon.com/jobs",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/voleon",
+  "evidenceExcerpt": "Voleon's first-party careers page embeds https://jobs.ashbyhq.com/voleon/embed?version=2",
+  "observedJobUrl": "https://jobs.ashbyhq.com/voleon/57f1b666-2f4b-4bad-aac0-fa42a1c8fdf6",
+  "verifiedAt": "2026-08-26T16:17:41.124Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ],
+  "notes": "The current first-party careers page directly embeds the exact Ashby tenant; Greenhouse's voleon endpoints returned 404 during verification."
+}

@@ -1,6 +1,6 @@
 import type { ReviewedGreenhouseSource } from './greenhouse-config.js';
 
-/** Owner-approved fleet expansion admitted to shadow monitoring on 2026-08-18T11:55:00.000Z. */
+/** Owner-approved fleet expansions admitted through manual first-party verification. */
 export const reviewedGreenhouseOwnerApprovedExpansionSources: ReviewedGreenhouseSource[] = [
   {
     "id": "greenhouse-autoscout24",
@@ -389,6 +389,31 @@ export const reviewedGreenhouseOwnerApprovedExpansionSources: ReviewedGreenhouse
       "job-boards.greenhouse.io"
     ],
     "status": "shadow",
+    "evidenceStatus": "reviewed",
+    "sourceClass": "greenhouse"
+  },
+  {
+    "id": "greenhouse-verkada",
+    "employerId": "verkada",
+    "displayName": "Verkada",
+    "aliases": [
+      "Verkada",
+      "Verkada Inc."
+    ],
+    "boardToken": "verkada",
+    "careersUrl": "https://www.verkada.com/careers/",
+    "expectedBoardNames": [
+      "Verkada"
+    ],
+    "admittedBoardName": "Verkada",
+    "admittedAt": "2026-08-26T16:17:41.124Z",
+    "allowedInitialHosts": [
+      "job-boards.greenhouse.io"
+    ],
+    "allowedFinalHosts": [
+      "job-boards.greenhouse.io"
+    ],
+    "status": "published",
     "evidenceStatus": "reviewed",
     "sourceClass": "greenhouse"
   }

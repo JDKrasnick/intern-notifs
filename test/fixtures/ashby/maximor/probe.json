@@ -1,0 +1,38 @@
+{
+  "probedAt": "2026-08-26T16:22:15.101Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "maximor",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/maximor",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 9,
+      "listedRows": 9,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "New York City",
+        "United States"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 9
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "67d0c7d0-fddb-4b8d-aed8-0647337a988e",
+          "title": "Software Engineer (New Grad)",
+          "location": "New York City"
+        },
+        {
+          "id": "3ff6e57d-5430-4836-b6f0-19044d8ee6d8",
+          "title": "Software engineering Intern",
+          "location": "New York City"
+        }
+      ]
+    }
+  ]
+}

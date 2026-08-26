@@ -166,7 +166,6 @@ const apiProbedBoards: Array<{
   { token: "vardaspace", name: "Varda Space Industries", initialHosts: ["job-boards.greenhouse.io"], finalHosts: ["job-boards.greenhouse.io"] },
   { token: "vast", name: "Vast", initialHosts: ["boards.greenhouse.io"], finalHosts: ["boards.greenhouse.io","job-boards.greenhouse.io"] },
   { token: "veeamsoftware", name: "Veeam Software", initialHosts: ["job-boards.eu.greenhouse.io"], finalHosts: ["job-boards.eu.greenhouse.io"] },
-  { token: "verkada", name: "Verkada", initialHosts: ["job-boards.greenhouse.io"], finalHosts: ["job-boards.greenhouse.io"] },
   { token: "virtu", name: "Virtu Financial", initialHosts: ["job-boards.greenhouse.io"], finalHosts: ["job-boards.greenhouse.io"] },
   { token: "virturecruitinghidden", name: "Virtu Careers", initialHosts: ["job-boards.greenhouse.io"], finalHosts: ["job-boards.greenhouse.io"] },
   { token: "voloridgeinvestmentmanagement", name: "Voloridge Investment Management", initialHosts: ["job-boards.greenhouse.io"], finalHosts: ["job-boards.greenhouse.io"] },

@@ -1,7 +1,43 @@
 import type { ReviewedSourceRecord } from './reviewed-source.js';
 
-/** Owner-approved fleet expansion admitted to shadow monitoring on 2026-08-18T11:55:00.000Z. */
+/** Owner-approved fleet expansions admitted through manual first-party verification. */
 export const reviewedAshbyOwnerApprovedExpansionSources: ReviewedSourceRecord[] = [
+  {
+    "id": "ashby-voleon",
+    "company": "The Voleon Group",
+    "identity": {
+      "provider": "ashby",
+      "boardKey": "voleon",
+      "apiRegion": "global"
+    },
+    "careersUrl": "https://voleon.com/jobs",
+    "admittedAt": "2026-08-26T16:17:41.124Z",
+    "evidenceState": "ownership-verified",
+    "allowedApplicationHosts": [
+      {
+        "host": "jobs.ashbyhq.com"
+      }
+    ],
+    "status": "shadow"
+  },
+  {
+    "id": "ashby-maximor",
+    "company": "Maximor AI",
+    "identity": {
+      "provider": "ashby",
+      "boardKey": "maximor",
+      "apiRegion": "global"
+    },
+    "careersUrl": "https://www.maximor.ai/",
+    "admittedAt": "2026-08-26T16:22:15.101Z",
+    "evidenceState": "ownership-verified",
+    "allowedApplicationHosts": [
+      {
+        "host": "jobs.ashbyhq.com"
+      }
+    ],
+    "status": "shadow"
+  },
   {
     "id": "ashby-super-com",
     "company": "Super.com",

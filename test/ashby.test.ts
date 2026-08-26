@@ -130,6 +130,25 @@ describe('Ashby ownership and admission evidence', () => {
       .toContain('evidenceExcerpt does not contain the exact Ashby board link');
   });
 
+  it('allows an explicit owner override when the current first-party site has no careers link', () => {
+    const overridden = evidence({
+      evidenceExcerpt: 'The employer site confirms the reviewed company identity but currently publishes no careers link.',
+      firstPartyLinkRequirementOverride: {
+        approvedBy: 'JDKrasnick', approvedAt: '2026-08-26T16:25:00Z',
+        reason: 'Owner manually matched the live board content and application contract to the employer.',
+      },
+    });
+    expect(ashbyEvidenceViolations(overridden)).toEqual([]);
+    expect(ashbyEvidenceViolations({
+      ...overridden,
+      firstPartyLinkRequirementOverride: { approvedBy: '', approvedAt: 'invalid', reason: '' },
+    })).toEqual(expect.arrayContaining([
+      'first-party-link override lacks approver',
+      'first-party-link override approvedAt is invalid',
+      'first-party-link override lacks a reason',
+    ]));
+  });
+
   it('blocks Ashby itself and aggregators from establishing ownership', () => {
     for (const url of ['https://jobs.ashbyhq.com/acme.io', 'https://linkedin.com/jobs/1', 'https://web.archive.org/example']) {
       expect(ashbyEvidenceViolations(evidence({ careersUrl: url, firstPartyEvidenceUrl: url }))).toContain('careersUrl is not an employer-controlled HTTPS URL');
@@ -183,9 +202,14 @@ describe('Ashby offline manifest and reverification', () => {
       'WindBorne Systems', 'Persona AI', 'Skydio', 'Heliux', 'Beacon Software', 'Centerfield', 'RV Tech',
       'Circleback', 'Eragon', 'Modal', 'Yotta Labs', 'Anthelion Capital', 'Saronic', 'First Order Effects',
       'Junior', 'Airwallex', 'Netic', 'Retell AI', 'Quadrillion', 'Pylon', 'NationGraph',
+      'The Voleon Group',
+      'Maximor AI',
     ]);
     expect(reviewedAshbySources.filter(({ status }) => status === 'shadow')).toHaveLength(61);
-    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-18T12:05:00Z') })).toEqual([]);
+    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-26T16:20:00Z') })).toEqual([
+      'ashby-sentry: observation-window override follow-up is overdue',
+      'ashby-sentry: promotion requires at least 3 clean snapshots',
+    ]);
   });
 
   it('keeps any expansion replacements ordered and unadmitted', () => {

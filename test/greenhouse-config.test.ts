@@ -56,8 +56,8 @@ describe('reviewed Greenhouse registry', () => {
     expect(reviewedGreenhouseSources.slice(0, 3).map((source) => source.id)).toEqual(['greenhouse-figma', 'greenhouse-datadog', 'greenhouse-cloudflare']);
     expect(reviewedGreenhouseSources.filter((source) => source.status === 'published')).toHaveLength(166);
     expect(reviewedGreenhouseSources.filter((source) => source.status === 'shadow')).toHaveLength(20);
-    expect(reviewedGreenhouseSources.filter((source) => source.evidenceStatus === 'reviewed')).toHaveLength(23);
-    expect(reviewedGreenhouseSources.filter((source) => source.evidenceStatus === 'api-probed')).toHaveLength(163);
+    expect(reviewedGreenhouseSources.filter((source) => source.evidenceStatus === 'reviewed')).toHaveLength(24);
+    expect(reviewedGreenhouseSources.filter((source) => source.evidenceStatus === 'api-probed')).toHaveLength(162);
   });
 
   it('keeps every future reviewed entry within the admission contract', () => {

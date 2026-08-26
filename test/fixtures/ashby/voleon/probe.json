@@ -1,0 +1,41 @@
+{
+  "probedAt": "2026-08-26T16:17:41.124Z",
+  "retention": "metadata-only",
+  "results": [
+    {
+      "state": "ok",
+      "boardName": "voleon",
+      "endpoint": "https://api.ashbyhq.com/posting-api/job-board/voleon",
+      "apiVersion": "1",
+      "apiRegion": "global",
+      "rawRows": 59,
+      "listedRows": 59,
+      "unlistedRows": 0,
+      "malformedRows": 0,
+      "boardPathViolations": 0,
+      "technicalEarlyCareerRoles": 2,
+      "geographicCoverage": [
+        "Berkeley, CA",
+        "London",
+        "Miami, FL",
+        "New York City, NY",
+        "Remote, United States"
+      ],
+      "applicationHostSummary": {
+        "jobs.ashbyhq.com": 59
+      },
+      "qualifyingRoleSamples": [
+        {
+          "id": "d732fd5a-ac98-4985-9e60-d1d59f02a66c",
+          "title": "Software Engineer - University Hire 2027",
+          "location": "Berkeley, CA"
+        },
+        {
+          "id": "57f1b666-2f4b-4bad-aac0-fa42a1c8fdf6",
+          "title": "Software Engineer Intern - (Summer 2027)",
+          "location": "Berkeley, CA"
+        }
+      ]
+    }
+  ]
+}

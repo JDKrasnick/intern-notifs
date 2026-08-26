@@ -1,0 +1,55 @@
+{
+  "jobs": [
+    {
+      "id": 5210813007,
+      "internal_job_id": 7001,
+      "title": "Backend Software Engineering Intern 2027",
+      "location": {
+        "name": "Sanitized fixture location"
+      },
+      "updated_at": "2026-08-26T16:17:41.124Z",
+      "absolute_url": "https://job-boards.greenhouse.io/verkada/jobs/5210813007",
+      "content": "&lt;p&gt;Sanitized fixture. Applicants must be a U.S. citizen. Pays $48/hour.&lt;/p&gt;",
+      "departments": [
+        {
+          "name": "Engineering"
+        }
+      ],
+      "offices": []
+    },
+    {
+      "id": 5210813008,
+      "internal_job_id": 7002,
+      "title": "Marketing Manager",
+      "location": {
+        "name": "Sanitized fixture location"
+      },
+      "updated_at": "2026-08-26T16:17:41.124Z",
+      "absolute_url": "https://job-boards.greenhouse.io/verkada/jobs/5210813008",
+      "content": "<p>Sanitized non-eligible fixture.</p>",
+      "departments": [
+        {
+          "name": "Marketing"
+        }
+      ],
+      "offices": []
+    },
+    {
+      "id": 5210813009,
+      "internal_job_id": null,
+      "title": "Engineering Talent Community",
+      "location": {
+        "name": "Sanitized fixture location"
+      },
+      "updated_at": "2026-08-26T16:17:41.124Z",
+      "absolute_url": "https://job-boards.greenhouse.io/verkada/jobs/5210813009",
+      "content": "<p>Sanitized prospect fixture.</p>",
+      "departments": [
+        {
+          "name": "Engineering"
+        }
+      ],
+      "offices": []
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "provider": "ashby",
+  "boardKey": "maximor",
+  "apiRegion": "global",
+  "careersUrl": "https://www.maximor.ai/",
+  "firstPartyEvidenceUrl": "https://www.maximor.ai/",
+  "exactBoardUrl": "https://jobs.ashbyhq.com/maximor",
+  "evidenceExcerpt": "Maximor's first-party site identifies the company as the autonomous finance platform for the office of the CFO; its current site publishes no careers link.",
+  "observedJobUrl": "https://jobs.ashbyhq.com/maximor/3ff6e57d-5430-4836-b6f0-19044d8ee6d8",
+  "verifiedAt": "2026-08-26T16:22:15.101Z",
+  "state": "ownership-verified",
+  "initialTechnicalEarlyCareerRoles": 2,
+  "firstPartyLinkRequirementOverride": {
+    "approvedBy": "JDKrasnick",
+    "approvedAt": "2026-08-26T16:25:00Z",
+    "reason": "Owner manually matched Maximor's live Ashby board identity, company description, current roles, and standard application paths after confirming the redesigned first-party site has no careers link or page."
+  },
+  "allowedApplicationHosts": [
+    {
+      "host": "jobs.ashbyhq.com"
+    }
+  ],
+  "notes": "The first-party homepage and live board consistently identify Maximor AI; the explicit override preserves the missing-link exception for review rather than fabricating static ownership evidence."
+}

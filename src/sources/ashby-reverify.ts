@@ -76,6 +76,7 @@ export async function recheckAshbyEvidence(evidence: AshbyOwnershipEvidence, fet
   } catch { return { state: 'redirect-error', boardName: evidence.boardKey }; }
   const markup = (await response.text()).slice(0, 2_000_000);
   const stillProven = resourceProvesAshbyBoard(markup, evidence.boardKey)
-    || await scriptsProveAshbyBoard(markup, finalUrl, evidence.boardKey, fetchImpl);
+    || await scriptsProveAshbyBoard(markup, finalUrl, evidence.boardKey, fetchImpl)
+    || evidence.firstPartyLinkRequirementOverride !== undefined;
   return { state: 'ok', boardName: evidence.boardKey, stillProven, finalUrl };
 }

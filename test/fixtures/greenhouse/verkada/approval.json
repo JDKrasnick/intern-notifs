@@ -1,0 +1,11 @@
+{
+  "sourceId": "greenhouse-verkada",
+  "runAt": "2026-08-26T16:17:41.124Z",
+  "commitSha": "cfaa78e8a6a12d6ef6b20c25e6e9b144a53a91f2",
+  "counts": {
+    "raw": 280,
+    "eligible": 7,
+    "withheld": 273
+  },
+  "hostSummary": "job-boards.greenhouse.io: 280"
+}
