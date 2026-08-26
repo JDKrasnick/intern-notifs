@@ -47,6 +47,12 @@
 - [x] Add local swipe-right hide with Undo and Profile-based restore.
 - [x] Add cursor-based endless scrolling through every role in the selected availability catalog.
 - [x] Repair catalog index drift and add a guarded operator repair, daily full-table invariant audit, metric, and alarm for open, closed, and nontechnical jobs.
+- [ ] Complete issue #99 catalog quality hardening and backfill.
+  - [x] Add shared catalog normalization, structured locations/pay, defensive mobile presentation, and the guarded D1 repair workflow.
+  - [x] Deploy the normalization and dry-run endpoint, then save the production dry-run report for owner approval.
+  - [x] Apply the approved production repair with its exact token and changed-record count.
+  - [x] Verify the post-repair audit, grouped projection, and unchanged job IDs/notification state through production D1 and API samples.
+  - [ ] Verify representative iOS/Android rendering.
 - [x] Separate catalog visibility from ingestion facts, keep provider baselines behind normal roles, and add the guarded 2026-08-09 Ashby recency repair.
 - [x] Audit 25 representative employers through the GitHub Markdown ingestion and poller pipeline.
 - [x] Add a provider-neutral company-coverage snapshot, public search API, and responsive web disclosure seeded from live internship evidence and reviewed ATS registries.

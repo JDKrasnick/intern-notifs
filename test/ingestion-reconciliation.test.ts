@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { IngestionRunner } from '../src/poll.js';
 import { GitHubMarkdownAdapter } from '../src/sources/github.js';
 import { MemoryInternshipStore } from '../src/store.js';
+import { buildInternshipIdentity } from '../src/identity/enrichment.js';
 import type { Internship, ProcessedListing, SourceAdapter, SourceCheckpoint, SourceFetchResult, SourceOccurrenceState } from '../src/types.js';
 
 const listing = (sourceId: string, overrides: Partial<ProcessedListing> = {}): ProcessedListing => ({
@@ -74,6 +75,31 @@ describe('snapshot reconciliation', () => {
     expect([...store.jobs.values()][0].sourceReferences).toEqual([
       expect.objectContaining({ sourceId: 'source-a', state: 'closed' }),
       expect.objectContaining({ sourceId: 'source-b', state: 'open' }),
+    ]);
+  });
+
+  it('closes an elapsed role when its last official occurrence closes', async () => {
+    const store = new MemoryInternshipStore();
+    const community = new MutableAdapter('github-list', [listing('github-list', { season: 'summer-2025' })]);
+    const officialListing = listing('greenhouse-acme', {
+      season: 'summer-2025',
+      internshipIdentity: buildInternshipIdentity({
+        sourceId: 'greenhouse-acme', sourceUrl: 'https://source.example.test/greenhouse-acme', observedAt: '2026-07-29T12:00:00.000Z',
+        company: 'Acme', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2025', seasonEvidenceStatus: 'explicit',
+      }),
+    });
+    const official = new MutableAdapter('greenhouse-acme', [officialListing]);
+    await new IngestionRunner([community, official], store).run();
+    expect([...store.jobs.values()][0]).toMatchObject({ open: true });
+
+    official.rows = [];
+    await new IngestionRunner([official], store).run();
+    await new IngestionRunner([official], store).run();
+
+    expect([...store.jobs.values()][0]).toMatchObject({ open: false });
+    expect([...store.jobs.values()][0]?.sourceReferences).toEqual([
+      expect.objectContaining({ sourceId: 'github-list', state: 'open' }),
+      expect.objectContaining({ sourceId: 'greenhouse-acme', state: 'closed' }),
     ]);
   });
 
@@ -195,6 +221,25 @@ describe('snapshot reconciliation', () => {
     expect(report.unchangedSources).toEqual(['source-a']);
     expect(operations).toBe(0);
     expect((await store.getSourceOccurrences('source-a'))[0]).toMatchObject({ present: true, consecutiveOmissions: 0 });
+  });
+
+  it('prefers cleaned official evidence over community display fields', async () => {
+    const store = new MemoryInternshipStore();
+    const community = new MutableAdapter('community-list', [listing('community-list', {
+      company: 'Community Acme', title: 'SWE Intern', location: 'Unspecified',
+    })]);
+    await new IngestionRunner([community], store).run();
+    const official = new MutableAdapter('greenhouse-acme', [listing('greenhouse-acme', {
+      company: '🇺🇸 Acme', title: '🎓 Advanced Degree Required · Software Engineering Intern', location: 'NYC',
+    })]);
+    await new IngestionRunner([official], store).run();
+    expect([...store.jobs.values()][0]).toMatchObject({
+      company: 'Acme', title: 'Software Engineering Intern', location: 'New York, NY',
+      requirements: { requiresUsCitizenship: true, advancedDegreeRequired: true },
+    });
+    community.rows = [listing('community-list', { company: 'Bad community value', title: 'Bad title', location: 'Unspecified' })];
+    await new IngestionRunner([community], store).run();
+    expect([...store.jobs.values()][0]).toMatchObject({ company: 'Acme', title: 'Software Engineering Intern', location: 'New York, NY' });
   });
 
   it('does not advance a checkpoint or duplicate an outbox event after a partial write failure', async () => {

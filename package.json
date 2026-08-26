@@ -40,6 +40,7 @@
     "migrate:catalog-search": "tsx src/migrate-catalog-search.ts",
     "migrate:source-occurrences": "tsx src/migrate-source-occurrences.ts",
     "migrate:posting-identity": "tsx src/migrate-posting-identity.ts",
+    "migrate:catalog-quality": "tsx scripts/catalog-quality-backfill.ts",
     "build:browser-companion": "esbuild browser-companion/content.ts --bundle --format=iife --platform=browser --outfile=browser-companion/dist/content.js",
     "build:cloudflare": "wrangler deploy --dry-run --outdir cloudflare/dist",
     "cloudflare:migrate:local": "wrangler d1 migrations apply intern-notifs-db --local",

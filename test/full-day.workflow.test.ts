@@ -64,7 +64,7 @@ describe('a full day of internship discovery', () => {
     });
     expect(await sendNewJobNotifications(discovered.newJobs, users, publisher, at('2026-07-19T12:01:00.000Z'))).toEqual({ sent: 3, skipped: 6, failed: 0 });
     expect(sentPayloads.map((payload) => payload.to).sort()).toEqual(['ExponentPushToken[ada]', 'ExponentPushToken[ada]', 'ExponentPushToken[quinn]']);
-    expect(sentPayloads.find((payload) => payload.body.includes('Remote (US)'))).toMatchObject({ title: 'ML — ModelWorks', body: expect.stringContaining('Remote (US) · summer-2027') });
+    expect(sentPayloads.find((payload) => payload.body.includes('Remote — US'))).toMatchObject({ title: 'ML — ModelWorks', body: expect.stringContaining('Remote — US · summer-2027') });
 
     // This is the same contract used by the mobile feed, search, and notification tap handler.
     const api = createApiHandler({ jobs, users });
@@ -75,8 +75,8 @@ describe('a full day of internship discovery', () => {
     expect(catalog).toHaveLength(5);
     expect(catalog.some((job) => job.title === 'Marketing Intern')).toBe(false);
     expect(catalog.filter((job) => `${job.company} ${job.title} ${job.location}`.toLowerCase().includes('remote')).map((job) => job.title)).toEqual(['Machine Learning Intern']);
-    const tappedId = sentPayloads.find((payload) => payload.body.includes('Remote (US)'))!.data.jobId;
-    expect(json<Internship>(await api(event(undefined, 'GET', `/jobs/${tappedId}`)))).toMatchObject({ title: 'Machine Learning Intern', location: 'Remote (US)' });
+    const tappedId = sentPayloads.find((payload) => payload.body.includes('Remote — US'))!.data.jobId;
+    expect(json<Internship>(await api(event(undefined, 'GET', `/jobs/${tappedId}`)))).toMatchObject({ title: 'Machine Learning Intern', location: 'Remote — US' });
 
     const saved = await api(event('ada', 'POST', '/me/applications', { jobId: tappedId, status: 'applied', notes: 'Applied after the push alert.' }));
     expect(saved.statusCode).toBe(201);
@@ -92,7 +92,7 @@ describe('a full day of internship discovery', () => {
 
     const email: PushMessage & { subject?: string; html?: string } = { title: '', body: '' };
     expect(await sendDigest(jobs, { send: async (subject, text, html) => { email.subject = subject; email.body = text; email.html = html; } }, at('2026-07-19T17:00:00.000Z'))).toBe(3);
-    expect(email).toMatchObject({ subject: 'Internship digest: 3 new roles', body: expect.stringContaining('Remote (US)') });
+    expect(email).toMatchObject({ subject: 'Internship digest: 3 new roles', body: expect.stringContaining('Remote — US') });
     expect(email.body).not.toContain('Marketing Intern');
     expect(await sendDigest(jobs, { send: async () => { throw new Error('a second digest should be empty'); } })).toBe(0);
   });

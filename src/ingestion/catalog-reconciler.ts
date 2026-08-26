@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { employerCategory } from '../core/employers.js';
 import { isTechnicalJob, matchesJobFilter, type JobFilter } from '../core/filters.js';
 import { fingerprint, jobId, normalizeUrl } from '../core/normalize.js';
+import { normalizeInternship, normalizeListing } from '../catalog-quality.js';
+import { isPastSeason } from '../core/early-career.js';
 import type {
   Internship,
   NotificationEvent,
@@ -46,6 +48,7 @@ function occurrence(listing: ProcessedListing, externalId: string): SourceOccurr
     company: listing.company,
     title: listing.title,
     location: listing.location,
+    ...(listing.locations ? { locations: listing.locations } : {}),
     season: listing.season,
     applyUrl: listing.applyUrl,
     compensation: listing.compensation,
@@ -85,13 +88,26 @@ function anyOpenTechnicalOccurrence(references: SourceOccurrence[]): boolean {
   return references.some((reference) => reference.state === 'open' && reference.technical !== false);
 }
 
+function seasonAllowsOpen(season: string, identity: Internship['internshipIdentity'], references: SourceOccurrence[], now: string): boolean {
+  if (!isPastSeason(season, new Date(now))) return true;
+  const evidence = (identity as { season?: { evidenceStatus?: string } } | undefined)?.season?.evidenceStatus;
+  return evidence === 'explicit' && references.some((reference) => reference.state === 'open' && /^(greenhouse|lever|ashby)-/iu.test(reference.sourceId));
+}
+
 function merge(existing: Internship, listing: ProcessedListing, externalId: string, now: string, applicationUrlValidatedAt?: string, metadataVersion?: number): Internship {
+  existing = normalizeInternship(existing);
+  listing = normalizeListing(listing);
   const reference = occurrence(listing, externalId);
   const match = existing.sourceReferences.findIndex((item) =>
     item.sourceId === reference.sourceId
     && (item.externalId ? item.externalId === externalId : item.document === reference.document && item.row === reference.row));
-  const location = genericLocation(existing.location) ? listing.location || existing.location : existing.location;
-  const company = existing.company || listing.company;
+  const incomingOfficial = /^(greenhouse|lever|ashby)-/iu.test(listing.sourceId);
+  const preferIncoming = incomingOfficial;
+  const useIncomingLocation = genericLocation(existing.location) || (!genericLocation(listing.location) && preferIncoming);
+  const location = useIncomingLocation ? listing.location || existing.location : existing.location;
+  const locations = useIncomingLocation ? listing.locations ?? existing.locations : existing.locations ?? listing.locations;
+  const company = preferIncoming ? listing.company || existing.company : existing.company || listing.company;
+  const title = preferIncoming ? listing.title || existing.title : existing.title || listing.title;
   const sourceReferences = match >= 0
     ? existing.sourceReferences.map((item, index) => index === match ? {
       ...reference,
@@ -104,37 +120,45 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
   const replaceStoredUrl = Boolean(applicationUrlValidatedAt && (!existing.applicationUrlValidatedAt || existing.normalizedUrl !== listingNormalizedUrl));
   const base = { ...existing };
   if (!keepQuarantined) delete base.invalidApplicationUrl;
-  return {
+  const internshipIdentity = listing.internshipIdentity ?? existing.internshipIdentity;
+  return normalizeInternship({
     ...base,
     company,
-    title: existing.title || listing.title,
+    title,
     location,
+    ...(locations ? { locations } : {}),
     season: listing.season,
     applyUrl: replaceStoredUrl ? listing.applyUrl : existing.applyUrl || listing.applyUrl,
     normalizedUrl: replaceStoredUrl ? listingNormalizedUrl : existing.normalizedUrl,
     postingIdentity: listing.postingIdentity ?? existing.postingIdentity,
-    internshipIdentity: listing.internshipIdentity ?? existing.internshipIdentity,
-    fingerprint: fingerprint(company, existing.title || listing.title, location, listing.season),
+    internshipIdentity,
+    fingerprint: fingerprint(company, title, location, listing.season),
     compensation: listing.compensation.maxHourlyUSD ? listing.compensation : existing.compensation,
-    requirements: listing.requirements ?? existing.requirements,
+    requirements: {
+      requiresUsCitizenship: Boolean(listing.requirements?.requiresUsCitizenship || existing.requirements?.requiresUsCitizenship),
+      advancedDegreeRequired: Boolean(listing.requirements?.advancedDegreeRequired || existing.requirements?.advancedDegreeRequired),
+    },
     employerCategory: employerCategory(company),
     sourceReferences,
     technical: anyOpenTechnicalOccurrence(sourceReferences),
-    open: keepQuarantined ? false : sourceReferences.some((item) => item.state === 'open'),
+    open: keepQuarantined ? false : sourceReferences.some((item) => item.state === 'open') && seasonAllowsOpen(listing.season, internshipIdentity, sourceReferences, now),
     lastSeenAt: now,
     ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}),
     ...(metadataVersion ? { applicationPageMetadataVersion: metadataVersion } : {}),
-  };
+  });
 }
 
 function create(listing: ProcessedListing, externalId: string, now: string, baseline: boolean, applicationUrlValidatedAt?: string, metadataVersion?: number): Internship {
+  listing = normalizeListing(listing);
   const normalizedUrl = normalizeUrl(listing.applyUrl);
   const key = fingerprint(listing.company, listing.title, listing.location, listing.season);
+  const reference = { ...occurrence(listing, externalId), firstAttachedAt: now, firstAttachedAtPrecision: 'exact' as const };
   return {
     jobId: listing.postingIdentity?.canonicalJobId ?? jobId(normalizedUrl, key),
     company: listing.company,
     title: listing.title,
     location: listing.location,
+    ...(listing.locations ? { locations: listing.locations } : {}),
     season: listing.season,
     applyUrl: listing.applyUrl,
     normalizedUrl,
@@ -146,9 +170,9 @@ function create(listing: ProcessedListing, externalId: string, now: string, base
     compensation: listing.compensation,
     ...(listing.requirements ? { requirements: listing.requirements } : {}),
     employerCategory: employerCategory(listing.company),
-    sourceReferences: [{ ...occurrence(listing, externalId), firstAttachedAt: now, firstAttachedAtPrecision: 'exact' },],
+    sourceReferences: [reference],
     technical: listing.technical ?? isTechnicalJob(listing),
-    open: listing.state === 'open',
+    open: listing.state === 'open' && seasonAllowsOpen(listing.season, listing.internshipIdentity, [reference], now),
     firstSeenAt: now,
     catalogVisibleAt: now,
     catalogRecency: baseline ? 'baseline' : 'normal',
@@ -178,7 +202,8 @@ function closeOccurrence(job: Internship, state: SourceOccurrenceState, now: str
     ...job,
     sourceReferences,
     technical: anyOpenTechnicalOccurrence(sourceReferences),
-    open: sourceReferences.some((reference) => reference.state === 'open'),
+    open: sourceReferences.some((reference) => reference.state === 'open')
+      && seasonAllowsOpen(job.season, job.internshipIdentity, sourceReferences, now),
     lastSeenAt: now,
   };
 }
