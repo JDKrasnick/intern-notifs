@@ -18,10 +18,14 @@ export async function shareDataExport(value: CompleteDataExport): Promise<void> 
   if (!await Sharing.isAvailableAsync()) throw new SharingUnavailableError();
   const file = new File(Paths.cache, fileName);
   file.create({ overwrite: true, intermediates: true });
-  file.write(contents);
-  await Sharing.shareAsync(file.uri, {
-    mimeType: 'application/json',
-    UTI: 'public.json',
-    dialogTitle: 'Export InternNotifs data',
-  });
+  try {
+    file.write(contents);
+    await Sharing.shareAsync(file.uri, {
+      mimeType: 'application/json',
+      UTI: 'public.json',
+      dialogTitle: 'Export InternNotifs data',
+    });
+  } finally {
+    file.delete();
+  }
 }

@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   share: vi.fn(),
   create: vi.fn(),
   write: vi.fn(),
+  delete: vi.fn(),
 }));
 
 vi.mock('react-native', () => ({ Platform: mocks.platform }));
@@ -16,6 +17,7 @@ vi.mock('expo-file-system', () => ({
     uri = 'file:///cache/internnotifs-data-2026-08-26.json';
     create = mocks.create;
     write = mocks.write;
+    delete = mocks.delete;
   },
 }));
 
@@ -40,6 +42,14 @@ describe('native account export sharing', () => {
     await expect(shareDataExport(exported)).resolves.toBeUndefined();
     expect(mocks.write).toHaveBeenCalledWith(expect.stringContaining('"schemaVersion": 1'));
     expect(mocks.share).toHaveBeenCalledWith(expect.stringMatching(/internnotifs-data-2026-08-26\.json$/), expect.objectContaining({ mimeType: 'application/json' }));
+    expect(mocks.delete).toHaveBeenCalledOnce();
+  });
+
+  it('deletes the temporary export when sharing fails', async () => {
+    mocks.isAvailable.mockResolvedValue(true);
+    mocks.share.mockRejectedValue(new Error('share failed'));
+    await expect(shareDataExport(exported)).rejects.toThrow('share failed');
+    expect(mocks.delete).toHaveBeenCalledOnce();
   });
 
   it('reports unavailable sharing before writing a temporary file', async () => {
@@ -47,5 +57,6 @@ describe('native account export sharing', () => {
     await expect(shareDataExport(exported)).rejects.toMatchObject({ name: 'SharingUnavailableError' });
     expect(mocks.create).not.toHaveBeenCalled();
     expect(mocks.share).not.toHaveBeenCalled();
+    expect(mocks.delete).not.toHaveBeenCalled();
   });
 });
