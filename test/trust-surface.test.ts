@@ -1,14 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { currentPrivacyVersion as backendPrivacyVersion, currentTermsVersion as backendTermsVersion } from '../cloudflare/auth.js';
-import { currentPrivacyVersion as mobilePrivacyVersion, currentTermsVersion as mobileTermsVersion } from '../mobile/src/policies.js';
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
+const readMobilePolicyVersion = (name: 'currentPrivacyVersion' | 'currentTermsVersion') => {
+  const match = read('mobile/src/policies.ts').match(new RegExp(`export const ${name} = '([^']+)';`, 'u'));
+  if (!match) throw new Error(`Missing ${name} in mobile/src/policies.ts`);
+  return match[1];
+};
+
 describe('public trust surface', () => {
   it('keeps signup policy versions synchronized', () => {
-    expect(mobileTermsVersion).toBe(backendTermsVersion);
-    expect(mobilePrivacyVersion).toBe(backendPrivacyVersion);
+    expect(readMobilePolicyVersion('currentTermsVersion')).toBe(backendTermsVersion);
+    expect(readMobilePolicyVersion('currentPrivacyVersion')).toBe(backendPrivacyVersion);
   });
 
   it('publishes every required policy from the public index', () => {
