@@ -85,6 +85,21 @@ After apply, replace the placeholder `database_id` in a temporary copy of
 then apply `cloudflare/migrations/` with that temporary configuration. Do not
 commit the generated configuration.
 
+Apply every pending D1 migration before deploying Worker code that depends on
+its schema. In particular, migration `0005_auth_consent.sql` must land before
+the consent-aware signup handler. With the temporary remote configuration:
+
+```bash
+npx wrangler d1 migrations apply intern-notifs-db --remote \
+  --config .context/wrangler.remote.json
+npm run build:cloudflare
+tofu -chdir=infra/cloudflare plan -out=.context/cloudflare.tfplan
+tofu -chdir=infra/cloudflare apply .context/cloudflare.tfplan
+```
+
+Review the migration list and Terraform plan before applying either one. Never
+deploy the Worker first: the new signup query requires the consent columns.
+
 Create separate random secrets for user sessions and operator access:
 
 ```bash

@@ -5,8 +5,14 @@ const encoder = new TextEncoder();
 const passwordIterations = 100_000;
 const sessionLifetimeMs = 30 * 24 * 60 * 60 * 1_000;
 const confirmationLifetimeMs = 30 * 60 * 1_000;
+const abandonedSignupLifetimeMs = 7 * 24 * 60 * 60 * 1_000;
+const installationLifetimeMs = 365 * 24 * 60 * 60 * 1_000;
+const installationRefreshWindowMs = 364 * 24 * 60 * 60 * 1_000;
 const maxAuthBodyBytes = 16 * 1_024;
 const maxPasswordLength = 128;
+
+export const currentTermsVersion = '2026-08-25';
+export const currentPrivacyVersion = '2026-08-25';
 
 type RateLimitPolicy = { limit: number; windowMs: number; blockMs: number };
 const rateLimitPolicies = {
@@ -33,6 +39,12 @@ type AuthUserRow = {
   verified_at: string | null;
   confirmation_hash: string | null;
   confirmation_expires_at: string | null;
+};
+
+type SignupConsent = {
+  ageAttested: true;
+  termsVersion: typeof currentTermsVersion;
+  privacyVersion: typeof currentPrivacyVersion;
 };
 
 class AuthRateLimitError extends Error {
@@ -202,6 +214,15 @@ export async function signUp(request: Request, env: AuthEnvironment): Promise<Re
   const input = await body(request);
   const email = normalizeEmail(input.email);
   const password = requirePassword(input.password);
+  if (input.ageAttested !== true) throw new Error('Confirm that you are at least 18 years old');
+  if (input.termsVersion !== currentTermsVersion || input.privacyVersion !== currentPrivacyVersion) {
+    throw new Error('Review and accept the current Terms and Privacy Policy');
+  }
+  const consent: SignupConsent = {
+    ageAttested: true,
+    termsVersion: currentTermsVersion,
+    privacyVersion: currentPrivacyVersion,
+  };
   await enforceAuthRateLimits(request, email, 'signup', env);
   const timestamp = new Date();
   const salt = randomToken(16);
@@ -214,11 +235,30 @@ export async function signUp(request: Request, env: AuthEnvironment): Promise<Re
   }
   const userId = existing?.user_id ?? crypto.randomUUID();
   await env.DB.prepare(`
-    INSERT INTO auth_users (user_id, email, password_hash, password_salt, confirmation_hash, confirmation_expires_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO auth_users (
+      user_id, email, password_hash, password_salt, confirmation_hash, confirmation_expires_at,
+      created_at, updated_at, age_attested_at, terms_version, terms_accepted_at, privacy_version
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(email) DO UPDATE SET password_hash = excluded.password_hash, password_salt = excluded.password_salt,
-      confirmation_hash = excluded.confirmation_hash, confirmation_expires_at = excluded.confirmation_expires_at, updated_at = excluded.updated_at
-  `).bind(userId, email, await passwordHash(password, salt), salt, confirmationHash, new Date(timestamp.getTime() + confirmationLifetimeMs).toISOString(), timestamp.toISOString(), timestamp.toISOString()).run();
+      confirmation_hash = excluded.confirmation_hash, confirmation_expires_at = excluded.confirmation_expires_at,
+      updated_at = excluded.updated_at, age_attested_at = excluded.age_attested_at,
+      terms_version = excluded.terms_version, terms_accepted_at = excluded.terms_accepted_at,
+      privacy_version = excluded.privacy_version
+  `).bind(
+    userId,
+    email,
+    await passwordHash(password, salt),
+    salt,
+    confirmationHash,
+    new Date(timestamp.getTime() + confirmationLifetimeMs).toISOString(),
+    timestamp.toISOString(),
+    timestamp.toISOString(),
+    timestamp.toISOString(),
+    consent.termsVersion,
+    timestamp.toISOString(),
+    consent.privacyVersion,
+  ).run();
   try {
     await sendConfirmation(email, code, env);
   } catch (error) {
@@ -244,12 +284,14 @@ function installationTokenHash(token: string, env: AuthEnvironment): Promise<str
 export async function createInstallation(env: AuthEnvironment): Promise<{ token: string; userId: string }> {
   const token = randomToken();
   const userId = `installation:${crypto.randomUUID()}`;
-  const timestamp = new Date().toISOString();
+  const now = new Date();
+  const timestamp = now.toISOString();
+  const expiresAt = Math.floor((now.getTime() + installationLifetimeMs) / 1_000);
   await env.DB.batch([
     env.DB.prepare(`
-      INSERT INTO user_items (user_id, item_key, kind, value, session_id)
-      VALUES (?, 'INSTALLATION', 'installation', ?, ?)
-    `).bind(userId, JSON.stringify({ userId, createdAt: timestamp }), await installationTokenHash(token, env)),
+      INSERT INTO user_items (user_id, item_key, kind, value, session_id, expires_at)
+      VALUES (?, 'INSTALLATION', 'installation', ?, ?, ?)
+    `).bind(userId, JSON.stringify({ userId, createdAt: timestamp }), await installationTokenHash(token, env), expiresAt),
     env.DB.prepare(`
       INSERT INTO user_items (user_id, item_key, kind, value)
       VALUES (?, 'PREFERENCES', 'preferences', ?)
@@ -269,8 +311,14 @@ export async function authenticatedInstallation(request: Request, env: AuthEnvir
   if (!authorization?.startsWith('Bearer ')) return undefined;
   const token = authorization.slice('Bearer '.length);
   if (!token) return undefined;
-  const row = await env.DB.prepare("SELECT user_id FROM user_items WHERE kind = 'installation' AND session_id = ?")
-    .bind(await installationTokenHash(token, env)).first<{ user_id: string }>();
+  const now = Date.now();
+  const row = await env.DB.prepare("SELECT user_id, expires_at FROM user_items WHERE kind = 'installation' AND session_id = ?")
+    .bind(await installationTokenHash(token, env)).first<{ user_id: string; expires_at: number | null }>();
+  if (row && row.expires_at !== null && row.expires_at * 1_000 <= now) return undefined;
+  if (row && (row.expires_at === null || row.expires_at * 1_000 < now + installationRefreshWindowMs)) {
+    await env.DB.prepare("UPDATE user_items SET expires_at = ? WHERE user_id = ? AND kind = 'installation'")
+      .bind(Math.floor((now + installationLifetimeMs) / 1_000), row.user_id).run();
+  }
   return row?.user_id;
 }
 
@@ -331,13 +379,15 @@ export async function deleteAuthUser(userId: string, env: AuthEnvironment): Prom
   await env.DB.prepare('DELETE FROM auth_users WHERE user_id = ?').bind(userId).run();
 }
 
-export async function cleanupExpiredAuth(env: AuthEnvironment): Promise<void> {
-  const timestamp = new Date().toISOString();
-  const rateLimitCutoff = Date.now() - 7 * 24 * 60 * 60_000;
+export async function cleanupExpiredAuth(env: AuthEnvironment, now = new Date()): Promise<void> {
+  const timestamp = now.toISOString();
+  const rateLimitCutoff = now.getTime() - 7 * 24 * 60 * 60_000;
+  const abandonedSignupCutoff = new Date(now.getTime() - abandonedSignupLifetimeMs).toISOString();
   await env.DB.batch([
     env.DB.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').bind(timestamp),
-    env.DB.prepare('UPDATE auth_users SET confirmation_hash = NULL, confirmation_expires_at = NULL WHERE confirmation_expires_at <= ?').bind(timestamp),
-    env.DB.prepare('DELETE FROM auth_rate_limits WHERE window_started_at <= ? AND (blocked_until IS NULL OR blocked_until <= ?)').bind(rateLimitCutoff, Date.now()),
+    env.DB.prepare('DELETE FROM auth_users WHERE verified_at IS NULL AND updated_at <= ?').bind(abandonedSignupCutoff),
+    env.DB.prepare('UPDATE auth_users SET confirmation_hash = NULL, confirmation_expires_at = NULL WHERE verified_at IS NULL AND confirmation_expires_at <= ?').bind(timestamp),
+    env.DB.prepare('DELETE FROM auth_rate_limits WHERE window_started_at <= ? AND (blocked_until IS NULL OR blocked_until <= ?)').bind(rateLimitCutoff, now.getTime()),
   ]);
 }
 

@@ -38,6 +38,7 @@ import { uploadDocumentContent } from "./src/document-upload";
 import { installationApi } from "./src/installation";
 import { migrateLegacyAccountAlerts } from "./src/legacy-alert-migration";
 import { clearSession, confirmEmail, restoreSession, signIn, signOut, signUp } from "./src/auth";
+import { policyUrls } from "./src/policies";
 import {
   clearApplicationFollowUp,
   notifyApplicationProgress,
@@ -4283,15 +4284,31 @@ function Profile({
       <ActionButton
         label="Privacy policy"
         variant="secondary"
-        onPress={() =>
-          openLink("Privacy policy", process.env.EXPO_PUBLIC_PRIVACY_URL)
-        }
+        onPress={() => openLink("Privacy policy", policyUrls.privacy)}
+      />
+      <View style={styles.buttonGap} />
+      <ActionButton
+        label="Terms of use"
+        variant="secondary"
+        onPress={() => openLink("Terms of use", policyUrls.terms)}
+      />
+      <View style={styles.buttonGap} />
+      <ActionButton
+        label="Data retention"
+        variant="secondary"
+        onPress={() => openLink("Data retention", policyUrls.retention)}
+      />
+      <View style={styles.buttonGap} />
+      <ActionButton
+        label="Sources and corrections"
+        variant="secondary"
+        onPress={() => openLink("Sources and corrections", policyUrls.sources)}
       />
       <View style={styles.buttonGap} />
       <ActionButton
         label="Support"
         variant="secondary"
-        onPress={() => openLink("Support", process.env.EXPO_PUBLIC_SUPPORT_URL)}
+        onPress={() => openLink("Support", policyUrls.support)}
       />
       <View style={styles.spacer} />
       {token ? (
@@ -4362,6 +4379,8 @@ function SignIn({
   const [developmentConfirmationCode, setDevelopmentConfirmationCode] = useState(false);
   const [needsConfirmation, setNeedsConfirmation] = useState(false);
   const [createMode, setCreateMode] = useState(false);
+  const [ageAttested, setAgeAttested] = useState(false);
+  const [policiesAccepted, setPoliciesAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -4377,7 +4396,7 @@ function SignIn({
     }
   };
   const createAccount = async () => {
-    const result = await signUp(email, password);
+    const result = await signUp(email, password, { ageAttested, policiesAccepted });
     if (result.confirmationCode) {
       setCode(result.confirmationCode);
       setDevelopmentConfirmationCode(true);
@@ -4386,6 +4405,14 @@ function SignIn({
     }
     setNeedsConfirmation(true);
   };
+  const openPolicy = (label: string, url: string | undefined) => {
+    if (!url || !/^https:\/\//u.test(url)) {
+      Alert.alert(`${label} unavailable`, "This release is missing its required public link.");
+      return;
+    }
+    void Linking.openURL(url).catch(() => Alert.alert(`Could not open ${label.toLowerCase()}`));
+  };
+  const canCreateAccount = ageAttested && policiesAccepted;
   const title = needsConfirmation
     ? developmentConfirmationCode
       ? "Enter the verification code"
@@ -4487,11 +4514,42 @@ function SignIn({
                     if (!busy)
                       void run(async () =>
                         createMode
-                          ? await createAccount()
+                          ? canCreateAccount ? await createAccount() : undefined
                           : onSession(await signIn(email, password)),
                       );
                   }}
                 />
+                {createMode ? (
+                  <View style={styles.consentGroup}>
+                    <TouchableOpacity
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: ageAttested }}
+                      onPress={() => setAgeAttested((current) => !current)}
+                      style={styles.consentRow}
+                    >
+                      <View style={[styles.consentBox, ageAttested && styles.consentBoxChecked]}>
+                        <Text style={styles.consentMark}>{ageAttested ? "✓" : ""}</Text>
+                      </View>
+                      <Text style={styles.consentText}>I confirm that I am at least 18 years old.</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: policiesAccepted }}
+                      onPress={() => setPoliciesAccepted((current) => !current)}
+                      style={styles.consentRow}
+                    >
+                      <View style={[styles.consentBox, policiesAccepted && styles.consentBoxChecked]}>
+                        <Text style={styles.consentMark}>{policiesAccepted ? "✓" : ""}</Text>
+                      </View>
+                      <Text style={styles.consentText}>I agree to the Terms and acknowledge the Privacy Policy.</Text>
+                    </TouchableOpacity>
+                    <View style={styles.policyLinks}>
+                      <Text accessibilityRole="link" onPress={() => openPolicy("Terms", policyUrls.terms)} style={styles.policyLink}>Terms</Text>
+                      <Text style={styles.policySeparator}>·</Text>
+                      <Text accessibilityRole="link" onPress={() => openPolicy("Privacy Policy", policyUrls.privacy)} style={styles.policyLink}>Privacy Policy</Text>
+                    </View>
+                  </View>
+                ) : null}
                 <AuthButton
                   label={
                     busy
@@ -4502,7 +4560,7 @@ function SignIn({
                         ? "Create account"
                         : "Sign in"
                   }
-                  disabled={busy}
+                  disabled={busy || (createMode && !canCreateAccount)}
                   onPress={() =>
                     void run(async () => {
                       if (createMode) {
@@ -5316,6 +5374,24 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     backgroundColor: colors.surface,
   },
+  consentGroup: { gap: 12, marginBottom: 16 },
+  consentRow: { alignItems: "flex-start", flexDirection: "row", gap: 10 },
+  consentBox: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 5,
+    borderWidth: 1,
+    height: 22,
+    justifyContent: "center",
+    width: 22,
+  },
+  consentBoxChecked: { backgroundColor: colors.ink, borderColor: colors.ink },
+  consentMark: { color: colors.onDark, fontSize: 15, fontWeight: "800" },
+  consentText: { color: colors.body, flex: 1, fontSize: 14, lineHeight: 20 },
+  policyLinks: { flexDirection: "row", gap: 8, marginLeft: 32 },
+  policyLink: { color: colors.signal, fontSize: 14, fontWeight: "700" },
+  policySeparator: { color: colors.muted, fontSize: 14 },
   authButton: {
     minHeight: 52,
     borderRadius: 10,

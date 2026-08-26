@@ -4,36 +4,65 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>InternNotifs Privacy Policy</title>
-    <style>
-      body { max-width: 48rem; margin: 3rem auto; padding: 0 1.25rem; color: #0f172a; background: #f8fafc; font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      main { padding: 2rem; background: #fff; border-radius: 1rem; box-shadow: 0 8px 24px rgb(15 23 42 / 8%); }
-      a { color: #0e7490; }
-      h1, h2 { line-height: 1.25; }
-    </style>
+    <link rel="stylesheet" href="policy.css" />
   </head>
   <body>
     <main>
-      <h1>InternNotifs Privacy Policy</h1>
-      <p>Effective July 19, 2026</p>
-      <p>InternNotifs helps people discover internships, track applications, and choose notification preferences. This policy describes the data used by the beta app.</p>
+      <p class="eyebrow">InternNotifs</p>
+      <h1>Privacy Policy</h1>
+      <p class="meta">Version 2026-08-25 · Effective August 25, 2026</p>
+      <p class="lede">InternNotifs is a browse-first early-career job radar operated by JD Krasnick. This policy explains what the mobile app and public web service collect, why, and how people can control their information.</p>
 
-      <h2>Data we process</h2>
-      <p>When you create an account, we process your email address and authentication information through Amazon Cognito. If you choose to use application-profile features, we process the profile information, links, education, reusable answers, application-tracking records, and résumé or other documents you upload. We also process your job-alert filters, notification wording preferences, and Expo push token when you enable notifications.</p>
+      <h2>Who can use InternNotifs</h2>
+      <p>InternNotifs is intended for people age 18 and older. Account creation requires an age attestation. We do not intentionally collect personal information from anyone under 18.</p>
 
-      <h2>Why we use it</h2>
-      <p>We use this data to provide sign-in, show and filter internships, send requested alerts, keep your profile and application tracker available across sessions, and operate and secure the service. We do not sell personal information or use it for advertising.</p>
+      <h2>Information we collect</h2>
+      <h3>Account and consent information</h3>
+      <p>If you create an account, we collect your email address, a one-way password hash and salt, verification and session records, and the versions and time of your age and policy acknowledgments. We do not store your password in readable form.</p>
 
-      <h2>Service providers</h2>
-      <p>InternNotifs uses Amazon Web Services for authentication, data storage, API delivery, and encrypted document storage. It uses Expo’s push service to deliver alerts to Apple Push Notification service or Firebase Cloud Messaging. These providers process data only as needed to provide their services.</p>
+      <h3>Optional profile and application information</h3>
+      <p>If you choose these features, we collect the name, email, phone number, location, education, work-authorization information, links, reusable answers, application statuses and notes, and résumé or other documents you provide. Some reusable answers may include sensitive information that you choose to save. Do not upload information you do not want stored.</p>
+
+      <h3>Device alerts and app settings</h3>
+      <p>The app creates a random installation identifier. When you enable alerts, we store that identifier with your Expo push token, platform, alert filters, notification wording, quiet hours, app-opening time, and delivery receipts. Installation data is deliberately separate from your account, so signing out or deleting an account does not turn off alerts or erase settings for that device.</p>
+
+      <h3>Local device information</h3>
+      <p>The app keeps its installation credential, sign-in session, public catalog cache, hidden-role choices, and notification scheduling identifiers in app storage on your device. InternNotifs does not request your contacts, precise device location, photos, microphone, or advertising identifier.</p>
+
+      <h3>Security, operations, and support</h3>
+      <p>We process request metadata and a cryptographic rate-limit key derived from an IP address or account email to prevent abuse. Cloudflare may record short-lived request, error, and performance logs. If you contact support, we receive the information you include in your email or public GitHub issue. Never put passwords, identity documents, or résumé files in a public issue.</p>
+
+      <h2>How we use information</h2>
+      <p>We use information only to operate requested app features, authenticate accounts, sync saved applications and profiles, deliver alerts, support application-form assistance that the user controls, answer support and rights requests, prevent abuse, and keep the service reliable. We do not sell personal information, show targeted advertising, or use personal information to track people across other companies’ apps or websites.</p>
+
+      <h2>Service providers and external sites</h2>
+      <ul>
+        <li><strong>Cloudflare</strong> hosts the API, account and application database, document storage, queues, and operational logs.</li>
+        <li><strong>Resend</strong> delivers account-verification email.</li>
+        <li><strong>Expo</strong> routes requested notifications to Apple Push Notification service or Firebase Cloud Messaging.</li>
+        <li><strong>Google</strong> provides the temporary support mailbox, and <strong>GitHub</strong> hosts the public project, policy pages, and public issue tracker.</li>
+      </ul>
+      <p>Opening an employer’s official application form takes you to a third-party site with its own privacy practices. InternNotifs does not submit an application for you unless a separately authorized partner integration is clearly identified and you remain in control of final submission.</p>
 
       <h2>Retention and deletion</h2>
-      <p>You can delete your account in the app at Profile → Delete account. Deletion removes your profile, applications, uploaded documents, saved device-alert records, and Cognito sign-in account from the active service. Backup retention may be limited by the operational retention settings of the underlying providers.</p>
+      <p>The detailed <a href="retention.html">Data Retention Policy</a> is part of this Privacy Policy. In summary, account data remains until deletion, abandoned unverified accounts are removed after seven days, inactive anonymous installations after twelve months, delivery records after ninety days, and application-assistance metadata after thirty days.</p>
+      <p>You can delete a signed-in account in the app under Profile → Account and support → Delete account. This removes the account, profile, synced applications, assistance records, documents, and active sign-in sessions. Device alerts and app settings remain because they are not linked to the account. Cloudflare’s point-in-time recovery history may retain database changes for up to 30 days before aging out.</p>
 
-      <h2>Your choices</h2>
-      <p>You can browse internships without an account. You can change alert filters and notification wording in Profile, turn alerts off, and deny or revoke notification permission in your device settings.</p>
+      <h2>Your choices and requests</h2>
+      <p>You may browse without an account, decline notification permission, disable alerts, omit optional profile fields, delete individual documents, or delete your account. To request access, correction, a portable copy, or help with deletion, email <a href="mailto:onlinestuff309@gmail.com">onlinestuff309@gmail.com</a>. We may request limited information to verify the request and target completion within 30 days.</p>
+
+      <h2>Security and international use</h2>
+      <p>We use access controls, encrypted network connections, restricted document storage, and bounded credentials. No system is perfectly secure. The primary service storage region is in North America, and the providers above may process information in other locations under their own data-protection commitments.</p>
+
+      <h2>Changes</h2>
+      <p>We will post revisions here with a new version and effective date. When a material change affects account holders’ rights or how their personal information is used, we will also provide reasonable notice in the app or by email when practical.</p>
 
       <h2>Contact</h2>
-      <p>For privacy questions, account-deletion help, or a copy of your information, use the <a href="support.html">InternNotifs support page</a>.</p>
+      <p>InternNotifs is operated by JD Krasnick in Pennsylvania, United States. For private privacy questions, email <a href="mailto:onlinestuff309@gmail.com">onlinestuff309@gmail.com</a>. For non-sensitive public bugs, use the <a href="https://github.com/JDKrasnick/intern-notifs/issues/new/choose">GitHub issue tracker</a>.</p>
+
+      <nav aria-label="Policies">
+        <a href="index.html">Home</a><a href="terms.html">Terms</a><a href="retention.html">Retention</a><a href="source-policy.html">Sources and corrections</a><a href="support.html">Support</a>
+      </nav>
     </main>
   </body>
 </html>

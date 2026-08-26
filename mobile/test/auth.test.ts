@@ -87,10 +87,31 @@ describe('Cloudflare session restoration', () => {
 
   it('returns a development confirmation code when Cloudflare supplies one', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ delivery: 'development', confirmationCode: '123456' }), { status: 201 }));
-    await expect(signUp(' Student@Example.Test ', 'Password12345')).resolves.toEqual({ delivery: 'development', confirmationCode: '123456' });
+    await expect(signUp(' Student@Example.Test ', 'Password12345', {
+      ageAttested: true,
+      policiesAccepted: true,
+    })).resolves.toEqual({ delivery: 'development', confirmationCode: '123456' });
     expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/auth/signup'), expect.objectContaining({
-      body: JSON.stringify({ email: 'student@example.test', password: 'Password12345' }),
+      body: JSON.stringify({
+        email: 'student@example.test',
+        password: 'Password12345',
+        ageAttested: true,
+        termsVersion: '2026-08-25',
+        privacyVersion: '2026-08-25',
+      }),
     }));
+  });
+
+  it('does not send signup before the adult and policy acknowledgments are complete', async () => {
+    await expect(signUp('student@example.test', 'Password12345', {
+      ageAttested: false,
+      policiesAccepted: true,
+    })).rejects.toThrow('at least 18');
+    await expect(signUp('student@example.test', 'Password12345', {
+      ageAttested: true,
+      policiesAccepted: false,
+    })).rejects.toThrow('Terms');
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('does not clear a newer account for an older request token', async () => {

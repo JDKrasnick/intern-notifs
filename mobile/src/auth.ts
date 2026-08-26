@@ -1,4 +1,5 @@
 import { publicConfig } from './public-config';
+import { currentPrivacyVersion, currentTermsVersion } from './policies';
 import { sessionStorage, type StoredAuthSession } from './session-storage';
 
 const baseUrl = publicConfig.apiUrl.replace(/\/$/u, '');
@@ -13,7 +14,7 @@ export type SessionRestoreResult =
 
 function normalizedEmail(email: string) { return email.trim().toLowerCase(); }
 
-async function authRequest<T>(path: string, body: Record<string, string>): Promise<T> {
+async function authRequest<T>(path: string, body: Record<string, string | boolean>): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -114,11 +115,22 @@ export async function signIn(email: string, password: string): Promise<string> {
   return response.token;
 }
 
-export async function signUp(email: string, password: string): Promise<{
+export async function signUp(email: string, password: string, consent: {
+  ageAttested: boolean;
+  policiesAccepted: boolean;
+}): Promise<{
   delivery: 'development' | 'email';
   confirmationCode?: string;
 }> {
-  return authRequest('/auth/signup', { email: normalizedEmail(email), password });
+  if (!consent.ageAttested) throw new Error('Confirm that you are at least 18 years old');
+  if (!consent.policiesAccepted) throw new Error('Agree to the Terms and acknowledge the Privacy Policy');
+  return authRequest('/auth/signup', {
+    email: normalizedEmail(email),
+    password,
+    ageAttested: true,
+    termsVersion: currentTermsVersion,
+    privacyVersion: currentPrivacyVersion,
+  });
 }
 
 export async function confirmEmail(email: string, code: string): Promise<void> {

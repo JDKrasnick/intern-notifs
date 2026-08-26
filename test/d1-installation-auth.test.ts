@@ -31,7 +31,7 @@ describe('account-independent installation authorization', () => {
       CREATE TABLE system_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE user_items (
         user_id TEXT NOT NULL, item_key TEXT NOT NULL, kind TEXT NOT NULL, value TEXT NOT NULL,
-        session_id TEXT, PRIMARY KEY (user_id, item_key)
+        session_id TEXT, expires_at INTEGER, PRIMARY KEY (user_id, item_key)
       );
       CREATE UNIQUE INDEX user_items_session_id ON user_items(session_id) WHERE session_id IS NOT NULL;
     `);
@@ -55,6 +55,11 @@ describe('account-independent installation authorization', () => {
     }), env)).resolves.toBe(installation.userId);
     await expect(authenticatedInstallation(new Request('https://example.test/installation/preferences', {
       headers: { Authorization: 'Bearer invalid-token' },
+    }), env)).resolves.toBeUndefined();
+    database.prepare("UPDATE user_items SET expires_at = 0 WHERE user_id = ? AND kind = 'installation'")
+      .run(installation.userId);
+    await expect(authenticatedInstallation(new Request('https://example.test/installation/preferences', {
+      headers: { Authorization: `Bearer ${installation.token}` },
     }), env)).resolves.toBeUndefined();
     database.close();
   });

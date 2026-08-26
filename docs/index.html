@@ -4,28 +4,26 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>InternNotifs</title>
+    <link rel="stylesheet" href="policy.css" />
     <style>
-      :root { color: #1c1c1e; background: #f2f2f7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      body { margin: 0; font-size: 16px; line-height: 1.5; }
-      main { box-sizing: border-box; margin: 0 auto; max-width: 42rem; padding: 4rem 1.25rem; }
-      .eyebrow { color: #0e7490; font-size: .75rem; font-weight: 700; letter-spacing: .03em; margin: 0 0 .5rem; }
-      h1 { font-size: clamp(2rem, 7vw, 2.75rem); letter-spacing: -.04em; line-height: 1.08; margin: 0; }
-      .intro { color: #6c6c70; margin: 1rem 0 2rem; max-width: 34rem; }
-      nav { border-top: 1px solid #d1d1d6; }
-      a { align-items: center; border-bottom: 1px solid #d1d1d6; color: #1c1c1e; display: flex; font-weight: 600; justify-content: space-between; padding: 1rem 0; text-decoration: none; }
-      a span { color: #0e7490; font-size: 1.5rem; font-weight: 400; }
-      a:focus-visible { outline: 3px solid #0e7490; outline-offset: 4px; }
+      .policy-list { border-top: 1px solid #d1d1d6; margin-top: 2rem; }
+      .policy-list a { align-items: center; border-bottom: 1px solid #d1d1d6; color: #1c1c1e; display: flex; font-weight: 600; justify-content: space-between; padding: 1rem 0; text-decoration: none; }
+      .policy-list span { color: #0e7490; font-size: 1.5rem; font-weight: 400; }
     </style>
   </head>
   <body>
     <main>
       <p class="eyebrow">InternNotifs</p>
       <h1>Technical internships, without the noise.</h1>
-      <p class="intro">Browse credible roles, then apply on the employer’s official site.</p>
-      <nav aria-label="Site information">
-        <a href="privacy.html">Privacy policy <span aria-hidden="true">›</span></a>
+      <p class="lede">Browse credible early-career roles, then apply on the employer’s official site. Read how the open-source project handles data, sources, and corrections.</p>
+      <div class="policy-list" role="navigation" aria-label="Policies and support">
+        <a href="privacy.html">Privacy Policy <span aria-hidden="true">›</span></a>
+        <a href="terms.html">Terms of Use <span aria-hidden="true">›</span></a>
+        <a href="retention.html">Data Retention Policy <span aria-hidden="true">›</span></a>
+        <a href="source-policy.html">Sources and corrections <span aria-hidden="true">›</span></a>
         <a href="support.html">Support and account deletion <span aria-hidden="true">›</span></a>
-      </nav>
+        <a href="https://github.com/JDKrasnick/intern-notifs">Source code <span aria-hidden="true">›</span></a>
+      </div>
     </main>
   </body>
 </html>

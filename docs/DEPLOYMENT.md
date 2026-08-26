@@ -433,12 +433,13 @@ board merely because deployment succeeded.
 
 ## EAS environments
 
-The production EAS environment must have these five plaintext/sensitive variables:
+The production EAS environment must have these six public variables:
 
 - `EXPO_PUBLIC_API_URL`
-- `EXPO_PUBLIC_COGNITO_USER_POOL_ID`
-- `EXPO_PUBLIC_COGNITO_CLIENT_ID`
 - `EXPO_PUBLIC_PRIVACY_URL`
+- `EXPO_PUBLIC_TERMS_URL`
+- `EXPO_PUBLIC_RETENTION_URL`
+- `EXPO_PUBLIC_SOURCE_POLICY_URL`
 - `EXPO_PUBLIC_SUPPORT_URL`
 
 Check them without printing their values:

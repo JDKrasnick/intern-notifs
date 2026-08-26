@@ -11,6 +11,40 @@ import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken,
 import type { D1Database } from './types.js';
 
 type JsonRow = { value: string };
+const deliveryReceiptLifetimeSeconds = 90 * 24 * 60 * 60;
+
+function receiptExpiry(value: Pick<DeliveryReceipt, 'updatedAt'>): number {
+  return Math.floor(new Date(value.updatedAt).getTime() / 1_000) + deliveryReceiptLifetimeSeconds;
+}
+
+/** Applies the published retention schedule to installation-scoped records. */
+export async function cleanupExpiredUserData(db: D1Database, now = new Date()): Promise<void> {
+  const nowSeconds = Math.floor(now.getTime() / 1_000);
+  const installationLifetimeSeconds = 365 * 24 * 60 * 60;
+  await db.batch([
+    // Existing installations predate explicit expiry. Start their retention
+    // clock at rollout so the migration never surprises an active tester.
+    db.prepare("UPDATE user_items SET expires_at = ? WHERE kind = 'installation' AND expires_at IS NULL")
+      .bind(nowSeconds + installationLifetimeSeconds),
+    db.prepare(`
+      UPDATE user_items
+      SET expires_at = CAST(strftime('%s', json_extract(value, '$.updatedAt')) AS INTEGER) + ?
+      WHERE kind = 'receipt' AND expires_at IS NULL
+        AND json_extract(value, '$.updatedAt') IS NOT NULL
+    `).bind(deliveryReceiptLifetimeSeconds),
+    db.prepare("UPDATE user_items SET expires_at = ? WHERE kind = 'receipt' AND expires_at IS NULL")
+      .bind(nowSeconds + deliveryReceiptLifetimeSeconds),
+    db.prepare(`
+      DELETE FROM user_items
+      WHERE user_id IN (
+        SELECT user_id FROM user_items
+        WHERE kind = 'installation' AND expires_at <= ?
+      )
+    `).bind(nowSeconds),
+    db.prepare("DELETE FROM user_items WHERE kind <> 'installation' AND expires_at IS NOT NULL AND expires_at <= ?")
+      .bind(nowSeconds),
+  ]);
+}
 
 function parse<T>(row: JsonRow | null): T | undefined {
   return row ? JSON.parse(row.value) as T : undefined;
@@ -477,19 +511,19 @@ export class D1UserStore implements UserStore {
   async claimReceipt(value: DeliveryReceipt): Promise<boolean> {
     const key = `RECEIPT#${value.dedupeKey ?? value.jobId}#${value.token}`;
     const result = await this.db.prepare(`
-      INSERT INTO user_items (user_id, item_key, kind, value, receipt_state) VALUES (?, ?, 'receipt', ?, 'PENDING')
-      ON CONFLICT(user_id, item_key) DO UPDATE SET value = excluded.value, receipt_state = excluded.receipt_state
+      INSERT INTO user_items (user_id, item_key, kind, value, receipt_state, expires_at) VALUES (?, ?, 'receipt', ?, 'PENDING', ?)
+      ON CONFLICT(user_id, item_key) DO UPDATE SET value = excluded.value, receipt_state = excluded.receipt_state, expires_at = excluded.expires_at
       WHERE json_extract(user_items.value, '$.status') = 'error'
-    `).bind(value.userId, key, JSON.stringify(value)).run();
+    `).bind(value.userId, key, JSON.stringify(value), receiptExpiry(value)).run();
     return result.meta.changes > 0;
   }
-  putReceipt(value: DeliveryReceipt) { return this.put(value.userId, `RECEIPT#${value.dedupeKey ?? value.jobId}#${value.token}`, 'receipt', value, { receipt_state: value.status === 'pending' ? 'PENDING' : value.status === 'retryable' ? 'RETRYABLE' : null }); }
+  putReceipt(value: DeliveryReceipt) { return this.put(value.userId, `RECEIPT#${value.dedupeKey ?? value.jobId}#${value.token}`, 'receipt', value, { receipt_state: value.status === 'pending' ? 'PENDING' : value.status === 'retryable' ? 'RETRYABLE' : null, expires_at: receiptExpiry(value) }); }
   async migrateReceipt(value: DeliveryReceipt, dedupeKey: string): Promise<boolean> {
     const migrated = { ...value, dedupeKey };
     const result = await this.db.prepare(`
-      INSERT INTO user_items (user_id, item_key, kind, value, receipt_state) VALUES (?, ?, 'receipt', ?, ?)
+      INSERT INTO user_items (user_id, item_key, kind, value, receipt_state, expires_at) VALUES (?, ?, 'receipt', ?, ?, ?)
       ON CONFLICT(user_id, item_key) DO NOTHING
-    `).bind(value.userId, `RECEIPT#${dedupeKey}#${value.token}`, JSON.stringify(migrated), value.status === 'pending' ? 'PENDING' : value.status === 'retryable' ? 'RETRYABLE' : null).run();
+    `).bind(value.userId, `RECEIPT#${dedupeKey}#${value.token}`, JSON.stringify(migrated), value.status === 'pending' ? 'PENDING' : value.status === 'retryable' ? 'RETRYABLE' : null, receiptExpiry(migrated)).run();
     return result.meta.changes > 0;
   }
   async pendingReceipts() { const rows = await this.db.prepare("SELECT value FROM user_items WHERE receipt_state = 'PENDING'").all<JsonRow>(); return rows.results.map((row) => JSON.parse(row.value) as DeliveryReceipt); }

@@ -21,6 +21,15 @@ This is intentionally not an anonymous shared account. Private data is scoped to
 
 Google sign-in should not be enabled by itself on iOS; when it is offered, Sign in with Apple must also be offered to satisfy Apple's equivalent-login policy. Apple and Google keys stay server-side and are never included in the Expo app.
 
+## Trust and policy decisions
+
+- InternNotifs is operated by JD Krasnick under Pennsylvania law and is intended for people age 18 and older.
+- Signup records a separate 18+ attestation and acceptance of the current Terms and Privacy Policy versions without collecting date of birth.
+- GitHub remains the public open-source support and listing-correction channel. Private account, résumé, privacy, deletion, and export requests use the published support email.
+- Verified access, correction, export, and deletion requests target completion within 30 days. Source corrections target acknowledgment within two business days and resolution within seven business days; credible fraud, malware, privacy, impersonation, or applicant-safety concerns are hidden while reviewed.
+- Account data remains until deletion; abandoned signups expire after 7 days, inactive anonymous installations after 12 months, delivery receipts after 90 days, and assistance metadata after 30 days.
+- Source code uses the MIT License. InternNotifs-created catalog metadata allows reuse with attribution under CC BY 4.0, excluding employer text, third-party source content, logos, and trademarks.
+
 ## Store-launch checklist
 
 ### Product and release

@@ -56,6 +56,9 @@ if (!app.icon || !splash)
 const requiredUrls = [
   "EXPO_PUBLIC_API_URL",
   "EXPO_PUBLIC_PRIVACY_URL",
+  "EXPO_PUBLIC_TERMS_URL",
+  "EXPO_PUBLIC_RETENTION_URL",
+  "EXPO_PUBLIC_SOURCE_POLICY_URL",
   "EXPO_PUBLIC_SUPPORT_URL",
 ];
 for (const name of requiredUrls) {

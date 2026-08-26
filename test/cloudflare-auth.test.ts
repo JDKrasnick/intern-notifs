@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { consumeAuthRateLimit, handleAuthRequest, signOut } from '../cloudflare/auth.js';
+import { cleanupExpiredAuth, consumeAuthRateLimit, handleAuthRequest, signOut } from '../cloudflare/auth.js';
 import type { AuthEnvironment } from '../cloudflare/auth.js';
 
 function environment(run = vi.fn(async () => ({}))) {
@@ -123,7 +123,10 @@ describe('Cloudflare authentication abuse controls', () => {
     const response = await handleAuthRequest(new Request('https://example.test/auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '192.0.2.1' },
-      body: JSON.stringify({ email: 'student@example.test', password: 'ValidPassword123' }),
+      body: JSON.stringify({
+        email: 'student@example.test', password: 'ValidPassword123', ageAttested: true,
+        termsVersion: '2026-08-25', privacyVersion: '2026-08-25',
+      }),
     }), {
       AUTH_SESSION_SECRET: 'a-production-length-session-secret-value',
       DB: { prepare },
@@ -176,7 +179,10 @@ describe('Cloudflare authentication abuse controls', () => {
     } as unknown as AuthEnvironment;
     const signup = () => handleAuthRequest(new Request('https://example.test/auth/signup', {
       method: 'POST',
-      body: JSON.stringify({ email: 'student@example.test', password: 'ValidPassword123' }),
+      body: JSON.stringify({
+        email: 'student@example.test', password: 'ValidPassword123', ageAttested: true,
+        termsVersion: '2026-08-25', privacyVersion: '2026-08-25',
+      }),
     }), env);
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
@@ -186,5 +192,44 @@ describe('Cloudflare authentication abuse controls', () => {
     expect(pending?.confirmation_expires_at).toBeNull();
     await expect(signup()).resolves.toMatchObject({ status: 201 });
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('requires the current policy versions and an adult attestation', async () => {
+    const prepare = vi.fn();
+    const env = {
+      AUTH_SESSION_SECRET: 'a-production-length-session-secret-value',
+      DB: { prepare },
+    } as unknown as AuthEnvironment;
+    const signup = (body: Record<string, unknown>) => handleAuthRequest(new Request('https://example.test/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'student@example.test', password: 'ValidPassword123', ...body }),
+    }), env);
+
+    await expect(signup({ ageAttested: false, termsVersion: '2026-08-25', privacyVersion: '2026-08-25' }))
+      .resolves.toMatchObject({ status: 400 });
+    await expect(signup({ ageAttested: true, termsVersion: 'old', privacyVersion: '2026-08-25' }))
+      .resolves.toMatchObject({ status: 400 });
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it('deletes abandoned unverified accounts after seven days', async () => {
+    const statements: Array<{ query: string; values: unknown[] }> = [];
+    const DB = {
+      prepare(query: string) {
+        let values: unknown[] = [];
+        return {
+          bind(...next: unknown[]) { values = next; return this; },
+          async run() { statements.push({ query, values }); return { meta: { changes: 0 } }; },
+        };
+      },
+      async batch(prepared: Array<{ run(): Promise<unknown> }>) { await Promise.all(prepared.map((item) => item.run())); return []; },
+    };
+    await cleanupExpiredAuth({
+      AUTH_SESSION_SECRET: 'a-production-length-session-secret-value',
+      DB,
+    } as unknown as AuthEnvironment, new Date('2026-08-25T12:00:00.000Z'));
+
+    const deletion = statements.find(({ query }) => query.includes('DELETE FROM auth_users'));
+    expect(deletion?.values).toEqual(['2026-08-18T12:00:00.000Z']);
   });
 });

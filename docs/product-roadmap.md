@@ -25,7 +25,7 @@
 | Mobile discovery MVP | In progress | Filtered feed, native deep-link alerts, official-form handoff, and tracker are polished |
 | Human-reviewed application assistance | In progress | Headed pilot fills a supported official form, pauses for unknowns and verification, and leaves final submission to the user |
 | Headless application preparation | Planned | Isolated runner reuses proven mappings, supports live user handoff, and never bypasses verification or non-partner submission controls |
-| Trust and release readiness | Planned | Settings/deletion UI, policy pages, store disclosure inputs, and release tests complete |
+| Trust and release readiness | In progress | Policy pages, disclosure worksheet, consent, retention enforcement, and release checks are implemented; final public URLs, support mailbox, store-console entry, and physical-device acceptance remain |
 | Cloudflare platform migration | In progress | Cloudflare infrastructure is live, the source backfill and grouped D1 projection are verified, the production mobile environment targets the Worker, and retained AWS rollback data is preserved |
 | Closed beta | Planned | 30–50 student test cohort and agreed success metrics |
 | Public release | Planned | TestFlight/Play validation complete and catalog reliability meets target |
@@ -100,7 +100,7 @@
 - [ ] Connect a GitHub account/repository with permission to create a GitHub Project and issues.
 - [ ] Create a deploy-only AWS role or Identity Center permission set; stop using root credentials for deployment.
 - [ ] Decide the default geographic emphasis for discovery ranking and the mobile experience; do not gate source verification on a hand-selected roster.
-- [ ] Provide/approve privacy policy, terms, support email, and retention policy.
+- [ ] Approve the drafted privacy, terms, retention, and source/correction policies; replace the temporary Gmail support contact with the intended long-term public mailbox before store submission.
 - [ ] Enroll in Apple Developer Program and Google Play Console when beta builds are ready.
 - [ ] Recruit 30–50 beta testers with iOS and Android devices.
 
@@ -127,3 +127,7 @@
 | 2026-07-29 | Track company coverage separately from any ATS provider and distinguish feed observations from reviewed direct sources | Makes broad discovery measurable without overstating community-list evidence as employer verification |
 | 2026-07-19 | GitHub Project will be the shared external tracker | Fits open-source workflow and links work to code/issues |
 | 2026-07-19 | Use FAANG, startup, and normal as the initial company-type filters | Small, understandable filters; startup begins with a reviewed YC-backed allowlist and unknown employers remain normal |
+| 2026-08-25 | Operate as JD Krasnick under Pennsylvania law, require separate 18+ and policy signup attestations, and use the published private support email for personal-data requests | Provides a clear accountable operator and consent record without collecting date of birth |
+| 2026-08-25 | Retain active account data until deletion, abandoned unverified signups for 7 days, inactive anonymous installations for 12 months, delivery records for 90 days, and assistance metadata for 30 days | Keeps product state available while bounding operational and abandoned data |
+| 2026-08-25 | Publish code under MIT and InternNotifs-authored catalog metadata under CC BY 4.0, excluding employer text, trademarks, and third-party material | Supports an open-source project without relicensing material InternNotifs does not own |
+| 2026-08-25 | Acknowledge source corrections within 2 business days, target resolution within 7 days, and promptly hide credible safety-sensitive listings during review | Makes the public correction path predictable while prioritizing user safety |

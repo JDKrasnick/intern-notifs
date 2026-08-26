@@ -16,7 +16,7 @@ import { defaultSources } from '../src/sources/index.js';
 import type { SourceCheckpoint, SourceHealth } from '../src/types.js';
 import { authenticatedInstallation, authenticatedUser, cleanupExpiredAuth, consumeAuthRateLimit, createInstallation, deleteAuthUser, handleAuthRequest, type AuthEnvironment } from './auth.js';
 import { runCatalogQualityBackfill } from '../src/catalog-quality-backfill.js';
-import { D1InternshipStore, D1ReleaseStore, D1UserStore } from './d1-store.js';
+import { cleanupExpiredUserData, D1InternshipStore, D1ReleaseStore, D1UserStore } from './d1-store.js';
 import { queueHasBacklog } from './queue-backlog.js';
 import type { MessageBatch, Queue, R2Bucket, ScheduledController } from './types.js';
 
@@ -526,7 +526,7 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
   }
   if (event.cron === '42 8 * * *') {
     await cleanupExpiredAuth(env);
-    await env.DB.prepare('DELETE FROM user_items WHERE expires_at IS NOT NULL AND expires_at <= ?').bind(Math.floor(Date.now() / 1000)).run();
+    await cleanupExpiredUserData(env.DB);
   }
 }
 
