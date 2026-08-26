@@ -76,6 +76,8 @@ export interface GmailWorkMessage {
   userId: string;
   mode: 'initial' | 'history';
   pageToken?: string;
+  /** Snapshot taken before an initial scan so history can replay mail that arrives during the scan. */
+  startHistoryId?: string;
   requestedAt: string;
 }
 
@@ -199,7 +201,7 @@ export class GmailStore {
   }
 
   async due(now: Date, limit = 100): Promise<string[]> {
-    const rows = await this.db.prepare(`SELECT user_id FROM gmail_connections WHERE next_sync_at <= ? AND (lease_until IS NULL OR lease_until <= ?) ORDER BY next_sync_at LIMIT ?`)
+    const rows = await this.db.prepare(`SELECT user_id FROM gmail_connections WHERE next_sync_at <= ? AND (lease_until IS NULL OR lease_until <= ?) AND (error_code IS NULL OR error_code <> 'revoked') ORDER BY next_sync_at LIMIT ?`)
       .bind(now.toISOString(), now.toISOString(), limit).all<{ user_id: string }>();
     return rows.results.map((row) => row.user_id);
   }
@@ -371,7 +373,9 @@ export async function processGmailWork(message: GmailWorkMessage, env: GmailEnvi
   const connection = await store.connection(message.userId);
   if (!connection) return;
   const token = await accessToken(connection, env, store, now);
-  if (message.mode === 'initial' || !connection.history_id) {
+  const startHistoryId = message.startHistoryId ?? connection.history_id ?? undefined;
+  if (message.mode === 'initial' || !startHistoryId) {
+    const initialHistoryId = message.startHistoryId ?? (await gmailGet<GmailProfile>('/profile', token)).historyId;
     const parameters = new URLSearchParams({ labelIds: 'INBOX', maxResults: '100' });
     if (message.pageToken) parameters.set('pageToken', message.pageToken);
     const page = await gmailGet<GmailMessageList>(`/messages?${parameters}`, token);
@@ -379,15 +383,15 @@ export async function processGmailWork(message: GmailWorkMessage, env: GmailEnvi
     let reachedBoundary = false;
     for (const item of page.messages ?? []) reachedBoundary = (await processMessage(message.userId, item.id, token, env, catalog, now)).olderThanBoundary || reachedBoundary;
     if (page.nextPageToken && !reachedBoundary) {
-      await env.GMAIL_QUEUE.send({ ...message, pageToken: page.nextPageToken });
+      await env.GMAIL_QUEUE.send({ ...message, startHistoryId: initialHistoryId, pageToken: page.nextPageToken });
       await store.continued(message.userId, now);
       return;
     }
-    const profile = await gmailGet<GmailProfile>('/profile', token);
-    await store.synced(message.userId, profile.historyId, now);
+    await env.GMAIL_QUEUE.send({ version: 1, userId: message.userId, mode: 'history', startHistoryId: initialHistoryId, requestedAt: message.requestedAt } satisfies GmailWorkMessage);
+    await store.continued(message.userId, now);
     return;
   }
-  const parameters = new URLSearchParams({ startHistoryId: connection.history_id, historyTypes: 'messageAdded', labelId: 'INBOX', maxResults: '100' });
+  const parameters = new URLSearchParams({ startHistoryId, historyTypes: 'messageAdded', labelId: 'INBOX', maxResults: '100' });
   if (message.pageToken) parameters.set('pageToken', message.pageToken);
   let page: GmailHistoryList;
   try { page = await gmailGet<GmailHistoryList>(`/history?${parameters}`, token); }
@@ -407,7 +411,7 @@ export async function processGmailWork(message: GmailWorkMessage, env: GmailEnvi
     await store.continued(message.userId, now);
     return;
   }
-  await store.synced(message.userId, page.historyId ?? connection.history_id, now);
+  await store.synced(message.userId, page.historyId ?? startHistoryId, now);
 }
 
 function appRedirect(status: 'connected' | 'cancelled' | 'error', message?: string): Response {
@@ -501,4 +505,10 @@ export function gmailRetryCode(error: unknown): string {
   if (status === 401 || status === 400) return 'revoked';
   if (status === 429) return 'rate_limited';
   return 'temporary';
+}
+
+export async function recordGmailFailure(userId: string, error: unknown, env: GmailEnvironment, now = new Date()): Promise<{ retry: boolean; delaySeconds: number }> {
+  const code = gmailRetryCode(error);
+  const delaySeconds = await new GmailStore(env.DB).failed(userId, code, now);
+  return { retry: code !== 'revoked', delaySeconds };
 }

@@ -96,7 +96,8 @@ export function matchGmailApplication(metadata: GmailMetadata, catalog: Internsh
 
   const candidates = catalog.map((job) => candidate(metadata, job)).filter((value): value is GmailDetectionCandidate => Boolean(value));
   if (!candidates.length) return { outcome: 'ignore', reason: 'no-catalog-match' };
-  const highConfidence = candidates.filter((value) => value.signals.length >= 2);
+  const highConfidence = candidates.filter((value) => value.signals.length >= 2
+    && (value.signals.includes('title') || value.signals.includes('requisition-id')));
   if (highConfidence.length === 1 && candidates.length === 1) {
     return {
       outcome: 'applied',

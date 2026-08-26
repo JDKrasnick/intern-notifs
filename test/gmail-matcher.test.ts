@@ -34,6 +34,14 @@ describe('Gmail application matcher', () => {
     expect(result.outcome).toBe('review');
   });
 
+  it('does not treat an employer name and matching provider tenant as independent role evidence', () => {
+    const result = matchGmailApplication(metadata('We received your application at Northstar Labs'), [role()]);
+    expect(result).toMatchObject({
+      outcome: 'review',
+      candidates: [{ jobId: 'job-1', signals: ['employer', 'provider-tenant'] }],
+    });
+  });
+
   it.each(['Interview invitation — Northstar Labs', 'Complete your coding assessment', 'New job alert from Northstar Labs', 'Your application was rejected'])(
     'excludes stage and alert mail: %s', (subject) => expect(matchGmailApplication(metadata(subject), [role()]).outcome).toBe('ignore'),
   );

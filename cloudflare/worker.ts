@@ -19,7 +19,7 @@ import { runCatalogQualityBackfill } from '../src/catalog-quality-backfill.js';
 import { cleanupExpiredUserData, D1InternshipStore, D1ReleaseStore, D1UserStore } from './d1-store.js';
 import { queueHasBacklog } from './queue-backlog.js';
 import type { MessageBatch, Queue, R2Bucket, ScheduledController } from './types.js';
-import { disconnectGmail, gmailApi, gmailCallback, gmailRetryCode, GmailStore, processGmailWork, type GmailWorkMessage } from './gmail.js';
+import { disconnectGmail, gmailApi, gmailCallback, GmailStore, processGmailWork, recordGmailFailure, type GmailWorkMessage } from './gmail.js';
 
 export interface Environment extends AuthEnvironment {
   DOCUMENTS: R2Bucket;
@@ -567,8 +567,9 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
         await processGmailWork(body, env);
         message.ack();
       } catch (error) {
-        const delaySeconds = await new GmailStore(env.DB).failed(body.userId, gmailRetryCode(error), new Date());
-        message.retry({ delaySeconds });
+        const failure = await recordGmailFailure(body.userId, error, env);
+        if (failure.retry) message.retry({ delaySeconds: failure.delaySeconds });
+        else message.ack();
       }
     }
     return;
