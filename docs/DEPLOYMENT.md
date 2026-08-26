@@ -88,6 +88,19 @@ timestamp semantics are measured separately from these scheduler objectives.
 
 These are not credentials. Do not record Apple private keys, API keys, Expo tokens, password values, or personal Apple Account emails here.
 
+## Mobile native project ownership
+
+The iOS project is intentionally checked in and manually managed because it
+contains `mobile/ios/InternNotifs/TextInputRecyclingFix.mm`. EAS therefore uses
+the committed Xcode project and does not regenerate it from `mobile/app.json`.
+Keep the app config and native project synchronized when changing the bundle
+identifier, URL scheme, version/build number, device family, orientation,
+appearance, icons, splash screen, entitlements, or Expo config plugins. Run
+`npx pod-install` after native dependency or plugin changes and verify with a
+local iOS build. Expo Doctor's generic `appConfigFieldsNotSyncedCheck` is
+disabled for this documented manually managed workflow; its package-version
+and all other checks remain enabled.
+
 ## Catalog index audit and repair
 
 The public catalog reads DynamoDB's `openJobsIndex`, so the stored job state and
