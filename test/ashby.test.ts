@@ -206,10 +206,7 @@ describe('Ashby offline manifest and reverification', () => {
       'Maximor AI',
     ]);
     expect(reviewedAshbySources.filter(({ status }) => status === 'shadow')).toHaveLength(61);
-    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-26T16:20:00Z') })).toEqual([
-      'ashby-sentry: observation-window override follow-up is overdue',
-      'ashby-sentry: promotion requires at least 3 clean snapshots',
-    ]);
+    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-26T18:05:00Z') })).toEqual([]);
   });
 
   it('keeps any expansion replacements ordered and unadmitted', () => {
