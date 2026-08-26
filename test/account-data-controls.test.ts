@@ -140,4 +140,35 @@ describe('account data controls', () => {
     expect(await users.listDocuments('mock-no-storage')).toHaveLength(1);
     expect(deleteIdentity).not.toHaveBeenCalled();
   });
+
+  it('classifies an initial account-store read failure as retryable without exposing provider details', async () => {
+    const users = new MemoryUserStore();
+    users.listDocuments = vi.fn().mockRejectedValue(new Error('internal D1 connection details'));
+    const handler = createApiHandler({ jobs: new MemoryInternshipStore(), users });
+
+    const response = await handler(event('mock-read-failure', 'DELETE', '/me'));
+    expect(response.statusCode).toBe(503);
+    expect(json(response)).toMatchObject({ code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'account-data', retryable: true });
+    expect(response.body).not.toContain('internal D1 connection details');
+  });
+
+  it('keeps data and identity available until an active document upload finishes', async () => {
+    const users = new MemoryUserStore();
+    await users.putDocument({ userId: 'mock-active-upload', documentId: 'document-1', fileName: 'resume.pdf', contentType: 'application/pdf', objectKey: 'private/mock-active-upload/document-1', createdAt: 'now' });
+    users.hasActiveDocumentUploads = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false);
+    const deleteObject = vi.fn().mockResolvedValue(undefined);
+    const deleteIdentity = vi.fn().mockResolvedValue(undefined);
+    const handler = createApiHandler({ jobs: new MemoryInternshipStore(), users, deleteIdentity, documentStorage: { createUploadUrl: vi.fn(), createDownloadUrl: vi.fn(), deleteObject } });
+
+    const first = await handler(event('mock-active-upload', 'DELETE', '/me'));
+    expect(first.statusCode).toBe(503);
+    expect(json(first)).toMatchObject({ stage: 'document-storage', retryable: true });
+    expect(await users.listDocuments('mock-active-upload')).toHaveLength(1);
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(deleteIdentity).not.toHaveBeenCalled();
+
+    expect((await handler(event('mock-active-upload', 'DELETE', '/me'))).statusCode).toBe(204);
+    expect(deleteObject).toHaveBeenCalledOnce();
+    expect(deleteIdentity).toHaveBeenCalledOnce();
+  });
 });

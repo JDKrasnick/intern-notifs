@@ -38,6 +38,7 @@ import { uploadDocumentContent } from "./src/document-upload";
 import { installationApi } from "./src/installation";
 import { migrateLegacyAccountAlerts } from "./src/legacy-alert-migration";
 import { buildCompleteDataExport, DataExportFetchError, SharingUnavailableError, type AccountExportResponse } from "./src/account-data-export";
+import { accountDataActionState } from "./src/account-data-controls";
 import { shareDataExport } from "./src/account-data-share";
 import { clearSession, confirmEmail, restoreSession, signIn, signOut, signUp } from "./src/auth";
 import { policyUrls } from "./src/policies";
@@ -3751,7 +3752,7 @@ function Profile({
     }
   };
   const exportMyData = async () => {
-    if (!token || exportingData) return;
+    if (!token || exportingData || deletingAccount) return;
     setExportingData(true);
     setExportFeedback({ kind: "saving", message: "Generating your complete export…" });
     try {
@@ -3832,6 +3833,7 @@ function Profile({
       fallback,
     );
   };
+  const accountActions = accountDataActionState(exportingData, deletingAccount);
   return (
     <ScrollView
       style={styles.list}
@@ -4345,17 +4347,17 @@ function Profile({
           <ActionButton
             label={exportingData ? "Generating export…" : "Export my data"}
             variant="secondary"
-            disabled={exportingData || deletingAccount}
+            disabled={accountActions.exportDisabled}
             onPress={() => void exportMyData()}
           />
-          <SaveFeedback state={exportFeedback} onRetry={() => void exportMyData()} />
+          <SaveFeedback state={exportFeedback} onRetry={accountActions.exportRetryEnabled ? () => void exportMyData() : undefined} />
           <View style={styles.spacer} />
-          <ActionButton label="Sign out" variant="secondary" onPress={() => onSignOut?.()} />
+          <ActionButton label="Sign out" variant="secondary" disabled={accountActions.signOutDisabled} onPress={() => onSignOut?.()} />
           <View style={styles.spacer} />
           <ActionButton
             label={deletingAccount ? "Deleting account…" : "Delete account"}
             variant="danger"
-            disabled={deletingAccount || exportingData}
+            disabled={accountActions.deleteDisabled}
             onPress={deleteAccount}
           />
         </>

@@ -404,6 +404,10 @@ export function createApiHandler(dependencies: ApiDependencies) {
         return reply(result.statusCode, result.body);
       }
       const userId = identity(event); if (!userId) return reply(401, { message: 'Authentication required' });
+      const deletingAccount = method === 'DELETE' && path === '/me';
+      if (!deletingAccount && method !== 'GET' && method !== 'HEAD' && await dependencies.users.isUserDeletionPending(userId)) {
+        return reply(409, { code: 'ACCOUNT_DELETION_IN_PROGRESS', retryable: false, message: 'Account deletion is already in progress. Finish or retry deletion before changing account data.' });
+      }
       const releaseMatch = path.match(/^\/me\/releases\/([^/]+)$/);
       if (method === 'GET' && releaseMatch) {
         const releaseId = decodeURIComponent(releaseMatch[1]!);
@@ -533,7 +537,20 @@ export function createApiHandler(dependencies: ApiDependencies) {
       if (method === 'GET' && docMatch) { if (!documentStorage) return reply(503, { message: 'Document storage is unavailable' }); const document = (await dependencies.users.listDocuments(userId)).find((item) => item.documentId === decodeURIComponent(docMatch[1])); if (!document) return reply(404, { message: 'Document not found' }); return reply(200, { document, downloadUrl: await documentStorage.createDownloadUrl(document) }); }
       if (method === 'DELETE' && docMatch) { const document = (await dependencies.users.listDocuments(userId)).find((item) => item.documentId === decodeURIComponent(docMatch[1])); if (!document) return reply(404, { message: 'Document not found' }); if (documentStorage) await documentStorage.deleteObject(document.objectKey); await dependencies.users.deleteDocument(userId, document.documentId); return reply(204, {}); }
       if (method === 'DELETE' && path === '/me') {
-        const documents = await dependencies.users.listDocuments(userId);
+        let documents: Awaited<ReturnType<UserStore['listDocuments']>>;
+        let activeDocumentUploads: boolean;
+        try {
+          await dependencies.users.beginUserDeletion(userId);
+          [documents, activeDocumentUploads] = await Promise.all([
+            dependencies.users.listDocuments(userId),
+            dependencies.users.hasActiveDocumentUploads(userId),
+          ]);
+        } catch {
+          return reply(503, { code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'account-data', retryable: true, message: 'Account deletion could not be prepared. Your account data and sign-in were kept so you can retry.' });
+        }
+        if (activeDocumentUploads) {
+          return reply(503, { code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'document-storage', retryable: true, message: 'A document upload is still finishing. Your account data and sign-in were kept so you can retry deletion.' });
+        }
         if (documents.length > 0 && !documentStorage) {
           return reply(503, { code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'document-storage', retryable: true, message: 'Document storage is unavailable. Your account data and sign-in were kept so you can retry.' });
         }

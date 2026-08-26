@@ -238,12 +238,28 @@ export async function documentContent(request: Request, env: Environment, userId
   const document = (await users.listDocuments(userId)).find((item) => item.documentId === documentId);
   if (!document) return Response.json({ message: 'Document not found' }, { status: 404 });
   if (request.method === 'PUT') {
-    const upload = await readDocumentUpload(request);
-    if (upload.tooLarge) return Response.json({ message: 'Documents must be 5 MiB or smaller' }, { status: 413 });
-    const period = new Date().toISOString().slice(0, 7);
-    if (!await users.claimDocumentUpload(period)) return Response.json({ message: 'Monthly document upload quota reached' }, { status: 429 });
-    await env.DOCUMENTS.put(document.objectKey, upload.content, { httpMetadata: { contentType: document.contentType } });
-    return new Response(null, { status: 204 });
+    const leaseId = crypto.randomUUID();
+    if (!await users.beginDocumentUpload(userId, documentId, leaseId)) {
+      const deletionPending = await users.isUserDeletionPending(userId);
+      await request.body?.cancel();
+      return Response.json(deletionPending
+        ? { code: 'ACCOUNT_DELETION_IN_PROGRESS', message: 'Account deletion is in progress. This document was not uploaded.' }
+        : { code: 'DOCUMENT_UPLOAD_IN_PROGRESS', message: 'A document upload is already in progress. Try again when it finishes.' }, { status: 409 });
+    }
+    try {
+      const upload = await readDocumentUpload(request);
+      if (upload.tooLarge) return Response.json({ message: 'Documents must be 5 MiB or smaller' }, { status: 413 });
+      const period = new Date().toISOString().slice(0, 7);
+      if (!await users.claimDocumentUpload(period)) return Response.json({ message: 'Monthly document upload quota reached' }, { status: 429 });
+      await env.DOCUMENTS.put(document.objectKey, upload.content, { httpMetadata: { contentType: document.contentType } });
+      if (await users.isUserDeletionPending(userId)) {
+        await env.DOCUMENTS.delete(document.objectKey);
+        return Response.json({ code: 'ACCOUNT_DELETION_IN_PROGRESS', message: 'Account deletion started before this upload completed. The uploaded document was removed.' }, { status: 409 });
+      }
+      return new Response(null, { status: 204 });
+    } finally {
+      await users.finishDocumentUpload(userId, documentId, leaseId);
+    }
   }
   const object = await env.DOCUMENTS.get(document.objectKey);
   if (!object) return Response.json({ message: 'Document content not found' }, { status: 404 });

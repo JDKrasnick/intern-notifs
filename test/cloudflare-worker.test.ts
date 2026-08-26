@@ -62,7 +62,8 @@ describe('Cloudflare document upload bounds', () => {
     const all = vi.fn(async () => ({ results: [{ value: JSON.stringify({
       userId: 'user-1', documentId: 'document-1', objectKey: 'private/user-1/document-1', contentType: 'application/pdf',
     }) }] }));
-    const prepare = vi.fn(() => ({ bind: vi.fn(() => ({ all })) }));
+    const run = vi.fn(async () => ({ meta: { changes: 1 } }));
+    const prepare = vi.fn(() => ({ bind: vi.fn(() => ({ all, run })) }));
     const put = vi.fn();
 
     const response = await documentContent(request, {
@@ -72,7 +73,8 @@ describe('Cloudflare document upload bounds', () => {
 
     expect(response.status).toBe(413);
     expect(cancel).toHaveBeenCalledOnce();
-    expect(prepare).toHaveBeenCalledOnce();
+    expect(prepare).toHaveBeenCalledTimes(3);
+    expect(run).toHaveBeenCalledTimes(2);
     expect(put).not.toHaveBeenCalled();
   });
 
