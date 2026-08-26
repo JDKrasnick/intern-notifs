@@ -61,6 +61,29 @@ graduate students pursuing software engineering, AI/ML, data,
 infrastructure/cloud, security, quantitative, product, and technical design
 roles.
 
+## Open source admission
+
+InternNotifs does not use a closed, preferred, or prestige-based employer
+roster. **Any company-controlled Greenhouse, Lever, or Ashby board can be
+accepted for direct monitoring when it passes the same verification process.**
+Company size, funding, brand recognition, and an existing relationship with
+InternNotifs are not admission requirements.
+
+| Verification stage | Requirement |
+| --- | --- |
+| Ownership | First-party evidence connects the exact ATS board or tenant to the company's official careers presence. |
+| Destination | Listings lead to an employer-controlled or otherwise authorized application host. |
+| Feed integrity | The board returns complete, structurally valid snapshots with safe and working application links. |
+| Quality baseline | The source passes review and a quiet monitoring baseline before it can generate alerts. |
+| Ongoing health | Incomplete or suspicious snapshots are rejected, and unhealthy sources can be quarantined without closing valid roles. |
+
+Admission of a board does not mean every posting is published. Individual roles
+must still fall within the project's technical early-career scope. To suggest a
+company, [open a source request](https://github.com/JDKrasnick/intern-notifs/issues/new/choose)
+with the company name, official careers page, and exact Greenhouse, Lever, or
+Ashby board URL. The complete rules are published in the
+[Source and Correction Policy](https://jdkrasnick.github.io/intern-notifs/source-policy.html).
+
 ## Product commitments
 
 - **Useful, not noisy.** New and relevant opportunities should be obvious

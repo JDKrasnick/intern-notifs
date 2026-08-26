@@ -24,6 +24,15 @@ describe('public trust surface', () => {
     }
   });
 
+  it('documents open admission for verified company ATS boards', () => {
+    const readme = read('README.md');
+    const sourcePolicy = read('docs/source-policy.html');
+    for (const document of [readme, sourcePolicy]) {
+      expect(document).toMatch(/Any company-controlled Greenhouse, Lever, or Ashby board can be\s+accepted/u);
+      expect(document).toContain('Company size, funding, brand recognition');
+    }
+  });
+
   it('keeps private account requests off the public issue tracker', () => {
     const support = read('docs/support.html');
     expect(support).toContain('id="delete-account"');
