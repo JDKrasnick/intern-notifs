@@ -34,7 +34,9 @@ New cards get a little reward without becoming a distraction: on first render, t
 
 ## API contract
 
-`POST /me/opening` is authenticated and has no request body. It returns:
+`POST /installation/opening` uses the anonymous installation bearer token and
+has no request body. The authenticated `POST /me/opening` route has the same
+contract for backwards compatibility. Both return:
 
 ```json
 {
@@ -52,4 +54,11 @@ The implementation uses the existing `openJobsIndex` and its recency-rank plus `
 
 ## Mobile integration
 
-After token restoration and preference loading, the mobile client calls `POST /me/opening` once per foreground app launch. If `total > 0`, it routes to the inbox; otherwise it renders the standard feed. The mobile shell uses the persistent bottom Roles, Saved, and Profile navigation specified above. The inbox is not a push notification, badge, or new tab: it is a calm, transient launch surface. Job cards retain the current role-detail and employer-official-application behavior.
+After installation preference loading, the mobile client calls
+`POST /installation/opening` once per app launch, regardless of account state.
+Signing in or out does not replace or advance the device's opening interval. If
+`total > 0`, it routes to the inbox; otherwise it renders the standard feed. The
+mobile shell uses the persistent bottom Roles, Saved, and Profile navigation
+specified above. The inbox is not a push notification, badge, or new tab: it is
+a calm, transient launch surface. Job cards retain the current role-detail and
+employer-official-application behavior.

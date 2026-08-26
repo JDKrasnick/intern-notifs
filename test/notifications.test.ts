@@ -45,6 +45,19 @@ describe('notifications', () => {
     expect(await store.pendingSms()).toHaveLength(2);
     expect(sends).toBe(MAX_LEGACY_PUSH_JOBS_PER_RUN);
   });
+  it('defers legacy markers while no opted-in device can receive them', async () => {
+    const store = new MemoryInternshipStore(); const users = new MemoryUserStore();
+    for (let index = 1; index <= 2; index += 1) await store.putInternship(job(index));
+
+    const empty = await drainPendingExpoNotifications(store, users, new ExpoPushPublisher('https://push.example.test'));
+    expect(empty).toMatchObject({ processed: 0, deferred: 2, delivery: { sent: 0 } });
+    expect(await store.pendingSms()).toHaveLength(2);
+
+    await users.putDevice({ userId: 'user-1', token: 'ExponentPushToken[test]', platform: 'ios', active: true, createdAt: '2026-08-25T00:00:00.000Z', updatedAt: '2026-08-25T00:00:00.000Z' });
+    const onboardingRace = await drainPendingExpoNotifications(store, users, new ExpoPushPublisher('https://push.example.test'));
+    expect(onboardingRace).toMatchObject({ processed: 0, deferred: 2, delivery: { sent: 0 } });
+    expect(await store.pendingSms()).toHaveLength(2);
+  });
   it('only marks a digest after SES accepts it', async () => {
     const store = new MemoryInternshipStore(); await store.putInternship(job(1));
     await expect(sendDigest(store, { send: async () => { throw new Error('SES unavailable'); } })).rejects.toThrow('SES unavailable');

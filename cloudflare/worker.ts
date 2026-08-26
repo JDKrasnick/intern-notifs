@@ -14,8 +14,8 @@ import { reviewedGreenhouseSources } from '../src/sources/greenhouse-config.js';
 import { reviewedLeverSources } from '../src/sources/lever-config.js';
 import { defaultSources } from '../src/sources/index.js';
 import type { SourceCheckpoint, SourceHealth } from '../src/types.js';
+import { authenticatedInstallation, authenticatedUser, cleanupExpiredAuth, consumeAuthRateLimit, createInstallation, deleteAuthUser, handleAuthRequest, type AuthEnvironment } from './auth.js';
 import { runCatalogQualityBackfill } from '../src/catalog-quality-backfill.js';
-import { authenticatedUser, cleanupExpiredAuth, deleteAuthUser, handleAuthRequest, type AuthEnvironment } from './auth.js';
 import { D1InternshipStore, D1ReleaseStore, D1UserStore } from './d1-store.js';
 import { queueHasBacklog } from './queue-backlog.js';
 import type { MessageBatch, Queue, R2Bucket, ScheduledController } from './types.js';
@@ -261,6 +261,32 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
     return withCors(Response.json(await refreshCatalogProjection(new D1InternshipStore(env.DB))));
   }
+  if (request.method === 'POST' && url.pathname === '/internal/recover-notifications') {
+    if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
+    const body = await request.json().catch(() => null) as { since?: unknown; limit?: unknown; apply?: unknown; expectedCandidateJobIds?: unknown } | null;
+    const since = typeof body?.since === 'string' ? body.since : '';
+    const limit = body?.limit === undefined ? 100 : body.limit;
+    const apply = body?.apply === true;
+    if (!since || Number.isNaN(Date.parse(since)) || typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+      return withCors(Response.json({ message: 'since must be an ISO timestamp and limit must be an integer from 1 to 100' }, { status: 400 }));
+    }
+    const expectedCandidateJobIds = body?.expectedCandidateJobIds;
+    if (apply && (!Array.isArray(expectedCandidateJobIds)
+      || expectedCandidateJobIds.length > 100
+      || expectedCandidateJobIds.some((jobId) => typeof jobId !== 'string' || !jobId || jobId.length > 512)
+      || new Set(expectedCandidateJobIds).size !== expectedCandidateJobIds.length)) {
+      return withCors(Response.json({ message: 'expectedCandidateJobIds must be the exact unique job-ID array from preview when apply is true' }, { status: 400 }));
+    }
+    try {
+      const result = await new D1InternshipStore(env.DB).recoverUndeliveredNotifications({
+        since: new Date(since).toISOString(), limit, apply,
+        ...(Array.isArray(expectedCandidateJobIds) ? { expectedCandidateJobIds: expectedCandidateJobIds as string[] } : {}),
+      });
+      return withCors(Response.json({ ...result, applied: apply }));
+    } catch (error) {
+      return withCors(Response.json({ message: error instanceof Error ? error.message : 'Notification recovery failed' }, { status: 409 }));
+    }
+  }
   if (request.method === 'POST' && url.pathname === '/internal/catalog-quality-backfill') {
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
     const input = await request.json().catch(() => ({})) as { apply?: boolean; repairToken?: string; expectedChanged?: number };
@@ -351,13 +377,26 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
   }
   const authResponse = await handleAuthRequest(request, env);
   if (authResponse) return withCors(authResponse);
-  const userId = await authenticatedUser(request, env);
-  const contentMatch = url.pathname.match(/^\/me\/documents\/([^/]+)\/content$/u);
-  if (contentMatch && (request.method === 'GET' || request.method === 'PUT')) {
-    if (!userId) return withCors(Response.json({ message: 'Authentication required' }, { status: 401 }));
-    return withCors(await documentContent(request, env, userId, decodeURIComponent(contentMatch[1])));
+  if (request.method === 'POST' && url.pathname === '/installations') {
+    const ip = request.headers.get('CF-Connecting-IP')?.trim();
+    if (ip) {
+      const rateLimit = await consumeAuthRateLimit(env, 'installation:ip', ip, {
+        limit: 20,
+        windowMs: 60 * 60_000,
+        blockMs: 60 * 60_000,
+      });
+      if (!rateLimit.allowed) {
+        return withCors(Response.json({ message: 'Too many installation requests. Try again later.' }, {
+          status: 429,
+          headers: { 'Retry-After': String(rateLimit.retryAfterSeconds) },
+        }));
+      }
+    }
+    return withCors(Response.json(await createInstallation(env), {
+      status: 201,
+      headers: { 'Cache-Control': 'no-store' },
+    }));
   }
-  const event = apiEvent(request, userId, request.method === 'GET' || request.method === 'HEAD' ? null : await request.text());
   const handler = createApiHandler({
     jobs: new D1InternshipStore(env.DB),
     users: new D1UserStore(env.DB),
@@ -365,6 +404,27 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
     documentStorage: documentStorage(env),
     deleteIdentity: (id) => deleteAuthUser(id, env),
   });
+  if (url.pathname.startsWith('/installation/')) {
+    const installationUserId = await authenticatedInstallation(request, env);
+    if (!installationUserId) return withCors(Response.json({ message: 'Installation authorization required' }, { status: 401 }));
+    const installationPath = url.pathname.slice('/installation'.length);
+    const allowed = installationPath === '/preferences'
+      || installationPath === '/opening'
+      || installationPath === '/devices'
+      || installationPath.startsWith('/devices/')
+      || installationPath.startsWith('/releases/');
+    if (!allowed) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
+    const installationEvent = apiEvent(request, installationUserId, request.method === 'GET' || request.method === 'HEAD' ? null : await request.text());
+    installationEvent.rawPath = `/me${installationPath}`;
+    return eventResponse(await handler(installationEvent));
+  }
+  const userId = await authenticatedUser(request, env);
+  const contentMatch = url.pathname.match(/^\/me\/documents\/([^/]+)\/content$/u);
+  if (contentMatch && (request.method === 'GET' || request.method === 'PUT')) {
+    if (!userId) return withCors(Response.json({ message: 'Authentication required' }, { status: 401 }));
+    return withCors(await documentContent(request, env, userId, decodeURIComponent(contentMatch[1])));
+  }
+  const event = apiEvent(request, userId, request.method === 'GET' || request.method === 'HEAD' ? null : await request.text());
   const result = await handler(event);
   return eventResponse(result);
 }

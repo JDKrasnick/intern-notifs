@@ -23,6 +23,8 @@ export interface AuthEnvironment {
   AUTH_FROM_EMAIL?: string;
 }
 
+export type VerificationDelivery = 'development' | 'email';
+
 type AuthUserRow = {
   user_id: string;
   email: string;
@@ -228,7 +230,48 @@ export async function signUp(request: Request, env: AuthEnvironment): Promise<Re
     `).bind(new Date().toISOString(), userId, confirmationHash).run();
     throw error;
   }
-  return json(201, { ...(env.AUTH_DEV_MODE === 'true' ? { confirmationCode: code } : {}) });
+  const development = env.AUTH_DEV_MODE === 'true';
+  return json(201, {
+    delivery: development ? 'development' : 'email',
+    ...(development ? { confirmationCode: code } : {}),
+  });
+}
+
+function installationTokenHash(token: string, env: AuthEnvironment): Promise<string> {
+  return sha256(`${sessionSecret(env)}:installation:${token}`);
+}
+
+export async function createInstallation(env: AuthEnvironment): Promise<{ token: string; userId: string }> {
+  const token = randomToken();
+  const userId = `installation:${crypto.randomUUID()}`;
+  const timestamp = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO user_items (user_id, item_key, kind, value, session_id)
+      VALUES (?, 'INSTALLATION', 'installation', ?, ?)
+    `).bind(userId, JSON.stringify({ userId, createdAt: timestamp }), await installationTokenHash(token, env)),
+    env.DB.prepare(`
+      INSERT INTO user_items (user_id, item_key, kind, value)
+      VALUES (?, 'PREFERENCES', 'preferences', ?)
+    `).bind(userId, JSON.stringify({
+      userId,
+      filter: {},
+      alertsEnabled: false,
+      onboardingComplete: true,
+      updatedAt: timestamp,
+    })),
+  ]);
+  return { token, userId };
+}
+
+export async function authenticatedInstallation(request: Request, env: AuthEnvironment): Promise<string | undefined> {
+  const authorization = request.headers.get('Authorization');
+  if (!authorization?.startsWith('Bearer ')) return undefined;
+  const token = authorization.slice('Bearer '.length);
+  if (!token) return undefined;
+  const row = await env.DB.prepare("SELECT user_id FROM user_items WHERE kind = 'installation' AND session_id = ?")
+    .bind(await installationTokenHash(token, env)).first<{ user_id: string }>();
+  return row?.user_id;
 }
 
 export async function confirmEmail(request: Request, env: AuthEnvironment): Promise<Response> {

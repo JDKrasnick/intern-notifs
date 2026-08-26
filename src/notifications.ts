@@ -301,17 +301,33 @@ export async function drainPendingExpoNotifications(
   now: () => Date = () => new Date(),
 ): Promise<{
   processed: number;
+  deferred: number;
   delivery: Awaited<ReturnType<typeof sendNewJobNotifications>>;
   receipts: Awaited<ReturnType<typeof inspectExpoPushReceipts>>;
   retries: Awaited<ReturnType<typeof retryExpoPushNotifications>>;
 }> {
   const pending = rankInternships(await jobs.pendingSms()).slice(0, MAX_LEGACY_PUSH_JOBS_PER_RUN);
+  const [devices, preferences] = await Promise.all([users.activeDevices(), users.activePreferences()]);
+  const readyUserIds = new Set(preferences.map((preference) => preference.userId));
+  const hasReadyDevice = devices.some((device) => readyUserIds.has(device.userId));
   const delivery = await sendNewJobNotifications(pending, users, publisher, now);
-  const sentAt = now().toISOString();
-  for (const job of pending) await jobs.markSmsSent(job.jobId, sentAt);
+  // A device can be registered slightly before onboarding saves its alert
+  // preferences. Do not consume the global legacy marker until at least one
+  // fully opted-in device has evaluated the batch; receipts own delivery and
+  // retry state after that point.
+  if (hasReadyDevice) {
+    const sentAt = now().toISOString();
+    for (const job of pending) await jobs.markSmsSent(job.jobId, sentAt);
+  }
   const receipts = await inspectExpoPushReceipts(users, publisher, now);
   const retries = await retryExpoPushNotifications(jobs, users, publisher, now);
-  return { processed: pending.length, delivery, receipts, retries };
+  return {
+    processed: hasReadyDevice ? pending.length : 0,
+    deferred: hasReadyDevice ? 0 : pending.length,
+    delivery,
+    receipts,
+    retries,
+  };
 }
 
 export class NtfyPublisher implements PushPublisher {

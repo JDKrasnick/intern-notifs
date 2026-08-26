@@ -10,7 +10,7 @@
 
 **Product constraints:**
 
-- Public browsing; account only for personal alerts, applications, and profile.
+- Public browsing and device-scoped push alerts; account only for synced applications and profile.
 - Prefer official employer career sources and openly maintained, attributed public lists.
 - Never automate a non-partner submission; users review and submit official forms themselves.
 - Core experience remains free, simple, privacy-respecting, and suitable for open-source development.
@@ -37,6 +37,8 @@
 - [x] Implement the Cloudflare replacement substrate with Workers, D1, R2, Queues, Cron Triggers, provider v5 Terraform, Cloudflare-native mobile authentication, and local end-to-end smoke coverage.
 - [x] Provision the Cloudflare account, apply remote D1 migrations and Worker secrets, verify the source backfill, and cut the production mobile environment over with an AWS rollback window.
 - [x] Bound sparse grouped-catalog filter scans, reconcile legacy notification markers through durable Expo receipts, isolate iOS plain-text accessibility state from secure authentication fields, and make account switching/sign-out race-safe with server-side session revocation.
+- [x] Roll every configured GitHub board to its live 2027 repository contract, preserve source health across HTTP 304 responses, roll expired list-wide seasons forward, and defer or guardedly recover notification markers when no opted-in device exists.
+- [x] Move push tokens, alert filters, and notification wording to an anonymous installation identity so signing in, signing out, and account deletion do not control device notifications.
 - [ ] Export any recoverable AWS development data after the suspended account is reactivated; do not block the source-backed development cutover on that export.
 
 - [ ] Continuously discover and verify the broadest practical employer set, then prioritize active sources by technical early-career relevance and international/student-friendly coverage.

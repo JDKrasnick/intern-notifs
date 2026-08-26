@@ -35,6 +35,8 @@ import { boundedCatalogText, compactLocations, presentCatalogRole, seasonLabel }
 import { catalogGroupAvailabilityLabel, groupedCatalogParameters } from "./src/catalog-filters";
 import { createLatestRequestGuard } from "./src/latest-request";
 import { uploadDocumentContent } from "./src/document-upload";
+import { installationApi } from "./src/installation";
+import { migrateLegacyAccountAlerts } from "./src/legacy-alert-migration";
 import { clearSession, confirmEmail, restoreSession, signIn, signOut, signUp } from "./src/auth";
 import {
   clearApplicationFollowUp,
@@ -212,6 +214,12 @@ const defaultAlertSettings: AlertSettings = {
   delivery: "immediate",
   applicationReminders: true,
   followUpDays: 7,
+};
+const defaultPreference: Preference = {
+  filter: {},
+  alertsEnabled: false,
+  onboardingComplete: true,
+  alertSettings: defaultAlertSettings,
 };
 const catalogCacheKey = "internnotifs.grouped-catalog.v4";
 const hiddenRolesCacheKey = "internnotifs.hidden-roles.v1";
@@ -2054,9 +2062,9 @@ function AppContent() {
   const [launchInbox, setLaunchInbox] = useState<LaunchInbox>();
   const [showLaunchInbox, setShowLaunchInbox] = useState(false);
   const [launchLoaded, setLaunchLoaded] = useState(false);
-  const [launchToken, setLaunchToken] = useState<string>();
   const launchRequestToken = useRef<string | undefined>(undefined);
   const launchRequestId = useRef(0);
+  const legacyAlertMigrationToken = useRef<string | undefined>(undefined);
   const catalogGroupsRef = useRef<CatalogGroupRow[]>([]);
   const catalogCursorRef = useRef<string | undefined>(undefined);
   const catalogRequestGeneration = useRef(0);
@@ -2068,16 +2076,8 @@ function AppContent() {
   };
   const clearPrivateState = () => {
     privateRequestId.current += 1;
-    setPreferences(undefined);
-    setPreferenceError(undefined);
     setApplications([]);
     setSavingJobIds(new Set());
-    launchRequestId.current += 1;
-    launchRequestToken.current = undefined;
-    setLaunchInbox(undefined);
-    setShowLaunchInbox(false);
-    setLaunchLoaded(false);
-    setLaunchToken(undefined);
   };
   const acceptSessionToken = (value: string) => {
     if (tokenRef.current !== value) clearPrivateState();
@@ -2112,6 +2112,23 @@ function AppContent() {
   };
   useEffect(() => {
     void recoverSession().finally(() => setReady(true));
+  }, []);
+  useEffect(() => {
+    let active = true;
+    void installationApi<Preference>("/preferences")
+      .then((value) => {
+        if (active) {
+          setPreferences(value);
+          setPreferenceError(undefined);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setPreferences(defaultPreference);
+          setPreferenceError(error instanceof Error ? error.message : "Settings could not be loaded.");
+        }
+      });
+    return () => { active = false; };
   }, []);
   useEffect(() => {
     const refresh = () => {
@@ -2242,12 +2259,8 @@ function AppContent() {
     setPreferenceError(undefined);
     const requestId = privateRequestId.current;
     try {
-      const [pref, apps] = await Promise.all([
-        authenticatedRead<Preference>("/me/preferences", { onToken: (value) => acceptRefreshedToken(requestId, value) }),
-        authenticatedRead<{ applications: Application[] }>("/me/applications", { onToken: (value) => acceptRefreshedToken(requestId, value) }),
-      ]);
+      const apps = await authenticatedRead<{ applications: Application[] }>("/me/applications", { onToken: (value) => acceptRefreshedToken(requestId, value) });
       if (privateRequestId.current !== requestId || tokenRef.current !== requestToken) return;
-      setPreferences(pref);
       setApplications(apps.applications);
     } catch (error) {
       if (privateRequestId.current !== requestId || tokenRef.current !== requestToken) return;
@@ -2267,18 +2280,41 @@ function AppContent() {
     if (token) void load();
   }, [token]);
   useEffect(() => {
-    if (token !== launchToken) {
-      launchRequestToken.current = undefined;
-      setLaunchInbox(undefined);
-      setShowLaunchInbox(false);
-      setLaunchLoaded(false);
-      setLaunchToken(token);
-      return;
-    }
-    if (!token || !preferences?.onboardingComplete || launchLoaded || launchRequestToken.current === token) return;
-    launchRequestToken.current = token;
+    if (!token || !preferences || legacyAlertMigrationToken.current === token) return;
+    legacyAlertMigrationToken.current = token;
+    const accountToken = token;
+    const requestId = privateRequestId.current;
+    void api<Preference>("/me/preferences", accountToken)
+      .then(async (legacyPreferences) => {
+        const updated = await migrateLegacyAccountAlerts({
+          installation: preferences,
+          legacyAccount: legacyPreferences,
+          register: registerForJobAlerts,
+          saveInstallation: (migration) => installationApi<Preference>("/preferences", {
+            method: "PUT",
+            body: JSON.stringify(migration),
+          }),
+          // Retire the account-owned flag only after the device token and
+          // preferences are durably installation-owned. A failed retirement is
+          // safe to retry on the next launch because every prior step is idempotent.
+          retireLegacyAccount: () => api<Preference>("/me/preferences", accountToken, {
+            method: "PUT",
+            body: JSON.stringify({ alertsEnabled: false }),
+          }),
+        });
+        if (updated && privateRequestId.current === requestId && tokenRef.current === accountToken) {
+          setPreferences(updated);
+        }
+      })
+      // Legacy migration is best-effort; the normal installation settings UI
+      // remains available if the account session or push service is unavailable.
+      .catch(() => undefined);
+  }, [preferences, token]);
+  useEffect(() => {
+    if (!preferences?.onboardingComplete || launchLoaded || launchRequestToken.current === "installation") return;
+    launchRequestToken.current = "installation";
     const requestId = ++launchRequestId.current;
-    void api<LaunchInbox>("/me/opening", token, { method: "POST" })
+    void installationApi<LaunchInbox>("/opening", { method: "POST" })
       .then((inbox) => {
         if (launchRequestId.current === requestId) {
           setLaunchInbox(inbox.total ? inbox : undefined);
@@ -2296,7 +2332,7 @@ function AppContent() {
       .finally(() => {
         if (launchRequestId.current === requestId) setLaunchLoaded(true);
       });
-  }, [launchLoaded, launchToken, preferences?.onboardingComplete, token]);
+  }, [launchLoaded, preferences?.onboardingComplete]);
   const presentDestination = (destination: AppDestination) => {
     if (destination.kind === "saved") {
       setTab("saved");
@@ -2304,20 +2340,13 @@ function AppContent() {
     }
     if (destination.kind === "release") {
       setTab("feed");
-      const currentToken = tokenRef.current;
-      if (!currentToken) {
-        pendingDestination.current = destination;
-        return;
-      }
       // An explicit notification tap must win over the automatic launch
       // inbox, including when that request already started during cold boot.
       launchRequestId.current += 1;
-      launchRequestToken.current = currentToken;
+      launchRequestToken.current = "installation";
       setLaunchLoaded(true);
-      const sessionId = sessionRequestId.current;
-      void authenticatedRead<{ jobs: Job[]; groups?: CatalogGroupDetails[]; total?: number }>(
-        `/me/releases/${encodeURIComponent(destination.releaseId)}`,
-        { onToken: (value) => acceptRefreshedToken(sessionId, value) },
+      void installationApi<{ jobs: Job[]; groups?: CatalogGroupDetails[]; total?: number }>(
+        `/releases/${encodeURIComponent(destination.releaseId)}`,
       )
         .then((release) => {
           const openedAt = new Date().toISOString();
@@ -2326,12 +2355,6 @@ function AppContent() {
           setShowLaunchInbox(true);
         })
         .catch((error) => {
-          if (error instanceof ApiError && error.kind === "unauthorized") {
-            pendingDestination.current = destination;
-            tokenRef.current = undefined;
-            setToken(undefined);
-            return;
-          }
           if (error instanceof ApiError && error.kind === "offline") {
             pendingDestination.current = destination;
             setSessionRecoveryMessage(error.message);
@@ -2598,6 +2621,8 @@ function AppContent() {
       <>
       <GuestExperience
         groups={catalogGroups}
+        preferences={preferences ?? defaultPreference}
+        onPreferencesChanged={setPreferences}
         routedJob={selectedJob}
         routedMatchReasons={selectedMatchReasons}
         routedExclusionsApplied={selectedExclusionsApplied}
@@ -2628,6 +2653,8 @@ function AppContent() {
         onRetryCatalog={() => setCatalogRefresh((value) => value + 1)}
         hiddenJobIds={hiddenJobIds}
         hiddenFeedbackJob={hiddenFeedbackJob}
+        hiddenJobs={catalogJobs.filter((job) => hiddenJobIds.has(job.jobId))}
+        onRestoreHiddenRole={restoreHiddenRole}
         onHideLocally={hideLocally}
         onUndoHide={undoHideLocally}
         onOpenJob={openCatalogJob}
@@ -2663,10 +2690,9 @@ function AppContent() {
         }}
       />
     );
-  if (!preferences)
-    return <AppLoadingSkeleton />;
+  if (!preferences) return <AppLoadingSkeleton />;
   if (!preferences.onboardingComplete)
-    return <Onboarding token={token} onDone={setPreferences} />;
+    return <Onboarding onDone={setPreferences} />;
   const apply = (job: Job) => {
     const browser = openOfficialApplication(job.applyUrl);
     void (async () => {
@@ -2806,6 +2832,7 @@ function AppContent() {
               onSignOut={async () => {
                 await endSession();
               }}
+              onSignIn={() => undefined}
             />
           )}
         </View>
@@ -2852,6 +2879,8 @@ export default function App() {
 
 function GuestExperience({
   groups,
+  preferences,
+  onPreferencesChanged,
   routedJob,
   routedMatchReasons,
   routedExclusionsApplied,
@@ -2882,6 +2911,8 @@ function GuestExperience({
   onRetryCatalog,
   hiddenJobIds,
   hiddenFeedbackJob,
+  hiddenJobs,
+  onRestoreHiddenRole,
   onHideLocally,
   onUndoHide,
   onOpenJob,
@@ -2889,6 +2920,8 @@ function GuestExperience({
   onSession,
 }: {
   groups: CatalogGroupRow[];
+  preferences: Preference;
+  onPreferencesChanged: (value: Preference) => void;
   routedJob: Job | null;
   routedMatchReasons: FilterMatchReason[];
   routedExclusionsApplied: boolean;
@@ -2919,6 +2952,8 @@ function GuestExperience({
   onRetryCatalog: () => void;
   hiddenJobIds: Set<string>;
   hiddenFeedbackJob?: Job;
+  hiddenJobs: Job[];
+  onRestoreHiddenRole: (job: Job) => void;
   onHideLocally: (job: Job) => void;
   onUndoHide: () => void;
   onOpenJob: (job: Job) => void;
@@ -2974,13 +3009,17 @@ function GuestExperience({
                 onOpenRole={onOpenJob}
               />
             </View>
-            {tab !== "feed" ? (
+            {tab === "saved" ? (
               <AccountGate
-                feature={
-                  tab === "saved"
-                    ? "save and track applications"
-                    : "set up alerts and your application profile"
-                }
+                feature="save and track applications"
+                onSignIn={() => setShowAccount(true)}
+              />
+            ) : tab === "profile" ? (
+              <Profile
+                preferences={preferences}
+                hiddenJobs={hiddenJobs}
+                onRestoreHiddenRole={onRestoreHiddenRole}
+                onPreferencesChanged={onPreferencesChanged}
                 onSignIn={() => setShowAccount(true)}
               />
             ) : null}
@@ -3030,7 +3069,7 @@ function AccountGate({
       </Text>
       <Text style={styles.gateBenefit}>What an account keeps</Text>
       <Text style={styles.gateBenefitCopy}>
-        Your alert preferences, saved applications, and application profile.
+        Your saved applications and application profile.
       </Text>
       <View style={styles.gateButton}>
         <ActionButton label="Sign in or create account" onPress={onSignIn} />
@@ -3040,10 +3079,8 @@ function AccountGate({
 }
 
 function Onboarding({
-  token,
   onDone,
 }: {
-  token: string;
   onDone: (preferences: Preference) => void;
 }) {
   const [selected, setSelected] = useState<string[]>(["swe"]);
@@ -3062,9 +3099,9 @@ function Onboarding({
     setFeedback({ kind: "saving", message: "Saving your alert settings…" });
     try {
       const registration = alertsRequested
-        ? await registerForJobAlerts(token)
+        ? await registerForJobAlerts()
         : undefined;
-      const preferences = await api<Preference>("/me/preferences", token, {
+      const preferences = await installationApi<Preference>("/preferences", {
         method: "PUT",
         body: JSON.stringify({
           filter: {
@@ -3375,13 +3412,15 @@ function Profile({
   onRestoreHiddenRole,
   onPreferencesChanged,
   onSignOut,
+  onSignIn,
 }: {
-  token: string;
+  token?: string;
   preferences: Preference;
   hiddenJobs: Job[];
   onRestoreHiddenRole: (job: Job) => void;
   onPreferencesChanged: (value: Preference) => void;
-  onSignOut: () => void;
+  onSignOut?: () => void;
+  onSignIn: () => void;
 }) {
   const [destination, setDestination] = useState<SettingsDestination>("home");
   const [profile, setProfile] = useState<Record<string, unknown>>({});
@@ -3463,6 +3502,10 @@ function Profile({
     draftRevisions.current.appSettings += 1;
   };
   useEffect(() => {
+    if (!token) {
+      setLoading(false);
+      return;
+    }
     void authenticatedRead<Record<string, unknown> | null>("/me/profile")
       .then((value) => setProfile(value ?? {}))
       .finally(() => setLoading(false));
@@ -3537,6 +3580,7 @@ function Profile({
         : [...selected, category],
     );
   const uploadResume = async () => {
+    if (!token) throw new Error("Sign in to upload a résumé.");
     const result = await DocumentPicker.getDocumentAsync({
       type: [
         "application/pdf",
@@ -3579,6 +3623,7 @@ function Profile({
     });
   };
   const saveProfile = async () => {
+    if (!token) return;
     setSavingProfile(true);
     setProfileFeedback({ kind: "saving", message: "Saving your profile…" });
     try {
@@ -3608,7 +3653,7 @@ function Profile({
     setJobPreferenceFeedback({ kind: "saving", message: "Saving job preferences…" });
     try {
       if (alertsEnabled) {
-        const registration = await registerForJobAlerts(token);
+        const registration = await registerForJobAlerts();
         if (registration.status !== "registered") {
           setNotificationsBlocked(registration.status === "denied");
           setJobPreferenceFeedback({
@@ -3621,7 +3666,7 @@ function Profile({
         }
       }
       setNotificationsBlocked(false);
-      const updated = await api<Preference>("/me/preferences", token, {
+      const updated = await installationApi<Preference>("/preferences", {
         method: "PUT",
         body: JSON.stringify(jobPreferencesPayload({
           filter: {
@@ -3676,7 +3721,7 @@ function Profile({
           : {}),
         ...(Object.keys(aliases).length ? { roleAbbreviations: aliases } : {}),
       };
-      const updated = await api<Preference>("/me/preferences", token, {
+      const updated = await installationApi<Preference>("/preferences", {
         method: "PUT",
         body: JSON.stringify(appSettingsPayload({
           applicationReminders,
@@ -3700,9 +3745,10 @@ function Profile({
     }
   };
   const deleteAccount = () =>
+    token &&
     Alert.alert(
       "Delete account?",
-      "This permanently deletes your profile, application tracking, uploaded documents, device alerts, and sign-in account.",
+      "This permanently deletes your profile, synced application tracking, uploaded documents, and sign-in account. Device alerts and app settings remain on this device.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -3803,7 +3849,7 @@ function Profile({
           ) : null}
         </>
       ) : null}
-      {destination === "user-info" ? (
+      {destination === "user-info" ? token ? (
         <>
       <Text style={[styles.hero, styles.profileHero]}>User info</Text>
       <Text style={styles.intro}>
@@ -3881,6 +3927,8 @@ function Profile({
       <SaveFeedback state={profileFeedback} onRetry={() => void saveProfile()} />
       <View style={styles.spacer} />
         </>
+      ) : (
+        <AccountGate feature="store application details and a résumé" onSignIn={onSignIn} />
       ) : null}
       {destination === "job-preferences" ? (
         <>
@@ -4246,9 +4294,15 @@ function Profile({
         onPress={() => openLink("Support", process.env.EXPO_PUBLIC_SUPPORT_URL)}
       />
       <View style={styles.spacer} />
-      <ActionButton label="Sign out" variant="secondary" onPress={onSignOut} />
-      <View style={styles.spacer} />
-      <ActionButton label="Delete account" variant="danger" onPress={deleteAccount} />
+      {token ? (
+        <>
+          <ActionButton label="Sign out" variant="secondary" onPress={() => onSignOut?.()} />
+          <View style={styles.spacer} />
+          <ActionButton label="Delete account" variant="danger" onPress={deleteAccount} />
+        </>
+      ) : (
+        <ActionButton label="Sign in or create account" variant="secondary" onPress={onSignIn} />
+      )}
         </>
       ) : null}
     </ScrollView>
@@ -4333,16 +4387,18 @@ function SignIn({
     setNeedsConfirmation(true);
   };
   const title = needsConfirmation
-    ? "Check your email"
+    ? developmentConfirmationCode
+      ? "Enter the verification code"
+      : "Check your email"
     : createMode
       ? "Create your account"
       : "Sign in";
   const description = needsConfirmation
     ? developmentConfirmationCode
-      ? "This development build filled in your verification code."
+      ? "Email delivery is not configured for this test release, so the development code is filled in below."
       : "Enter the verification code we sent to your email."
     : createMode
-      ? "Use an email and password to save roles and receive alerts."
+      ? "Use an email and password to sync saved roles and application details."
       : "Sign in to pick up where you left off.";
   return (
     <SafeAreaView style={styles.authScreen}>
@@ -4478,7 +4534,7 @@ function SignIn({
             />
           ) : null}
           <Text style={styles.authFootnote}>
-            Your account keeps your saved roles, alerts, and application profile.
+            Alerts and app settings stay with this device. An account keeps saved roles and application details.
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>

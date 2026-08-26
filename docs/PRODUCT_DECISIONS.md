@@ -25,7 +25,7 @@ Google sign-in should not be enabled by itself on iOS; when it is offered, Sign 
 
 ### Product and release
 
-- [ ] Test the browse-first flow, account creation, email verification, filters, alerts, application tracking, résumé upload, sign-out, and account deletion on a physical iPhone.
+- [ ] Test browse-first device alerts without an account, then separately test account creation, email verification, application tracking, résumé upload, sign-out, and account deletion on a physical iPhone.
 - [ ] Test notification permission approval and denial, a real push alert, and its job deep link.
 - [ ] Confirm the deployed catalog has enough current technical early-career roles and that every source link reaches the employer's official application.
 - [ ] Produce and install a fresh TestFlight build after the browse-first change; build 3 cannot contain later commits.

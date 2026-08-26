@@ -8,7 +8,7 @@ InternNotifs is a lightweight, simple mobile early-career radar: it notifies stu
 
 - Initial audience: international and domestic undergraduate/graduate students.
 - Initial scope: technical internships, co-ops, apprenticeships, new-grad programs, and explicitly entry-level roles (software engineering, AI/ML, data, infrastructure/cloud, security, quantitative, product, and technical design).
-- Browse first: the public catalog requires no account. Ask for an account only to save applications, enable personal alerts, or store a résumé/profile.
+- Browse first: the public catalog, device notification settings, and personal push alerts require no account. Ask for an account only to sync saved applications or store a résumé/profile.
 - Applications are always handed off to the employer's official form. Do not automate submission without an authorized partner integration.
 - The experience should remain free, calm, privacy-respecting, open-source-friendly, and **simple and clean**. One clear primary action per screen; prefer native mobile controls and plain language.
 - Authentication today is email/password plus verification. Sign in with Apple is the next iPhone improvement; Google sign-in is deferred and must ship alongside Sign in with Apple on iOS.

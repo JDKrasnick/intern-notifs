@@ -86,8 +86,8 @@ describe('Cloudflare session restoration', () => {
   });
 
   it('returns a development confirmation code when Cloudflare supplies one', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ confirmationCode: '123456' }), { status: 201 }));
-    await expect(signUp(' Student@Example.Test ', 'Password12345')).resolves.toEqual({ confirmationCode: '123456' });
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ delivery: 'development', confirmationCode: '123456' }), { status: 201 }));
+    await expect(signUp(' Student@Example.Test ', 'Password12345')).resolves.toEqual({ delivery: 'development', confirmationCode: '123456' });
     expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/auth/signup'), expect.objectContaining({
       body: JSON.stringify({ email: 'student@example.test', password: 'Password12345' }),
     }));

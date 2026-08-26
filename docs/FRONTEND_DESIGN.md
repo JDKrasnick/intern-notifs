@@ -232,6 +232,7 @@ The notification backend must apply the saved role, company-type, U.S.-citizensh
 - **Apply:** make the handoff to the employer explicit. InternNotifs tracks progress; it does not impersonate an employer form.
 - **Saved:** show a small, clear status model rather than a complex CRM workflow.
 - **Profile:** separate application data, job preferences, and app/account controls into three clear Settings destinations.
+- **Device ownership:** job preferences, push permission, and notification wording stay with the installation and remain available while signed out; only application data and user info are account-gated.
 
 ## Implementation acceptance checklist
 

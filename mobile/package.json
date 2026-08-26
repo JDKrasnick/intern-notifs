@@ -13,23 +13,30 @@
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
     "@react-native-async-storage/async-storage": "^2.1.2",
-    "expo": "^55.0.0",
+    "expo": "~55.0.30",
     "expo-constants": "~55.0.17",
-    "expo-device": "~55.0.19",
-    "expo-document-picker": "~55.0.15",
+    "expo-device": "~55.0.21",
+    "expo-document-picker": "~55.0.17",
     "expo-font": "~55.0.8",
-    "expo-notifications": "~55.0.25",
-    "expo-splash-screen": "~55.0.23",
-    "expo-web-browser": "~55.0.18",
+    "expo-notifications": "~55.0.27",
+    "expo-splash-screen": "~55.0.25",
+    "expo-web-browser": "~55.0.20",
     "react": "19.2.0",
     "react-dom": "19.2.0",
-    "react-native": "0.83.6",
+    "react-native": "0.83.10",
     "react-native-web": "^0.21.0"
   },
   "devDependencies": {
     "@types/react": "~19.2.10",
     "typescript": "~5.9.2",
     "vitest": "^3.2.4"
+  },
+  "expo": {
+    "doctor": {
+      "appConfigFieldsNotSyncedCheck": {
+        "enabled": false
+      }
+    }
   },
   "version": "1.0.0"
 }

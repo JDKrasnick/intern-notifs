@@ -177,6 +177,61 @@ export class D1InternshipStore implements InternshipStore {
   async markSmsSent(jobId: string, sentAt: string) { const job = await this.getJob(jobId); if (job) { job.notification.smsPending = false; job.notification.smsSentAt = sentAt; await this.putInternship(job); } }
   async markDigested(jobIds: string[], sentAt: string) { for (const jobId of jobIds) { const job = await this.getJob(jobId); if (job) { job.notification.digestPending = false; job.notification.digestedAt = sentAt; await this.putInternship(job); } } }
 
+  /**
+   * Guarded recovery for notification events consumed while no Expo recipient
+   * existed. Existing per-device receipts always win, so accepted or failed
+   * deliveries are never replayed by this operation.
+   */
+  async recoverUndeliveredNotifications(input: {
+    since: string;
+    limit: number;
+    apply: boolean;
+    expectedCandidateJobIds?: string[];
+  }): Promise<{ candidates: number; candidateJobIds: string[]; requeued: number }> {
+    const result = await this.db.prepare(`
+      SELECT json_extract(event.value, '$.jobId') AS jobId
+      FROM catalog_items AS event
+      JOIN catalog_items AS job
+        ON job.pk = 'JOB#' || json_extract(event.value, '$.jobId') AND job.sk = 'META'
+      WHERE event.kind = 'notification-event'
+        AND json_extract(event.value, '$.createdAt') >= ?
+        AND job.kind = 'internship'
+        AND job.catalog_state = 'OPEN'
+        AND job.sms_pending = 0
+        AND NOT EXISTS (
+          SELECT 1 FROM user_items AS receipt
+          WHERE receipt.kind = 'receipt'
+            AND json_extract(receipt.value, '$.jobId') = json_extract(event.value, '$.jobId')
+        )
+      GROUP BY job.pk
+      ORDER BY MAX(json_extract(event.value, '$.createdAt')) DESC, job.pk ASC
+      LIMIT ?
+    `).bind(input.since, input.limit).all<{ jobId: string }>();
+    const candidates = result.results.map(({ jobId }) => jobId);
+    if (!input.apply) return { candidates: candidates.length, candidateJobIds: candidates, requeued: 0 };
+    if (!input.expectedCandidateJobIds
+      || input.expectedCandidateJobIds.length !== candidates.length
+      || input.expectedCandidateJobIds.some((jobId, index) => jobId !== candidates[index])) {
+      throw new Error('Notification recovery candidate set changed; preview again before applying');
+    }
+    const statements = candidates.map((jobId) => this.db.prepare(`
+      UPDATE catalog_items
+      SET value = json_set(json_remove(value, '$.notification.smsSentAt'), '$.notification.smsPending', json('true')),
+          sms_pending = 1
+      WHERE pk = ? AND sk = 'META' AND kind = 'internship' AND catalog_state = 'OPEN' AND sms_pending = 0
+        AND NOT EXISTS (
+          SELECT 1 FROM user_items AS receipt
+          WHERE receipt.kind = 'receipt' AND json_extract(receipt.value, '$.jobId') = ?
+        )
+    `).bind(`JOB#${jobId}`, jobId));
+    const updates = statements.length ? await this.db.batch(statements) : [];
+    return {
+      candidates: candidates.length,
+      candidateJobIds: candidates,
+      requeued: updates.reduce((total, update) => total + update.meta.changes, 0),
+    };
+  }
+
   async listOpen(cursor?: string, limit = 25, status: 'open' | 'closed' = 'open', query: CatalogQuery = {}): Promise<{ jobs: Internship[]; cursor?: string }> {
     const offset = cursorOffset(cursor);
     const clauses = ['catalog_state = ?'];
@@ -357,7 +412,24 @@ export class D1UserStore implements UserStore {
     return rows.results.map((row) => JSON.parse(row.value) as UserPreferences);
   }
   async activeDevices(): Promise<DeviceToken[]> { const rows = await this.db.prepare('SELECT value FROM user_items WHERE active_device = 1').all<JsonRow>(); return rows.results.map((row) => JSON.parse(row.value) as DeviceToken); }
-  putDevice(value: DeviceToken) { return this.put(value.userId, `DEVICE#${value.token}`, 'device', value, { active_device: value.active ? 1 : 0, device_token: value.token }); }
+  async putDevice(value: DeviceToken) {
+    // One Expo token represents one physical installation. Transfer a token
+    // away from any legacy account owner before assigning it to the anonymous
+    // installation so the same phone cannot receive duplicate alerts.
+    await this.db.batch([
+      this.db.prepare("DELETE FROM user_items WHERE kind = 'device' AND device_token = ? AND user_id <> ?")
+        .bind(value.token, value.userId),
+      this.db.prepare(`
+        INSERT INTO user_items (user_id, item_key, kind, value, active_device, device_token)
+        VALUES (?, ?, 'device', ?, ?, ?)
+        ON CONFLICT(user_id, item_key) DO UPDATE SET
+          kind = excluded.kind,
+          value = excluded.value,
+          active_device = excluded.active_device,
+          device_token = excluded.device_token
+      `).bind(value.userId, `DEVICE#${value.token}`, JSON.stringify(value), value.active ? 1 : 0, value.token),
+    ]);
+  }
   async deleteDevice(userId: string, token: string) { await this.db.prepare('DELETE FROM user_items WHERE user_id = ? AND item_key = ?').bind(userId, `DEVICE#${token}`).run(); }
   getProfile(userId: string) { return this.get<ApplicantProfile>(userId, 'PROFILE'); }
   putProfile(value: ApplicantProfile) { return this.put(value.userId, 'PROFILE', 'profile', value); }

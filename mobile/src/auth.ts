@@ -114,7 +114,10 @@ export async function signIn(email: string, password: string): Promise<string> {
   return response.token;
 }
 
-export async function signUp(email: string, password: string): Promise<{ confirmationCode?: string }> {
+export async function signUp(email: string, password: string): Promise<{
+  delivery: 'development' | 'email';
+  confirmationCode?: string;
+}> {
   return authRequest('/auth/signup', { email: normalizedEmail(email), password });
 }
 

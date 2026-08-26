@@ -37,7 +37,8 @@
           "backgroundColor": "#061A33"
         }
       ],
-      "expo-font"
+      "expo-font",
+      "expo-web-browser"
     ],
     "extra": {
       "eas": {
