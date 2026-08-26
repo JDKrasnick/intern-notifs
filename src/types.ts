@@ -83,6 +83,18 @@ export interface UserDocument {
   createdAt: string;
 }
 
+export const ACCOUNT_EXPORT_SCHEMA_VERSION = 1 as const;
+
+export interface AccountDataExport {
+  schemaVersion: typeof ACCOUNT_EXPORT_SCHEMA_VERSION;
+  exportedAt: string;
+  account: {
+    profile: ApplicantProfile | null;
+    applications: ApplicationRecord[];
+    documents: Array<Pick<UserDocument, 'documentId' | 'fileName' | 'contentType' | 'createdAt'>>;
+  };
+}
+
 export interface DeliveryReceipt {
   userId: string;
   jobId: string;

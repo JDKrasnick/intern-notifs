@@ -42,6 +42,19 @@ describe('mobile API retries', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves retryable partial account-deletion guidance from the API', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: 'ACCOUNT_DELETION_INCOMPLETE',
+      stage: 'identity',
+      retryable: true,
+      message: 'Your account data was deleted, but sign-in cleanup is incomplete. Please retry while you are still signed in.',
+    }), { status: 503 })));
+    await expect(api('/me', 'token', { method: 'DELETE' })).rejects.toMatchObject({
+      message: 'Your account data was deleted, but sign-in cleanup is incomplete. Please retry while you are still signed in.',
+      status: 503,
+    });
+  });
+
   it('stops after the bounded number of read attempts', async () => {
     vi.useFakeTimers();
     const fetcher = vi.fn().mockResolvedValue(

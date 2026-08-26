@@ -1,5 +1,4 @@
-import { AdminDeleteUserCommand, CognitoIdentityProviderClient } from '@aws-sdk/client-cognito-identity-provider';
-import { DeleteObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { S3Client } from '@aws-sdk/client-s3';
 import { describe, expect, it, vi } from 'vitest';
 import { createApiHandler } from '../src/api.js';
 import { MemoryInternshipStore, MemoryUserStore } from '../src/store.js';
@@ -126,12 +125,10 @@ describe('public catalog and authenticated applicant workflow', () => {
     expect(body<{ applications: Array<{ status: string }> }>(await handler(event('student-a', 'GET', '/me/applications'))).applications).toMatchObject([{ status: 'applied' }]);
   });
 
-  it('keeps documents private and removes their objects, user records, and Cognito account on deletion', async () => {
+  it('keeps documents private and makes the retained AWS adapter fail closed on account deletion', async () => {
     const users = new MemoryUserStore(); const s3 = new S3Client({ region: 'us-east-1', credentials });
-    const cognito = new CognitoIdentityProviderClient({ region: 'us-east-1', credentials });
     const s3Send = vi.spyOn(s3, 'send').mockResolvedValue({ $metadata: {} } as never);
-    const cognitoSend = vi.spyOn(cognito, 'send').mockResolvedValue({ $metadata: {} } as never);
-    const handler = createApiHandler({ jobs: new MemoryInternshipStore(), users, documentsBucket: 'private-documents', userPoolId: 'pool-id', s3, cognito });
+    const handler = createApiHandler({ jobs: new MemoryInternshipStore(), users, documentsBucket: 'private-documents', s3 });
 
     const created = await handler(event('student-a', 'POST', '/me/documents', { fileName: 'résumé.pdf', contentType: 'application/pdf' }));
     expect(created.statusCode).toBe(201);
@@ -144,12 +141,10 @@ describe('public catalog and authenticated applicant workflow', () => {
 
     await users.putPreferences({ userId: 'student-a', filter: {}, alertsEnabled: true, onboardingComplete: true, updatedAt: '2026-07-19T00:00:00.000Z' });
     const deleted = await handler(event('student-a', 'DELETE', '/me'));
-    expect(deleted.statusCode).toBe(204);
-    expect(await users.getPreferences('student-a')).toBeUndefined();
-    expect(await users.listDocuments('student-a')).toEqual([]);
-    expect(s3Send.mock.calls.map(([command]) => command)).toContainEqual(expect.any(DeleteObjectCommand));
-    expect(cognitoSend.mock.calls.map(([command]) => command)).toContainEqual(expect.any(AdminDeleteUserCommand));
-    expect((s3Send.mock.calls[0]?.[0] as DeleteObjectCommand).input).toMatchObject({ Bucket: 'private-documents', Key: document.document.objectKey });
-    expect((cognitoSend.mock.calls[0]?.[0] as AdminDeleteUserCommand).input).toMatchObject({ UserPoolId: 'pool-id', Username: 'student-a' });
+    expect(deleted.statusCode).toBe(503);
+    expect(body<{ code: string; retryable: boolean }>(deleted)).toMatchObject({ code: 'ACCOUNT_DELETION_UNAVAILABLE', retryable: false });
+    expect(await users.getPreferences('student-a')).toBeDefined();
+    expect(await users.listDocuments('student-a')).toHaveLength(1);
+    expect(s3Send).not.toHaveBeenCalled();
   });
 });

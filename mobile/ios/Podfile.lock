@@ -75,6 +75,8 @@ PODS:
     - ReactCommon
   - ExpoNotifications (55.0.27):
     - ExpoModulesCore
+  - ExpoSharing (55.0.24):
+    - ExpoModulesCore
   - ExpoSplashScreen (55.0.25):
     - ExpoModulesCore
   - ExpoWebBrowser (55.0.20):
@@ -1932,13 +1934,14 @@ DEPENDENCIES:
   - ExpoDevice (from `../node_modules/expo-device/ios`)
   - ExpoDocumentPicker (from `../node_modules/expo-document-picker/ios`)
   - "ExpoDomWebView (from `../node_modules/expo/node_modules/@expo/log-box/node_modules/@expo/dom-webview/ios`)"
-  - ExpoFileSystem (from `../node_modules/expo/node_modules/expo-file-system/ios`)
+  - ExpoFileSystem (from `../node_modules/expo-file-system/ios`)
   - ExpoFont (from `../node_modules/expo-font/ios`)
   - ExpoKeepAwake (from `../node_modules/expo/node_modules/expo-keep-awake/ios`)
   - "ExpoLogBox (from `../node_modules/expo/node_modules/@expo/log-box`)"
   - ExpoModulesCore (from `../node_modules/expo-modules-core`)
   - ExpoModulesJSI (from `../node_modules/expo-modules-core`)
   - ExpoNotifications (from `../node_modules/expo-notifications/ios`)
+  - ExpoSharing (from `../node_modules/expo-sharing/ios`)
   - ExpoSplashScreen (from `../node_modules/expo-splash-screen/ios`)
   - ExpoWebBrowser (from `../node_modules/expo-web-browser/ios`)
   - FBLazyVector (from `../node_modules/react-native/Libraries/FBLazyVector`)
@@ -2034,7 +2037,7 @@ EXTERNAL SOURCES:
   ExpoDomWebView:
     :path: "../node_modules/expo/node_modules/@expo/log-box/node_modules/@expo/dom-webview/ios"
   ExpoFileSystem:
-    :path: "../node_modules/expo/node_modules/expo-file-system/ios"
+    :path: "../node_modules/expo-file-system/ios"
   ExpoFont:
     :path: "../node_modules/expo-font/ios"
   ExpoKeepAwake:
@@ -2047,6 +2050,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-modules-core"
   ExpoNotifications:
     :path: "../node_modules/expo-notifications/ios"
+  ExpoSharing:
+    :path: "../node_modules/expo-sharing/ios"
   ExpoSplashScreen:
     :path: "../node_modules/expo-splash-screen/ios"
   ExpoWebBrowser:
@@ -2218,6 +2223,7 @@ SPEC CHECKSUMS:
   ExpoModulesCore: 998d0fbf7f687b1ff715b87cec779fc92be628ac
   ExpoModulesJSI: 964334271fc77832736f66ee1785761cdc778dbe
   ExpoNotifications: 6d4f3cf4eda7a7bab49f11aacc1687ed5a0f17a2
+  ExpoSharing: f628ba7d9d0bf72cf624ebb60d2e69de07fbc241
   ExpoSplashScreen: b7c56a0ae848fb5e34c6217255a5ac211ffa261a
   ExpoWebBrowser: 93992534927ba810f67e3171f6acf862c7098674
   FBLazyVector: b88945378388c6651d3725b0e8c2624fbb37ec64
@@ -2230,7 +2236,7 @@ SPEC CHECKSUMS:
   React: c8a434eb4c7720649ce29b79ec65a8a085d9ef89
   React-callinvoker: 4c2b5f172ed44389be239e98c3f337c5196cace7
   React-Core: bf2977380d26b10c311fc205c66f856bc46d19cd
-  React-Core-prebuilt: 68569190dc905ea6e3602aaf80bc775a04a48914
+  React-Core-prebuilt: 80eb110a7269c88f347492c36eb3ddb1dc6ffcb2
   React-CoreModules: a3ce5ded6a0e1ce1994afe27108d91a3c1cfb815
   React-cxxreact: f6321e3f111c22152d95505cfdb5ca7f31319276
   React-debug: 4f438e5a751a73ea73cded17cd51db62588d7bac
@@ -2292,7 +2298,7 @@ SPEC CHECKSUMS:
   ReactAppDependencyProvider: 5cc0b8b95a5be99ad92aee2d59bc59987df97753
   ReactCodegen: c805c22747d4d5ff8e7b66fe58ed316db4fd6a34
   ReactCommon: 4d9dcc879c31dcfb3ebcef8d3189293ba501d6b3
-  ReactNativeDependencies: 7a112acc23d3b65a9b54d94a01d273dfa7d9d9ce
+  ReactNativeDependencies: 84b15710102994645886674f6eea4a36cd1236bb
   RNCAsyncStorage: 3a4f5e2777dae1688b781a487923a08569e27fe4
   Yoga: 3a3ee5afb97f3a990839cfae6092b0540c7441a4
 
