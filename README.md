@@ -1,48 +1,99 @@
 # InternNotifs
 
-InternNotifs is a public Expo app and serverless backend for discovering internships, receiving native iOS/Android alerts, and privately tracking applications. The catalog is shared; accounts, filters, devices, profile data, documents, and application records are scoped to the Cognito user.
+<p align="center">
+  <img src="mobile/assets/icon.png" alt="InternNotifs — a rising path through an N toward a notification signal" width="180" />
+</p>
 
-## What ships
+<p align="center"><strong>A lightweight, open-source radar for technical internships and early-career roles.</strong></p>
 
-- Expo iOS/Android client in [`mobile/`](mobile/) with email-verified Cognito sign-up/sign-in, first-launch alert/filter setup, search feed, saved application tracking, guided official-form apply, and a reusable application profile.
-- Public `GET /jobs` and `GET /jobs/{jobId}` endpoints with cursor pagination; Cognito-protected `/me/*` endpoints for preferences, Expo device tokens, profile, documents, applications, and account deletion.
-- Polling keeps every open listing in a DynamoDB open-jobs index. New listings fan out only to users whose saved filters match; Expo tickets and receipts make retries safe and invalid device tokens are deactivated.
-- Applicant documents are private, versioned S3 objects encrypted with KMS. User data is in a separate encrypted DynamoDB table. The legacy `Applications` table is left intact.
-- A partner-adapter interface protects direct submit. No employer is enabled by default: all roles open their official form in the in-app browser and the applicant submits it themselves.
+InternNotifs helps students stay confidently up to date without repeatedly
+refreshing job boards or maintaining a complicated application CRM. It watches
+credible employer and community sources, makes genuinely new opportunities
+obvious, and gets the student quickly to the employer's official application
+form.
 
-## Deploy the backend
+The experience is designed for short gaps between classes: calm, fast, and
+useful at a glance. Public browsing, device notification settings, and personal
+push alerts work without an account. An account is needed only for private data
+that should sync, such as saved applications, a résumé, or a reusable profile.
 
-1. Install Node 22 dependencies: `npm install`.
-2. Bootstrap AWS: `npx cdk bootstrap aws://ACCOUNT_ID/us-east-1`.
-3. Deploy: `npx cdk deploy -c githubRepository=OWNER/REPO -c emailAddress=you@example.com`.
-4. Store the encrypted runtime configuration. Email digest is intentionally unchanged and remains the deployment owner’s digest:
+## What it does
 
-   ```bash
-   aws ssm put-parameter --name /intern-notifs/runtime-config --type SecureString --overwrite \
-     --value '{"sesFrom":"you@example.com","sesTo":"you@example.com"}'
-   ```
+- Monitors reviewed Greenhouse, Lever, Ashby, and community sources for
+  technical internships, co-ops, apprenticeships, new-grad programs, and
+  explicitly entry-level roles.
+- Shows source provenance, freshness, location, compensation, education, and
+  work-authorization context without copying full employer job descriptions.
+- Sends personalized, device-scoped alerts with filters, quiet hours, and
+  duplicate-safe deep links.
+- Hands every application off to the employer's official form; InternNotifs
+  never submits a non-partner application for the user.
+- Provides optional saved-role tracking, application status, résumé storage,
+  and user-controlled form assistance behind a verified account.
+- Keeps the core product free, privacy-respecting, and open to public review.
 
-   In the SES sandbox, both addresses must be verified.
+## Product principles
 
-The stack outputs `PublicApiUrl`, `UserPoolId`, and `UserPoolClientId`. Set these values as `EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_COGNITO_USER_POOL_ID`, and `EXPO_PUBLIC_COGNITO_CLIENT_ID` before running the mobile project.
+1. Keep the student informed, not busy.
+2. Prefer a short path to the official application over workflow complexity.
+3. Make the interface feel native, focused, and accessible.
+4. Use personality for genuinely new opportunities—not ambient noise.
+5. Keep the app lightweight enough to replace manual repository refreshes.
 
-## Run the mobile client
+See [`PRODUCT.md`](PRODUCT.md) for the complete product brief and
+[`docs/product-roadmap.md`](docs/product-roadmap.md) for current milestones.
+
+## Architecture
+
+| Area | Implementation |
+| --- | --- |
+| Mobile | Expo SDK 55, React Native, iOS first |
+| API and authentication | Cloudflare Workers with verified email/password accounts and opaque sessions |
+| Catalog and private records | Cloudflare D1 |
+| Résumés and documents | Private Cloudflare R2 objects behind authenticated routes |
+| Ingestion and notifications | Cron Triggers, Queues with DLQs, and Expo Push Service |
+| Infrastructure | OpenTofu with Cloudflare provider v5 |
+
+The public catalog and account-free device alerts are installation-scoped.
+Profiles, documents, and synced application records are isolated to the
+verified account that owns them.
+
+## Local development
+
+Install and verify the backend from the repository root:
+
+```bash
+npm ci
+npm run lint
+npm run typecheck
+npm test
+```
+
+Run the mobile client with the public environment variables described in
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md):
 
 ```bash
 cd mobile
-npm install
-EXPO_PUBLIC_API_URL=https://... EXPO_PUBLIC_COGNITO_USER_POOL_ID=... EXPO_PUBLIC_COGNITO_CLIENT_ID=... npx expo start
+npm ci
+npx expo start
 ```
 
-Use a physical iOS/Android device for push testing. Expo Push Service delivery is asynchronous: the scheduled poll reconciles Expo receipts and removes `DeviceNotRegistered` tokens.
+Use a physical iOS or Android device for notification delivery and deep-link
+testing. Emulator checks cannot prove Expo/APNs/FCM delivery.
 
-## Privacy and release checklist
+## Trust and release documentation
 
-- Keep the App Store/Play privacy policy and terms URLs current before submission; describe account, profile, document, and application-data handling accurately.
-- Verify account and document deletion in a deployed environment. Deletion removes user records, document objects, and the Cognito account.
-- Test Cognito verification, notification permission denial/approval, notification deep links, pagination, cross-account API authorization, and physical-device push behavior.
-- Do not enable a partner adapter until the employer has authorized the integration, supplied credentials and test jobs, and approved the required-field mapping.
+- [Privacy Policy](docs/privacy.html)
+- [Terms of Use](docs/terms.html)
+- [Data Retention Policy](docs/retention.html)
+- [Source and Correction Policy](docs/source-policy.html)
+- [Support and account deletion](docs/support.html)
+- [Store disclosure worksheet](docs/store-disclosures.md)
+- [TestFlight checklist](docs/testflight-checklist.md)
 
-## Commands
+## License
 
-`npm run typecheck`, `npm run lint`, and `npm test` verify the backend and infrastructure. Use `npm run test:unit` for fast module/persistence checks and `npm run test:integration` for the hermetic end-to-end polling and authenticated API workflows. `npx tsx src/cli.ts seed` baselines sources quietly; `poll`, `dry-run`, `digest`, `smoke-push`, and `smoke-email` remain available for operations. `smoke-push` uses `EXPO_PUSH_TOKEN`.
+InternNotifs source code is available under the [MIT License](LICENSE).
+InternNotifs-created catalog metadata is available under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); employer-authored
+text, third-party source material, logos, and trademarks are excluded.
