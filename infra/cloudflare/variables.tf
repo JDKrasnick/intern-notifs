@@ -61,3 +61,23 @@ variable "ntfy_endpoint" {
   default     = null
   nullable    = true
 }
+
+variable "gmail_enabled" {
+  description = "Enables Gmail OAuth for approved test users only until restricted-scope verification is complete."
+  type        = bool
+  default     = false
+}
+
+variable "gmail_client_id" {
+  description = "Google OAuth web client identifier. The client secret remains a Worker secret binding."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "gmail_redirect_uri" {
+  description = "Google OAuth callback URL, normally https://api.internnotifs.com/oauth/gmail/callback."
+  type        = string
+  default     = null
+  nullable    = true
+}

@@ -271,6 +271,8 @@ export interface ApiDependencies {
   releases?: ReleaseStore;
   documentStorage?: DocumentStorage;
   deleteIdentity?: (userId: string) => Promise<void>;
+  /** Revokes and deletes linked-provider data before the account record disappears. */
+  beforeDeleteUser?: (userId: string) => Promise<void>;
   /** AWS compatibility fields retained until the Cloudflare cutover completes. */
   documentsBucket?: string;
   userPoolId?: string;
@@ -467,9 +469,23 @@ export function createApiHandler(dependencies: ApiDependencies) {
         const summaries = await Promise.all(applications.map(async (application) => applicationSummary(application, await dependencies.jobs.getJob?.(application.jobId))));
         return reply(200, { applications: summaries });
       }
-      if (method === 'POST' && path === '/me/applications') { const body = parseBody(event); if (typeof body.jobId !== 'string') return reply(400, { message: 'jobId is required' }); const job = await dependencies.jobs.getJob?.(body.jobId); if (!job) return reply(404, { message: 'Job not found' }); const timestamp = now(); const existing = (await dependencies.users.listApplications(userId)).find((application) => application.jobId === job.jobId); const application: ApplicationRecord = { applicationId: existing?.applicationId ?? randomUUID(), jobId: job.jobId, status: statuses.includes(body.status as ApplicationStatus) ? body.status as ApplicationStatus : existing?.status ?? 'saved', notes: typeof body.notes === 'string' ? body.notes.slice(0, 5000) : existing?.notes, applyMode: integrations.applyMode(job), createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp }; await dependencies.users.putApplication(userId, application); return reply(existing ? 200 : 201, { ...application, officialApplyUrl: application.applyMode === 'official-form' ? job.applyUrl : undefined }); }
+      if (method === 'POST' && path === '/me/applications') {
+        const body = parseBody(event); if (typeof body.jobId !== 'string') return reply(400, { message: 'jobId is required' });
+        const job = await dependencies.jobs.getJob?.(body.jobId); if (!job) return reply(404, { message: 'Job not found' });
+        const timestamp = now(); const existing = (await dependencies.users.listApplications(userId)).find((application) => application.jobId === job.jobId);
+        const status = statuses.includes(body.status as ApplicationStatus) ? body.status as ApplicationStatus : existing?.status ?? 'saved';
+        const application: ApplicationRecord = {
+          applicationId: existing?.applicationId ?? randomUUID(), jobId: job.jobId, status,
+          ...(existing?.appliedAt ? { appliedAt: existing.appliedAt } : status === 'applied' ? { appliedAt: timestamp } : {}),
+          ...(existing?.detection ? { detection: existing.detection } : {}),
+          notes: typeof body.notes === 'string' ? body.notes.slice(0, 5000) : existing?.notes,
+          applyMode: integrations.applyMode(job), createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp,
+        };
+        await dependencies.users.putApplication(userId, application);
+        return reply(existing ? 200 : 201, { ...application, officialApplyUrl: application.applyMode === 'official-form' ? job.applyUrl : undefined });
+      }
       const appMatch = path.match(/^\/me\/applications\/([^/]+)$/);
-      if (method === 'PATCH' && appMatch) { const current = await dependencies.users.getApplication(userId, decodeURIComponent(appMatch[1])); if (!current) return reply(404, { message: 'Application not found' }); const body = parseBody(event); if (body.status !== undefined && !statuses.includes(body.status as ApplicationStatus)) return reply(400, { message: `status must be one of ${statuses.join(', ')}` }); const updated: ApplicationRecord = { ...current, ...(body.status ? { status: body.status as ApplicationStatus } : {}), ...(typeof body.notes === 'string' ? { notes: body.notes.slice(0, 5000) } : {}), updatedAt: now() }; await dependencies.users.putApplication(userId, updated); return reply(200, updated); }
+      if (method === 'PATCH' && appMatch) { const current = await dependencies.users.getApplication(userId, decodeURIComponent(appMatch[1])); if (!current) return reply(404, { message: 'Application not found' }); const body = parseBody(event); if (body.status !== undefined && !statuses.includes(body.status as ApplicationStatus)) return reply(400, { message: `status must be one of ${statuses.join(', ')}` }); const timestamp = now(); const updated: ApplicationRecord = { ...current, ...(body.status ? { status: body.status as ApplicationStatus } : {}), ...(!current.appliedAt && body.status === 'applied' ? { appliedAt: timestamp } : {}), ...(typeof body.notes === 'string' ? { notes: body.notes.slice(0, 5000) } : {}), updatedAt: timestamp }; await dependencies.users.putApplication(userId, updated); return reply(200, updated); }
       const applicationSessionMatch = path.match(/^\/me\/applications\/([^/]+)\/assistance-sessions$/);
       if (method === 'POST' && applicationSessionMatch) {
         const application = await dependencies.users.getApplication(userId, decodeURIComponent(applicationSessionMatch[1]));
@@ -515,7 +531,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
       const docMatch = path.match(/^\/me\/documents\/([^/]+)$/);
       if (method === 'GET' && docMatch) { if (!documentStorage) return reply(503, { message: 'Document storage is unavailable' }); const document = (await dependencies.users.listDocuments(userId)).find((item) => item.documentId === decodeURIComponent(docMatch[1])); if (!document) return reply(404, { message: 'Document not found' }); return reply(200, { document, downloadUrl: await documentStorage.createDownloadUrl(document) }); }
       if (method === 'DELETE' && docMatch) { const document = (await dependencies.users.listDocuments(userId)).find((item) => item.documentId === decodeURIComponent(docMatch[1])); if (!document) return reply(404, { message: 'Document not found' }); if (documentStorage) await documentStorage.deleteObject(document.objectKey); await dependencies.users.deleteDocument(userId, document.documentId); return reply(204, {}); }
-      if (method === 'DELETE' && path === '/me') { const documents = await dependencies.users.deleteUser(userId); if (documentStorage) await Promise.all(documents.map((document) => documentStorage.deleteObject(document.objectKey))); if (dependencies.deleteIdentity) await dependencies.deleteIdentity(userId); else if (dependencies.userPoolId) await (dependencies.cognito ?? new CognitoIdentityProviderClient({})).send(new AdminDeleteUserCommand({ UserPoolId: dependencies.userPoolId, Username: userId })); return reply(204, {}); }
+      if (method === 'DELETE' && path === '/me') { await dependencies.beforeDeleteUser?.(userId); const documents = await dependencies.users.deleteUser(userId); if (documentStorage) await Promise.all(documents.map((document) => documentStorage.deleteObject(document.objectKey))); if (dependencies.deleteIdentity) await dependencies.deleteIdentity(userId); else if (dependencies.userPoolId) await (dependencies.cognito ?? new CognitoIdentityProviderClient({})).send(new AdminDeleteUserCommand({ UserPoolId: dependencies.userPoolId, Username: userId })); return reply(204, {}); }
       return reply(404, { message: 'Not found', supportedCategories: jobCategories });
     } catch (error) { return reply(400, { message: error instanceof Error ? error.message : 'Invalid request' }); }
   };

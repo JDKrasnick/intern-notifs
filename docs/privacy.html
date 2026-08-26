@@ -10,7 +10,7 @@
     <main>
       <p class="eyebrow">InternNotifs</p>
       <h1>Privacy Policy</h1>
-      <p class="meta">Version 2026-08-25 · Effective August 25, 2026</p>
+      <p class="meta">Version 2026-08-26 · Effective August 26, 2026</p>
       <p class="lede">InternNotifs is a browse-first early-career job radar operated by JD Krasnick. This policy explains what the mobile app and public web service collect, why, and how people can control their information.</p>
 
       <h2>Who can use InternNotifs</h2>
@@ -23,6 +23,10 @@
       <h3>Optional profile and application information</h3>
       <p>If you choose these features, we collect the name, email, phone number, location, education, work-authorization information, links, reusable answers, application statuses and notes, and résumé or other documents you provide. Some reusable answers may include sensitive information that you choose to save. Do not upload information you do not want stored.</p>
 
+      <h3>Optional Gmail application detection</h3>
+      <p>If you connect one Gmail account, Google gives InternNotifs an encrypted OAuth refresh credential and access to Gmail metadata. We request only the restricted <code>gmail.metadata</code> scope and process the sender, subject, received date, and labels of messages checked for application confirmations. We do not request, read, store, or log email bodies, attachments, or raw headers. The first sync checks up to 30 days of Inbox metadata; later syncs use Gmail history. Gmail message identifiers are stored only as keyed, non-reversible deduplication values.</p>
+      <p>InternNotifs uses deterministic rules—not AI—to compare confirmation metadata with roles already in the catalog. A unique high-confidence match may create or advance an application to Applied; uncertain matches wait for your review. Gmail data is not used for advertising, generalized profiling, model training, or any purpose unrelated to this user-facing feature. InternNotifs’ use and transfer of information received from Google APIs complies with the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including its Limited Use requirements.</p>
+
       <h3>Device alerts and app settings</h3>
       <p>The app creates a random installation identifier. When you enable alerts, we store that identifier with your Expo push token, platform, alert filters, notification wording, quiet hours, app-opening time, and delivery receipts. Installation data is deliberately separate from your account, so signing out or deleting an account does not turn off alerts or erase settings for that device.</p>
 
@@ -33,26 +37,26 @@
       <p>We process request metadata and a cryptographic rate-limit key derived from an IP address or account email to prevent abuse. Cloudflare may record short-lived request, error, and performance logs. If you contact support, we receive the information you include in your email or public GitHub issue. Never put passwords, identity documents, or résumé files in a public issue.</p>
 
       <h2>How we use information</h2>
-      <p>We use information only to operate requested app features, authenticate accounts, sync saved applications and profiles, deliver alerts, support application-form assistance that the user controls, answer support and rights requests, prevent abuse, and keep the service reliable. We do not sell personal information, show targeted advertising, or use personal information to track people across other companies’ apps or websites.</p>
+      <p>We use information only to operate requested app features, authenticate accounts, sync saved applications and profiles, detect application confirmations when Gmail is connected, deliver alerts, support application-form assistance that the user controls, answer support and rights requests, prevent abuse, and keep the service reliable. We do not sell personal information, show targeted advertising, or use personal information to track people across other companies’ apps or websites.</p>
 
       <h2>Service providers and external sites</h2>
       <ul>
         <li><strong>Cloudflare</strong> hosts the API, account and application database, document storage, queues, and operational logs.</li>
         <li><strong>Resend</strong> delivers account-verification email.</li>
         <li><strong>Expo</strong> routes requested notifications to Apple Push Notification service or Firebase Cloud Messaging.</li>
-        <li><strong>Google</strong> provides the public support mailbox, and <strong>GitHub</strong> hosts the public project, policy pages, and public issue tracker.</li>
+        <li><strong>Google</strong> provides the optional Gmail OAuth and metadata API and the public support mailbox. <strong>GitHub</strong> hosts the public project, policy pages, and public issue tracker.</li>
       </ul>
       <p>Opening an employer’s official application form takes you to a third-party site with its own privacy practices. InternNotifs does not submit an application for you unless a separately authorized partner integration is clearly identified and you remain in control of final submission.</p>
 
       <h2>Retention and deletion</h2>
-      <p>The detailed <a href="retention.html">Data Retention Policy</a> is part of this Privacy Policy. In summary, account data remains until deletion, abandoned unverified accounts are removed after seven days, inactive anonymous installations after twelve months, delivery records after ninety days, and application-assistance metadata after thirty days.</p>
-      <p>You can delete a signed-in account in the app under Profile → Account and support → Delete account. This removes the account, profile, synced applications, assistance records, documents, and active sign-in sessions. Device alerts and app settings remain because they are not linked to the account. Cloudflare’s point-in-time recovery history may retain database changes for up to 30 days before aging out.</p>
+      <p>The detailed <a href="retention.html">Data Retention Policy</a> is part of this Privacy Policy. In summary, account data remains until deletion, abandoned unverified accounts are removed after seven days, inactive anonymous installations after twelve months, delivery records after ninety days, and application-assistance and pending Gmail-detection evidence after thirty days.</p>
+      <p>Disconnect Gmail in App &amp; account to revoke the Google grant when possible and delete the local OAuth credential, sync state, deduplication values, and pending detections immediately. Existing application status and timestamp remain, but Gmail provenance is removed. Account deletion performs the same Gmail cleanup before removing the account, profile, synced applications, assistance records, documents, and active sign-in sessions. Local Gmail data is deleted even if Google’s revocation endpoint is temporarily unavailable. Device alerts and app settings remain because they are not linked to the account. Cloudflare’s point-in-time recovery history may retain database changes for up to 30 days before aging out.</p>
 
       <h2>Your choices and requests</h2>
-      <p>You may browse without an account, decline notification permission, disable alerts, omit optional profile fields, delete individual documents, or delete your account. To request access, correction, a portable copy, or help with deletion, email <a href="mailto:onlinestuff309@gmail.com">onlinestuff309@gmail.com</a>. We may request limited information to verify the request and target completion within 30 days.</p>
+      <p>You may browse without an account, decline notification permission, leave Gmail disconnected, disconnect Gmail at any time, disable alerts, omit optional profile fields, delete individual documents, or delete your account. To request access, correction, a portable copy, or help with deletion, email <a href="mailto:onlinestuff309@gmail.com">onlinestuff309@gmail.com</a>. We may request limited information to verify the request and target completion within 30 days.</p>
 
       <h2>Security and international use</h2>
-      <p>We use access controls, encrypted network connections, restricted document storage, and bounded credentials. No system is perfectly secure. The primary service storage region is in North America, and the providers above may process information in other locations under their own data-protection commitments.</p>
+      <p>We use access controls, encrypted network connections, restricted document storage, independently keyed encryption for Gmail OAuth credentials, keyed message-identifier deduplication, and bounded credentials. No system is perfectly secure. The primary service storage region is in North America, and the providers above may process information in other locations under their own data-protection commitments.</p>
 
       <h2>Changes</h2>
       <p>We will post revisions here with a new version and effective date. When a material change affects account holders’ rights or how their personal information is used, we will also provide reasonable notice in the app or by email when practical.</p>

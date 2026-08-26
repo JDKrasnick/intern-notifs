@@ -32,7 +32,7 @@ export interface QueueMessage<T> {
   id: string;
   body: T;
   ack(): void;
-  retry(): void;
+  retry(options?: { delaySeconds?: number }): void;
 }
 export interface MessageBatch<T> {
   queue: string;

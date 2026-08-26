@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "intern-notifs",
   "main": "cloudflare/worker.ts",
-  "compatibility_date": "2026-08-24",
+  "compatibility_date": "2026-08-26",
   "compatibility_flags": ["nodejs_compat"],
   "limits": { "cpu_ms": 30000, "subrequests": 10000 },
   "observability": { "enabled": true },
@@ -18,22 +18,26 @@
       { "binding": "LEVER_QUEUE", "queue": "intern-notifs-lever" },
       { "binding": "ASHBY_QUEUE", "queue": "intern-notifs-ashby" },
       { "binding": "GITHUB_QUEUE", "queue": "intern-notifs-github" },
+      { "binding": "GMAIL_QUEUE", "queue": "intern-notifs-gmail" },
       { "binding": "GREENHOUSE_DLQ", "queue": "intern-notifs-greenhouse-dlq" },
       { "binding": "LEVER_DLQ", "queue": "intern-notifs-lever-dlq" },
-      { "binding": "ASHBY_DLQ", "queue": "intern-notifs-ashby-dlq" }
+      { "binding": "ASHBY_DLQ", "queue": "intern-notifs-ashby-dlq" },
+      { "binding": "GMAIL_DLQ", "queue": "intern-notifs-gmail-dlq" }
     ],
     "consumers": [
       { "queue": "intern-notifs-greenhouse", "max_batch_size": 1, "max_retries": 2, "dead_letter_queue": "intern-notifs-greenhouse-dlq" },
       { "queue": "intern-notifs-lever", "max_batch_size": 1, "max_retries": 2, "dead_letter_queue": "intern-notifs-lever-dlq" },
       { "queue": "intern-notifs-ashby", "max_batch_size": 1, "max_retries": 2, "dead_letter_queue": "intern-notifs-ashby-dlq" },
-      { "queue": "intern-notifs-github", "max_batch_size": 1, "max_retries": 2, "dead_letter_queue": "intern-notifs-github-dlq" }
+      { "queue": "intern-notifs-github", "max_batch_size": 1, "max_retries": 2, "dead_letter_queue": "intern-notifs-github-dlq" },
+      { "queue": "intern-notifs-gmail", "max_batch_size": 1, "max_retries": 5, "dead_letter_queue": "intern-notifs-gmail-dlq" }
     ]
   },
   "triggers": {
-    "crons": ["7-57/10 * * * *", "9-59/10 * * * *", "12,42 * * * *", "22,52 * * * *", "2,32 * * * *", "0 * * * *", "42 8 * * *"]
+    "crons": ["5-55/10 * * * *", "7-57/10 * * * *", "9-59/10 * * * *", "12,42 * * * *", "22,52 * * * *", "2,32 * * * *", "0 * * * *", "42 8 * * *"]
   },
   "vars": {
     "PUBLIC_API_URL": "http://localhost:8787",
-    "AUTH_DEV_MODE": "false"
+    "AUTH_DEV_MODE": "false",
+    "GMAIL_ENABLED": "false"
   }
 }

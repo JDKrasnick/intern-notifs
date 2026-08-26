@@ -20,9 +20,12 @@
       <p>Email <a href="mailto:onlinestuff309@gmail.com">onlinestuff309@gmail.com</a> for account access, privacy, data export, inaccessible-account deletion, or any request containing personal information. We target completion of verified access, correction, export, and deletion requests within 30 days.</p>
 
       <h2 id="delete-account">Delete your account</h2>
-      <p>In the app, open Profile → Account and support → Delete account, then confirm. The in-app flow deletes your account, profile, synced applications, application-assistance records, uploaded documents, and active sign-in sessions.</p>
+      <p>In the app, open Profile → Account and support → Delete account, then confirm. The in-app flow attempts to revoke a connected Gmail grant, then deletes Gmail credentials and sync data, your account, profile, synced applications, application-assistance records, uploaded documents, and active sign-in sessions. Local deletion finishes even if Google’s revocation service is unavailable.</p>
       <p>Your device alerts, notification preferences, and app settings remain because they belong to a separate anonymous installation. You can turn off alerts in Profile or revoke notification permission in device settings. Inactive installation records are automatically deleted after twelve months.</p>
       <p>If you cannot sign in, email the private support address with the subject “Account deletion request” from the account email when possible. We may ask for limited information to verify ownership. Never send your password.</p>
+
+      <h2>Disconnect Gmail without deleting your account</h2>
+      <p>Open Profile → App &amp; account → Disconnect Gmail. This removes OAuth credentials, sync history, processed-message identifiers, and pending detections. Application statuses and applied dates remain, with Gmail-specific evidence removed. You can also remove InternNotifs from your Google Account’s third-party access page.</p>
 
       <h2>Listing corrections</h2>
       <p>Use GitHub for non-sensitive listing issues or private email when disclosure could harm an applicant or reveal personal information. See the <a href="source-policy.html">Source and Correction Policy</a> for review targets and temporary hiding rules.</p>

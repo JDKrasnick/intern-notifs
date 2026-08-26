@@ -10,6 +10,10 @@ export interface ApplicationRecord {
   status: ApplicationStatus;
   updatedAt: string;
   createdAt: string;
+  /** Submission timestamp, whether manually confirmed or detected from mail metadata. */
+  appliedAt?: string;
+  /** Mail-derived provenance is removed on Gmail disconnect without changing status. */
+  detection?: { source: 'gmail'; detectedAt: string };
   notes?: string;
   /** `partner` is only set after an employer has granted direct-submit access. */
   applyMode?: 'official-form' | 'partner';

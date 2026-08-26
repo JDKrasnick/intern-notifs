@@ -21,6 +21,8 @@ This is intentionally not an anonymous shared account. Private data is scoped to
 
 Google sign-in should not be enabled by itself on iOS; when it is offered, Sign in with Apple must also be offered to satisfy Apple's equivalent-login policy. Apple and Google keys stay server-side and are never included in the Expo app.
 
+Optional Gmail application detection is not Google sign-in. It is available only after an InternNotifs account is authenticated, requests the metadata-only Gmail scope for one mailbox, and does not change the Apple/Google login sequencing above.
+
 ## Trust and policy decisions
 
 - InternNotifs is operated by JD Krasnick under Pennsylvania law and is intended for people age 18 and older.

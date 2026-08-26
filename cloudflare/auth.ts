@@ -12,7 +12,7 @@ const maxAuthBodyBytes = 16 * 1_024;
 const maxPasswordLength = 128;
 
 export const currentTermsVersion = '2026-08-25';
-export const currentPrivacyVersion = '2026-08-25';
+export const currentPrivacyVersion = '2026-08-26';
 
 type RateLimitPolicy = { limit: number; windowMs: number; blockMs: number };
 const rateLimitPolicies = {

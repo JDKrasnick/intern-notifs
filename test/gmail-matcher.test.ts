@@ -1,0 +1,44 @@
+import { describe, expect, it } from 'vitest';
+import { matchGmailApplication, type GmailMetadata } from '../src/gmail-matcher.js';
+import type { Internship } from '../src/types.js';
+
+function role(overrides: Partial<Internship> = {}): Internship {
+  return {
+    jobId: 'job-1', company: 'Northstar Labs', title: 'Software Engineering Intern', location: 'New York', season: 'Summer 2027',
+    applyUrl: 'https://boards.greenhouse.io/northstar/jobs/12345', normalizedUrl: 'https://boards.greenhouse.io/northstar/jobs/12345',
+    fingerprint: 'fingerprint', technical: true, open: true, firstSeenAt: '2026-08-01T00:00:00.000Z', lastSeenAt: '2026-08-25T00:00:00.000Z',
+    compensation: { raw: 'Not listed' }, sourceReferences: [], notification: { smsPending: false, digestPending: false },
+    postingIdentity: { provider: 'greenhouse', tenant: 'northstar', providerPostingId: '12345', canonicalApplicationUrl: 'https://boards.greenhouse.io/northstar/jobs/12345', canonicalJobId: 'job-1', aliases: [] },
+    ...overrides,
+  } as Internship;
+}
+
+const metadata = (subject: string, sender = 'Northstar Recruiting <notifications@greenhouse-mail.io>'): GmailMetadata => ({
+  subject, sender, receivedAt: '2026-08-25T12:00:00.000Z', labels: ['INBOX'],
+});
+
+describe('Gmail application matcher', () => {
+  it.each([
+    'Thank you for applying to Software Engineering Intern at Northstar Labs',
+    'Application received — Northstar Labs Software Engineering Intern',
+    'Solicitud recibida — Northstar Labs Software Engineering Intern',
+  ])('auto-applies a unique confirmation: %s', (subject) => {
+    const result = matchGmailApplication(metadata(subject), [role()]);
+    expect(result.outcome).toBe('applied');
+  });
+
+  it('sends an ambiguous company-only confirmation to review', () => {
+    const result = matchGmailApplication(metadata('We received your application at Northstar Labs', 'jobs@northstarlabs.com'), [
+      role(), role({ jobId: 'job-2', title: 'Data Science Intern' }),
+    ]);
+    expect(result.outcome).toBe('review');
+  });
+
+  it.each(['Interview invitation — Northstar Labs', 'Complete your coding assessment', 'New job alert from Northstar Labs', 'Your application was rejected'])(
+    'excludes stage and alert mail: %s', (subject) => expect(matchGmailApplication(metadata(subject), [role()]).outcome).toBe('ignore'),
+  );
+
+  it('ignores malformed and unrelated headers', () => {
+    expect(matchGmailApplication({ subject: '', sender: '', receivedAt: 'invalid', labels: [] }, [role()]).outcome).toBe('ignore');
+  });
+});
