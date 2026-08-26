@@ -25,7 +25,7 @@
 | Mobile discovery MVP | In progress | Filtered feed, native deep-link alerts, official-form handoff, and tracker are polished |
 | Human-reviewed application assistance | In progress | Headed pilot fills a supported official form, pauses for unknowns and verification, and leaves final submission to the user |
 | Headless application preparation | Planned | Isolated runner reuses proven mappings, supports live user handoff, and never bypasses verification or non-partner submission controls |
-| Trust and release readiness | In progress | Policy pages, disclosure worksheet, consent, retention enforcement, and release checks are implemented; final public URLs, support mailbox, store-console entry, and physical-device acceptance remain |
+| Trust and release readiness | In progress | Public policies and support routes are live, and the disclosure worksheet, consent, retention enforcement, and release checks are deployed; permanent support mailbox, owner policy approval, store-console entry, final archive reconciliation, and physical-device acceptance remain |
 | Cloudflare platform migration | In progress | Cloudflare infrastructure is live, the source backfill and grouped D1 projection are verified, the production mobile environment targets the Worker, and retained AWS rollback data is preserved |
 | Closed beta | Planned | 30–50 student test cohort and agreed success metrics |
 | Public release | Planned | TestFlight/Play validation complete and catalog reliability meets target |
@@ -100,7 +100,7 @@
 - [ ] Connect a GitHub account/repository with permission to create a GitHub Project and issues.
 - [ ] Create a deploy-only AWS role or Identity Center permission set; stop using root credentials for deployment.
 - [ ] Decide the default geographic emphasis for discovery ranking and the mobile experience; do not gate source verification on a hand-selected roster.
-- [ ] Approve the drafted privacy, terms, retention, and source/correction policies; replace the temporary Gmail support contact with the intended long-term public mailbox before store submission.
+- [ ] Approve the live privacy, terms, retention, and source/correction policies; replace the temporary Gmail support contact with the intended long-term public mailbox before store submission.
 - [ ] Enroll in Apple Developer Program and Google Play Console when beta builds are ready.
 - [ ] Recruit 30–50 beta testers with iOS and Android devices.
 

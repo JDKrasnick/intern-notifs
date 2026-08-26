@@ -475,11 +475,17 @@ After Apple processing:
 3. The tester must accept their App Store Connect invitation and use TestFlight with that same Apple Account. Internal testers do not use redeem codes.
 4. Follow [`testflight-checklist.md`](testflight-checklist.md) on a physical iPhone.
 
-## Current release context (2026-07-19)
+## Current release context (2026-08-26)
 
-- Build `1.0.0 (4)` was built from merged `main` commit `5d6255e` and is superseded.
-- Build `1.0.0 (5)` was built from `d994e00` (`feat: complete TestFlight release readiness`) with policy/support pages, EAS production URLs, icon, splash, and TestFlight checks.
-- Before the public App Store release, merge the validated release-readiness work to `main`, finish physical TestFlight acceptance, complete the App Store listing/privacy disclosures, then submit the selected build for App Review.
+- Build `1.0.0 (22)` was built from `a838fa4` with the issue #41 trust surface,
+  final app icon, policy/support links, signup consent, retention enforcement,
+  and production EAS URLs. It was uploaded to and accepted by App Store Connect.
+- Production D1 migration `0005_auth_consent.sql` and Worker version
+  `29e40ce2-bab7-4276-b196-41d1116d808d` were deployed on 2026-08-26 after a
+  successful 10% canary.
+- Before the public App Store release, finish physical TestFlight acceptance,
+  reconcile the final archive, complete the App Store listing/privacy
+  disclosures, and submit the selected build for App Review.
 
 ## Physical-device checks agents cannot fake
 

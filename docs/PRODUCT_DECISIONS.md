@@ -37,7 +37,7 @@ Google sign-in should not be enabled by itself on iOS; when it is offered, Sign 
 - [ ] Test browse-first device alerts without an account, then separately test account creation, email verification, application tracking, résumé upload, sign-out, and account deletion on a physical iPhone.
 - [ ] Test notification permission approval and denial, a real push alert, and its job deep link.
 - [ ] Confirm the deployed catalog has enough current technical early-career roles and that every source link reaches the employer's official application.
-- [ ] Produce and install a fresh TestFlight build after the browse-first change; build 3 cannot contain later commits.
+- [x] Produce a fresh TestFlight build after the browse-first and trust-surface changes; build `1.0.0 (22)` was accepted by App Store Connect on 2026-08-26.
 - [ ] Resolve all TestFlight feedback and crashes.
 
 ### Required App Store materials

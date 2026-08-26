@@ -1,10 +1,9 @@
 # App Store and Google Play disclosure worksheet
 
-Prepared for issue #41 from the mobile and Cloudflare production data flows at
-base commit `104a41d2af3ab080a621b8687dc84078fe70b200`, including the trust-surface
-changes in this branch. Re-audit before submission if the release commit adds
-an SDK, login provider, permission, analytics, advertising, payment, or new
-profile field.
+Prepared for issue #41 from the mobile and Cloudflare production data flows in
+TestFlight build `1.0.0 (22)`, built from commit `a838fa4`. Re-audit before
+submission if the selected release adds an SDK, login provider, permission,
+analytics, advertising, payment, or new profile field.
 
 This is an owner-entry worksheet, not proof that the answers have been
 published in App Store Connect or Play Console.
@@ -122,6 +121,19 @@ them. The random installation identifier and basic service diagnostics are the
 required data paths.
 
 ## Final submission reconciliation
+
+### Operational verification (2026-08-26)
+
+- TestFlight build `1.0.0 (22)` was uploaded to and accepted by App Store
+  Connect.
+- The Privacy Policy, Terms, Data Retention, Source and Correction Policy,
+  Support, and public account-deletion URLs returned `200` without a login.
+- D1 migration `0005_auth_consent.sql` was applied to production and the
+  production Worker version `29e40ce2-bab7-4276-b196-41d1116d808d` was
+  promoted after a successful 10% canary.
+- These checks do not constitute owner approval of the policy text, publication
+  of store-console answers, final archive reconciliation, or physical-device
+  acceptance.
 
 Before the owner publishes either store form:
 
