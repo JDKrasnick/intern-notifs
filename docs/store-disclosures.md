@@ -131,9 +131,10 @@ required data paths.
 - D1 migration `0005_auth_consent.sql` was applied to production and the
   production Worker version `29e40ce2-bab7-4276-b196-41d1116d808d` was
   promoted after a successful 10% canary.
-- These checks do not constitute owner approval of the policy text, publication
-  of store-console answers, final archive reconciliation, or physical-device
-  acceptance.
+- JD Krasnick approved the published policy text as written and confirmed
+  `onlinestuff309@gmail.com` as the public support mailbox.
+- These checks do not constitute publication of store-console answers, final
+  archive reconciliation, or physical-device acceptance.
 
 Before the owner publishes either store form:
 

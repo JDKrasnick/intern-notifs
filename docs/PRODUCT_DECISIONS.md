@@ -29,6 +29,7 @@ Google sign-in should not be enabled by itself on iOS; when it is offered, Sign 
 - Verified access, correction, export, and deletion requests target completion within 30 days. Source corrections target acknowledgment within two business days and resolution within seven business days; credible fraud, malware, privacy, impersonation, or applicant-safety concerns are hidden while reviewed.
 - Account data remains until deletion; abandoned signups expire after 7 days, inactive anonymous installations after 12 months, delivery receipts after 90 days, and assistance metadata after 30 days.
 - Source code uses the MIT License. InternNotifs-created catalog metadata allows reuse with attribution under CC BY 4.0, excluding employer text, third-party source content, logos, and trademarks.
+- JD Krasnick approved the published policy text as written and confirmed `onlinestuff309@gmail.com` as the public support mailbox on 2026-08-26. The mailbox may be replaced later without changing the private-support boundary.
 
 ## Store-launch checklist
 
