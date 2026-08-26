@@ -14,6 +14,7 @@ export interface GitHubAdapterOptions { id: string; owner: string; repo: string;
 export function markdownListingToSourcedPosting(listing: RawListing): SourcedPosting {
   return {
     sourceId: listing.sourceId,
+    provenance: 'reviewed-community',
     externalId: `${listing.document}:${normalizeUrl(listing.applyUrl)}`,
     document: listing.document,
     sourceUrl: listing.sourceUrl,

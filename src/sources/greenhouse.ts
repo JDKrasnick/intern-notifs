@@ -263,6 +263,7 @@ export function mapGreenhouseSourcedPosting(
   const description = job.content ?? '';
   return {
     sourceId: source.id,
+    provenance: 'official-ats',
     externalId,
     document: externalId,
     sourceUrl: greenhouseJobsUrl(source.boardToken),

@@ -136,6 +136,7 @@ export function mapLeverSourcedPosting(
   }));
   return {
     sourceId: options.id,
+    provenance: 'official-ats',
     externalId: posting.id,
     document: posting.id,
     sourceUrl: `https://api.lever.co/v0/postings/${options.site}?mode=json`,

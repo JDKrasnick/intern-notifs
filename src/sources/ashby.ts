@@ -153,7 +153,7 @@ function mapPosting(row: AshbyPosting, source: ReviewedSourceRecord, fetchedAt: 
     || row.compensation?.compensationTierSummary?.trim() || undefined;
   const declaredWorkMode = workMode(row);
   return {
-    sourceId: source.id, externalId: row.id, document: row.id, sourceUrl: sourceUrl(boardName), row: index + 1, fetchedAt,
+    sourceId: source.id, provenance: 'official-ats', externalId: row.id, document: row.id, sourceUrl: sourceUrl(boardName), row: index + 1, fetchedAt,
     employer: { name: source.company, authority: 'reviewed-registry' }, title: row.title,
     content: description ? [description] : [], locations: uniqueLocations(row), applyUrl: row.applyUrl,
     hostedUrl: row.jobUrl, sourceState: 'open',

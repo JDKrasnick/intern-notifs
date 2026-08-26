@@ -59,11 +59,11 @@ describe('mobile job routes', () => {
 
 describe('mobile job trust and freshness', () => {
   it('distinguishes official, community, and corroborated sources', () => {
-    expect(sourcePresentation([{ sourceId: 'greenhouse-acme' }])).toEqual({ primary: 'Official employer source · Greenhouse', corroboration: undefined });
-    expect(sourcePresentation([{ sourceId: 'lever-acme' }, { sourceId: 'community-list', sourceUrl: 'https://raw.githubusercontent.com/example/jobs/main/README.md' }])).toEqual({ primary: 'Official employer source · Lever', corroboration: 'Also corroborated by a community listing' });
-    expect(sourcePresentation([{ sourceId: 'community-list', sourceUrl: 'https://github.com/example/jobs' }])).toEqual({ primary: 'Community listing', corroboration: undefined });
-    expect(sourcePresentation([{ sourceId: 'ashby-acme' }, { sourceId: 'greenhouse-acme' }]).primary).toBe('Official employer source · Ashby + Greenhouse');
-    expect(sourcePresentation([])).toEqual({ primary: 'Source unavailable', corroboration: undefined });
+    expect(sourcePresentation([{ sourceId: 'greenhouse-acme', provenance: 'official-ats' }])).toEqual({ primary: 'Official ATS', corroboration: undefined, labels: ['Official ATS'] });
+    expect(sourcePresentation([{ sourceId: 'employer-acme', provenance: 'employer-submitted' }, { sourceId: 'lever-acme', provenance: 'official-ats' }, { sourceId: 'community-list', provenance: 'reviewed-community' }])).toEqual({ primary: 'Employer submitted', corroboration: 'Also: Official ATS · Reviewed community source', labels: ['Employer submitted', 'Official ATS', 'Reviewed community source'] });
+    expect(sourcePresentation([{ sourceId: 'community-list', provenance: 'reviewed-community' }])).toEqual({ primary: 'Reviewed community source', corroboration: undefined, labels: ['Reviewed community source'] });
+    expect(sourcePresentation([{ sourceId: 'submitted', provenance: 'employer-submitted', state: 'closed' }, { sourceId: 'official', provenance: 'official-structured' }]).primary).toBe('Official structured source');
+    expect(sourcePresentation([])).toEqual({ primary: 'Source unavailable', corroboration: undefined, labels: [] });
   });
 
   it('uses relative confirmation times for recent checks and dates for older checks', () => {

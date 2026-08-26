@@ -10,7 +10,7 @@
     <main>
       <p class="eyebrow">InternNotifs</p>
       <h1>Data Retention Policy</h1>
-      <p class="meta">Version 2026-08-25 · Effective August 25, 2026</p>
+      <p class="meta">Version 2026-08-26 · Effective August 26, 2026</p>
       <p class="lede">InternNotifs keeps personal and device data only while it supports a requested feature, a short operational need, or a legal obligation.</p>
 
       <table>
@@ -25,6 +25,9 @@
           <tr><td>Anonymous installation, alert settings, and push token</td><td>Until 12 months without installation activity</td><td>Automatic inactivity cleanup; invalid push tokens are disabled earlier</td></tr>
           <tr><td>Notification delivery receipt</td><td>90 days after its last update</td><td>Automatic expiry or deletion of its inactive installation</td></tr>
           <tr><td>Hashed authentication and installation rate-limit keys</td><td>Up to 7 days after the applicable window or block ends</td><td>Automatic cleanup</td></tr>
+          <tr><td>Employer organization, membership, source, proposal, submission, report, and publishing records</td><td>While active and for 1 year after organization closure or revocation</td><td>Private member, token, and review-note data is deleted or redacted after the retention period; redacted publication and trust evidence may remain for catalog provenance</td></tr>
+          <tr><td>Employer verification challenge token</td><td>Until its challenge expires or is consumed</td><td>Expired secrets are deleted immediately; only the audit outcome remains</td></tr>
+          <tr><td>Employer invitation</td><td>Invitation lifetime plus a 7-day operational grace period</td><td>Automatic deletion after the grace period or earlier account-access cleanup</td></tr>
           <tr><td>Cloudflare Worker request, error, and performance logs</td><td>No more than 7 days; the active plan may retain them for less</td><td>Provider expiry</td></tr>
           <tr><td>Private support correspondence</td><td>While a request is active and up to 12 months afterward</td><td>Routine deletion unless longer retention is reasonably required for security, disputes, or law</td></tr>
           <tr><td>Public GitHub issues and contributions</td><td>Part of the public project history</td><td>Removal or redaction under GitHub and project moderation processes</td></tr>

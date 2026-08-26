@@ -21,6 +21,10 @@
         "POST_NOTIFICATIONS"
       ]
     },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
     "plugins": [
       [
         "expo-notifications",

@@ -116,6 +116,7 @@ describe('neutral boundary parity', () => {
   /** The neutral boundary adds identity and the persisted classification decision. */
   const additions = {
     externalId: expect.any(String) as unknown as string,
+    provenance: 'official-ats' as const,
     technical: true,
     internshipIdentity: expect.any(Object) as unknown as object,
   };

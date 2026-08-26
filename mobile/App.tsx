@@ -73,6 +73,18 @@ import {
   type SettingsDestination,
   type SettingsDraftRevisions,
 } from "./src/settings";
+import {
+  employerApi,
+  employerRouteFromUrl,
+  employerStateExplanation,
+  employerWorkspaceSections,
+  type EmployerMember,
+  type EmployerMetadataProposal,
+  type EmployerOrganization,
+  type EmployerSource,
+  type EmployerSubmission,
+  type EmployerWorkspaceSection,
+} from "./src/employer";
 
 type Job = {
   jobId: string;
@@ -92,6 +104,8 @@ type Job = {
   invalidApplicationUrl?: string;
   sourceReferences: Array<{
     sourceId: string;
+    provenance?: "official-ats" | "official-structured" | "employer-submitted" | "reviewed-community";
+    state?: "open" | "closed";
     sourceUrl: string;
     postedAt?: string;
     providerTimestamp?: { value: string; semantics: "published" | "updated" };
@@ -131,6 +145,7 @@ type CatalogGroupRole = {
   disciplines: string[];
   workModes: string[];
   sourceCredibility: "official" | "corroborated" | "community" | "unspecified";
+  provenanceLabels?: string[];
   detailUrl: string;
   officialApplyUrl: string;
   applicationUrlValidated: boolean;
@@ -321,16 +336,18 @@ async function openOfficialApplication(url: string) {
 }
 
 function JobSource({ source }: { source: ReturnType<typeof sourcePresentation> }) {
-  const icon = source.primary.startsWith("Official")
+  const icon = source.primary === "Employer submitted"
+    ? "business-outline"
+    : source.primary.startsWith("Official")
     ? "shield-checkmark-outline"
-    : source.primary === "Community listing"
+    : source.primary === "Reviewed community source"
       ? "people-outline"
       : "help-circle-outline";
   return (
     <View style={styles.jobSourceRow}>
       <Ionicons name={icon} size={14} color={colors.muted} />
       <Text style={styles.jobSourceText}>{source.primary}</Text>
-      {source.corroboration ? <Text style={styles.jobSourceCorroboration}>Community corroborated</Text> : null}
+      {source.corroboration ? <Text style={styles.jobSourceCorroboration}>{source.corroboration}</Text> : null}
     </View>
   );
 }
@@ -2872,11 +2889,328 @@ function AppContent() {
   );
 }
 
+function EmployerStatus({ state, reason }: { state: Parameters<typeof employerStateExplanation>[0]; reason?: string }) {
+  const explanation = employerStateExplanation(state, reason);
+  return (
+    <View
+      accessible
+      accessibilityLabel={`${explanation.label}${explanation.reason ? `. Reason: ${explanation.reason}` : ""}${explanation.nextAction ? `. Next action: ${explanation.nextAction}` : ""}`}
+      style={[styles.employerStatus, explanation.tone === "danger" && styles.employerStatusDanger, explanation.tone === "warning" && styles.employerStatusWarning, explanation.tone === "positive" && styles.employerStatusPositive]}
+    >
+      <Text style={styles.employerStatusLabel}>{explanation.label}</Text>
+      {explanation.reason ? <Text style={styles.employerStatusText}>Reason: {explanation.reason}</Text> : null}
+      {explanation.nextAction ? <Text style={styles.employerStatusText}>Next: {explanation.nextAction}</Text> : null}
+    </View>
+  );
+}
+
+function EmployerField({ label, value, onChangeText, placeholder, multiline = false }: {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  placeholder: string;
+  multiline?: boolean;
+}) {
+  return (
+    <View style={styles.employerField}>
+      <Text style={styles.inputLabel}>{label}</Text>
+      <PlainTextInput
+        accessibilityLabel={label}
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor={colors.placeholder}
+        multiline={multiline}
+        style={[styles.employerInput, multiline && styles.employerInputMultiline]}
+      />
+    </View>
+  );
+}
+
+function EmployerPortal({ initialSection }: { initialSection: EmployerWorkspaceSection }) {
+  const { width } = useWindowDimensions();
+  const [token, setToken] = useState<string>();
+  const [sessionReady, setSessionReady] = useState(false);
+  const [section, setSection] = useState(initialSection);
+  const [organizations, setOrganizations] = useState<EmployerOrganization[]>([]);
+  const [organization, setOrganization] = useState<EmployerOrganization>();
+  const [members, setMembers] = useState<EmployerMember[]>([]);
+  const [sources, setSources] = useState<EmployerSource[]>([]);
+  const [proposals, setProposals] = useState<EmployerMetadataProposal[]>([]);
+  const [submissions, setSubmissions] = useState<EmployerSubmission[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const [featureUnavailable, setFeatureUnavailable] = useState(false);
+  const [feedback, setFeedback] = useState<string>();
+  const [challengeId, setChallengeId] = useState<string>();
+  const [challengeToken, setChallengeToken] = useState<string>();
+  const [claimName, setClaimName] = useState("");
+  const [claimDomain, setClaimDomain] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [invitationToken, setInvitationToken] = useState("");
+  const [newInvitationToken, setNewInvitationToken] = useState<string>();
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [proposalJobId, setProposalJobId] = useState("");
+  const [proposalField, setProposalField] = useState("");
+  const [proposalValue, setProposalValue] = useState("");
+  const [submission, setSubmission] = useState({
+    company: "", title: "", programType: "internship", discipline: "software engineering",
+    location: "", workMode: "onsite", season: "", deadline: "rolling", deadlineTimezone: "",
+    workAuthorization: "unknown", applicationUrl: "", privateReviewNote: "",
+  });
+  const wide = width >= 880;
+
+  const loadWorkspace = async (preferredOrganizationId?: string) => {
+    setLoading(true);
+    setError(undefined);
+    try {
+      const readOptions = { onToken: setToken };
+      const response = await employerApi.organizations(readOptions);
+      setOrganizations(response.organizations);
+      const selected = response.organizations.find((candidate) => candidate.organizationId === preferredOrganizationId)
+        ?? response.organizations.find((candidate) => candidate.organizationId === organization?.organizationId)
+        ?? response.organizations[0];
+      setOrganization(selected);
+      if (!selected) {
+        setMembers([]); setSources([]); setProposals([]); setSubmissions([]);
+        return;
+      }
+      const [detail, memberResponse, invitationResponse, sourceResponse, proposalResponse, submissionResponse] = await Promise.all([
+        employerApi.organization(selected.organizationId, readOptions), employerApi.members(selected.organizationId, readOptions), employerApi.invitations(selected.organizationId, readOptions),
+        employerApi.sources(selected.organizationId, readOptions), employerApi.proposals(selected.organizationId, readOptions),
+        employerApi.submissions(selected.organizationId, readOptions),
+      ]);
+      setOrganization(detail.organization);
+      setMembers(detail.members ?? [...memberResponse.members, ...invitationResponse.invitations]);
+      setSources(detail.sources ?? sourceResponse.sources);
+      setProposals(detail.proposals ?? proposalResponse.proposals);
+      setSubmissions(detail.submissions ?? submissionResponse.submissions);
+      setFeatureUnavailable(false);
+    } catch (loadError) {
+      if (loadError instanceof ApiError && loadError.status === 404) {
+        setFeatureUnavailable(true);
+        setError("The employer workspace could not be reached.");
+      } else {
+        setError(loadError instanceof Error ? loadError.message : "The employer workspace could not be loaded.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    void restoreSession().then((result) => {
+      if (result.status === "authenticated") setToken(result.token);
+    }).finally(() => setSessionReady(true));
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setInvitationToken(new URL(window.location.href).searchParams.get("invitation") ?? "");
+  }, []);
+  useEffect(() => { if (token) void loadWorkspace(); }, [token]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleHistory = () => setSection(employerRouteFromUrl(window.location.href) ?? "verification");
+    window.addEventListener("popstate", handleHistory);
+    return () => window.removeEventListener("popstate", handleHistory);
+  }, []);
+  const changeSection = (nextSection: EmployerWorkspaceSection) => {
+    if (typeof window !== "undefined") window.history.pushState({}, "", `/employer/${nextSection}`);
+    setSection(nextSection);
+  };
+  const perform = async <T,>(action: () => Promise<T>, success: string, onSuccess?: (result: T) => void) => {
+    setBusy(true); setError(undefined); setFeedback(undefined);
+    try {
+      const result = await action();
+      setFeedback(success);
+      onSuccess?.(result);
+      await loadWorkspace();
+    } catch (actionError) {
+      if (actionError instanceof ApiError && actionError.kind === "unauthorized") {
+        setToken(undefined);
+        setOrganization(undefined);
+      }
+      setError(actionError instanceof Error ? actionError.message : "That change could not be saved.");
+    } finally { setBusy(false); }
+  };
+
+  if (!sessionReady) return <AppLoadingSkeleton />;
+  if (!token) {
+    return (
+      <SafeAreaView style={styles.employerRoot}>
+        <View style={styles.employerAuth}>
+          <Text style={styles.employerWordmark}>InternNotifs for employers</Text>
+          <Text style={styles.employerPageTitle}>Manage trusted role sources.</Text>
+          <Text style={styles.employerIntro}>Sign in with your verified account to claim an organization, connect official sources, and submit early-career roles.</Text>
+          <SignIn onSession={async (idToken) => { await sessionStorage.set(idToken); setToken(idToken); }} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const orgId = organization?.organizationId;
+  const canManageMembers = organization?.role === "owner";
+  const canVerify = organization?.role === "owner";
+  const isVerified = organization?.verificationState === "verified";
+  const verification = organization ? employerStateExplanation(organization.verificationState, organization.verificationReason) : undefined;
+  const updateSubmission = (key: keyof typeof submission, value: string) => setSubmission((current) => ({ ...current, [key]: value }));
+  return (
+    <SafeAreaView style={styles.employerRoot}>
+      <View style={[styles.employerShell, wide && styles.employerShellWide]}>
+        <View style={[styles.employerNav, wide ? styles.employerNavWide : styles.employerNavCompact]} accessibilityRole="tablist">
+          <View style={[styles.employerBrandBlock, !wide && styles.employerBrandBlockCompact]}>
+            <Text style={styles.employerWordmark}>InternNotifs</Text>
+            <Text style={styles.employerWorkspaceLabel}>Employer workspace</Text>
+          </View>
+          {employerWorkspaceSections.map((item) => (
+            <TouchableOpacity
+              key={item.id}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: section === item.id }}
+              accessibilityHint={item.description}
+              onPress={() => changeSection(item.id)}
+              style={[styles.employerNavItem, section === item.id && styles.employerNavItemActive]}
+            >
+              <Text style={[styles.employerNavText, section === item.id && styles.employerNavTextActive]}>{item.label}</Text>
+            </TouchableOpacity>
+          ))}
+          <TouchableOpacity accessibilityRole="button" onPress={() => void (async () => { await signOut(token); setToken(undefined); setOrganization(undefined); })()} style={styles.employerSignOut}>
+            <Text style={styles.employerSignOutText}>Sign out</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView style={styles.employerMain} contentContainerStyle={styles.employerContent} keyboardShouldPersistTaps="handled">
+          <Text accessibilityRole="header" style={styles.employerPageTitle}>{employerWorkspaceSections.find(({ id }) => id === section)?.label}</Text>
+          <Text style={styles.employerIntro}>{employerWorkspaceSections.find(({ id }) => id === section)?.description}</Text>
+          {loading ? <Text accessibilityRole="progressbar" style={styles.employerNotice}>Loading workspace…</Text> : null}
+          {error ? <Text accessibilityRole="alert" style={[styles.employerNotice, styles.employerError]}>{error}</Text> : null}
+          {feedback ? <Text accessibilityRole="alert" style={[styles.employerNotice, styles.employerSuccess]}>{feedback}</Text> : null}
+          {featureUnavailable ? (
+            <View style={styles.employerEvidence}>
+              <Text style={styles.employerHelp}>The service may still be rolling out. Retry this request before contacting support.</Text>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry loading the employer workspace"
+                disabled={loading} onPress={() => void loadWorkspace()} style={styles.employerInlineAction}>
+                <Text style={styles.employerInlineActionText}>{loading ? "Retrying…" : "Try again"}</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          {organizations.length > 1 ? (
+            <View style={styles.employerEvidence}>
+              <Text style={styles.inputLabel}>Organization</Text>
+              {organizations.map((candidate) => <TouchableOpacity key={candidate.organizationId} accessibilityRole="button"
+                accessibilityState={{ selected: candidate.organizationId === organization?.organizationId }}
+                onPress={() => { setOrganization(candidate); void loadWorkspace(candidate.organizationId); }} style={styles.employerInlineAction}>
+                <Text style={styles.employerInlineActionText}>{candidate.name}{candidate.organizationId === organization?.organizationId ? " · selected" : ""}</Text>
+              </TouchableOpacity>)}
+            </View>
+          ) : null}
+
+          {!organization && !loading && !featureUnavailable ? (
+            <View style={styles.employerSection}>
+              <Text accessibilityRole="header" style={styles.employerSectionTitle}>Accept an invitation</Text>
+              <EmployerField label="Invitation token" value={invitationToken} onChangeText={setInvitationToken} placeholder="Paste the private invitation token" />
+              <ActionButton label={busy ? "Accepting…" : "Accept invitation"} disabled={busy || !invitationToken.trim()} onPress={() => void perform(
+                () => employerApi.acceptInvitation(token, invitationToken.trim()), "Invitation accepted.", () => setInvitationToken(""),
+              )} />
+              <Text accessibilityRole="header" style={styles.employerSectionTitle}>Claim your organization</Text>
+              <Text style={styles.employerHelp}>Use the legal or public company name and its primary website domain.</Text>
+              <EmployerField label="Organization name" value={claimName} onChangeText={setClaimName} placeholder="Acme" />
+              <EmployerField label="Company domain" value={claimDomain} onChangeText={setClaimDomain} placeholder="acme.com" />
+              <ActionButton label={busy ? "Submitting…" : "Submit claim"} disabled={busy || !claimName.trim() || !claimDomain.trim()} onPress={() => void perform(async () => {
+                const response = await employerApi.claim(token, { name: claimName.trim(), domain: claimDomain.trim().toLowerCase() });
+                setOrganization(response.organization);
+              }, "Organization claim submitted.")} />
+            </View>
+          ) : null}
+
+          {organization && section === "verification" ? (
+            <View style={styles.employerSection}>
+              <Text accessibilityRole="header" style={styles.employerSectionTitle}>{organization.name}</Text>
+              <Text style={styles.employerHelp}>{organization.domain} · You are an {organization.role}.</Text>
+              <EmployerStatus state={organization.verificationState} reason={organization.verificationReason} />
+              {challengeToken ?? organization.challengeToken ? (
+                <View style={styles.employerEvidence}>
+                  <Text style={styles.inputLabel}>Verification token</Text>
+                  <Text selectable style={styles.employerCode}>{challengeToken ?? organization.challengeToken}</Text>
+                  <Text style={styles.employerHelp}>Publish this value in DNS TXT at _internnotifs-verification.{organization.domain}.</Text>
+                </View>
+              ) : null}
+              {organization.verificationExpiresAt ? <Text style={styles.employerHelp}>Verification expires {new Date(organization.verificationExpiresAt).toLocaleDateString()}.</Text> : null}
+              {!canVerify ? <Text style={styles.employerHelp}>Only an organization owner can manage verification.</Text> : organization.verificationState === "challenge-pending" && (challengeId ?? organization.activeChallengeId) && (challengeToken ?? organization.challengeToken) ? (
+                <ActionButton label={busy ? "Checking…" : "Check verification"} disabled={busy || !(challengeToken ?? organization.challengeToken)} onPress={() => void perform(() => employerApi.verifyChallenge(token, orgId!, (challengeId ?? organization.activeChallengeId)!, (challengeToken ?? organization.challengeToken)!), "Challenge found and sent for review.")} />
+              ) : organization.verificationState !== "verified" && organization.verificationState !== "review-pending" ? (
+                <ActionButton label={busy ? "Starting…" : organization.activeChallengeId ? "Replace lost DNS challenge" : "Start DNS verification"} disabled={busy} onPress={() => void perform(() => employerApi.createChallenge(token, orgId!, "dns-txt"), "New DNS verification challenge created.", (result) => { setChallengeId(result.challenge.id); setChallengeToken(result.token ?? result.challenge.token); })} />
+              ) : verification?.nextAction ? <Text style={styles.employerHelp}>{verification.nextAction}</Text> : null}
+            </View>
+          ) : null}
+
+          {organization && section === "members" ? (
+            <View style={styles.employerSection}>
+              <Text style={styles.employerSectionTitle}>Accept another organization invitation</Text>
+              <EmployerField label="Invitation token" value={invitationToken} onChangeText={setInvitationToken} placeholder="Paste the private invitation token" />
+              <ActionButton label={busy ? "Accepting…" : "Accept invitation"} disabled={busy || !invitationToken.trim()} onPress={() => void perform(
+                () => employerApi.acceptInvitation(token, invitationToken.trim()), "Invitation accepted.", () => setInvitationToken(""),
+              )} />
+              {members.map((member) => <View key={member.membershipId} style={[styles.employerRow, !wide && styles.employerRowCompact]}><View style={styles.employerRowCopy}><Text style={styles.employerRowTitle}>{member.email}</Text><Text style={styles.employerHelp}>{member.role}</Text>{canManageMembers && member.userId && member.role !== "owner" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Remove ${member.email}`} onPress={() => void perform(() => employerApi.removeMember(token, orgId!, member.userId!), "Member removed.")} style={styles.employerInlineAction}><Text style={styles.employerInlineActionDanger}>Remove member</Text></TouchableOpacity> : null}</View><EmployerStatus state={member.state ?? "active"} reason={member.reason} /></View>)}
+              {!members.length ? <Text style={styles.employerEmpty}>No members are listed yet.</Text> : null}
+              {newInvitationToken ? <View style={styles.employerEvidence}><Text style={styles.inputLabel}>Private invitation link</Text><Text selectable style={styles.employerCode}>{typeof window !== "undefined" ? `${window.location.origin}/employer/members?invitation=${encodeURIComponent(newInvitationToken)}` : newInvitationToken}</Text><Text style={styles.employerHelp}>Share this link securely with the invited person. It is shown only once.</Text></View> : null}
+              {canManageMembers ? <><Text style={styles.employerSectionTitle}>Invite an editor</Text><EmployerField label="Work email" value={inviteEmail} onChangeText={setInviteEmail} placeholder={`name@${organization.domain}`} /><ActionButton label={busy ? "Creating…" : "Create invitation"} disabled={busy || !inviteEmail.includes("@")} onPress={() => void perform(() => employerApi.inviteMember(token, orgId!, { email: inviteEmail.trim().toLowerCase(), role: "editor" }), "Invitation created.", (result) => setNewInvitationToken(result.token))} /></> : <Text style={styles.employerHelp}>Only an organization owner can manage invitations and members.</Text>}
+            </View>
+          ) : null}
+
+          {organization && section === "sources" ? (
+            <View style={styles.employerSection}>
+              {sources.map((source) => <View key={source.sourceId} style={[styles.employerRow, !wide && styles.employerRowCompact]}><View style={styles.employerRowCopy}><Text style={styles.employerRowTitle}>{source.provider}</Text><Text selectable style={styles.employerUrl}>{source.url}</Text>{source.lastSuccessfulAt ? <Text style={styles.employerHelp}>Last healthy sync {new Date(source.lastSuccessfulAt).toLocaleString()}</Text> : null}</View><EmployerStatus state={source.state} reason={source.reason} /></View>)}
+              {!sources.length ? <Text style={styles.employerEmpty}>No official sources connected.</Text> : null}
+              <Text style={styles.employerSectionTitle}>Connect a source</Text>
+              <Text style={styles.employerHelp}>Paste the exact HTTPS Greenhouse, Lever, Ashby, or reviewed structured careers URL. InternNotifs will not guess a board from a company name.</Text>
+              <EmployerField label="Official source URL" value={sourceUrl} onChangeText={setSourceUrl} placeholder="https://boards.greenhouse.io/acme" />
+              {!isVerified ? <Text style={styles.employerHelp}>Verify the organization before connecting a source.</Text> : null}
+              <ActionButton label={busy ? "Connecting…" : "Connect source"} disabled={busy || !isVerified || !sourceUrl.startsWith("https://")} onPress={() => void perform(() => employerApi.connectSource(token, orgId!, sourceUrl), "Source submitted for review.")} />
+            </View>
+          ) : null}
+
+          {organization && section === "metadata" ? (
+            <View style={styles.employerSection}>
+              {proposals.map((proposal) => <View key={proposal.proposalId} style={[styles.employerRow, !wide && styles.employerRowCompact]}><View style={styles.employerRowCopy}><Text style={styles.employerRowTitle}>{proposal.field}: {proposal.proposedValue}</Text><Text style={styles.employerHelp}>Role {proposal.jobId}{proposal.originalValue ? ` · Current: ${proposal.originalValue}` : ""}</Text></View><EmployerStatus state={proposal.state} reason={proposal.reason} /></View>)}
+              {!proposals.length ? <Text style={styles.employerEmpty}>No metadata proposals yet.</Text> : null}
+              <Text style={styles.employerSectionTitle}>Propose a field change</Text>
+              <EmployerField label="Catalog role ID" value={proposalJobId} onChangeText={setProposalJobId} placeholder="role_…" />
+              <EmployerField label="Field" value={proposalField} onChangeText={setProposalField} placeholder="applicationDeadline" />
+              <EmployerField label="Proposed value" value={proposalValue} onChangeText={setProposalValue} placeholder="2026-10-15" />
+              {!isVerified ? <Text style={styles.employerHelp}>Verify the organization before proposing metadata.</Text> : null}
+              <ActionButton label={busy ? "Submitting…" : "Submit proposal"} disabled={busy || !isVerified || !proposalJobId.trim() || !proposalField.trim() || !proposalValue.trim()} onPress={() => void perform(() => employerApi.proposeMetadata(token, orgId!, proposalJobId, proposalField, proposalValue), "Metadata proposal submitted.")} />
+            </View>
+          ) : null}
+
+          {organization && section === "submissions" ? (
+            <View style={styles.employerSection}>
+              {submissions.map((item) => <View key={item.submissionId} style={[styles.employerRow, !wide && styles.employerRowCompact]}><View style={styles.employerRowCopy}><Text style={styles.employerRowTitle}>{item.title}</Text>{item.updatedAt ? <Text style={styles.employerHelp}>Updated {new Date(item.updatedAt).toLocaleDateString()}</Text> : null}{item.state !== "closed" && item.state !== "rejected" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Close ${item.title}`} onPress={() => void perform(() => employerApi.closeSubmission(token, orgId!, item.submissionId), "Submission closed.")} style={styles.employerInlineAction}><Text style={styles.employerInlineActionText}>Close role</Text></TouchableOpacity> : null}</View><EmployerStatus state={item.state} reason={item.reason} /></View>)}
+              {!submissions.length ? <Text style={styles.employerEmpty}>No direct submissions yet.</Text> : null}
+              <Text style={styles.employerSectionTitle}>Submit a structured role</Text>
+              <Text style={styles.employerHelp}>Provide catalog facts and the official application URL only. Do not paste a full job description.</Text>
+              <View style={wide ? styles.employerFieldGrid : undefined}>
+                {([['Company', 'company', organization.name], ['Role title', 'title', 'Software Engineering Intern'], ['Program type', 'programType', 'internship'], ['Technical discipline', 'discipline', 'software engineering'], ['Location', 'location', 'New York, NY'], ['Work mode', 'workMode', 'hybrid'], ['Season', 'season', 'Summer 2027'], ['Deadline or rolling', 'deadline', 'rolling'], ['Deadline timezone', 'deadlineTimezone', 'America/New_York'], ['Work authorization', 'workAuthorization', 'unknown'], ['Official application URL', 'applicationUrl', 'https://…']] as const).map(([label, key, placeholder]) => <View key={key} style={wide ? styles.employerGridItem : undefined}><EmployerField label={label} value={submission[key]} onChangeText={(value) => updateSubmission(key, value)} placeholder={placeholder} /></View>)}
+              </View>
+              <EmployerField label="Private review note (optional)" value={submission.privateReviewNote} onChangeText={(value) => updateSubmission("privateReviewNote", value)} placeholder="Context for the reviewer" multiline />
+              {!isVerified ? <Text style={styles.employerHelp}>Verify the organization before submitting roles.</Text> : null}
+              <ActionButton label={busy ? "Submitting…" : "Submit role for review"} disabled={busy || !isVerified || !submission.title.trim() || !submission.location.trim() || !submission.season.trim() || !submission.applicationUrl.startsWith("https://")} onPress={() => void perform(() => employerApi.submitRole(token, orgId!, { ...submission, company: submission.company || organization.name }), "Role submitted for review.")} />
+            </View>
+          ) : null}
+        </ScrollView>
+      </View>
+    </SafeAreaView>
+  );
+}
+
 export default function App() {
   const motionAllowed = useMotionAllowed();
+  const employerSection = Platform.OS === "web" && typeof window !== "undefined"
+    ? employerRouteFromUrl(window.location.href)
+    : undefined;
   return (
     <MotionAllowedContext.Provider value={motionAllowed}>
-      <AppContent />
+      {employerSection ? <EmployerPortal initialSection={employerSection} /> : <AppContent />}
     </MotionAllowedContext.Provider>
   );
 }
@@ -5477,4 +5811,89 @@ const styles = StyleSheet.create({
   actionButtonDisabled: { opacity: 0.55 },
   actionButtonText: { color: colors.onDark, fontSize: 16, fontWeight: "700" },
   actionButtonTextSecondary: { color: colors.body },
+  employerRoot: { backgroundColor: "#F7F7F4", flex: 1 },
+  employerShell: { flex: 1 },
+  employerShellWide: { flexDirection: "row" },
+  employerNav: {
+    backgroundColor: colors.surface,
+    borderBottomColor: colors.separator,
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    paddingHorizontal: 16,
+  },
+  employerNavCompact: { flexWrap: "wrap", paddingBottom: 8, paddingTop: 14 },
+  employerNavWide: {
+    alignSelf: "stretch",
+    borderBottomWidth: 0,
+    borderRightColor: colors.separator,
+    borderRightWidth: 1,
+    flexDirection: "column",
+    paddingHorizontal: 18,
+    paddingVertical: 28,
+    width: 244,
+  },
+  employerBrandBlock: { marginBottom: 18, marginRight: 24, minWidth: 150 },
+  employerBrandBlockCompact: { marginBottom: 8, width: "100%" },
+  employerWordmark: { color: colors.ink, fontSize: 18, fontWeight: "800", letterSpacing: -0.3 },
+  employerWorkspaceLabel: { color: colors.muted, fontSize: 12, marginTop: 3 },
+  employerNavItem: {
+    justifyContent: "center",
+    minHeight: 50,
+    paddingHorizontal: 12,
+  },
+  employerNavItemActive: { backgroundColor: colors.signalSoft, borderRadius: 10 },
+  employerNavText: { color: colors.muted, fontSize: 14, fontWeight: "700" },
+  employerNavTextActive: { color: colors.signal },
+  employerSignOut: { justifyContent: "center", minHeight: 48, paddingHorizontal: 12 },
+  employerSignOutText: { color: colors.muted, fontSize: 14, fontWeight: "700" },
+  employerMain: { flex: 1 },
+  employerContent: { alignSelf: "center", maxWidth: 860, paddingHorizontal: 24, paddingVertical: 42, width: "100%" },
+  employerPageTitle: { color: colors.ink, fontSize: 36, fontWeight: "800", letterSpacing: -1, lineHeight: 42 },
+  employerIntro: { color: colors.muted, fontSize: 16, lineHeight: 24, marginBottom: 30, marginTop: 8, maxWidth: 640 },
+  employerSection: { gap: 14 },
+  employerSectionTitle: { color: colors.ink, fontSize: 20, fontWeight: "700", lineHeight: 27, marginTop: 26 },
+  employerHelp: { color: colors.muted, fontSize: 14, lineHeight: 20 },
+  employerNotice: { backgroundColor: colors.surface, borderRadius: 10, color: colors.body, fontSize: 14, lineHeight: 20, marginBottom: 18, padding: 14 },
+  employerError: { backgroundColor: colors.dangerSoft, color: colors.danger },
+  employerSuccess: { backgroundColor: colors.successSoft, color: "#17633A" },
+  employerEmpty: { color: colors.muted, fontSize: 15, lineHeight: 22, paddingVertical: 18 },
+  employerRow: {
+    alignItems: "flex-start",
+    borderBottomColor: colors.separator,
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    gap: 18,
+    justifyContent: "space-between",
+    paddingVertical: 16,
+  },
+  employerRowCopy: { flex: 1, minWidth: 0 },
+  employerRowCompact: { flexDirection: "column" },
+  employerRowTitle: { color: colors.ink, fontSize: 16, fontWeight: "700", lineHeight: 22 },
+  employerUrl: { color: colors.signal, fontSize: 13, lineHeight: 19, marginTop: 4 },
+  employerInlineAction: { alignSelf: "flex-start", justifyContent: "center", minHeight: 44, paddingRight: 12 },
+  employerInlineActionText: { color: colors.signal, fontSize: 14, fontWeight: "700" },
+  employerInlineActionDanger: { color: colors.danger, fontSize: 14, fontWeight: "700" },
+  employerStatus: { backgroundColor: "#EEF1F4", borderRadius: 10, maxWidth: 300, paddingHorizontal: 12, paddingVertical: 10 },
+  employerStatusDanger: { backgroundColor: colors.dangerSoft },
+  employerStatusWarning: { backgroundColor: "#FFF5D9" },
+  employerStatusPositive: { backgroundColor: colors.successSoft },
+  employerStatusLabel: { color: colors.ink, fontSize: 13, fontWeight: "800" },
+  employerStatusText: { color: colors.body, fontSize: 12, lineHeight: 17, marginTop: 3 },
+  employerField: { marginTop: 2 },
+  employerInput: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 10,
+    borderWidth: 1,
+    color: colors.ink,
+    fontSize: 16,
+    minHeight: 50,
+    paddingHorizontal: 14,
+  },
+  employerInputMultiline: { minHeight: 92, paddingTop: 13, textAlignVertical: "top" },
+  employerFieldGrid: { flexDirection: "row", flexWrap: "wrap", gap: 14 },
+  employerGridItem: { width: "48%" },
+  employerEvidence: { backgroundColor: colors.surface, borderRadius: 12, padding: 16 },
+  employerCode: { color: colors.ink, fontFamily: Platform.OS === "web" ? "monospace" : undefined, fontSize: 15, marginBottom: 10 },
+  employerAuth: { alignSelf: "center", maxWidth: 520, paddingHorizontal: 24, paddingTop: 54, width: "100%" },
 });
