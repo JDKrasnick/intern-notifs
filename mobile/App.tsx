@@ -2967,6 +2967,7 @@ function EmployerPortal({ initialSection }: { initialSection: EmployerWorkspaceS
     try {
       const readOptions = { onToken: setToken };
       const response = await employerApi.organizations(readOptions);
+      setFeatureUnavailable(false);
       setOrganizations(response.organizations);
       const selected = response.organizations.find((candidate) => candidate.organizationId === preferredOrganizationId)
         ?? response.organizations.find((candidate) => candidate.organizationId === organization?.organizationId)
