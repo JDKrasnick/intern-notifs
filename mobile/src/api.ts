@@ -78,7 +78,7 @@ export async function api<T>(path: string, token: string, init: RequestInit = {}
   }
   if (!response) throw lastTransportError ?? new ApiError('We couldn\'t complete that request. Please try again.', 'unexpected');
   if (response.status === 204) return undefined as T;
-  let data: T & { message?: string };
+  let data: T & { message?: string; code?: string };
   try {
     data = await response.json() as T & { message?: string };
   } catch {
@@ -86,6 +86,9 @@ export async function api<T>(path: string, token: string, init: RequestInit = {}
   }
   if (!response.ok) {
     if (response.status === 401) throw new ApiError('Your sign-in has expired. Please sign in again.', 'unauthorized', 401);
+    if (data.code === 'ACCOUNT_DELETION_INCOMPLETE') {
+      throw new ApiError(data.message ?? 'Account deletion is incomplete. Please retry.', 'unexpected', response.status);
+    }
     if (retryableReadStatuses.has(response.status)) {
       throw new ApiError('The service is temporarily busy. Please try again.', 'capacity', response.status);
     }

@@ -37,6 +37,8 @@ import { createLatestRequestGuard } from "./src/latest-request";
 import { uploadDocumentContent } from "./src/document-upload";
 import { installationApi } from "./src/installation";
 import { migrateLegacyAccountAlerts } from "./src/legacy-alert-migration";
+import { buildCompleteDataExport, DataExportFetchError, SharingUnavailableError, type AccountExportResponse } from "./src/account-data-export";
+import { shareDataExport } from "./src/account-data-share";
 import { clearSession, confirmEmail, restoreSession, signIn, signOut, signUp } from "./src/auth";
 import { policyUrls } from "./src/policies";
 import {
@@ -3488,6 +3490,9 @@ function Profile({
   const [profileFeedback, setProfileFeedback] = useState<SaveFeedbackState>({
     kind: "idle",
   });
+  const [exportingData, setExportingData] = useState(false);
+  const [exportFeedback, setExportFeedback] = useState<SaveFeedbackState>({ kind: "idle" });
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const draftRevisions = useRef<SettingsDraftRevisions>({
     jobPreferences: 0,
     appSettings: 0,
@@ -3745,8 +3750,28 @@ function Profile({
       setSavingAppSettings(false);
     }
   };
+  const exportMyData = async () => {
+    if (!token || exportingData) return;
+    setExportingData(true);
+    setExportFeedback({ kind: "saving", message: "Generating your complete export…" });
+    try {
+      const exported = await buildCompleteDataExport({
+        fetchAccount: () => authenticatedRead<AccountExportResponse>("/me/export"),
+        fetchInstallationPreferences: () => installationApi<Record<string, unknown>>("/preferences"),
+      });
+      await shareDataExport(exported);
+      setExportFeedback({ kind: "success", message: "Your complete export is ready." });
+    } catch (error) {
+      const message = error instanceof DataExportFetchError || error instanceof SharingUnavailableError
+        ? error.message
+        : error instanceof Error ? error.message : "Your data export could not be generated.";
+      setExportFeedback({ kind: "error", message });
+    } finally {
+      setExportingData(false);
+    }
+  };
   const deleteAccount = () =>
-    token &&
+    token && !deletingAccount &&
     Alert.alert(
       "Delete account?",
       "This permanently deletes your profile, synced application tracking, uploaded documents, and sign-in account. Device alerts and app settings remain on this device.",
@@ -3756,17 +3781,21 @@ function Profile({
           text: "Delete account",
           style: "destructive",
           onPress: () =>
-            void api("/me", token, { method: "DELETE" })
-              .then(async () => {
+            void (async () => {
+              setDeletingAccount(true);
+              try {
+                await api("/me", token, { method: "DELETE" });
                 await clearSession();
                 onSignOut();
-              })
-              .catch((error) =>
+              } catch (error) {
                 Alert.alert(
                   "Could not delete account",
                   error instanceof Error ? error.message : "Please try again.",
-                ),
-              ),
+                );
+              } finally {
+                setDeletingAccount(false);
+              }
+            })()
         },
       ],
     );
@@ -4313,9 +4342,22 @@ function Profile({
       <View style={styles.spacer} />
       {token ? (
         <>
+          <ActionButton
+            label={exportingData ? "Generating export…" : "Export my data"}
+            variant="secondary"
+            disabled={exportingData || deletingAccount}
+            onPress={() => void exportMyData()}
+          />
+          <SaveFeedback state={exportFeedback} onRetry={() => void exportMyData()} />
+          <View style={styles.spacer} />
           <ActionButton label="Sign out" variant="secondary" onPress={() => onSignOut?.()} />
           <View style={styles.spacer} />
-          <ActionButton label="Delete account" variant="danger" onPress={deleteAccount} />
+          <ActionButton
+            label={deletingAccount ? "Deleting account…" : "Delete account"}
+            variant="danger"
+            disabled={deletingAccount || exportingData}
+            onPress={deleteAccount}
+          />
         </>
       ) : (
         <ActionButton label="Sign in or create account" variant="secondary" onPress={onSignIn} />

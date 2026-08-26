@@ -4,7 +4,7 @@ import { CognitoIdentityProviderClient, AdminDeleteUserCommand } from '@aws-sdk/
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { jobCategories, matchesJobFilter, parseJobFilter } from './core/filters.js';
 import { DynamoInternshipStore, DynamoReleaseStore, DynamoUserStore, type InternshipStore, type ReleaseStore, type UserStore } from './store.js';
-import type { ApplicantProfile, ApplicationRecord, ApplicationStatus, DeviceToken, UserPreferences } from './types.js';
+import { ACCOUNT_EXPORT_SCHEMA_VERSION, type AccountDataExport, type ApplicantProfile, type ApplicationRecord, type ApplicationStatus, type DeviceToken, type UserPreferences } from './types.js';
 import { EmployerIntegrationRegistry } from './providers.js';
 import { assistanceAvailability } from './application-assistance.js';
 import { createApplicationSession, transitionApplicationSession, type ApplicationFieldDraft, type ApplicationSession, type ApplicationSessionEvent } from './application-automation.js';
@@ -460,6 +460,23 @@ export function createApiHandler(dependencies: ApiDependencies) {
       if (method === 'DELETE' && path.startsWith('/me/devices/')) { await dependencies.users.deleteDevice(userId, decodeURIComponent(path.slice('/me/devices/'.length))); return reply(204, {}); }
       if (method === 'GET' && path === '/me/profile') return reply(200, (await dependencies.users.getProfile(userId)) ?? null);
       if (method === 'PUT' && path === '/me/profile') { const profile = requireProfile(parseBody(event), userId); await dependencies.users.putProfile(profile); return reply(200, profile); }
+      if (method === 'GET' && path === '/me/export') {
+        const [profile, applications, documents] = await Promise.all([
+          dependencies.users.getProfile(userId),
+          dependencies.users.listApplications(userId),
+          dependencies.users.listDocuments(userId),
+        ]);
+        const exported: AccountDataExport = {
+          schemaVersion: ACCOUNT_EXPORT_SCHEMA_VERSION,
+          exportedAt: dependencies.now?.() ?? now(),
+          account: {
+            profile: profile ?? null,
+            applications,
+            documents: documents.map(({ documentId, fileName, contentType, createdAt }) => ({ documentId, fileName, contentType, createdAt })),
+          },
+        };
+        return reply(200, exported);
+      }
       if (method === 'GET' && path === '/me/applications') {
         const requestedStatus = event.queryStringParameters?.status;
         if (requestedStatus !== undefined && !statuses.includes(requestedStatus as ApplicationStatus)) return reply(400, { message: `status must be one of ${statuses.join(', ')}` });
@@ -515,7 +532,31 @@ export function createApiHandler(dependencies: ApiDependencies) {
       const docMatch = path.match(/^\/me\/documents\/([^/]+)$/);
       if (method === 'GET' && docMatch) { if (!documentStorage) return reply(503, { message: 'Document storage is unavailable' }); const document = (await dependencies.users.listDocuments(userId)).find((item) => item.documentId === decodeURIComponent(docMatch[1])); if (!document) return reply(404, { message: 'Document not found' }); return reply(200, { document, downloadUrl: await documentStorage.createDownloadUrl(document) }); }
       if (method === 'DELETE' && docMatch) { const document = (await dependencies.users.listDocuments(userId)).find((item) => item.documentId === decodeURIComponent(docMatch[1])); if (!document) return reply(404, { message: 'Document not found' }); if (documentStorage) await documentStorage.deleteObject(document.objectKey); await dependencies.users.deleteDocument(userId, document.documentId); return reply(204, {}); }
-      if (method === 'DELETE' && path === '/me') { const documents = await dependencies.users.deleteUser(userId); if (documentStorage) await Promise.all(documents.map((document) => documentStorage.deleteObject(document.objectKey))); if (dependencies.deleteIdentity) await dependencies.deleteIdentity(userId); else if (dependencies.userPoolId) await (dependencies.cognito ?? new CognitoIdentityProviderClient({})).send(new AdminDeleteUserCommand({ UserPoolId: dependencies.userPoolId, Username: userId })); return reply(204, {}); }
+      if (method === 'DELETE' && path === '/me') {
+        const documents = await dependencies.users.listDocuments(userId);
+        if (documents.length > 0 && !documentStorage) {
+          return reply(503, { code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'document-storage', retryable: true, message: 'Document storage is unavailable. Your account data and sign-in were kept so you can retry.' });
+        }
+        try {
+          if (documentStorage) await Promise.all(documents.map((document) => documentStorage.deleteObject(document.objectKey)));
+        } catch {
+          return reply(503, { code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'document-storage', retryable: true, message: 'Account deletion is incomplete. Your document records and sign-in are still available so you can retry.' });
+        }
+        try {
+          await dependencies.users.deleteUser(userId);
+        } catch {
+          return reply(503, { code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'account-data', retryable: true, message: 'Document cleanup finished, but account data could not be fully deleted. Please retry.' });
+        }
+        try {
+          if (dependencies.deleteIdentity) await dependencies.deleteIdentity(userId);
+          else if (dependencies.userPoolId) await (dependencies.cognito ?? new CognitoIdentityProviderClient({})).send(new AdminDeleteUserCommand({ UserPoolId: dependencies.userPoolId, Username: userId }));
+        } catch (error) {
+          if ((error as { name?: string }).name !== 'UserNotFoundException') {
+            return reply(503, { code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'identity', retryable: true, message: 'Your account data was deleted, but sign-in cleanup is incomplete. Please retry while you are still signed in.' });
+          }
+        }
+        return reply(204, {});
+      }
       return reply(404, { message: 'Not found', supportedCategories: jobCategories });
     } catch (error) { return reply(400, { message: error instanceof Error ? error.message : 'Invalid request' }); }
   };

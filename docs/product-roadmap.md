@@ -83,7 +83,7 @@
   - [x] Wire the production stream, aggregation, flush, personalized push/email, receipt, release-deep-link, and materialized catalog workers in infrastructure.
   - [ ] Execute the guarded identity/receipt migration, deploy to an owner-only cohort, export delivery audits, and measure the 15-second p95 gate.
 - [x] Add user-facing settings with separate user-info, job-preference, and app/account destinations, including account deletion.
-- [ ] Add a user-facing data export surface.
+- [x] Add a user-facing data export surface.
 - [x] Add source-quality reports, drift gates, nightly live probing, source-candidate review artifacts, and Firecrawl discovery-only workflow.
 - [x] Define the shared headed/headless application-session state machine and trust boundaries.
 - [x] Keep official-form opens in the persistent To Apply queue; mark Applied only after user confirmation.
