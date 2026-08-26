@@ -1,6 +1,5 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { DeleteObjectCommand, GetObjectCommand, S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { CognitoIdentityProviderClient, AdminDeleteUserCommand } from '@aws-sdk/client-cognito-identity-provider';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { jobCategories, matchesJobFilter, parseJobFilter } from './core/filters.js';
 import { DynamoInternshipStore, DynamoReleaseStore, DynamoUserStore, type InternshipStore, type ReleaseStore, type UserStore } from './store.js';
@@ -271,12 +270,10 @@ export interface ApiDependencies {
   releases?: ReleaseStore;
   documentStorage?: DocumentStorage;
   deleteIdentity?: (userId: string) => Promise<void>;
-  /** AWS compatibility fields retained until the Cloudflare cutover completes. */
+  /** AWS document compatibility retained for rollback and export only. */
   documentsBucket?: string;
-  userPoolId?: string;
   integrations?: EmployerIntegrationRegistry;
   s3?: S3Client;
-  cognito?: CognitoIdentityProviderClient;
   now?: () => string;
 }
 export function createApiHandler(dependencies: ApiDependencies) {
@@ -537,6 +534,9 @@ export function createApiHandler(dependencies: ApiDependencies) {
       if (method === 'GET' && docMatch) { if (!documentStorage) return reply(503, { message: 'Document storage is unavailable' }); const document = (await dependencies.users.listDocuments(userId)).find((item) => item.documentId === decodeURIComponent(docMatch[1])); if (!document) return reply(404, { message: 'Document not found' }); return reply(200, { document, downloadUrl: await documentStorage.createDownloadUrl(document) }); }
       if (method === 'DELETE' && docMatch) { const document = (await dependencies.users.listDocuments(userId)).find((item) => item.documentId === decodeURIComponent(docMatch[1])); if (!document) return reply(404, { message: 'Document not found' }); if (documentStorage) await documentStorage.deleteObject(document.objectKey); await dependencies.users.deleteDocument(userId, document.documentId); return reply(204, {}); }
       if (method === 'DELETE' && path === '/me') {
+        if (!dependencies.deleteIdentity) {
+          return reply(503, { code: 'ACCOUNT_DELETION_UNAVAILABLE', retryable: false, message: 'Account deletion is unavailable on this retired service. Update InternNotifs and try again.' });
+        }
         let documents: Awaited<ReturnType<UserStore['listDocuments']>>;
         let activeDocumentUploads: boolean;
         try {
@@ -565,8 +565,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
           return reply(503, { code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'account-data', retryable: true, message: 'Document cleanup finished, but account data could not be fully deleted. Please retry.' });
         }
         try {
-          if (dependencies.deleteIdentity) await dependencies.deleteIdentity(userId);
-          else if (dependencies.userPoolId) await (dependencies.cognito ?? new CognitoIdentityProviderClient({})).send(new AdminDeleteUserCommand({ UserPoolId: dependencies.userPoolId, Username: userId }));
+          await dependencies.deleteIdentity(userId);
         } catch (error) {
           if ((error as { name?: string }).name !== 'UserNotFoundException') {
             return reply(503, { code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'identity', retryable: true, message: 'Your account data was deleted, but sign-in cleanup is incomplete. Please retry while you are still signed in.' });
@@ -579,4 +578,4 @@ export function createApiHandler(dependencies: ApiDependencies) {
   };
 }
 
-export const handler = createApiHandler({ jobs: new DynamoInternshipStore(process.env.INTERNSHIPS_TABLE ?? ''), users: new DynamoUserStore(process.env.USERS_TABLE ?? ''), releases: new DynamoReleaseStore(process.env.USERS_TABLE ?? ''), documentsBucket: process.env.DOCUMENTS_BUCKET, userPoolId: process.env.USER_POOL_ID });
+export const handler = createApiHandler({ jobs: new DynamoInternshipStore(process.env.INTERNSHIPS_TABLE ?? ''), users: new DynamoUserStore(process.env.USERS_TABLE ?? ''), releases: new DynamoReleaseStore(process.env.USERS_TABLE ?? ''), documentsBucket: process.env.DOCUMENTS_BUCKET });

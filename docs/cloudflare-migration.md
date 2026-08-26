@@ -184,6 +184,10 @@ build. Keep AWS retained and the previous mobile configuration available during
 the observation window. Rollback changes the mobile/API hostname back to the AWS
 endpoint; it does not delete Cloudflare or AWS data.
 
+The retained AWS endpoint is rollback and export infrastructure, not the active
+account service. It fails account deletion before changing DynamoDB, S3, or
+Cognito state; users must use the current Cloudflare-backed app for deletion.
+
 Only after the observation window and an owner-approved export should AWS
 schedules be disabled. Destruction of retained DynamoDB tables, Cognito users,
 or S3 documents is a separate, explicit operation and is not part of cutover.

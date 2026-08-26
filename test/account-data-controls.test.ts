@@ -115,18 +115,16 @@ describe('account data controls', () => {
     expect(await users.getPreferences('installation:mock-device')).toMatchObject({ alertsEnabled: true, filter: { includeKeywords: ['security'] } });
   });
 
-  it('keeps Cognito deletion idempotent when the identity is already absent', async () => {
-    const cognito = { send: vi.fn().mockRejectedValue(Object.assign(new Error('missing'), { name: 'UserNotFoundException' })) };
-    const handler = createApiHandler({ jobs: new MemoryInternshipStore(), users: new MemoryUserStore(), userPoolId: 'pool-id', cognito: cognito as never });
-    expect((await handler(event('mock-cognito-missing', 'DELETE', '/me'))).statusCode).toBe(204);
-  });
-
-  it('reports Cognito identity-provider failure without collapsing it into validation', async () => {
-    const cognito = { send: vi.fn().mockRejectedValue(new Error('Cognito unavailable')) };
-    const handler = createApiHandler({ jobs: new MemoryInternshipStore(), users: new MemoryUserStore(), userPoolId: 'pool-id', cognito: cognito as never });
-    const response = await handler(event('mock-cognito-failure', 'DELETE', '/me'));
+  it('fails closed before changing data when identity deletion is not configured', async () => {
+    const users = new MemoryUserStore();
+    await users.putPreferences({ userId: 'mock-retired-service', filter: {}, alertsEnabled: false, onboardingComplete: true, updatedAt: 'now' });
+    const beginUserDeletion = vi.spyOn(users, 'beginUserDeletion');
+    const handler = createApiHandler({ jobs: new MemoryInternshipStore(), users });
+    const response = await handler(event('mock-retired-service', 'DELETE', '/me'));
     expect(response.statusCode).toBe(503);
-    expect(json(response)).toMatchObject({ code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'identity', retryable: true });
+    expect(json(response)).toMatchObject({ code: 'ACCOUNT_DELETION_UNAVAILABLE', retryable: false });
+    expect(beginUserDeletion).not.toHaveBeenCalled();
+    expect(await users.getPreferences('mock-retired-service')).toBeDefined();
   });
 
   it('keeps account records when document metadata exists but storage is unavailable', async () => {
@@ -144,7 +142,7 @@ describe('account data controls', () => {
   it('classifies an initial account-store read failure as retryable without exposing provider details', async () => {
     const users = new MemoryUserStore();
     users.listDocuments = vi.fn().mockRejectedValue(new Error('internal D1 connection details'));
-    const handler = createApiHandler({ jobs: new MemoryInternshipStore(), users });
+    const handler = createApiHandler({ jobs: new MemoryInternshipStore(), users, deleteIdentity: vi.fn() });
 
     const response = await handler(event('mock-read-failure', 'DELETE', '/me'));
     expect(response.statusCode).toBe(503);
