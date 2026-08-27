@@ -89,16 +89,16 @@
   - [x] Wire the production stream, aggregation, flush, personalized push/email, receipt, release-deep-link, and materialized catalog workers in infrastructure.
   - [ ] Execute the guarded identity/receipt migration, deploy to an owner-only cohort, export delivery audits, and measure the 15-second p95 gate.
 - [x] Add user-facing settings with separate user-info, job-preference, and app/account destinations, including account deletion.
-- [x] Decouple official-form opens from application tracking; only Save, manual status changes, or confirmed Gmail detections create or advance records.
-- [x] Implement optional Gmail metadata OAuth, encrypted credential storage, bounded initial/history sync, deterministic matching, review/dismiss actions, disconnect/account-deletion cleanup, queue retries/DLQ, and mobile connection/review states.
+- [x] Keep official-form opens from immediately changing application status; signed-in Apply clicks start role-specific confirmation checks, while only Save, manual status changes, or confirmed Gmail detections create or advance records.
+- [x] Implement optional Gmail metadata OAuth, encrypted credential storage, Apply-triggered checks at 5 minutes, 10 minutes, 30 minutes, and 24 hours, deterministic role-scoped matching, review/dismiss actions, disconnect/account-deletion cleanup, queue retries/DLQ, and mobile connection/review states.
 - [x] Update privacy, retention, store-disclosure, support, frontend, deployment, and roadmap documentation for Gmail metadata and Google Limited Use.
-- [ ] Complete Gmail live acceptance with OAuth-console test users and representative confirmations. Connect, the 30-day backfill, scheduled incremental sync, and the needs-review queue were validated in production on 2026-08-26; cancellation, accept/dismiss, disconnect, revoked-grant recovery, and account deletion remain.
+- [ ] Complete Gmail live acceptance with OAuth-console test users and representative confirmations. OAuth connection and the needs-review queue were validated in production on 2026-08-26; the new Apply-triggered 5-minute, 10-minute, 30-minute, and 24-hour checks plus cancellation, accept/dismiss, disconnect, revoked-grant recovery, and account deletion remain.
 - [ ] Complete Google restricted-scope verification and the required annual third-party security assessment before enabling Gmail detection outside test users.
 - [ ] Reconcile Gmail metadata collection in App Store Connect and Google Play Console, then release to closed beta before general availability.
 - [x] Add a user-facing data export surface.
 - [x] Add source-quality reports, drift gates, nightly live probing, source-candidate review artifacts, and Firecrawl discovery-only workflow.
 - [x] Define the shared headed/headless application-session state machine and trust boundaries.
-- [x] Keep official-form opens mutation-free; Save is the explicit To Apply action and Applied requires a manual or confirmed Gmail transition.
+- [x] Keep official-form opens from directly changing application records; Save is the explicit To Apply action and Applied requires a manual or confirmed Gmail transition.
 - [x] Add the reviewed default-deny assistance policy, versioned session API, short-lived handoff credentials, and session metadata TTL.
 - [x] Define and test Greenhouse and Lever high-confidence route detection plus the simple-field, review-only, and never-fill policy.
 - [x] Build a local-only headed, no-submit browser companion pilot for reviewed Greenhouse and Lever test forms.
@@ -143,4 +143,4 @@
 | 2026-08-25 | Retain active account data until deletion, abandoned unverified signups for 7 days, inactive anonymous installations for 12 months, delivery records for 90 days, and assistance metadata for 30 days | Keeps product state available while bounding operational and abandoned data |
 | 2026-08-25 | Publish code under MIT and InternNotifs-authored catalog metadata under CC BY 4.0, excluding employer text, trademarks, and third-party material | Supports an open-source project without relicensing material InternNotifs does not own |
 | 2026-08-25 | Acknowledge source corrections within 2 business days, target resolution within 7 days, and promptly hide credible safety-sensitive listings during review | Makes the public correction path predictable while prioritizing user safety |
-| 2026-08-26 | Make Gmail confirmation detection optional, metadata-only, deterministic, account-gated, and unavailable to general users until restricted-scope verification and annual security assessment are complete | Reduces manual tracking without treating link opens as applications or expanding access to message content |
+| 2026-08-26 | Make Gmail confirmation detection optional, metadata-only, deterministic, account-gated, and triggered for one role at 5 minutes, 10 minutes, 30 minutes, and 24 hours after Apply; keep it unavailable to general users until restricted-scope verification and annual security assessment are complete | Reduces manual tracking without treating a link open itself as a completed application or expanding access to message content |

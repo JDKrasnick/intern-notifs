@@ -111,3 +111,15 @@ export function matchGmailApplication(metadata: GmailMetadata, catalog: Internsh
     reasons: [highConfidence.length > 1 ? 'More than one catalog role has strong identity evidence.' : 'The confirmation does not uniquely provide two role identity signals.'],
   };
 }
+
+/** Match only roles for which this user recently opened the official application form. */
+export function matchClickedGmailApplication(metadata: GmailMetadata, clickedRoles: Internship[]): GmailMatch {
+  const result = matchGmailApplication(metadata, clickedRoles);
+  if (result.outcome !== 'review' || result.candidates.length !== 1) return result;
+  const only = result.candidates[0]!;
+  return {
+    outcome: 'applied',
+    candidate: only,
+    reasons: [`The confirmation uniquely matches the role whose application form was opened (${only.signals.join(' + ')}).`],
+  };
+}

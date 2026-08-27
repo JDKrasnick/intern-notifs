@@ -2734,6 +2734,15 @@ function AppContent() {
   if (!preferences) return <AppLoadingSkeleton />;
   if (!preferences.onboardingComplete)
     return <Onboarding onDone={setPreferences} />;
+  const openApplicationAndScheduleCheck = (job: Pick<Job, "jobId" | "applyUrl">) => {
+    void openOfficialApplication(job.applyUrl);
+    void api("/me/gmail/checks", token, {
+      method: "POST",
+      body: JSON.stringify({ jobId: job.jobId }),
+    }).catch((error) => {
+      console.warn("Could not schedule Gmail application check", error);
+    });
+  };
   const saveForWeb = (job: Job) => {
     if (applicationStatuses.has(job.jobId) || savingJobIds.has(job.jobId)) return;
     setSavingJobIds((current) => new Set(current).add(job.jobId));
@@ -2826,7 +2835,7 @@ function AppContent() {
               alertSettings={preferences.alertSettings ?? defaultAlertSettings}
               alertsEnabled={preferences.alertsEnabled}
               onChanged={() => void load()}
-              onOpenOfficialApplication={(applyUrl) => void openOfficialApplication(applyUrl)}
+              onOpenOfficialApplication={openApplicationAndScheduleCheck}
             />
           ) : (
             <Profile
@@ -2854,7 +2863,7 @@ function AppContent() {
         onModalDismissed={finishDetailDismissal}
         onRetry={retryRoutedJob}
         onApply={(job) => {
-          void openOfficialApplication(job.applyUrl);
+          openApplicationAndScheduleCheck(job);
         }}
         onOpenListing={(job) => {
           void openOfficialApplication(job.applyUrl);
@@ -3564,7 +3573,7 @@ function Applications({
   alertSettings: AlertSettings;
   alertsEnabled: boolean;
   onChanged: () => void;
-  onOpenOfficialApplication: (applyUrl: string) => void;
+  onOpenOfficialApplication: (job: Pick<Job, "jobId" | "applyUrl">) => void;
 }) {
   const [detections, setDetections] = useState<GmailDetection[]>([]);
   const [detectionError, setDetectionError] = useState<string>();
@@ -3669,7 +3678,7 @@ function Applications({
                 <ApplyNowButton
                   label="Open official application"
                   hint="Opens the employer's official application in your browser."
-                  onPress={() => onOpenOfficialApplication(job.applyUrl)}
+                  onPress={() => onOpenOfficialApplication(job)}
                 />
               </View>
             ) : null}
@@ -4652,7 +4661,7 @@ function Profile({
         <>
       <Text style={styles.sectionTitle}>Gmail application detection</Text>
       <Text style={styles.muted}>
-        Optional. InternNotifs reads only sender, subject, date, and labels from Gmail. The first sync checks 30 days of Inbox metadata; later checks run within 15 minutes. Email bodies and attachments are never read, and Gmail data is never used for AI or model training.
+        Optional. After you tap Apply, InternNotifs checks Gmail for that role after 5 minutes, 10 minutes, 30 minutes, and 24 hours. It reads only sender, subject, date, and labels. Email bodies and attachments are never read, and Gmail data is never used for AI or model training.
       </Text>
       {token ? gmailStatus.connected ? (
         <View style={styles.gmailConnection}>

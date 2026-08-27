@@ -782,11 +782,17 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
     console.log(JSON.stringify({ event: 'cloudflare_maintenance_complete', projection, notifications }));
     return;
   }
-  if (event.cron === '5-55/10 * * * *') {
+  if (event.cron === '*/5 * * * *') {
     if (env.GMAIL_ENABLED !== 'true') return;
     const gmail = new GmailStore(env.DB);
     const userIds = await gmail.due(new Date(event.scheduledTime));
-    await sendQueueMessages(env.GMAIL_QUEUE, userIds.map((userId) => ({ version: 1, userId, mode: 'history', requestedAt: new Date(event.scheduledTime).toISOString() } satisfies GmailWorkMessage)));
+    await sendQueueMessages(env.GMAIL_QUEUE, userIds.map((userId) => ({
+      version: 1,
+      userId,
+      mode: 'history',
+      requestedAt: new Date(event.scheduledTime).toISOString(),
+      advanceChecks: true,
+    } satisfies GmailWorkMessage)));
     return;
   }
   if (event.cron === '12,42 * * * *') {

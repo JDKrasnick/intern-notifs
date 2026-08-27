@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchGmailApplication, type GmailMetadata } from '../src/gmail-matcher.js';
+import { matchClickedGmailApplication, matchGmailApplication, type GmailMetadata } from '../src/gmail-matcher.js';
 import type { Internship } from '../src/types.js';
 
 function role(overrides: Partial<Internship> = {}): Internship {
@@ -40,6 +40,18 @@ describe('Gmail application matcher', () => {
       outcome: 'review',
       candidates: [{ jobId: 'job-1', signals: ['employer', 'provider-tenant'] }],
     });
+  });
+
+  it('uses the Apply click to resolve a single company-only confirmation', () => {
+    const result = matchClickedGmailApplication(metadata('We received your application at Northstar Labs', 'jobs@northstarlabs.com'), [role()]);
+    expect(result).toMatchObject({ outcome: 'applied', candidate: { jobId: 'job-1' } });
+  });
+
+  it('keeps company-only confirmations ambiguous when multiple clicked roles match', () => {
+    const result = matchClickedGmailApplication(metadata('We received your application at Northstar Labs', 'jobs@northstarlabs.com'), [
+      role(), role({ jobId: 'job-2', title: 'Data Science Intern' }),
+    ]);
+    expect(result).toMatchObject({ outcome: 'review' });
   });
 
   it.each(['Interview invitation — Northstar Labs', 'Complete your coding assessment', 'New job alert from Northstar Labs', 'Your application was rejected'])(

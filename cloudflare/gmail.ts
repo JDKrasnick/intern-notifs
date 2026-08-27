@@ -1,4 +1,4 @@
-import { matchGmailApplication, type GmailDetectionCandidate, type GmailMetadata } from '../src/gmail-matcher.js';
+import { matchClickedGmailApplication, type GmailDetectionCandidate, type GmailMetadata } from '../src/gmail-matcher.js';
 import type { ApplicationRecord, Internship } from '../src/types.js';
 import type { D1Database, Queue } from './types.js';
 import { D1InternshipStore, D1UserStore } from './d1-store.js';
@@ -8,7 +8,8 @@ const oauthStateLifetimeMs = 10 * 60_000;
 const pendingLifetimeMs = 30 * 24 * 60 * 60_000;
 const processedLifetimeMs = 180 * 24 * 60 * 60_000;
 const leaseLifetimeMs = 5 * 60_000;
-const initialLookbackMs = 30 * 24 * 60 * 60_000;
+const applicationCheckOffsetsMs = [5 * 60_000, 10 * 60_000, 30 * 60_000, 24 * 60 * 60_000] as const;
+const applicationCheckLifetimeMs = 25 * 60 * 60_000;
 const terminalApplicationStatuses = new Set(['assessment', 'interview', 'offer', 'rejected', 'withdrawn']);
 
 export interface GmailEnvironment {
@@ -59,6 +60,19 @@ interface DetectionRow {
   expires_at: string;
 }
 
+interface ApplicationCheckRow {
+  user_id: string;
+  job_id: string;
+  clicked_at: string;
+  attempt_index: number;
+  next_check_at: string | null;
+  status: 'pending' | 'detected' | 'expired';
+  detected_at: string | null;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
 interface GoogleTokenResponse { access_token?: string; refresh_token?: string; expires_in?: number; error?: string; error_description?: string; }
 interface GmailProfile { emailAddress: string; historyId: string; }
 interface GmailMessageList { messages?: Array<{ id: string }>; nextPageToken?: string; }
@@ -79,6 +93,8 @@ export interface GmailWorkMessage {
   /** Snapshot taken before an initial scan so history can replay mail that arrives during the scan. */
   startHistoryId?: string;
   requestedAt: string;
+  /** Advance the Apply-triggered check schedule after this complete sync. */
+  advanceChecks?: boolean;
 }
 
 function base64Url(bytes: Uint8Array): string {
@@ -201,9 +217,65 @@ export class GmailStore {
   }
 
   async due(now: Date, limit = 100): Promise<string[]> {
-    const rows = await this.db.prepare(`SELECT user_id FROM gmail_connections WHERE next_sync_at <= ? AND (lease_until IS NULL OR lease_until <= ?) AND (error_code IS NULL OR error_code <> 'revoked') ORDER BY next_sync_at LIMIT ?`)
+    const rows = await this.db.prepare(`SELECT DISTINCT connections.user_id
+      FROM gmail_connections AS connections
+      INNER JOIN gmail_application_checks AS checks ON checks.user_id = connections.user_id
+      WHERE checks.status = 'pending' AND checks.next_check_at <= ?
+        AND (connections.lease_until IS NULL OR connections.lease_until <= ?)
+        AND (connections.error_code IS NULL OR connections.error_code <> 'revoked')
+      ORDER BY checks.next_check_at LIMIT ?`)
       .bind(now.toISOString(), now.toISOString(), limit).all<{ user_id: string }>();
     return rows.results.map((row) => row.user_id);
+  }
+
+  async scheduleCheck(userId: string, jobId: string, now: Date): Promise<ApplicationCheckRow> {
+    const clickedAt = now.toISOString();
+    await this.db.prepare(`INSERT INTO gmail_application_checks
+      (user_id, job_id, clicked_at, attempt_index, next_check_at, status, detected_at, expires_at, created_at, updated_at)
+      VALUES (?, ?, ?, 0, ?, 'pending', NULL, ?, ?, ?)
+      ON CONFLICT(user_id, job_id) DO UPDATE SET clicked_at = excluded.clicked_at, attempt_index = 0,
+        next_check_at = excluded.next_check_at, status = 'pending', detected_at = NULL,
+        expires_at = excluded.expires_at, updated_at = excluded.updated_at`)
+      .bind(userId, jobId, clickedAt, new Date(now.getTime() + applicationCheckOffsetsMs[0]).toISOString(),
+        new Date(now.getTime() + applicationCheckLifetimeMs).toISOString(), clickedAt, clickedAt).run();
+    return (await this.check(userId, jobId))!;
+  }
+
+  check(userId: string, jobId: string) {
+    return this.db.prepare('SELECT * FROM gmail_application_checks WHERE user_id = ? AND job_id = ?')
+      .bind(userId, jobId).first<ApplicationCheckRow>().then((row) => row ?? undefined);
+  }
+
+  async activeChecks(userId: string, at: Date): Promise<ApplicationCheckRow[]> {
+    const rows = await this.db.prepare(`SELECT * FROM gmail_application_checks
+      WHERE user_id = ? AND status = 'pending' AND clicked_at <= ? AND expires_at > ? ORDER BY clicked_at`)
+      .bind(userId, at.toISOString(), at.toISOString()).all<ApplicationCheckRow>();
+    return rows.results;
+  }
+
+  async advanceDueChecks(userId: string, requestedAt: Date, now: Date): Promise<void> {
+    const rows = await this.db.prepare(`SELECT * FROM gmail_application_checks
+      WHERE user_id = ? AND status = 'pending' AND next_check_at <= ? ORDER BY next_check_at`)
+      .bind(userId, requestedAt.toISOString()).all<ApplicationCheckRow>();
+    for (const row of rows.results) {
+      const nextAttempt = row.attempt_index + 1;
+      const nextOffset = applicationCheckOffsetsMs[nextAttempt];
+      if (nextOffset === undefined) {
+        await this.db.prepare(`UPDATE gmail_application_checks SET attempt_index = 4, next_check_at = NULL,
+          status = 'expired', updated_at = ? WHERE user_id = ? AND job_id = ? AND status = 'pending'`)
+          .bind(now.toISOString(), userId, row.job_id).run();
+      } else {
+        await this.db.prepare(`UPDATE gmail_application_checks SET attempt_index = ?, next_check_at = ?, updated_at = ?
+          WHERE user_id = ? AND job_id = ? AND status = 'pending'`)
+          .bind(nextAttempt, new Date(Date.parse(row.clicked_at) + nextOffset).toISOString(), now.toISOString(), userId, row.job_id).run();
+      }
+    }
+  }
+
+  async markCheckDetected(userId: string, jobId: string, detectedAt: string, now: Date): Promise<void> {
+    await this.db.prepare(`UPDATE gmail_application_checks SET status = 'detected', detected_at = ?,
+      next_check_at = NULL, updated_at = ? WHERE user_id = ? AND job_id = ? AND status = 'pending'`)
+      .bind(detectedAt, now.toISOString(), userId, jobId).run();
   }
 
   async claimLease(userId: string, now: Date): Promise<boolean> {
@@ -264,6 +336,7 @@ export class GmailStore {
       this.db.prepare('DELETE FROM gmail_detections WHERE user_id = ?').bind(userId),
       this.db.prepare('DELETE FROM gmail_processed_messages WHERE user_id = ?').bind(userId),
       this.db.prepare('DELETE FROM gmail_detection_resolutions WHERE user_id = ?').bind(userId),
+      this.db.prepare('DELETE FROM gmail_application_checks WHERE user_id = ?').bind(userId),
       this.db.prepare('DELETE FROM gmail_oauth_states WHERE user_id = ?').bind(userId),
       this.db.prepare('DELETE FROM gmail_connections WHERE user_id = ?').bind(userId),
       this.db.prepare(`UPDATE user_items SET value = json_remove(value, '$.detection') WHERE user_id = ? AND kind = 'application' AND json_extract(value, '$.detection.source') = 'gmail'`).bind(userId),
@@ -276,6 +349,7 @@ export class GmailStore {
       this.db.prepare('DELETE FROM gmail_detections WHERE expires_at <= ?').bind(now.toISOString()),
       this.db.prepare('DELETE FROM gmail_processed_messages WHERE expires_at <= ?').bind(now.toISOString()),
       this.db.prepare('DELETE FROM gmail_detection_resolutions WHERE expires_at <= ?').bind(now.toISOString()),
+      this.db.prepare('DELETE FROM gmail_application_checks WHERE expires_at <= ?').bind(now.toISOString()),
     ]);
   }
 
@@ -349,17 +423,22 @@ async function applyDetection(userId: string, jobId: string, detectedAt: string,
   return application;
 }
 
-async function processMessage(userId: string, messageId: string, token: string, env: GmailEnvironment, catalog: Internship[], now: Date): Promise<{ olderThanBoundary: boolean }> {
+async function processMessage(userId: string, messageId: string, token: string, env: GmailEnvironment, clickedRoles: Array<{ check: ApplicationCheckRow; job: Internship }>, now: Date): Promise<{ olderThanBoundary: boolean }> {
   const config = requireGmailConfig(env); const store = new GmailStore(env.DB);
   const messageKey = await hmac(`${userId}:${messageId}`, config.messageSecret);
   if (await store.processed(userId, messageKey)) return { olderThanBoundary: false };
   const message = await gmailGet<GmailMessage>(`/messages/${encodeURIComponent(messageId)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, token);
   const metadata = metadataFrom(message);
   if (!metadata) { await store.markProcessed(userId, messageKey, now); return { olderThanBoundary: false }; }
-  const olderThanBoundary = Date.parse(metadata.receivedAt) < now.getTime() - initialLookbackMs;
+  const earliestClick = Math.min(...clickedRoles.map(({ check }) => Date.parse(check.clicked_at)));
+  const olderThanBoundary = Date.parse(metadata.receivedAt) < earliestClick;
   if (!olderThanBoundary && metadata.labels.includes('INBOX')) {
-    const result = matchGmailApplication(metadata, catalog);
-    if (result.outcome === 'applied') await applyDetection(userId, result.candidate.jobId, metadata.receivedAt, env);
+    const eligibleRoles = clickedRoles.filter(({ check }) => Date.parse(metadata.receivedAt) >= Date.parse(check.clicked_at)).map(({ job }) => job);
+    const result = matchClickedGmailApplication(metadata, eligibleRoles);
+    if (result.outcome === 'applied') {
+      await applyDetection(userId, result.candidate.jobId, metadata.receivedAt, env);
+      await store.markCheckDetected(userId, result.candidate.jobId, metadata.receivedAt, now);
+    }
     if (result.outcome === 'review') await store.addDetection(userId, messageKey, metadata, result.candidates, result.reasons, now);
   }
   await store.markProcessed(userId, messageKey, now);
@@ -373,21 +452,32 @@ export async function processGmailWork(message: GmailWorkMessage, env: GmailEnvi
   const connection = await store.connection(message.userId);
   if (!connection) return;
   const token = await accessToken(connection, env, store, now);
+  const requestedAt = new Date(message.requestedAt);
+  const activeChecks = (await store.activeChecks(message.userId, requestedAt)).filter((check) => (
+    message.mode !== 'initial' || message.advanceChecks || (check.next_check_at !== null && check.next_check_at <= requestedAt.toISOString())
+  ));
+  const catalogStore = new D1InternshipStore(env.DB);
+  const clickedRoles = (await Promise.all(activeChecks.map(async (check) => ({ check, job: await catalogStore.getJob(check.job_id) }))))
+    .filter((value): value is { check: ApplicationCheckRow; job: Internship } => Boolean(value.job));
   const startHistoryId = message.startHistoryId ?? connection.history_id ?? undefined;
   if (message.mode === 'initial' || !startHistoryId) {
     const initialHistoryId = message.startHistoryId ?? (await gmailGet<GmailProfile>('/profile', token)).historyId;
+    if (clickedRoles.length === 0) {
+      await store.synced(message.userId, initialHistoryId, now);
+      if (message.advanceChecks) await store.advanceDueChecks(message.userId, requestedAt, now);
+      return;
+    }
     const parameters = new URLSearchParams({ labelIds: 'INBOX', maxResults: '100' });
     if (message.pageToken) parameters.set('pageToken', message.pageToken);
     const page = await gmailGet<GmailMessageList>(`/messages?${parameters}`, token);
-    const catalog = await new D1InternshipStore(env.DB).listCatalog();
     let reachedBoundary = false;
-    for (const item of page.messages ?? []) reachedBoundary = (await processMessage(message.userId, item.id, token, env, catalog, now)).olderThanBoundary || reachedBoundary;
+    for (const item of page.messages ?? []) reachedBoundary = (await processMessage(message.userId, item.id, token, env, clickedRoles, now)).olderThanBoundary || reachedBoundary;
     if (page.nextPageToken && !reachedBoundary) {
       await env.GMAIL_QUEUE.send({ ...message, startHistoryId: initialHistoryId, pageToken: page.nextPageToken });
       await store.continued(message.userId, now);
       return;
     }
-    await env.GMAIL_QUEUE.send({ version: 1, userId: message.userId, mode: 'history', startHistoryId: initialHistoryId, requestedAt: message.requestedAt } satisfies GmailWorkMessage);
+    await env.GMAIL_QUEUE.send({ version: 1, userId: message.userId, mode: 'history', startHistoryId: initialHistoryId, requestedAt: message.requestedAt, advanceChecks: message.advanceChecks } satisfies GmailWorkMessage);
     await store.continued(message.userId, now);
     return;
   }
@@ -404,14 +494,14 @@ export async function processGmailWork(message: GmailWorkMessage, env: GmailEnvi
     throw error;
   }
   const messageIds = [...new Set((page.history ?? []).flatMap((history) => history.messagesAdded ?? []).map((item) => item.message.id))];
-  const catalog = await new D1InternshipStore(env.DB).listCatalog();
-  for (const messageId of messageIds) await processMessage(message.userId, messageId, token, env, catalog, now);
+  for (const messageId of messageIds) await processMessage(message.userId, messageId, token, env, clickedRoles, now);
   if (page.nextPageToken) {
     await env.GMAIL_QUEUE.send({ ...message, pageToken: page.nextPageToken });
     await store.continued(message.userId, now);
     return;
   }
   await store.synced(message.userId, page.historyId ?? startHistoryId, now);
+  if (message.advanceChecks) await store.advanceDueChecks(message.userId, requestedAt, now);
 }
 
 function appRedirect(status: 'connected' | 'cancelled' | 'error', message?: string): Response {
@@ -474,6 +564,30 @@ export async function gmailApi(request: Request, env: GmailEnvironment, userId: 
     await env.GMAIL_QUEUE.send({ version: 1, userId, mode: connection.history_id ? 'history' : 'initial', requestedAt: new Date().toISOString() } satisfies GmailWorkMessage);
     return Response.json({ queued: true }, { status: 202 });
   }
+  if (url.pathname === '/me/gmail/checks' && request.method === 'POST') {
+    try { requireGmailConfig(env); } catch (error) { return Response.json({ message: (error as Error).message }, { status: 503 }); }
+    const body = await request.json().catch(() => ({})) as { jobId?: unknown };
+    if (typeof body.jobId !== 'string' || !body.jobId.trim()) return Response.json({ message: 'jobId is required' }, { status: 400 });
+    const job = await new D1InternshipStore(env.DB).getJob(body.jobId);
+    if (!job || !job.open) return Response.json({ message: 'Catalog role not found or no longer open' }, { status: 404 });
+    const existing = (await new D1UserStore(env.DB).listApplications(userId)).find((application) => application.jobId === body.jobId);
+    if (existing && existing.status !== 'saved') return Response.json({ scheduled: false, alreadyApplied: true, application: existing });
+    const now = new Date(); const check = await store.scheduleCheck(userId, body.jobId, now);
+    const checksAt = applicationCheckOffsetsMs.map((offset) => new Date(now.getTime() + offset));
+    await Promise.all(checksAt.map((scheduledFor, index) => env.GMAIL_QUEUE.send({
+      version: 1,
+      userId,
+      mode: 'history',
+      requestedAt: scheduledFor.toISOString(),
+      advanceChecks: true,
+    } satisfies GmailWorkMessage, { delaySeconds: Math.round(applicationCheckOffsetsMs[index]! / 1000) })));
+    return Response.json({
+      scheduled: true,
+      gmailConnected: Boolean(await store.connection(userId)),
+      checksAt: checksAt.map((value) => value.toISOString()),
+      expiresAt: check.expires_at,
+    }, { status: 202 });
+  }
   if (url.pathname === '/me/gmail/detections' && request.method === 'GET') return Response.json({ detections: await store.detections(userId) }, { headers: { 'Cache-Control': 'no-store' } });
   const match = url.pathname.match(/^\/me\/gmail\/detections\/([^/]+)\/(accept|dismiss)$/u);
   if (match && request.method === 'POST') {
@@ -494,6 +608,7 @@ export async function gmailApi(request: Request, env: GmailEnvironment, userId: 
     const candidates = JSON.parse(detection.candidates) as GmailDetectionCandidate[];
     if (typeof body.jobId !== 'string' || !candidates.some((candidate) => candidate.jobId === body.jobId)) return Response.json({ message: 'Choose one of this detection’s catalog roles' }, { status: 400 });
     const application = await applyDetection(userId, body.jobId, detection.message_date, env);
+    await store.markCheckDetected(userId, body.jobId, detection.message_date, new Date());
     await store.recordResolution(userId, detectionId, 'accept', body.jobId, new Date()); await store.removeDetection(userId, detectionId);
     return Response.json({ application });
   }

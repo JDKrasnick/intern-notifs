@@ -26,8 +26,11 @@ The catalog is public. Accounts, preferences, device tokens, profiles, documents
 
 ## Gmail application detection rollout
 
-Gmail detection is optional, account-gated, and disabled by default. It requests
-only `https://www.googleapis.com/auth/gmail.metadata`. The OAuth project must
+Gmail detection is optional, account-gated, Apply-triggered, and disabled by default. It requests
+only `https://www.googleapis.com/auth/gmail.metadata`. A signed-in Apply click records a
+short-lived check for that exact catalog role and publishes delayed queue work for
+5 minutes, 10 minutes, 30 minutes, and 24 hours after the click. The periodic cron
+is a fallback for due checks; there is no continuous full-catalog inbox polling. The OAuth project must
 remain in testing mode with explicit test users until Google restricted-scope
 verification and the required annual third-party security assessment are
 complete. Do not substitute `gmail.readonly`; Gmail metadata scope deliberately
@@ -55,10 +58,10 @@ npx wrangler secret put GMAIL_MESSAGE_HMAC_KEY
 ```
 
 The encryption key and message-HMAC key must be independently generated and
-managed. Apply migration `0006_gmail_detection.sql`, provision the dedicated
+managed. Apply migrations `0006_gmail_detection.sql` and `0007_gmail_application_checks.sql`, provision the dedicated
 `intern-notifs-gmail` queue and DLQ through OpenTofu, deploy the Worker, and then
-exercise connect/cancel/replay, 30-day backfill, history continuation, expired
-history recovery, ambiguous review, disconnect, revocation failure, and account
+exercise connect/cancel/replay, all four Apply-triggered delays, history continuation, expired
+history recovery, exact-role matching, ambiguous review, disconnect, revocation failure, and account
 deletion using test users. Inspect structured logs only for operation/error codes;
 sender, subject, Gmail IDs, OAuth tokens, bodies, attachments, and raw headers
 must never appear in logs.
