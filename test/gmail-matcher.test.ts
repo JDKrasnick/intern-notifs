@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { matchClickedGmailApplication, matchGmailApplication, type GmailMetadata } from '../src/gmail-matcher.js';
+import {
+  matchClickedGmailApplication,
+  matchGmailApplication,
+  matchRecentClickedGmailApplication,
+  type GmailMetadata,
+} from '../src/gmail-matcher.js';
 import type { Internship } from '../src/types.js';
 
 function role(overrides: Partial<Internship> = {}): Internship {
@@ -15,6 +20,10 @@ function role(overrides: Partial<Internship> = {}): Internship {
 
 const metadata = (subject: string, sender = 'Northstar Recruiting <notifications@greenhouse-mail.io>'): GmailMetadata => ({
   subject, sender, receivedAt: '2026-08-25T12:00:00.000Z', labels: ['INBOX'],
+});
+
+const recent = (job: Internship, clickedAt = '2026-08-25T11:55:00.000Z', expiresAt = '2026-08-26T12:55:00.000Z') => ({
+  job, clickedAt, expiresAt,
 });
 
 describe('Gmail application matcher', () => {
@@ -84,5 +93,76 @@ describe('Gmail application matcher', () => {
 
   it('ignores malformed and unrelated headers', () => {
     expect(matchGmailApplication({ subject: '', sender: '', receivedAt: 'invalid', labels: [] }, [role()]).outcome).toBe('ignore');
+  });
+
+  it.each([
+    {
+      name: 'D. E. Shaw',
+      message: metadata('Your application to the D. E. Shaw group', 'D. E. Shaw Recruiting <recruiting@deshaw.com>'),
+      clickedRole: role({ company: 'D. E. Shaw & Co.', title: 'Software Developer Intern' }),
+    },
+    {
+      name: 'American Express',
+      message: metadata('Your application to Amex', 'American Express Careers <careers@americanexpress.com>'),
+      clickedRole: role({ company: 'American Express', title: 'Software Engineer Intern' }),
+    },
+    {
+      name: 'Postman',
+      message: metadata('John, thanks for wanting to become a Postmanaut!', 'Postman <notifications@greenhouse-mail.io>'),
+      clickedRole: role({ company: 'Postman', title: 'Software Engineering Intern' }),
+    },
+    {
+      name: 'IMC',
+      message: metadata("We've got it! Your application for Software Engineer, Early Career at IMC is underway", 'IMC Careers <careers@imc.com>'),
+      clickedRole: role({ company: 'IMC', title: 'Software Engineer, Early Career' }),
+    },
+    {
+      name: 'Five Rings',
+      message: metadata('Regarding the Summer Intern 2027 - Software Developer role at Five Rings', 'Five Rings <notifications@greenhouse-mail.io>'),
+      clickedRole: role({ company: 'Five Rings', title: 'Summer Intern 2027 - Software Developer' }),
+    },
+  ])('uses the click window to accept liberal historical receipt language: $name', ({ message, clickedRole }) => {
+    expect(matchRecentClickedGmailApplication(message, [recent(clickedRole)])).toMatchObject({
+      outcome: 'applied', candidate: { jobId: clickedRole.jobId },
+    });
+  });
+
+  it('does not inspect messages before the click or after the 25-hour window', () => {
+    const confirmation = metadata('Thank you for applying to Northstar Labs');
+    expect(matchRecentClickedGmailApplication(confirmation, [recent(role(), '2026-08-25T12:00:01.000Z')]).outcome).toBe('ignore');
+    expect(matchRecentClickedGmailApplication(confirmation, [recent(role(), '2026-08-24T00:00:00.000Z', '2026-08-25T11:59:59.000Z')]).outcome).toBe('ignore');
+  });
+
+  it.each([
+    ['Radix Trading', 'Thank you for applying to Hudson River Trading', 'Hudson River Trading <jobs@hudsonrivertrading.com>'],
+    ['DV Trading', 'Thank you for applying to Radix Trading', 'Radix Trading <jobs@radix-trading.com>'],
+    ['X Development', 'Thank you for applying to Ciena', 'Ciena <jobs@ciena.com>'],
+    ['Junior AI', 'Thank you for applying to BMO Junior Developer', 'BMO <jobs@bmo.com>'],
+  ])('does not auto-apply %s from an unrelated employer receipt', (company, subject, sender) => {
+    const result = matchRecentClickedGmailApplication(metadata(subject, sender), [recent(role({ company }))]);
+    expect(result.outcome).not.toBe('applied');
+  });
+
+  it('does not auto-apply on a shared provider alone', () => {
+    const result = matchRecentClickedGmailApplication(
+      metadata('Your application for a role is complete', 'Unrelated Company <notifications@greenhouse-mail.io>'),
+      [recent(role())],
+    );
+    expect(result.outcome).toBe('review');
+  });
+
+  it.each([
+    'An update from Northstar Labs on your application to Software Engineering Intern',
+    'Interview invitation — your application to Northstar Labs',
+    'Your application to Northstar Labs was rejected',
+  ])('keeps later application-stage messages out of applied: %s', (subject) => {
+    expect(matchRecentClickedGmailApplication(metadata(subject), [recent(role())]).outcome).toBe('ignore');
+  });
+
+  it('reviews simultaneous same-employer Apply clicks rather than guessing', () => {
+    const result = matchRecentClickedGmailApplication(metadata('Your application to Northstar Labs', 'jobs@northstarlabs.com'), [
+      recent(role()), recent(role({ jobId: 'job-2', title: 'Data Science Intern' })),
+    ]);
+    expect(result.outcome).toBe('review');
   });
 });

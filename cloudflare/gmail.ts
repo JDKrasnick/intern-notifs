@@ -1,4 +1,4 @@
-import { matchClickedGmailApplication, type GmailDetectionCandidate, type GmailMetadata } from '../src/gmail-matcher.js';
+import { matchRecentClickedGmailApplication, type GmailDetectionCandidate, type GmailMetadata } from '../src/gmail-matcher.js';
 import type { ApplicationRecord, Internship } from '../src/types.js';
 import type { D1Database, Queue } from './types.js';
 import { D1InternshipStore, D1UserStore } from './d1-store.js';
@@ -444,8 +444,11 @@ async function processMessage(userId: string, messageId: string, token: string, 
   const earliestClick = Math.min(...clickedRoles.map(({ check }) => Date.parse(check.clicked_at)));
   const olderThanBoundary = Date.parse(metadata.receivedAt) < earliestClick;
   if (!olderThanBoundary && metadata.labels.includes('INBOX')) {
-    const eligibleRoles = clickedRoles.filter(({ check }) => Date.parse(metadata.receivedAt) >= Date.parse(check.clicked_at)).map(({ job }) => job);
-    const result = matchClickedGmailApplication(metadata, eligibleRoles);
+    const result = matchRecentClickedGmailApplication(metadata, clickedRoles.map(({ check, job }) => ({
+      job,
+      clickedAt: check.clicked_at,
+      expiresAt: check.expires_at,
+    })));
     if (result.outcome === 'applied') {
       await applyDetection(userId, result.candidate.jobId, metadata.receivedAt, env);
       await store.markCheckDetected(userId, result.candidate.jobId, metadata.receivedAt, now);
