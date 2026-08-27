@@ -77,6 +77,8 @@ const confirmations: HistoricalCase[] = [
   { company: 'Microsoft', subject: 'Thank you for your application!', sender: 'Microsoft Careers <donotreply@email.careers.microsoft.com>', title: 'AI Software Engineering Intern - Edge' },
   { company: 'Microsoft', subject: 'Thank you for your application!', sender: 'Microsoft Careers <donotreply@email.careers.microsoft.com>', title: 'AI Software Engineering Intern' },
   { company: 'NVIDIA', subject: 'Thank you for your interest in NVIDIA', sender: 'NVIDIA HR <nvidia@myworkday.com>', title: 'NVIDIA 2027 Internships: Software Engineering' },
+  { company: 'IBM', subject: 'You have successfully submitted your IBM job application - Data and AI Intern 2027', sender: 'IBM Talent Acquisition <talent@ibm.com>', title: 'Data and AI Intern 2027' },
+  { company: 'IBM', subject: 'You have successfully submitted your IBM job application - 2027 Software Engineering Intern – Agentic AI & Workflow Automation', sender: 'IBM Talent Acquisition <talent@ibm.com>', title: '2027 Software Engineering Intern – Agentic AI & Workflow Automation' },
 ];
 
 const nonConfirmations: HistoricalCase[] = [
@@ -92,6 +94,8 @@ const nonConfirmations: HistoricalCase[] = [
   { company: 'WayUp', subject: 'Your application is almost complete', sender: 'WayUp <jobs@wayup.com>' },
   { company: 'Vetty', subject: 'Background screening for your application', sender: 'Vetty <support@vetty.co>' },
   { company: 'Battle.net', subject: 'The Witcher 3: Wild Hunt — Remastered is coming to Battle.net!', sender: 'Battle.net <noreply@e.battle.net>' },
+  { company: 'IBM', subject: 'Your IBM Application: Next Steps', sender: 'IBM Talent Acquisition <talent@ibm.com>', title: 'Data and AI Intern 2027' },
+  { company: 'IBM', subject: 'Your IBM Application: Next Steps', sender: 'IBM Talent Acquisition <talent@ibm.com>', title: '2027 Software Engineering Intern – Agentic AI & Workflow Automation' },
 ];
 
 describe('historical Gmail header replay', () => {

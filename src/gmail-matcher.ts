@@ -12,6 +12,8 @@ export interface GmailDetectionCandidate {
   company: string;
   title: string;
   signals: Array<'employer' | 'title' | 'requisition-id' | 'provider-tenant' | 'provider'>;
+  /** Additive evidence score; it is intentionally not presented as a probability. */
+  confidenceScore: number;
 }
 
 export interface RecentClickedGmailRole {
@@ -28,6 +30,7 @@ export type GmailMatch =
 const confirmationPhrases = [
   /application (?:has been |was )?(?:received|submitted)/iu,
   /received your (?:job )?application/iu,
+  /\bsuccessfully submitted your\b.{0,160}\b(?:job )?application\b/iu,
   /thanks? for applying/iu,
   /thank you for (?:applying|your application)/iu,
   /we(?:'|’)ve received your application/iu,
@@ -59,6 +62,15 @@ const providerConfirmation = /application|candidature|bewerbung|solicitud/iu;
 const providerReceipt = /received|submitted|applying|candidature|eingegangen|recibida|enviada/iu;
 const noiseWords = new Set(['and', 'the', 'for', 'with', 'intern', 'internship', 'co-op', 'role', 'position', 'program', 'new', 'grad']);
 const companySuffixes = new Set(['and', 'careers', 'co', 'company', 'corporation', 'corp', 'group', 'inc', 'incorporated', 'llc', 'limited', 'ltd', 'the']);
+const confirmationWeights = { strong: 4, recent: 3, provider: 3 } as const;
+const signalWeights: Record<GmailDetectionCandidate['signals'][number], number> = {
+  employer: 4,
+  title: 2,
+  'requisition-id': 5,
+  'provider-tenant': 3,
+  provider: 1,
+};
+const autoApplyThreshold = 7;
 
 function normalized(value: string): string {
   return value.normalize('NFKD').replace(/\p{Diacritic}/gu, '').toLowerCase().replace(/[^a-z0-9]+/gu, ' ').trim();
@@ -124,7 +136,7 @@ function postingSignals(identity: PostingIdentity | undefined, text: string) {
   };
 }
 
-function candidate(metadata: GmailMetadata, job: Internship, includeProvider = false): GmailDetectionCandidate | undefined {
+function candidate(metadata: GmailMetadata, job: Internship, receiptScore = 0, includeProvider = false): GmailDetectionCandidate | undefined {
   const text = `${metadata.sender} ${metadata.subject}`;
   const subject = normalized(metadata.subject);
   const textWords = new Set(normalized(text).split(' ').filter(Boolean));
@@ -145,24 +157,27 @@ function candidate(metadata: GmailMetadata, job: Internship, includeProvider = f
   if (posting.tenant) signals.push('provider-tenant');
   if (includeProvider && providerMatches(metadata, job)) signals.push('provider');
   if (!signals.length) return undefined;
-  return { jobId: job.jobId, company: job.company, title: job.title, signals };
+  const confidenceScore = receiptScore + signals.reduce((score, signal) => score + signalWeights[signal], 0);
+  return { jobId: job.jobId, company: job.company, title: job.title, signals, confidenceScore };
 }
 
 function isExcluded(metadata: GmailMetadata): boolean {
   return excludedPhrases.some((phrase) => phrase.test(`${metadata.sender} ${metadata.subject}`));
 }
 
-function isConfirmation(metadata: GmailMetadata, recent: boolean): boolean {
-  return confirmationPhrases.some((phrase) => phrase.test(metadata.subject))
-    || (recent && recentConfirmationPhrases.some((phrase) => phrase.test(metadata.subject)))
-    || (providerDomains.test(metadata.sender) && providerConfirmation.test(metadata.subject) && providerReceipt.test(metadata.subject));
+function confirmationScore(metadata: GmailMetadata, recent: boolean): number {
+  if (confirmationPhrases.some((phrase) => phrase.test(metadata.subject))) return confirmationWeights.strong;
+  if (recent && recentConfirmationPhrases.some((phrase) => phrase.test(metadata.subject))) return confirmationWeights.recent;
+  if (providerDomains.test(metadata.sender) && providerConfirmation.test(metadata.subject) && providerReceipt.test(metadata.subject)) return confirmationWeights.provider;
+  return 0;
 }
 
 export function matchGmailApplication(metadata: GmailMetadata, catalog: Internship[]): GmailMatch {
   if (isExcluded(metadata)) return { outcome: 'ignore', reason: 'excluded-stage' };
-  if (!isConfirmation(metadata, false)) return { outcome: 'ignore', reason: 'not-confirmation' };
+  const receiptScore = confirmationScore(metadata, false);
+  if (!receiptScore) return { outcome: 'ignore', reason: 'not-confirmation' };
 
-  const candidates = catalog.map((job) => candidate(metadata, job)).filter((value): value is GmailDetectionCandidate => Boolean(value));
+  const candidates = catalog.map((job) => candidate(metadata, job, receiptScore)).filter((value): value is GmailDetectionCandidate => Boolean(value));
   if (!candidates.length) return { outcome: 'ignore', reason: 'no-catalog-match' };
   const highConfidence = candidates.filter((value) => value.signals.length >= 2
     && (value.signals.includes('title') || value.signals.includes('requisition-id')));
@@ -207,9 +222,10 @@ export function matchRecentClickedGmailApplication(metadata: GmailMetadata, clic
   });
   if (!eligible.length) return { outcome: 'ignore', reason: 'no-catalog-match' };
   if (isExcluded(metadata)) return { outcome: 'ignore', reason: 'excluded-stage' };
-  if (!isConfirmation(metadata, true)) return { outcome: 'ignore', reason: 'not-confirmation' };
+  const receiptScore = confirmationScore(metadata, true);
+  if (!receiptScore) return { outcome: 'ignore', reason: 'not-confirmation' };
 
-  const candidates = eligible.map(({ job }) => candidate(metadata, job, true))
+  const candidates = eligible.map(({ job }) => candidate(metadata, job, receiptScore, true))
     .filter((value): value is GmailDetectionCandidate => Boolean(value));
   if (!candidates.length) return { outcome: 'ignore', reason: 'no-catalog-match' };
   if (candidates.length > 1) return {
@@ -218,13 +234,12 @@ export function matchRecentClickedGmailApplication(metadata: GmailMetadata, clic
     reasons: ['More than one recent Apply click matches this confirmation.'],
   };
   const only = candidates[0]!;
-  if (!only.signals.some((signal) => signal === 'employer' || signal === 'provider-tenant'
-    || signal === 'requisition-id') && !(only.signals.includes('provider') && only.signals.includes('title'))) {
-    return { outcome: 'review', candidates, reasons: ['The recent Apply click has only weak title or shared-provider evidence.'] };
+  if (only.confidenceScore < autoApplyThreshold) {
+    return { outcome: 'review', candidates, reasons: [`The evidence score is ${only.confidenceScore}/${autoApplyThreshold}; weak title or shared-provider evidence cannot confirm the role.`] };
   }
   return {
     outcome: 'applied',
     candidate: only,
-    reasons: [`The confirmation falls inside one Apply window and matches ${only.signals.join(' + ')}.`],
+    reasons: [`The confirmation falls inside one Apply window and scores ${only.confidenceScore}/${autoApplyThreshold} from ${only.signals.join(' + ')} evidence.`],
   };
 }

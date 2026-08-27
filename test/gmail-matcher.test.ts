@@ -148,7 +148,16 @@ describe('Gmail application matcher', () => {
       metadata('Your application for a role is complete', 'Unrelated Company <notifications@greenhouse-mail.io>'),
       [recent(role())],
     );
-    expect(result.outcome).toBe('review');
+    expect(result).toMatchObject({ outcome: 'review', candidates: [{ confidenceScore: 4 }] });
+  });
+
+  it('scores IBM submitted-application wording above the auto-apply threshold', () => {
+    const ibm = role({ company: 'IBM', title: 'Data and AI Intern 2027' });
+    const result = matchRecentClickedGmailApplication(metadata(
+      'You have successfully submitted your IBM job application - Data and AI Intern 2027',
+      'IBM Talent Acquisition <talent@ibm.com>',
+    ), [recent(ibm)]);
+    expect(result).toMatchObject({ outcome: 'applied', candidate: { jobId: ibm.jobId, confidenceScore: 10 } });
   });
 
   it.each([

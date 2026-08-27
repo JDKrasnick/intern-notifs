@@ -108,7 +108,7 @@ describe('Gmail credential and state storage', () => {
     await store.connect('user-1', 'student@example.com', 'encrypted', now);
     await store.scheduleCheck('user-1', 'job-1', now);
     await store.markProcessed('user-1', 'message-hmac', now);
-    await store.addDetection('user-1', 'message-hmac', { sender: 'jobs@example.com', subject: 'Application received', receivedAt: now.toISOString(), labels: ['INBOX'] }, [{ jobId: 'job-1', company: 'Example', title: 'SWE Intern', signals: ['employer'] }], ['review'], now);
+    await store.addDetection('user-1', 'message-hmac', { sender: 'jobs@example.com', subject: 'Application received', receivedAt: now.toISOString(), labels: ['INBOX'] }, [{ jobId: 'job-1', company: 'Example', title: 'SWE Intern', signals: ['employer'], confidenceScore: 8 }], ['review'], now);
     db.prepare("INSERT INTO user_items (user_id, item_key, kind, value) VALUES (?, ?, 'application', ?)")
       .run('user-1', 'APPLICATION#one', JSON.stringify({ applicationId: 'one', jobId: 'job-1', status: 'applied', appliedAt: now.toISOString(), detection: { source: 'gmail', detectedAt: now.toISOString() } }));
 
