@@ -24,7 +24,7 @@
           <tr><td>Application-assistance metadata and masked field plan</td><td>30 days</td><td>Automatic expiry or earlier account deletion</td></tr>
           <tr><td>Gmail OAuth credential, account address, incremental history cursor, and sync state</td><td>While Gmail remains connected</td><td>Gmail disconnect or account deletion; local deletion proceeds even if remote revocation fails</td></tr>
           <tr><td>Apply-triggered Gmail role check</td><td>Through the final check 24 hours after the Apply click, plus at most 1 hour for cleanup</td><td>Confirmation detection, automatic expiry, Gmail disconnect, or account deletion</td></tr>
-          <tr><td>Pending Gmail confirmation metadata and candidate evidence</td><td>30 days</td><td>Acceptance, dismissal, automatic expiry, Gmail disconnect, or account deletion</td></tr>
+          <tr><td>Pending Gmail confirmation headers and derived candidate evidence (message text is not retained)</td><td>30 days</td><td>Acceptance, dismissal, automatic expiry, Gmail disconnect, or account deletion</td></tr>
           <tr><td>Keyed Gmail message deduplication value</td><td>180 days</td><td>Automatic expiry, Gmail disconnect, or account deletion</td></tr>
           <tr><td>Single-use Gmail OAuth state and PKCE verifier</td><td>10 minutes or less</td><td>Callback use or automatic expiry</td></tr>
           <tr><td>Anonymous installation, alert settings, and push token</td><td>Until 12 months without installation activity</td><td>Automatic inactivity cleanup; invalid push tokens are disabled earlier</td></tr>

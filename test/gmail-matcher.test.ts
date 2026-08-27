@@ -160,6 +160,28 @@ describe('Gmail application matcher', () => {
     expect(result).toMatchObject({ outcome: 'applied', candidate: { jobId: ibm.jobId, confidenceScore: 10 } });
   });
 
+  it('uses message content when a generic subject does not identify the role', () => {
+    const result = matchRecentClickedGmailApplication({
+      ...metadata('Application confirmation'),
+      content: 'We received your application for Software Engineering Intern at Northstar Labs.',
+    }, [recent(role())]);
+    expect(result).toMatchObject({
+      outcome: 'applied',
+      candidate: { jobId: 'job-1', signals: expect.arrayContaining(['employer', 'title']) },
+    });
+  });
+
+  it('does not auto-apply a matching title sent through a shared ATS for another employer', () => {
+    const result = matchRecentClickedGmailApplication({
+      ...metadata('Application confirmation', 'Other Company <notifications@greenhouse-mail.io>'),
+      content: 'We received your application for Software Engineering Intern at Other Company.',
+    }, [recent(role())]);
+    expect(result).toMatchObject({
+      outcome: 'review',
+      candidates: [{ jobId: 'job-1', signals: ['title', 'provider'] }],
+    });
+  });
+
   it.each([
     'An update from Northstar Labs on your application to Software Engineering Intern',
     'Interview invitation — your application to Northstar Labs',

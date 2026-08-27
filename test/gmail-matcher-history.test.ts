@@ -47,8 +47,8 @@ function clicked(example: HistoricalCase, index: number) {
   return { job: role(example, index), clickedAt: '2026-08-25T11:55:00.000Z', expiresAt: '2026-08-26T12:55:00.000Z' };
 }
 
-// Sanitized header patterns sampled from the connected Gmail account. Bodies are
-// deliberately omitted because production matching reads only Gmail metadata.
+// Sanitized header patterns sampled from the connected Gmail account. These
+// preserve the historical metadata-only regression corpus alongside content tests.
 const confirmations: HistoricalCase[] = [
   { company: 'SpaceX', subject: 'Thank you for applying to SpaceX', sender: 'SpaceX <no-reply-recruiting@spacex.com>', title: 'Summer 2027 Software Engineering Internship/Co-op' },
   { company: 'Zipline', subject: 'Thank you for applying to Zipline', sender: 'Zipline <no-reply@flyzipline.com>' },

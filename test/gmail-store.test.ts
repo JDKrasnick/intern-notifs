@@ -108,7 +108,8 @@ describe('Gmail credential and state storage', () => {
     await store.connect('user-1', 'student@example.com', 'encrypted', now);
     await store.scheduleCheck('user-1', 'job-1', now);
     await store.markProcessed('user-1', 'message-hmac', now);
-    await store.addDetection('user-1', 'message-hmac', { sender: 'jobs@example.com', subject: 'Application received', receivedAt: now.toISOString(), labels: ['INBOX'] }, [{ jobId: 'job-1', company: 'Example', title: 'SWE Intern', signals: ['employer'], confidenceScore: 8 }], ['review'], now);
+    await store.addDetection('user-1', 'message-hmac', { sender: 'jobs@example.com', subject: 'Application received', content: 'transient-body-marker', receivedAt: now.toISOString(), labels: ['INBOX'] }, [{ jobId: 'job-1', company: 'Example', title: 'SWE Intern', signals: ['employer'], confidenceScore: 8 }], ['review'], now);
+    expect(JSON.stringify(db.prepare('SELECT * FROM gmail_detections').get())).not.toContain('transient-body-marker');
     db.prepare("INSERT INTO user_items (user_id, item_key, kind, value) VALUES (?, ?, 'application', ?)")
       .run('user-1', 'APPLICATION#one', JSON.stringify({ applicationId: 'one', jobId: 'job-1', status: 'applied', appliedAt: now.toISOString(), detection: { source: 'gmail', detectedAt: now.toISOString() } }));
 
@@ -135,7 +136,7 @@ describe('Gmail credential and state storage', () => {
     expect(started?.status).toBe(200);
     const { authorizationUrl } = await started!.json() as { authorizationUrl: string };
     const authorization = new URL(authorizationUrl); const state = authorization.searchParams.get('state');
-    expect(authorization.searchParams.get('scope')).toBe('https://www.googleapis.com/auth/gmail.metadata');
+    expect(authorization.searchParams.get('scope')).toBe('https://www.googleapis.com/auth/gmail.readonly');
     expect(authorization.searchParams.get('code_challenge_method')).toBe('S256');
     expect(state).toBeTruthy();
     expect(db.prepare('SELECT state_hash FROM gmail_oauth_states').get()).not.toMatchObject({ state_hash: state });
@@ -188,10 +189,12 @@ describe('Gmail credential and state storage', () => {
       );
       if (url.includes('/gmail/v1/users/me/messages/arrived-during-scan?')) return Response.json({
         id: 'arrived-during-scan', internalDate: String(now.getTime()), labelIds: ['INBOX'],
-        payload: { headers: [
+        payload: { mimeType: 'multipart/alternative', headers: [
           { name: 'From', value: 'Northstar Recruiting <notifications@greenhouse-mail.io>' },
-          { name: 'Subject', value: 'Thank you for applying to Software Engineering Intern at Northstar Labs' },
-        ] },
+          { name: 'Subject', value: 'Application confirmation' },
+        ], parts: [{ mimeType: 'text/plain', body: {
+          data: 'V2UgcmVjZWl2ZWQgeW91ciBhcHBsaWNhdGlvbiBmb3IgU29mdHdhcmUgRW5naW5lZXJpbmcgSW50ZXJuIGF0IE5vcnRoc3RhciBMYWJzLg',
+        } }] },
       });
       throw new Error(`Unexpected request ${url}`);
     });
@@ -201,6 +204,8 @@ describe('Gmail credential and state storage', () => {
     const catchup = send.mock.calls[0]?.[0] as GmailWorkMessage;
     expect(catchup).toMatchObject({ mode: 'history', startHistoryId: 'history-before-scan' });
     await processGmailWork(catchup, env, new Date(now.getTime() + 1));
+
+    expect(requests.some((url) => url.includes('format=full'))).toBe(true);
 
     const application = db.prepare("SELECT value FROM user_items WHERE user_id = ? AND kind = 'application'").get('user-1') as { value: string };
     expect(JSON.parse(application.value)).toMatchObject({ jobId: 'job-1', status: 'applied', detection: { source: 'gmail' } });
@@ -242,6 +247,23 @@ describe('Gmail credential and state storage', () => {
 
     await expect(recordGmailFailure('user-1', error, env, now)).resolves.toMatchObject({ retry: false });
     await expect(store.status('user-1')).resolves.toMatchObject({ connected: true, state: 'error', error: { retryable: false } });
+    await expect(store.due(new Date(now.getTime() + 24 * 60 * 60_000))).resolves.toEqual([]);
+    db.close();
+  });
+
+  it('requires reconnection when an existing grant lacks the read-only scope', async () => {
+    const db = database(); const now = new Date('2026-08-26T12:00:00.000Z');
+    const env = { DB: sqliteD1(db) } as GmailEnvironment; const store = new GmailStore(env.DB);
+    await store.connect('user-1', 'student@example.com', 'encrypted', now);
+    await store.scheduleCheck('user-1', 'job-1', now);
+    const error = Object.assign(new Error('insufficient scope'), { status: 403, googleStatus: 'PERMISSION_DENIED' });
+
+    await expect(recordGmailFailure('user-1', error, env, now)).resolves.toMatchObject({ retry: false });
+    await expect(store.status('user-1')).resolves.toMatchObject({
+      connected: true,
+      state: 'error',
+      error: { retryable: false, message: expect.stringContaining('Disconnect and connect Gmail again') },
+    });
     await expect(store.due(new Date(now.getTime() + 24 * 60 * 60_000))).resolves.toEqual([]);
     db.close();
   });

@@ -4672,7 +4672,7 @@ function Profile({
         <>
       <Text style={styles.sectionTitle}>Gmail application detection</Text>
       <Text style={styles.muted}>
-        Optional. After you tap Apply, InternNotifs checks Gmail for that role after 5 minutes, 10 minutes, 30 minutes, and 24 hours. It reads only sender, subject, date, and labels. Email bodies and attachments are never read, and Gmail data is never used for AI or model training.
+        Optional. After you tap Apply, InternNotifs checks Gmail for that role after 5 minutes, 10 minutes, 30 minutes, and 24 hours. It reads the sender, subject, date, labels, and a limited portion of the message text to confirm the employer and role. Message text is not stored, attachments are not processed, and Gmail data is never used for AI or model training.
       </Text>
       {token ? gmailStatus.connected ? (
         <View style={styles.gmailConnection}>
@@ -4681,7 +4681,7 @@ function Profile({
             <View style={styles.gmailConnectionCopy}>
               <Text style={styles.preferenceTitle}>{gmailStatus.email}</Text>
               <Text style={styles.muted}>
-                {gmailStatus.state === "syncing" ? "Syncing Gmail metadata…" : gmailStatus.lastSuccessfulSync ? `Last synced ${new Date(gmailStatus.lastSuccessfulSync).toLocaleString()}` : "Connected"}
+                {gmailStatus.state === "syncing" ? "Checking Gmail…" : gmailStatus.lastSuccessfulSync ? `Last checked ${new Date(gmailStatus.lastSuccessfulSync).toLocaleString()}` : "Connected"}
               </Text>
             </View>
           </View>

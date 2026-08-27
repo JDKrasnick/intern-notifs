@@ -3,6 +3,8 @@ import type { Internship, PostingIdentity, PostingProvider } from './types.js';
 export interface GmailMetadata {
   sender: string;
   subject: string;
+  /** Bounded message text used transiently for matching; never persisted. */
+  content?: string;
   receivedAt: string;
   labels: string[];
 }
@@ -137,10 +139,9 @@ function postingSignals(identity: PostingIdentity | undefined, text: string) {
 }
 
 function candidate(metadata: GmailMetadata, job: Internship, receiptScore = 0, includeProvider = false): GmailDetectionCandidate | undefined {
-  const text = `${metadata.sender} ${metadata.subject}`;
-  const subject = normalized(metadata.subject);
+  const text = `${metadata.sender} ${metadata.subject} ${metadata.content ?? ''}`;
   const textWords = new Set(normalized(text).split(' ').filter(Boolean));
-  const subjectWords = new Set(subject.split(' ').filter(Boolean));
+  const evidenceWords = new Set(normalized(`${metadata.subject} ${metadata.content ?? ''}`).split(' ').filter(Boolean));
   const identityWords = companyWords(job.company);
   const titleWords = meaningfulWords(job.title);
   const company = (identityWords.length > 0 && identityWords.every((word) => textWords.has(word)))
@@ -148,7 +149,7 @@ function candidate(metadata: GmailMetadata, job: Internship, receiptScore = 0, i
     || subjectUsesCompanyBrand(metadata.subject, job.company);
   const distinctiveTitleWords = titleWords.filter((word) => word.length >= 4);
   const title = distinctiveTitleWords.length > 0
-    && distinctiveTitleWords.filter((word) => subjectWords.has(word)).length >= Math.min(2, distinctiveTitleWords.length);
+    && distinctiveTitleWords.filter((word) => evidenceWords.has(word)).length >= Math.min(2, distinctiveTitleWords.length);
   const posting = postingSignals(job.postingIdentity, text);
   const signals: GmailDetectionCandidate['signals'] = [];
   if (company) signals.push('employer');
@@ -166,9 +167,10 @@ function isExcluded(metadata: GmailMetadata): boolean {
 }
 
 function confirmationScore(metadata: GmailMetadata, recent: boolean): number {
-  if (confirmationPhrases.some((phrase) => phrase.test(metadata.subject))) return confirmationWeights.strong;
-  if (recent && recentConfirmationPhrases.some((phrase) => phrase.test(metadata.subject))) return confirmationWeights.recent;
-  if (providerDomains.test(metadata.sender) && providerConfirmation.test(metadata.subject) && providerReceipt.test(metadata.subject)) return confirmationWeights.provider;
+  const evidence = `${metadata.subject} ${metadata.content ?? ''}`;
+  if (confirmationPhrases.some((phrase) => phrase.test(evidence))) return confirmationWeights.strong;
+  if (recent && recentConfirmationPhrases.some((phrase) => phrase.test(evidence))) return confirmationWeights.recent;
+  if (providerDomains.test(metadata.sender) && providerConfirmation.test(evidence) && providerReceipt.test(evidence)) return confirmationWeights.provider;
   return 0;
 }
 
@@ -234,8 +236,9 @@ export function matchRecentClickedGmailApplication(metadata: GmailMetadata, clic
     reasons: ['More than one recent Apply click matches this confirmation.'],
   };
   const only = candidates[0]!;
-  if (only.confidenceScore < autoApplyThreshold) {
-    return { outcome: 'review', candidates, reasons: [`The evidence score is ${only.confidenceScore}/${autoApplyThreshold}; weak title or shared-provider evidence cannot confirm the role.`] };
+  const authoritativeIdentity = only.signals.some((signal) => signal === 'employer' || signal === 'provider-tenant' || signal === 'requisition-id');
+  if (only.confidenceScore < autoApplyThreshold || !authoritativeIdentity) {
+    return { outcome: 'review', candidates, reasons: [`The evidence score is ${only.confidenceScore}/${autoApplyThreshold}, but automatic confirmation also requires employer, requisition, or provider-tenant identity.`] };
   }
   return {
     outcome: 'applied',

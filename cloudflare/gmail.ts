@@ -1,9 +1,10 @@
 import { matchRecentClickedGmailApplication, type GmailDetectionCandidate, type GmailMetadata } from '../src/gmail-matcher.js';
+import { gmailMessageContent, type GmailMessagePart } from '../src/gmail-content.js';
 import type { ApplicationRecord, Internship } from '../src/types.js';
 import type { D1Database, Queue } from './types.js';
 import { D1InternshipStore, D1UserStore } from './d1-store.js';
 
-const gmailScope = 'https://www.googleapis.com/auth/gmail.metadata';
+const gmailScope = 'https://www.googleapis.com/auth/gmail.readonly';
 const oauthStateLifetimeMs = 10 * 60_000;
 const pendingLifetimeMs = 30 * 24 * 60 * 60_000;
 const processedLifetimeMs = 180 * 24 * 60 * 60_000;
@@ -11,6 +12,7 @@ const leaseLifetimeMs = 5 * 60_000;
 const applicationCheckOffsetsMs = [5 * 60_000, 10 * 60_000, 30 * 60_000, 24 * 60 * 60_000] as const;
 const applicationCheckLifetimeMs = 25 * 60 * 60_000;
 const terminalApplicationStatuses = new Set(['assessment', 'interview', 'offer', 'rejected', 'withdrawn']);
+const terminalGmailErrors = new Set(['revoked', 'scope_upgrade']);
 
 export interface GmailEnvironment {
   DB: D1Database;
@@ -82,7 +84,8 @@ interface GmailMessage {
   historyId?: string;
   internalDate?: string;
   labelIds?: string[];
-  payload?: { headers?: Array<{ name: string; value: string }> };
+  snippet?: string;
+  payload?: GmailMessagePart & { headers?: Array<{ name: string; value: string }> };
 }
 
 export interface GmailWorkMessage {
@@ -164,6 +167,7 @@ function requireGmailConfig(env: GmailEnvironment) {
 
 function userMessage(code: string | null): string {
   if (code === 'revoked') return 'Gmail access was revoked. Connect Gmail again.';
+  if (code === 'scope_upgrade') return 'Gmail needs updated permission to read confirmation text. Disconnect and connect Gmail again.';
   if (code === 'rate_limited') return 'Gmail is temporarily limiting syncs. Try again later.';
   return 'Gmail could not be checked. Try syncing again.';
 }
@@ -179,7 +183,7 @@ export class GmailStore {
       email: row.email,
       state: row.sync_state === 'error' ? 'error' : row.history_id ? 'connected' : 'syncing',
       ...(row.last_success_at ? { lastSuccessfulSync: row.last_success_at } : {}),
-      ...(row.error_code ? { error: { retryable: row.error_code !== 'revoked', message: userMessage(row.error_code) } } : {}),
+      ...(row.error_code ? { error: { retryable: !terminalGmailErrors.has(row.error_code), message: userMessage(row.error_code) } } : {}),
     };
   }
 
@@ -222,7 +226,7 @@ export class GmailStore {
       INNER JOIN gmail_application_checks AS checks ON checks.user_id = connections.user_id
       WHERE checks.status = 'pending' AND checks.next_check_at <= ?
         AND (connections.lease_until IS NULL OR connections.lease_until <= ?)
-        AND (connections.error_code IS NULL OR connections.error_code <> 'revoked')
+        AND (connections.error_code IS NULL OR connections.error_code NOT IN ('revoked', 'scope_upgrade'))
       ORDER BY checks.next_check_at LIMIT ?`)
       .bind(now.toISOString(), now.toISOString(), limit).all<{ user_id: string }>();
     return rows.results.map((row) => row.user_id);
@@ -402,7 +406,11 @@ function metadataFrom(message: GmailMessage): GmailMetadata | undefined {
   const receivedAt = new Date(Number(message.internalDate)).toISOString();
   if (!Number.isFinite(Date.parse(receivedAt))) return undefined;
   const headers = new Map((message.payload?.headers ?? []).map((header) => [header.name.toLowerCase(), header.value]));
-  return { sender: headers.get('from') ?? '', subject: headers.get('subject') ?? '', receivedAt, labels: message.labelIds ?? [] };
+  const content = gmailMessageContent(message.payload, message.snippet);
+  return {
+    sender: headers.get('from') ?? '', subject: headers.get('subject') ?? '', receivedAt, labels: message.labelIds ?? [],
+    ...(content ? { content } : {}),
+  };
 }
 
 async function applyDetection(userId: string, jobId: string, detectedAt: string, env: GmailEnvironment): Promise<ApplicationRecord> {
@@ -430,7 +438,7 @@ async function processMessage(userId: string, messageId: string, token: string, 
   if (await store.processed(userId, messageKey)) return { olderThanBoundary: false };
   let message: GmailMessage;
   try {
-    message = await gmailGet<GmailMessage>(`/messages/${encodeURIComponent(messageId)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, token);
+    message = await gmailGet<GmailMessage>(`/messages/${encodeURIComponent(messageId)}?format=full&fields=id,historyId,internalDate,labelIds,snippet,payload`, token);
   } catch (error) {
     // A message can leave the mailbox between history/list and metadata fetch.
     // Treat that race as processed so one vanished message cannot block every
@@ -630,8 +638,9 @@ export async function gmailApi(request: Request, env: GmailEnvironment, userId: 
 }
 
 export function gmailRetryCode(error: unknown): string {
-  const status = (error as { status?: number }).status;
+  const { status, googleStatus } = error as { status?: number; googleStatus?: string };
   if (status === 401 || status === 400) return 'revoked';
+  if (status === 403 || googleStatus === 'PERMISSION_DENIED') return 'scope_upgrade';
   if (status === 429) return 'rate_limited';
   return 'temporary';
 }
@@ -639,5 +648,5 @@ export function gmailRetryCode(error: unknown): string {
 export async function recordGmailFailure(userId: string, error: unknown, env: GmailEnvironment, now = new Date()): Promise<{ retry: boolean; delaySeconds: number }> {
   const code = gmailRetryCode(error);
   const delaySeconds = await new GmailStore(env.DB).failed(userId, code, now);
-  return { retry: code !== 'revoked', delaySeconds };
+  return { retry: !terminalGmailErrors.has(code), delaySeconds };
 }
