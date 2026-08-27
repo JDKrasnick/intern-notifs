@@ -66,7 +66,7 @@ async function historicalDatabase(options: { presentationAgrees?: boolean } = {}
 
   const plusOld = job('plus-old', `https://jobs.lever.co/plus-2/${plusId}`, '2026-07-28T03:12:13.556Z', [
     occurrence('community-list', 'community-plus', `https://jobs.lever.co/plus-2/${plusId}?utm_source=simplify`),
-  ], { notification: { smsPending: false, digestPending: false, smsSentAt: '2026-07-28T03:13:00.000Z' } });
+  ], { notification: { smsPending: false, digestPending: false, smsSentAt: '2026-07-28T03:13:00.000Z', digestedAt: '2026-07-28T12:00:00.000Z' } });
   const plusDuplicate = job('plus-duplicate', options.presentationAgrees
     ? `https://jobs.lever.co/plus-2/${plusId}`
     : `https://jobs.lever.co/plus-2/${plusId}/apply`, '2026-08-01T13:44:06.281Z', [
@@ -94,8 +94,8 @@ async function historicalDatabase(options: { presentationAgrees?: boolean } = {}
   await store.putSourceOccurrence({ sourceId: 'lever-plusai', externalId: plusId, jobId: 'plus-duplicate', occurrence: plusDuplicate.sourceReferences[0]!, present: true, consecutiveOmissions: 0, changedSnapshotHash: 'a', changedAt: '2026-08-01T13:44:06.281Z' });
 
   const insertUser = sqlite.prepare('INSERT INTO user_items (user_id, item_key, kind, value) VALUES (?, ?, ?, ?)');
-  insertUser.run('user-1', 'APPLICATION#saved', 'application', JSON.stringify({ applicationId: 'saved', jobId: 'plus-old', status: 'saved', notes: 'first note', createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' }));
-  insertUser.run('user-1', 'APPLICATION#interview', 'application', JSON.stringify({ applicationId: 'interview', jobId: 'plus-duplicate', status: 'interview', notes: 'interview note', createdAt: '2026-08-02T00:00:00Z', updatedAt: '2026-08-03T00:00:00Z' }));
+  insertUser.run('user-1', 'APPLICATION#saved', 'application', JSON.stringify({ applicationId: 'saved', jobId: 'plus-old', status: 'saved', notes: 'latest note', createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-04T00:00:00Z' }));
+  insertUser.run('user-1', 'APPLICATION#interview', 'application', JSON.stringify({ applicationId: 'interview', jobId: 'plus-duplicate', status: 'interview', appliedAt: '2026-08-02T12:00:00Z', detection: { source: 'gmail', detectedAt: '2026-08-02T12:00:00Z' }, applyMode: 'official-form', notes: 'interview note', createdAt: '2026-08-02T00:00:00Z', updatedAt: '2026-08-03T00:00:00Z' }));
   insertUser.run('user-1', 'APPLICATION_SESSION#session', 'application-session', JSON.stringify({ sessionId: 'session', userId: 'user-1', applicationId: 'saved', jobId: 'plus-old', status: 'created', version: 1, fields: [], fieldPlanDigest: 'x', runnerLifecycle: 'not-started', expiresAt: '2026-09-01T00:00:00Z', metadataExpiresAt: '2026-09-01T00:00:00Z', eventIds: [], createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' }));
   insertUser.run('user-1', 'RECEIPT#old-a#token', 'receipt', JSON.stringify({ userId: 'user-1', jobId: 'plus-old', token: 'token', status: 'error', deliveryState: 'definitive-failure', createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' }));
   insertUser.run('user-1', 'RECEIPT#old-b#token', 'receipt', JSON.stringify({ userId: 'user-1', jobId: 'plus-duplicate', token: 'token', status: 'ok', deliveryState: 'delivered', createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-02T00:00:00Z' }));
@@ -147,11 +147,21 @@ describe('D1 posting identity repair', () => {
     expect(dry).toMatchObject({ eligibleDuplicateGroups: 2, eligibleDuplicateJobs: 2, unresolvedDuplicateGroups: 0 });
     const applied = await runPostingIdentityRepair(db, { apply: true, repairToken: dry.repairToken, expectedChanges: dry.expectedChanges, expectedDuplicateJobs: dry.duplicateJobs });
     expect(applied).toMatchObject({ applied: true, projectionRefreshRequired: true });
-    expect(await store.getJob('plus-duplicate')).toMatchObject({ jobId: 'plus-old', open: true, notification: { smsPending: true, digestPending: true, smsSentAt: '2026-07-28T03:13:00.000Z' } });
+    expect(await store.getJob('plus-duplicate')).toMatchObject({ jobId: 'plus-old', open: true, notification: { smsPending: false, digestPending: false, smsSentAt: '2026-07-28T03:13:00.000Z', digestedAt: '2026-07-28T12:00:00.000Z' } });
+    expect(await store.pendingSms()).not.toEqual(expect.arrayContaining([expect.objectContaining({ jobId: 'plus-old' })]));
+    expect(await store.pendingDigest()).not.toEqual(expect.arrayContaining([expect.objectContaining({ jobId: 'plus-old' })]));
     expect(sqlite.prepare("SELECT COUNT(*) AS count FROM catalog_items WHERE kind = 'notification-event'").get()).toEqual({ count: 1 });
     expect(sqlite.prepare("SELECT job_id FROM employer_field_proposals WHERE id = 'proposal'").get()).toEqual({ job_id: 'plus-old' });
     const applications = sqlite.prepare("SELECT value FROM user_items WHERE kind = 'application'").all().map((row) => JSON.parse((row as { value: string }).value));
-    expect(applications).toEqual([expect.objectContaining({ jobId: 'plus-old', status: 'interview', notes: 'first note\n\ninterview note' })]);
+    expect(applications).toEqual([expect.objectContaining({
+      applicationId: 'saved',
+      jobId: 'plus-old',
+      status: 'interview',
+      appliedAt: '2026-08-02T12:00:00Z',
+      detection: { source: 'gmail', detectedAt: '2026-08-02T12:00:00Z' },
+      applyMode: 'official-form',
+      notes: 'interview note\n\nlatest note',
+    })]);
     const release = JSON.parse((sqlite.prepare("SELECT value FROM user_items WHERE kind = 'catalog-release'").get() as { value: string }).value);
     expect(release).toMatchObject({ jobIds: ['plus-old', 'regular-a'], newJobIds: ['plus-old'] });
     const receipts = sqlite.prepare("SELECT value FROM user_items WHERE kind = 'receipt'").all().map((row) => JSON.parse((row as { value: string }).value));

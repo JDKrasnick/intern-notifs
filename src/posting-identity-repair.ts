@@ -109,8 +109,8 @@ function mergeJob(canonical: Internship, members: Internship[], identity: Postin
     catalogVisibleAt: earliest(members.map((job) => job.catalogVisibleAt ?? firstSeen(job))),
     lastSeenAt: latest(members.map((job) => job.lastSeenAt)),
     notification: {
-      smsPending: members.some((job) => job.notification.smsPending),
-      digestPending: members.some((job) => job.notification.digestPending),
+      smsPending: !smsSentAt && members.some((job) => job.notification.smsPending),
+      digestPending: !digestedAt && members.some((job) => job.notification.digestPending),
       ...(smsSentAt ? { smsSentAt } : {}), ...(digestedAt ? { digestedAt } : {}),
     },
   };
@@ -355,9 +355,23 @@ export function postingIdentityRepairPlan(catalogRows: CatalogRow[], userRows: U
     if (records.every((item) => item.value.jobId === canonicalJobId)) continue;
     const ordered = [...records].sort((a, b) => b.value.updatedAt.localeCompare(a.value.updatedAt) || a.value.applicationId.localeCompare(b.value.applicationId));
     const keeper = ordered[0]!;
-    const status = [...ordered].sort((a, b) => statusRank(b.value.status) - statusRank(a.value.status) || b.value.updatedAt.localeCompare(a.value.updatedAt))[0]!.value.status;
+    const strongest = [...ordered].sort((a, b) => statusRank(b.value.status) - statusRank(a.value.status) || b.value.updatedAt.localeCompare(a.value.updatedAt))[0]!.value;
+    const appliedAt = ordered.map((item) => item.value.appliedAt).filter((value): value is string => Boolean(value)).sort()[0];
+    const detection = ordered.map((item) => item.value.detection).filter((value): value is NonNullable<ApplicationRecord['detection']> => Boolean(value))
+      .sort((a, b) => b.detectedAt.localeCompare(a.detectedAt))[0];
+    const applyMode = strongest.applyMode ?? ordered.map((item) => item.value.applyMode).find((value) => value !== undefined);
     const notes = uniqueNotes(ordered.map((item) => item.value));
-    const value: ApplicationRecord = { ...keeper.value, jobId: canonicalJobId, status, createdAt: earliest(ordered.map((item) => item.value.createdAt)), updatedAt: latest(ordered.map((item) => item.value.updatedAt)), ...(notes ? { notes } : {}) };
+    const value: ApplicationRecord = {
+      ...keeper.value,
+      jobId: canonicalJobId,
+      status: strongest.status,
+      createdAt: earliest(ordered.map((item) => item.value.createdAt)),
+      updatedAt: latest(ordered.map((item) => item.value.updatedAt)),
+      ...(appliedAt ? { appliedAt } : {}),
+      ...(detection ? { detection } : {}),
+      ...(applyMode ? { applyMode } : {}),
+      ...(notes ? { notes } : {}),
+    };
     userWrites.push({ before: keeper.row, userId: keeper.row.user_id, itemKey: keeper.row.item_key, kind: keeper.row.kind, value: JSON.stringify(value) });
     applicationRemaps += 1; applicationMerges += ordered.length - 1;
     for (const item of ordered) applicationIdAliases.set(`${item.row.user_id}\0${item.value.applicationId}`, value.applicationId);
