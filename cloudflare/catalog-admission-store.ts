@@ -10,6 +10,7 @@ import type {
   DestinationReviewRule,
   EmployerMapping,
   Internship,
+  ProviderIdentity,
 } from '../src/types.js';
 import type { D1Database } from './types.js';
 
@@ -114,6 +115,19 @@ export class D1CatalogAdmissionStore {
     }));
   }
 
+  async resolveCanonicalEmployer(identity: ProviderIdentity): Promise<Pick<CanonicalEmployer, 'id' | 'displayName'> | undefined> {
+    const scopes = [...new Set([identity.sourceId, identity.tenant].filter((value): value is string => Boolean(value)))];
+    for (const scope of scopes) {
+      const row = await this.db.prepare(`SELECT employer.id, employer.display_name
+        FROM employer_mappings AS mapping
+        JOIN canonical_employers AS employer ON employer.id = mapping.canonical_employer_id
+        WHERE mapping.provider = ? AND mapping.scope = ? AND mapping.superseded_at IS NULL`)
+        .bind(identity.provider, scope).first<{ id: string; display_name: string }>();
+      if (row) return { id: row.id, displayName: row.display_name };
+    }
+    return undefined;
+  }
+
   async supersedeEmployerMapping(value: EmployerMapping): Promise<void> {
     const active = await this.db.prepare('SELECT id FROM employer_mappings WHERE provider = ? AND scope = ? AND superseded_at IS NULL')
       .bind(value.provider, value.scope).first<{ id: string }>();
@@ -138,12 +152,32 @@ export class D1CatalogAdmissionStore {
     }));
   }
 
+  async resolveReviewRule(identity: ProviderIdentity, candidateUrl: string): Promise<DestinationReviewRule | undefined> {
+    let host: string;
+    try { host = new URL(candidateUrl).hostname.toLowerCase(); } catch { return undefined; }
+    const row = await this.db.prepare(`SELECT * FROM destination_review_rules
+      WHERE host = ? AND provider = ? AND (tenant = ? OR tenant IS NULL)
+      ORDER BY CASE WHEN tenant = ? THEN 0 ELSE 1 END LIMIT 1`)
+      .bind(host, identity.provider, identity.tenant ?? null, identity.tenant ?? null).first<Record<string, unknown>>();
+    return row ? {
+      id: row.id as string, host: row.host as string, provider: row.provider as DestinationReviewRule['provider'],
+      ...(row.tenant ? { tenant: row.tenant as string } : {}), decision: row.decision as DestinationReviewRule['decision'],
+      reviewedAt: row.reviewed_at as string, reviewedBy: row.reviewed_by as string,
+      ...(row.sample_due_at ? { sampleDueAt: row.sample_due_at as string } : {}),
+    } : undefined;
+  }
+
   async putReviewRule(value: DestinationReviewRule): Promise<void> {
-    await this.db.prepare(`INSERT INTO destination_review_rules
+    const removePrior = this.db.prepare(`DELETE FROM destination_review_rules
+      WHERE host = ? AND provider = ? AND ((tenant IS NULL AND ? IS NULL) OR tenant = ?)`)
+      .bind(value.host, value.provider, value.tenant ?? null, value.tenant ?? null);
+    const insert = this.db.prepare(`INSERT INTO destination_review_rules
       (id, host, provider, tenant, decision, reviewed_at, reviewed_by, sample_due_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(host, provider, tenant) DO UPDATE SET id=excluded.id, decision=excluded.decision,
-        reviewed_at=excluded.reviewed_at, reviewed_by=excluded.reviewed_by, sample_due_at=excluded.sample_due_at`)
-      .bind(value.id, value.host, value.provider, value.tenant ?? null, value.decision, value.reviewedAt, value.reviewedBy, value.sampleDueAt ?? null).run();
+      ON CONFLICT(id) DO UPDATE SET host=excluded.host, provider=excluded.provider, tenant=excluded.tenant,
+        decision=excluded.decision, reviewed_at=excluded.reviewed_at, reviewed_by=excluded.reviewed_by,
+        sample_due_at=excluded.sample_due_at`)
+      .bind(value.id, value.host, value.provider, value.tenant ?? null, value.decision, value.reviewedAt, value.reviewedBy, value.sampleDueAt ?? null);
+    await this.db.batch([removePrior, insert]);
   }
 
   async recordReviewerDecision(value: {
@@ -197,6 +231,13 @@ export class D1CatalogAdmissionStore {
       ...(row.warning_sent_at ? { warningSentAt: row.warning_sent_at as string } : {}),
       ...(row.quarantine_sent_at ? { quarantineSentAt: row.quarantine_sent_at as string } : {}),
     }));
+  }
+
+  async resolveIncidents(jobId: string, sourceId: string, updatedAt: string, exceptReason?: AdmissionIncident['reasonCode']): Promise<void> {
+    const condition = exceptReason ? ' AND reason_code <> ?' : '';
+    await this.db.prepare(`UPDATE admission_incidents SET state = 'resolved', updated_at = ?
+      WHERE job_id = ? AND source_id = ? AND state = 'open'${condition}`)
+      .bind(updatedAt, jobId, sourceId, ...(exceptReason ? [exceptReason] : [])).run();
   }
 
   async recordVerificationAttempt(value: {

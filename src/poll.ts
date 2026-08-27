@@ -9,7 +9,7 @@ import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
 import { evaluateSourceFreshness } from './ingestion/monitoring.js';
 import { processSnapshot } from './ingestion/processor.js';
 import { evaluateCatalogAdmission } from './catalog-admission.js';
-import { classifyDestination, requiresBrowserVerification, type DestinationVerificationRequest } from './destination-verification.js';
+import { classifyDestination, requiresBrowserVerification, type CatalogAdmissionResolver, type DestinationVerificationRequest } from './destination-verification.js';
 import { reviewedBoardIndex } from './sources/index.js';
 import { sourceQualityFailures } from './sources/quality.js';
 import { SourceFetchError } from './sources/source-error.js';
@@ -277,6 +277,7 @@ export class IngestionRunner {
     private readonly validateApplicationUrl?: ApplicationUrlValidator,
     private readonly validateCatalogApplicationUrl: ApplicationUrlValidator | false | undefined = validateApplicationUrl,
     private readonly enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>,
+    private readonly catalogAdmissionResolver?: CatalogAdmissionResolver,
   ) {}
 
   private async quarantine(job: Internship) {
@@ -381,6 +382,13 @@ export class IngestionRunner {
           ...listing,
           postingIdentity: { ...identity, canonicalJobId: identityResolution.canonicalJobId },
         };
+        if (admissionManaged && listing.providerIdentity && this.catalogAdmissionResolver) {
+          const canonicalEmployer = await this.catalogAdmissionResolver.resolveCanonicalEmployer(listing.providerIdentity);
+          if (canonicalEmployer) listing = {
+            ...listing,
+            employerEvidence: { authority: 'reviewed-registry', canonicalEmployer },
+          };
+        }
         const attribution = await this.attribute(listing);
         if (listing.seasonSource === 'source-default'
           && existing?.applicationPageMetadataVersion === applicationPageMetadataVersion
@@ -392,7 +400,10 @@ export class IngestionRunner {
         let pageEvidence: ApplicationPageEvidence | undefined;
         const needsMetadataValidation = listing.seasonSource === 'source-default'
           && existing?.applicationPageMetadataVersion !== applicationPageMetadataVersion;
-        const initialDestination = classifyDestination({ listing, reachability, inspectedAt: this.now().toISOString() });
+        const destinationRule = admissionManaged && listing.providerIdentity && this.catalogAdmissionResolver
+          ? await this.catalogAdmissionResolver.resolveDestinationRule(listing.providerIdentity, listing.applyUrl)
+          : undefined;
+        const initialDestination = classifyDestination({ listing, reachability, inspectedAt: this.now().toISOString(), ...(destinationRule ? { rule: destinationRule } : {}) });
         // Standard provider routes are proven by immutable IDs. Custom routes
         // need page evidence even when the provider API attributed the posting.
         const needsValidation = Boolean(this.validateApplicationUrl && listing.technical !== false
@@ -436,7 +447,8 @@ export class IngestionRunner {
           return;
         }
         const inspectedAt = this.now().toISOString();
-        const destination = classifyDestination({ listing, reachability, ...(pageEvidence ? { evidence: pageEvidence } : {}), inspectedAt });
+        const destination = classifyDestination({ listing, reachability, ...(pageEvidence ? { evidence: pageEvidence } : {}), inspectedAt,
+          ...(destinationRule ? { rule: destinationRule } : {}) });
         const admission = evaluateCatalogAdmission({
           listing,
           destination,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryInternshipStore } from '../src/store.js';
 import { Poller } from '../src/poll.js';
-import type { RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult } from '../src/types.js';
+import type { RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult, SourceSnapshot } from '../src/types.js';
 
 const listing = (url: string, sourceId = 'one'): RawListing => ({ sourceId, document: 'README.md', sourceUrl: 'https://github.com/x', row: 5, company: 'Acme', title: 'Software Engineering Intern', location: 'NYC', season: 'summer-2027', applyUrl: url, compensation: { raw: '$40/hr', maxHourlyUSD: 40 }, state: 'open', fetchedAt: '2026-01-01T00:00:00Z' });
 class Adapter implements SourceAdapter {
@@ -189,5 +189,30 @@ describe('polling', () => {
     expect(report.failures).toEqual([]);
     expect(validated).toEqual([incoming.applyUrl]);
     expect((await store.getJob('legacy-role'))?.open).toBe(true);
+  });
+
+  it('applies reviewed employer mappings and destination rules during neutral ingestion', async () => {
+    const store = new MemoryInternshipStore();
+    const snapshot: SourceFetchResult & SourceSnapshot = {
+      sourceId: 'greenhouse-board-label', outcome: 'changed', complete: true, rawCount: 1, contentHash: 'hash',
+      listings: [], notModified: false,
+      checkpoint: { sourceId: 'greenhouse-board-label', successfulFetches: 1 },
+      postings: [{
+        sourceId: 'greenhouse-board-label', provenance: 'official-ats', externalId: '123', sourceUrl: 'https://boards-api.greenhouse.io/board-label',
+        fetchedAt: '2026-08-27T12:00:00Z', employer: { id: 'board-label', name: 'Talent Community', authority: 'reviewed-registry' },
+        providerIdentity: { provider: 'greenhouse', tenant: 'board-label' }, title: 'Software Engineering Intern',
+        content: [], locations: ['Remote'], applyUrl: 'https://careers.example.test/roles/123', sourceState: 'open',
+      }],
+    };
+    const adapter: SourceAdapter = { id: snapshot.sourceId, async fetch() { return snapshot; } };
+    const resolver = {
+      async resolveCanonicalEmployer() { return { id: 'acme', displayName: 'Acme' }; },
+      async resolveDestinationRule() { return { id: 'reviewed-custom-route', host: 'careers.example.test', provider: 'greenhouse' as const,
+        tenant: 'board-label', decision: 'standard-provider-route' as const, reviewedAt: '2026-08-27T00:00:00Z', reviewedBy: 'reviewer' }; },
+    };
+    await new Poller([adapter], store, undefined, undefined, undefined, undefined, undefined, resolver).poll();
+    expect([...store.jobs.values()][0]).toMatchObject({ company: 'Acme', admission: {
+      canonicalEmployer: { id: 'acme', displayName: 'Acme' }, catalogEligible: true,
+    } });
   });
 });

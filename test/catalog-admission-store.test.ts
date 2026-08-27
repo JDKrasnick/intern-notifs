@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
+import { persistDestinationAdmission, reachabilityFromHttpStatus, type DestinationVerificationMessage } from '../cloudflare/destination-verification.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 import type { CatalogAdmission, Internship } from '../src/types.js';
 
@@ -64,6 +65,84 @@ describe('D1 catalog admission operations', () => {
     expect(await store.listEmployerMappings()).toMatchObject([
       { id: 'first', supersededAt: '2026-08-27T00:00:00Z' }, { id: 'second', supersedesMappingId: 'first' },
     ]);
+    await expect(store.resolveCanonicalEmployer({ provider: 'greenhouse', sourceId: 'greenhouse-axon', tenant: 'axon', postingId: 'role-1', sourceUrl: 'https://example.test' }))
+      .resolves.toEqual({ id: 'new-acme', displayName: 'New Acme' });
+  });
+
+  it('resolves tenant-specific review rules ahead of host-wide rules', async () => {
+    const { admission: store } = subject();
+    await store.putReviewRule({ id: 'host', host: 'careers.acme.test', provider: 'greenhouse', decision: 'browser-required',
+      reviewedAt: '2026-08-26T00:00:00Z', reviewedBy: 'reviewer' });
+    await store.putReviewRule({ id: 'tenant', host: 'careers.acme.test', provider: 'greenhouse', tenant: 'acme', decision: 'blocked-accepted',
+      reviewedAt: '2026-08-27T00:00:00Z', reviewedBy: 'reviewer' });
+    await expect(store.resolveReviewRule({ provider: 'greenhouse', sourceId: 'greenhouse-acme', tenant: 'acme', postingId: 'role-1', sourceUrl: 'https://example.test' },
+      'https://careers.acme.test/role-1')).resolves.toMatchObject({ id: 'tenant', decision: 'blocked-accepted' });
+    await expect(store.resolveReviewRule({ provider: 'greenhouse', sourceId: 'greenhouse-other', tenant: 'other', postingId: 'role-1', sourceUrl: 'https://example.test' },
+      'https://careers.acme.test/role-1')).resolves.toMatchObject({ id: 'host', decision: 'browser-required' });
+    await store.putReviewRule({ id: 'host-replacement', host: 'careers.acme.test', provider: 'greenhouse', decision: 'aggregate-board',
+      reviewedAt: '2026-08-28T00:00:00Z', reviewedBy: 'reviewer' });
+    await expect(store.resolveReviewRule({ provider: 'greenhouse', sourceId: 'greenhouse-other', tenant: 'other', postingId: 'role-1', sourceUrl: 'https://example.test' },
+      'https://careers.acme.test/role-1')).resolves.toMatchObject({ id: 'host-replacement', decision: 'aggregate-board' });
+    expect((await store.listReviewRules()).filter((rule) => !rule.tenant)).toHaveLength(1);
+  });
+
+  it('resolves stale incidents while retaining the current reason', async () => {
+    const { admission: store } = subject();
+    const base = { jobId: 'job-1', sourceId: 'greenhouse-acme', host: 'careers.acme.test', state: 'open' as const,
+      openedAt: '2026-08-26T00:00:00Z', updatedAt: '2026-08-26T00:00:00Z' };
+    await store.upsertIncident({ ...base, id: 'old', reasonCode: 'destination-unresolved' });
+    await store.upsertIncident({ ...base, id: 'current', reasonCode: 'destination-grace' });
+    await store.resolveIncidents('job-1', 'greenhouse-acme', '2026-08-27T00:00:00Z', 'destination-grace');
+    expect(await store.listActiveIncidents()).toMatchObject([{ id: 'current', reasonCode: 'destination-grace' }]);
+    await store.resolveIncidents('job-1', 'greenhouse-acme', '2026-08-27T01:00:00Z');
+    expect(await store.listActiveIncidents()).toEqual([]);
+  });
+
+  it('expires grace after a failed browser retry and clears the incident after recovery', async () => {
+    const { admission: operations, jobs } = subject();
+    const previous = admission(true);
+    previous.destination = { ...previous.destination, classification: 'unresolved', finalUrl: 'https://careers.acme.test/role-1',
+      lastKnownGoodAt: '2026-08-20T00:00:00Z' };
+    previous.alertEligible = false;
+    previous.reasonCodes = ['destination-grace'];
+    previous.graceDeadline = '2026-08-27T00:00:00Z';
+    const reference = {
+      sourceId: 'structured-acme', provenance: 'official-structured' as const, externalId: 'role-1', document: 'role-1',
+      sourceUrl: 'https://careers.acme.test/jobs', row: 1, company: 'Acme', title: 'Software Engineering Intern',
+      location: 'Remote', locations: ['Remote'], season: 'summer-2027', applyUrl: 'https://careers.acme.test/role-1',
+      compensation: { raw: '' }, state: 'open' as const, admission: previous,
+    };
+    const current = { ...job(), sourceReferences: [reference], admission: previous };
+    await jobs.putInternship(current);
+    await jobs.putSourceOccurrence({ sourceId: reference.sourceId, externalId: reference.externalId, jobId: current.jobId,
+      occurrence: reference, present: true, consecutiveOmissions: 0, changedSnapshotHash: 'snapshot-1', changedAt: '2026-08-20T00:00:00Z',
+      firstObservedAt: '2026-08-20T00:00:00Z', firstObservedAtPrecision: 'exact' });
+    const message: DestinationVerificationMessage = { version: 1, jobId: current.jobId, sourceId: reference.sourceId,
+      externalId: reference.externalId, providerIdentity: { provider: 'structured', sourceId: reference.sourceId,
+        sourceUrl: reference.sourceUrl, tenant: 'careers.acme.test', postingId: reference.externalId },
+      candidateUrl: reference.applyUrl, reason: 'daily-retry', queuedAt: '2026-08-28T00:00:00Z' };
+
+    await persistDestinationAdmission({ jobs, operations, message, job: current, reference, reachability: 'unreachable', inspectedAt: '2026-08-28T00:00:00Z' });
+    expect(await jobs.getJob(current.jobId)).toMatchObject({ admission: { catalogEligible: false, alertEligible: false,
+      reasonCodes: ['destination-unresolved'] } });
+    expect(await operations.listActiveIncidents()).toMatchObject([{ reasonCode: 'destination-unresolved', state: 'open' }]);
+
+    const expired = (await jobs.getJob(current.jobId))!;
+    const expiredReference = expired.sourceReferences[0]!;
+    await persistDestinationAdmission({ jobs, operations, message, job: expired, reference: expiredReference, reachability: 'live',
+      inspectedAt: '2026-08-28T01:00:00Z', browserVisible: true,
+      evidence: { url: reference.applyUrl, title: reference.title, postingIdPresent: true, jobPostingCount: 1,
+        confidence: { score: 100, level: 'high', recommendation: 'alert-eligible', signals: ['browser-visible evidence'] } } });
+    expect(await jobs.getJob(current.jobId)).toMatchObject({ admission: { catalogEligible: true, alertEligible: true, reasonCodes: [] } });
+    expect(await operations.listActiveIncidents()).toEqual([]);
+  });
+
+  it('maps browser response statuses before inspecting stale page content', () => {
+    expect(reachabilityFromHttpStatus(404)).toBe('gone');
+    expect(reachabilityFromHttpStatus(410)).toBe('gone');
+    expect(reachabilityFromHttpStatus(403)).toBe('blocked');
+    expect(reachabilityFromHttpStatus(503)).toBe('unreachable');
+    expect(reachabilityFromHttpStatus(200)).toBe('live');
   });
 
   it('applies an exact staged repair silently and rolls back on a changed source row', async () => {

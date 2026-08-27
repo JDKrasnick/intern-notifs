@@ -1,6 +1,6 @@
 import { sourceRoleAgreement, type ApplicationPageEvidence } from './core/application-url.js';
 import { providerPostingReference } from './identity/posting.js';
-import type { DestinationEvidence, ProcessedListing, ProviderIdentity } from './types.js';
+import type { CanonicalEmployer, DestinationEvidence, DestinationReviewRule, ProcessedListing, ProviderIdentity } from './types.js';
 import type { Reachability } from './core/application-verification.js';
 import { evidenceHash } from './catalog-admission.js';
 
@@ -11,6 +11,11 @@ export interface DestinationVerificationRequest {
   providerIdentity: ProviderIdentity;
   candidateUrl: string;
   reason: 'first-sight' | 'url-change' | 'content-change' | 'daily-retry' | 'weekly-sample';
+}
+
+export interface CatalogAdmissionResolver {
+  resolveCanonicalEmployer(identity: ProviderIdentity): Promise<Pick<CanonicalEmployer, 'id' | 'displayName'> | undefined>;
+  resolveDestinationRule(identity: ProviderIdentity, candidateUrl: string): Promise<DestinationReviewRule | undefined>;
 }
 
 function standardRouteMatches(identity: ProviderIdentity, url: string): boolean {
@@ -49,12 +54,25 @@ function looksLikeForm(url: string, evidence?: ApplicationPageEvidence): boolean
   }
 }
 
+function routeContainsPostingId(identity: ProviderIdentity, url: string): boolean {
+  if (!identity.postingId) return false;
+  try {
+    const candidate = new URL(url);
+    const expected = identity.postingId.toLowerCase();
+    return candidate.pathname.split('/').filter(Boolean).some((part) => decodeURIComponent(part).toLowerCase() === expected)
+      || [...candidate.searchParams.values()].some((value) => value.toLowerCase() === expected);
+  } catch {
+    return false;
+  }
+}
+
 export function classifyDestination(input: {
   listing: ProcessedListing;
   reachability: Reachability;
   evidence?: ApplicationPageEvidence;
   inspectedAt: string;
   browserVisible?: boolean;
+  rule?: DestinationReviewRule;
 }): DestinationEvidence {
   const identity = input.listing.providerIdentity ?? {
     provider: input.listing.postingIdentity?.provider ?? 'unknown',
@@ -88,12 +106,20 @@ export function classifyDestination(input: {
   } satisfies Omit<DestinationEvidence, 'classification'>;
 
   if (input.reachability === 'gone') return { ...common, classification: 'gone' };
-  const standard = standardRouteMatches(identity, candidateUrl);
+  if (input.rule?.decision === 'aggregate-board') return { ...common, classification: 'aggregate-board' };
+  if (input.reachability === 'blocked' && input.rule?.decision === 'blocked-accepted' && routeContainsPostingId(identity, candidateUrl)) {
+    return { ...common, classification: looksLikeForm(finalUrl ?? candidateUrl, input.evidence) ? 'application-form' : 'posting-detail' };
+  }
+  const standard = (input.rule?.decision === 'standard-provider-route' && routeContainsPostingId(identity, candidateUrl))
+    || (input.rule?.decision !== 'browser-required' && standardRouteMatches(identity, candidateUrl));
   if (standard) {
     return { ...common, classification: looksLikeForm(finalUrl ?? candidateUrl, input.evidence) ? 'application-form' : 'posting-detail' };
   }
   if (input.evidence?.redirectedToGenericDestination || (input.evidence?.jobPostingCount ?? 0) > 1) {
     return { ...common, classification: 'aggregate-board' };
+  }
+  if (input.rule?.decision === 'browser-required' && input.browserVisible !== true) {
+    return { ...common, classification: input.reachability === 'blocked' ? 'blocked-uninspectable' : 'unresolved' };
   }
   if (input.reachability === 'blocked') return { ...common, classification: 'blocked-uninspectable' };
   if (input.reachability !== 'live') return { ...common, classification: 'unresolved' };

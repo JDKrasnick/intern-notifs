@@ -112,6 +112,14 @@ export class D1InternshipStore implements InternshipStore {
     );
   }
 
+  private sourceOccurrenceStatement(occurrence: SourceOccurrenceState) {
+    return this.db.prepare(`INSERT INTO catalog_items (pk, sk, kind, value, source_id, external_id)
+      VALUES (?, ?, 'source-occurrence', ?, ?, ?)
+      ON CONFLICT(pk, sk) DO UPDATE SET kind = excluded.kind, value = excluded.value,
+        source_id = excluded.source_id, external_id = excluded.external_id`)
+      .bind(`SOURCE#${occurrence.sourceId}`, `OCCURRENCE#${occurrence.externalId}`, JSON.stringify(occurrence), occurrence.sourceId, occurrence.externalId);
+  }
+
   getCheckpoint(sourceId: string) { return this.get<SourceCheckpoint>(`SOURCE#${sourceId}`, 'CHECKPOINT'); }
   putCheckpoint(checkpoint: SourceCheckpoint) { return this.put(`SOURCE#${checkpoint.sourceId}`, 'CHECKPOINT', 'checkpoint', checkpoint); }
   getSourceHealth(sourceId: string) { return this.get<SourceHealth>(`SOURCE#${sourceId}`, 'HEALTH'); }
@@ -196,7 +204,10 @@ export class D1InternshipStore implements InternshipStore {
     return result.results.map((row) => JSON.parse(row.value) as SourceOccurrenceState);
   }
   putSourceOccurrence(occurrence: SourceOccurrenceState) {
-    return this.put(`SOURCE#${occurrence.sourceId}`, `OCCURRENCE#${occurrence.externalId}`, 'source-occurrence', occurrence, { source_id: occurrence.sourceId, external_id: occurrence.externalId });
+    return this.sourceOccurrenceStatement(occurrence).run().then(() => undefined);
+  }
+  async putAdmissionState(job: Internship, occurrence?: SourceOccurrenceState): Promise<void> {
+    await this.db.batch([this.internshipStatement(job), ...(occurrence ? [this.sourceOccurrenceStatement(occurrence)] : [])]);
   }
   async putInternshipWithNotificationEvent(job: Internship, event: NotificationEvent): Promise<boolean> {
     const eventStatement = this.db.prepare("INSERT INTO catalog_items (pk, sk, kind, value) VALUES (?, 'EVENT', 'notification-event', ?) ON CONFLICT(pk, sk) DO NOTHING")

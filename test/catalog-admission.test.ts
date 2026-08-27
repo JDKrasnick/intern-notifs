@@ -100,4 +100,47 @@ describe('record-level catalog admission', () => {
       occurrence('official-a', 'official-ats', valid), occurrence('official-b', 'official-structured', conflict),
     ], '2026-08-26T13:00:00Z')).toMatchObject({ employerResolution: 'conflict', catalogEligible: false, reasonCodes: ['employer-conflict'] });
   });
+
+  it('derives an open role only from open occurrences while retaining a closed-history fallback', () => {
+    const valid = evaluateCatalogAdmission({ listing: listing(), destination: classifyDestination({ listing: listing(), reachability: 'implied', inspectedAt: '2026-08-26T12:00:00Z' }), postingAttributed: true, evaluatedAt: '2026-08-26T12:00:00Z' });
+    const invalid: CatalogAdmission = { ...valid, catalogEligible: false, alertEligible: false, reasonCodes: ['destination-aggregate-board'],
+      destination: { ...valid.destination, classification: 'aggregate-board' } };
+    const occurrence = (sourceId: string, state: SourceOccurrence['state'], admission: CatalogAdmission): SourceOccurrence => ({
+      sourceId, provenance: 'official-ats', externalId: sourceId, document: sourceId, sourceUrl: 'https://source.test', row: 1,
+      company: 'Acme', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2027',
+      applyUrl: admission.destination.candidateUrl, compensation: { raw: '' }, state, admission,
+    });
+    expect(deriveCanonicalAdmission([
+      occurrence('closed-good', 'closed', valid), occurrence('open-bad', 'open', invalid),
+    ], '2026-08-26T13:00:00Z')).toMatchObject({ catalogEligible: false, reasonCodes: ['destination-aggregate-board'] });
+
+    const conflict = { ...valid, canonicalEmployer: { id: 'other', displayName: 'Other' } };
+    expect(deriveCanonicalAdmission([
+      occurrence('closed-conflict', 'closed', conflict), occurrence('open-good', 'open', valid),
+    ], '2026-08-26T13:00:00Z')).toMatchObject({ catalogEligible: true, canonicalEmployer: { id: 'acme' } });
+    expect(deriveCanonicalAdmission([occurrence('closed-good', 'closed', valid)], '2026-08-26T13:00:00Z'))
+      .toMatchObject({ catalogEligible: true, canonicalEmployer: { id: 'acme' } });
+  });
+
+  it('applies reviewed destination decisions before built-in route inference', () => {
+    const role = listing();
+    const rule = (decision: 'standard-provider-route' | 'browser-required' | 'aggregate-board' | 'blocked-accepted') => ({
+      id: decision, host: 'job-boards.greenhouse.io', provider: 'greenhouse' as const, tenant: 'acme', decision,
+      reviewedAt: '2026-08-26T00:00:00Z', reviewedBy: 'reviewer',
+    });
+    expect(classifyDestination({ listing: role, reachability: 'implied', inspectedAt: '2026-08-26T12:00:00Z', rule: rule('browser-required') }).classification)
+      .toBe('unresolved');
+    expect(classifyDestination({ listing: role, reachability: 'live', inspectedAt: '2026-08-26T12:00:00Z', rule: rule('browser-required'),
+      evidence: page({ postingIdPresent: true, jobPostingCount: 1 }) }).classification).toBe('unresolved');
+    expect(classifyDestination({ listing: role, reachability: 'live', inspectedAt: '2026-08-26T12:00:00Z', rule: rule('browser-required'),
+      browserVisible: true, evidence: page({ postingIdPresent: true, jobPostingCount: 1 }) }).classification).toBe('posting-detail');
+    expect(classifyDestination({ listing: role, reachability: 'live', inspectedAt: '2026-08-26T12:00:00Z', rule: rule('aggregate-board') }).classification)
+      .toBe('aggregate-board');
+    expect(classifyDestination({ listing: { ...role, applyUrl: 'https://job-boards.greenhouse.io/acme/custom/1234567' }, reachability: 'implied',
+      inspectedAt: '2026-08-26T12:00:00Z', rule: rule('standard-provider-route') }).classification).toBe('posting-detail');
+    expect(classifyDestination({ listing: role, reachability: 'blocked', inspectedAt: '2026-08-26T12:00:00Z', rule: rule('blocked-accepted') }).classification)
+      .toBe('posting-detail');
+    expect(classifyDestination({ listing: { ...role, applyUrl: 'https://job-boards.greenhouse.io/acme/careers' }, reachability: 'blocked',
+      inspectedAt: '2026-08-26T12:00:00Z', rule: rule('blocked-accepted') }).classification).toBe('blocked-uninspectable');
+  });
 });

@@ -10,7 +10,7 @@ import { defaultSources } from './sources/index.js';
 import type { SourceAdapter } from './types.js';
 import { catalogGroupDetails, groupCatalogJobs } from './catalog-groups.js';
 import { loadGroupedNotificationCohort } from './grouped-notification-cohort.js';
-import type { DestinationVerificationRequest } from './destination-verification.js';
+import type { CatalogAdmissionResolver, DestinationVerificationRequest } from './destination-verification.js';
 
 export interface RuntimeConfig {
   /** Optional personal fallback topic. Public app alerts use Expo Push Service. */
@@ -49,6 +49,7 @@ export interface RuntimeDependencies {
   /** Reviewed complete sources may close their final role with an explicit empty snapshot. */
   allowCompleteEmptySnapshot?: boolean;
   enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>;
+  catalogAdmissionResolver?: CatalogAdmissionResolver;
 }
 
 export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies: RuntimeDependencies) {
@@ -61,6 +62,7 @@ export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies
       dependencies.linkValidator ?? validateApplicationUrlWithEvidence,
       dependencies.validateCatalogOnPoll === false ? false : undefined,
       dependencies.enqueueDestinationVerification,
+      dependencies.catalogAdmissionResolver,
     ).poll({ allowCompleteEmptySnapshot: dependencies.allowCompleteEmptySnapshot });
     if (dependencies.userStore) {
       const publisher = dependencies.expoPublisher ?? new ExpoPushPublisher();

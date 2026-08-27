@@ -131,9 +131,11 @@ export function evaluateCatalogAdmission(input: {
 }
 
 export function deriveCanonicalAdmission(references: readonly SourceOccurrence[], evaluatedAt: string): CatalogAdmission | undefined {
-  const decisions = references.map((reference) => reference.admission).filter((value): value is CatalogAdmission => Boolean(value));
+  const openReferences = references.filter((reference) => reference.state === 'open');
+  const relevantReferences = openReferences.length ? openReferences : references;
+  const decisions = relevantReferences.map((reference) => reference.admission).filter((value): value is CatalogAdmission => Boolean(value));
   if (!decisions.length) return undefined;
-  const officialEmployerIds = new Set(references
+  const officialEmployerIds = new Set(relevantReferences
     .filter((reference) => reference.provenance !== 'reviewed-community')
     .map((reference) => reference.admission?.canonicalEmployer?.id)
     .filter((value): value is string => Boolean(value)));

@@ -9,7 +9,7 @@ import type { GreenhouseWorkMessage } from './greenhouse-dispatch.js';
 import { failedSourceHealth, successfulSourceHealth } from './source-health.js';
 import { processFifoBatch } from './sqs-fifo-batch.js';
 import { legacyDeliveryExclusions, loadGroupedNotificationCohort, type GroupedNotificationCohort } from './grouped-notification-cohort.js';
-import type { DestinationVerificationRequest } from './destination-verification.js';
+import type { CatalogAdmissionResolver, DestinationVerificationRequest } from './destination-verification.js';
 
 const SHADOW_CHECKPOINT_PREFIX = 'shadow-';
 const SHADOW_LINK_CONCURRENCY = 4;
@@ -34,6 +34,7 @@ export interface GreenhouseBoardDependencies {
   linkValidator?: ApplicationUrlValidator;
   groupedNotificationCohort?: GroupedNotificationCohort;
   enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>;
+  catalogAdmissionResolver?: CatalogAdmissionResolver;
 }
 
 export interface GreenhouseBoardResult {
@@ -123,7 +124,8 @@ export async function runGreenhouseBoard(
     };
   }
 
-  const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate, false, dependencies.enqueueDestinationVerification).poll();
+  const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate, false,
+    dependencies.enqueueDestinationVerification, dependencies.catalogAdmissionResolver).poll();
   const sourceFailures = poll.failures.filter((failure) => failure.startsWith(`${source.id}:`));
   const widespreadLinkFailure = poll.processedListings > 0 && sourceFailures.length / poll.processedListings > SHADOW_LINK_FAILURE_THRESHOLD;
   if (sourceFailures.length && widespreadLinkFailure) {

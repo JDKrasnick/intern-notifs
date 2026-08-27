@@ -33,6 +33,7 @@ import { StructuredCareerSourceConnector } from '../src/sources/structured/index
 import { failedSourceHealth, successfulSourceHealth } from '../src/source-health.js';
 import type { BrowserWorker } from '@cloudflare/puppeteer';
 import { destinationVerificationMessage, enqueueDueDestinationVerifications, processDestinationVerificationBatch } from './destination-verification.js';
+import type { CatalogAdmissionResolver } from '../src/destination-verification.js';
 
 export interface Environment extends AuthEnvironment {
   DOCUMENTS: R2Bucket;
@@ -72,6 +73,28 @@ export interface Environment extends AuthEnvironment {
   GMAIL_TOKEN_ENCRYPTION_KEY?: string;
   GMAIL_MESSAGE_HMAC_KEY?: string;
   GMAIL_REDIRECT_URI?: string;
+}
+
+function catalogAdmissionResolver(env: Environment): CatalogAdmissionResolver {
+  const operations = new D1CatalogAdmissionStore(env.DB);
+  const employers = new Map<string, ReturnType<typeof operations.resolveCanonicalEmployer>>();
+  const rules = new Map<string, ReturnType<typeof operations.resolveReviewRule>>();
+  return {
+    resolveCanonicalEmployer(identity) {
+      const key = `${identity.provider}\0${identity.sourceId}\0${identity.tenant ?? ''}`;
+      const pending = employers.get(key) ?? operations.resolveCanonicalEmployer(identity);
+      employers.set(key, pending);
+      return pending;
+    },
+    resolveDestinationRule(identity, candidateUrl) {
+      let host: string;
+      try { host = new URL(candidateUrl).hostname.toLowerCase(); } catch { host = candidateUrl; }
+      const key = `${identity.provider}\0${identity.tenant ?? ''}\0${host}`;
+      const pending = rules.get(key) ?? operations.resolveReviewRule(identity, candidateUrl);
+      rules.set(key, pending);
+      return pending;
+    },
+  };
 }
 
 async function dnsJson(name: string, type: 'A' | 'AAAA' | 'TXT'): Promise<Array<{ data?: string }>> {
@@ -184,6 +207,7 @@ async function runStructuredSource(source: ReviewedStructuredSource, env: Enviro
   const connector = new StructuredCareerSourceConnector({ source, resolver: publicHostResolver });
   const result = await runRuntimeCommand('poll', { store, userStore, sources: [connector], validateCatalogOnPoll: false,
     enqueueDestinationVerification: (request) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(request)),
+    catalogAdmissionResolver: catalogAdmissionResolver(env),
     allowCompleteEmptySnapshot: true,
     config: { sesFrom: env.AUTH_FROM_EMAIL ?? '', sesTo: env.DIGEST_TO_EMAIL ?? '', ntfyTopic: env.NTFY_TOPIC, ntfyEndpoint: env.NTFY_ENDPOINT } });
   if ('poll' in result && result.poll?.failures.length) throw new Error(result.poll.failures.join('; '));
@@ -866,6 +890,7 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
   if (batch.queue.includes('github')) {
     const failed = new Set<string>();
     const employerStore = new D1EmployerStore(env.DB);
+    const admissionResolver = catalogAdmissionResolver(env);
     const structured = await reviewedStructuredRegistry(employerStore);
     for (const record of records) {
       try {
@@ -884,6 +909,7 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
           sources: [source],
           validateCatalogOnPoll: false,
           enqueueDestinationVerification: (request) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(request)),
+          catalogAdmissionResolver: admissionResolver,
           config: { sesFrom: env.AUTH_FROM_EMAIL ?? '', sesTo: env.DIGEST_TO_EMAIL ?? '', ntfyTopic: env.NTFY_TOPIC, ntfyEndpoint: env.NTFY_ENDPOINT },
         });
       } catch (error) {
@@ -902,6 +928,7 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
   const dependencies = {
     store: new D1InternshipStore(env.DB), userStore: new D1UserStore(env.DB),
     enqueueDestinationVerification: (request: Parameters<typeof destinationVerificationMessage>[0]) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(request)),
+    catalogAdmissionResolver: catalogAdmissionResolver(env),
   };
   const legacyLever = (await dependencies.store.listLeverAdmissions?.() ?? []).map(({ source }) => source);
   const leverRegistry = [...registry.lever, ...legacyLever.filter((source) => !registry.lever.some((candidate) => candidate.id === source.id))];

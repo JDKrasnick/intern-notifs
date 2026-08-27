@@ -4,7 +4,8 @@ import { evaluateCatalogAdmission, deriveCanonicalAdmission, metadataCompletenes
 import { classifyDestination } from '../src/destination-verification.js';
 import type { DestinationVerificationRequest } from '../src/destination-verification.js';
 import type { ApplicationPageEvidence } from '../src/core/application-url.js';
-import type { ProcessedListing, ProviderIdentity } from '../src/types.js';
+import { reachabilityFromFailure, type Reachability } from '../src/core/application-verification.js';
+import type { CatalogAdmissionReason, Internship, ProcessedListing, ProviderIdentity, SourceOccurrence } from '../src/types.js';
 import { D1CatalogAdmissionStore } from './catalog-admission-store.js';
 import { D1InternshipStore } from './d1-store.js';
 import type { D1Database, MessageBatch, Queue } from './types.js';
@@ -42,6 +43,76 @@ function parseMessage(value: unknown): DestinationVerificationMessage {
     || typeof message.externalId !== 'string' || typeof message.candidateUrl !== 'string'
     || !message.providerIdentity || typeof message.providerIdentity !== 'object') throw new Error('Destination verification message is invalid');
   return message as DestinationVerificationMessage;
+}
+
+export function reachabilityFromHttpStatus(status: number | undefined): Reachability {
+  if (status === 404 || status === 410) return 'gone';
+  if (status === 401 || status === 403 || status === 429) return 'blocked';
+  if (status !== undefined && status >= 500) return 'unreachable';
+  return 'live';
+}
+
+function incidentState(reason: CatalogAdmissionReason): 'open' | 'quarantined' {
+  return ['destination-grace', 'destination-unresolved', 'destination-blocked-uninspectable'].includes(reason)
+    ? 'open'
+    : 'quarantined';
+}
+
+export async function persistDestinationAdmission(input: {
+  jobs: D1InternshipStore;
+  operations: D1CatalogAdmissionStore;
+  message: DestinationVerificationMessage;
+  job: Internship;
+  reference: SourceOccurrence;
+  reachability: Reachability;
+  inspectedAt: string;
+  evidence?: ApplicationPageEvidence;
+  browserVisible?: boolean;
+}): Promise<{
+  destination: ReturnType<typeof classifyDestination>;
+  incident?: { sourceId: string; host: string; reason: string; incidentId: string; messageType: 'incident-opened' | 'quarantine' };
+}> {
+  const { jobs, operations, message, job, reference, reachability, inspectedAt, evidence, browserVisible } = input;
+  const mappedEmployer = await operations.resolveCanonicalEmployer(message.providerIdentity);
+  const listing: ProcessedListing = {
+    ...reference,
+    externalId: message.externalId,
+    fetchedAt: inspectedAt,
+    providerIdentity: message.providerIdentity,
+    postingIdentity: job.postingIdentity,
+    employerEvidence: {
+      authority: reference.provenance === 'reviewed-community' ? 'source-row' : 'reviewed-registry',
+      ...(mappedEmployer ? { canonicalEmployer: mappedEmployer }
+        : reference.admission?.canonicalEmployer ? { canonicalEmployer: reference.admission.canonicalEmployer }
+          : job.admission?.canonicalEmployer ? { canonicalEmployer: job.admission.canonicalEmployer } : {}),
+    },
+    metadataCompleteness: reference.admission?.metadata ?? metadataCompleteness({ title: reference.title, locations: reference.locations ?? [reference.location] }),
+  };
+  const rule = await operations.resolveReviewRule(message.providerIdentity, message.candidateUrl);
+  const destination = classifyDestination({ listing, reachability, ...(evidence ? { evidence } : {}), inspectedAt,
+    ...(browserVisible !== undefined ? { browserVisible } : {}), ...(rule ? { rule } : {}) });
+  const admission = evaluateCatalogAdmission({
+    listing, destination,
+    postingAttributed: reference.provenance !== 'reviewed-community' || reference.admission?.postingAttribution === 'attributed',
+    evaluatedAt: inspectedAt, previous: reference.admission ?? job.admission,
+  });
+  const sourceReferences = job.sourceReferences.map((item) => item === reference ? { ...item, admission } : item);
+  const occurrence = (await jobs.getSourceOccurrences(message.sourceId)).find((item) => item.externalId === message.externalId);
+  await jobs.putAdmissionState(
+    { ...job, sourceReferences, admission: deriveCanonicalAdmission(sourceReferences, inspectedAt) },
+    occurrence ? { ...occurrence, occurrence: { ...occurrence.occurrence, admission }, changedAt: inspectedAt } : undefined,
+  );
+
+  const reason = admission.reasonCodes[0];
+  await operations.resolveIncidents(message.jobId, message.sourceId, inspectedAt, reason);
+  if (!reason) return { destination };
+  const id = incidentId(message, reason);
+  const state = incidentState(reason);
+  const host = new URL(message.candidateUrl).hostname;
+  await operations.upsertIncident({ id, jobId: message.jobId, sourceId: message.sourceId, host, reasonCode: reason,
+    state, openedAt: inspectedAt, updatedAt: inspectedAt, ...(admission.graceDeadline ? { graceDeadline: admission.graceDeadline } : {}) });
+  return { destination, incident: { sourceId: message.sourceId, host, reason, incidentId: id,
+    messageType: state === 'open' ? 'incident-opened' : 'quarantine' } };
 }
 
 async function sendIncidentEmail(
@@ -95,71 +166,51 @@ export async function processDestinationVerificationBatch(
         const reference = job.sourceReferences.find((item) => item.sourceId === message!.sourceId && item.externalId === message!.externalId);
         if (!reference) { queued.ack(); continue; }
         const page = await browser.newPage();
+        let reachability: Reachability = 'live';
+        let evidence: ApplicationPageEvidence | undefined;
+        let browserError: unknown;
         try {
-          await page.goto(message.candidateUrl, { waitUntil: 'networkidle0', timeout: 20_000 });
-          const browserEvidence = await page.evaluate((expectedPostingId) => {
-            const html = document.documentElement.outerHTML;
-            const jobPostingCount = [...document.querySelectorAll('script[type="application/ld+json"]')].reduce((total, node) => total + ((node.textContent?.match(/["']@type["']\s*:\s*["']JobPosting["']/gi) ?? []).length), 0);
-            const description = document.querySelector('meta[name="description"],meta[property="og:description"]')?.getAttribute('content') ?? undefined;
-            const main = (document.querySelector('main')?.textContent ?? document.body?.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 12_000);
-            return {
-              url: location.href, title: document.title || undefined, description,
-              postingIdPresent: expectedPostingId ? html.includes(expectedPostingId) : undefined,
-              jobPostingCount,
-              applicationFormPresent: Boolean(document.querySelector('form[action*="apply" i],form[id*="apply" i],input[type="file"],input[name="resume" i],input[name="cv" i]')),
-              contentExcerpt: main || undefined,
+          const response = await page.goto(message.candidateUrl, { waitUntil: 'networkidle0', timeout: 20_000 });
+          reachability = reachabilityFromHttpStatus(response?.status());
+          if (reachability === 'live') {
+            const browserEvidence = await page.evaluate((expectedPostingId) => {
+              const html = document.documentElement.outerHTML;
+              const jobPostingCount = [...document.querySelectorAll('script[type="application/ld+json"]')].reduce((total, node) => total + ((node.textContent?.match(/["']@type["']\s*:\s*["']JobPosting["']/gi) ?? []).length), 0);
+              const description = document.querySelector('meta[name="description"],meta[property="og:description"]')?.getAttribute('content') ?? undefined;
+              const main = (document.querySelector('main')?.textContent ?? document.body?.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 12_000);
+              return {
+                url: location.href, title: document.title || undefined, description,
+                postingIdPresent: expectedPostingId ? html.includes(expectedPostingId) : undefined,
+                jobPostingCount,
+                applicationFormPresent: Boolean(document.querySelector('form[action*="apply" i],form[id*="apply" i],input[type="file"],input[name="resume" i],input[name="cv" i]')),
+                contentExcerpt: main || undefined,
+              };
+            }, message.providerIdentity.postingId);
+            evidence = {
+              ...browserEvidence,
+              expectedPostingId: message.providerIdentity.postingId,
+              confidence: { score: 100, level: 'high', recommendation: 'alert-eligible', signals: ['browser-visible evidence'] },
             };
-          }, message.providerIdentity.postingId);
-          const evidence: ApplicationPageEvidence = {
-            ...browserEvidence,
-            expectedPostingId: message.providerIdentity.postingId,
-            confidence: { score: 100, level: 'high', recommendation: 'alert-eligible', signals: ['browser-visible evidence'] },
-          };
-          const listing: ProcessedListing = {
-            ...reference,
-            externalId: message.externalId,
-            fetchedAt: attemptedAt,
-            providerIdentity: message.providerIdentity,
-            postingIdentity: job.postingIdentity,
-            employerEvidence: {
-              authority: reference.provenance === 'reviewed-community' ? 'source-row' : 'reviewed-registry',
-              ...(reference.admission?.canonicalEmployer ? { canonicalEmployer: reference.admission.canonicalEmployer } : job.admission?.canonicalEmployer ? { canonicalEmployer: job.admission.canonicalEmployer } : {}),
-            },
-            metadataCompleteness: reference.admission?.metadata ?? metadataCompleteness({ title: reference.title, locations: reference.locations ?? [reference.location] }),
-          };
-          const inspectedAt = now().toISOString();
-          const destination = classifyDestination({ listing, reachability: 'live', evidence, inspectedAt, browserVisible: true });
-          const admission = evaluateCatalogAdmission({
-            listing, destination,
-            postingAttributed: reference.provenance !== 'reviewed-community' || reference.admission?.postingAttribution === 'attributed',
-            evaluatedAt: inspectedAt, previous: reference.admission ?? job.admission,
-          });
-          const sourceReferences = job.sourceReferences.map((item) => item === reference ? { ...item, admission } : item);
-          await jobs.putInternship({ ...job, sourceReferences, admission: deriveCanonicalAdmission(sourceReferences, inspectedAt) });
-          const occurrence = (await jobs.getSourceOccurrences(message.sourceId)).find((item) => item.externalId === message!.externalId);
-          if (occurrence) await jobs.putSourceOccurrence({ ...occurrence, occurrence: { ...occurrence.occurrence, admission }, changedAt: inspectedAt });
-          const reason = admission.reasonCodes[0];
-          if (reason) {
-            const id = incidentId(message, reason);
-            const host = new URL(message.candidateUrl).hostname;
-            await operations.upsertIncident({ id, jobId: message.jobId, sourceId: message.sourceId, host, reasonCode: reason,
-              state: admission.catalogEligible ? 'resolved' : admission.graceDeadline ? 'open' : 'quarantined',
-              openedAt: attemptedAt, updatedAt: inspectedAt, ...(admission.graceDeadline ? { graceDeadline: admission.graceDeadline } : {}) });
-            if (!admission.catalogEligible) opened.push({ sourceId: message.sourceId, host, reason, incidentId: id,
-              messageType: admission.graceDeadline ? 'incident-opened' : 'quarantine' });
           }
-          await operations.recordVerificationAttempt({ id: crypto.randomUUID(), jobId: message.jobId, sourceId: message.sourceId,
-            candidateUrl: message.candidateUrl, state: 'succeeded', classification: destination.classification,
-            attemptedAt, completedAt: inspectedAt }, destination.evidenceHash ? { hash: destination.evidenceHash, classification: destination.classification, value: destination, observedAt: inspectedAt } : undefined);
-          queued.ack();
+        } catch (error) {
+          browserError = error;
+          reachability = reachabilityFromFailure(error);
         } finally {
           await page.close();
         }
-      } catch (error) {
-        const completedAt = now().toISOString();
-        if (message) await operations.recordVerificationAttempt({ id: crypto.randomUUID(), jobId: message.jobId, sourceId: message.sourceId,
-          candidateUrl: message.candidateUrl, state: 'failed', error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500), attemptedAt, completedAt });
-        queued.retry({ delaySeconds: 86_400 });
+        const inspectedAt = now().toISOString();
+        const result = await persistDestinationAdmission({ jobs, operations, message, job, reference, reachability, inspectedAt,
+          ...(evidence ? { evidence, browserVisible: true } : {}) });
+        if (result.incident) opened.push(result.incident);
+        await operations.recordVerificationAttempt({ id: crypto.randomUUID(), jobId: message.jobId, sourceId: message.sourceId,
+          candidateUrl: message.candidateUrl, state: browserError ? 'failed' : 'succeeded', classification: result.destination.classification,
+          ...(browserError ? { error: browserError instanceof Error ? browserError.message.slice(0, 500) : String(browserError).slice(0, 500) } : {}),
+          attemptedAt, completedAt: inspectedAt }, result.destination.evidenceHash ? { hash: result.destination.evidenceHash,
+          classification: result.destination.classification, value: result.destination, observedAt: inspectedAt } : undefined);
+        if (browserError && reachability !== 'gone') queued.retry({ delaySeconds: 86_400 });
+        else queued.ack();
+      } catch {
+        queued.retry({ delaySeconds: 300 });
       }
     }
   } catch {
