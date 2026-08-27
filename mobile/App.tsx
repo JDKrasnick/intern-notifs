@@ -3615,8 +3615,19 @@ function Applications({
         />
         {detections.length ? (
           <View style={styles.gmailReviewSection}>
-            <Text style={styles.sectionTitle}>Needs review</Text>
-            <Text style={styles.muted}>Choose the catalog role that matches each confirmation, or dismiss it.</Text>
+            <Text style={styles.sectionTitle}>Possibly applied</Text>
+            <Text style={styles.muted}>Gmail found an application confirmation, but could not tell which recently opened role it belongs to.</Text>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Why this application cannot be confirmed"
+              onPress={() => Alert.alert(
+                "Why we can’t confirm it",
+                "The email confirms that you applied, but it does not include enough role details to distinguish between the applications you recently opened. Choose the matching role if you recognize it.",
+              )}
+              style={styles.gmailWhy}
+            >
+              <Text style={styles.gmailWhyText}>Why can’t this be confirmed?</Text>
+            </TouchableOpacity>
             {detections.map((detection) => (
               <View key={detection.detectionId} style={styles.gmailReviewRow}>
                 <Text style={styles.gmailSubject} numberOfLines={2}>{detection.subject || "Application confirmation"}</Text>
@@ -3625,7 +3636,7 @@ function Applications({
                   <TouchableOpacity
                     key={candidate.jobId}
                     accessibilityRole="button"
-                    accessibilityLabel={`Mark ${candidate.title} at ${candidate.company} as applied`}
+                    accessibilityLabel={`Confirm ${candidate.title} at ${candidate.company} was applied`}
                     disabled={reviewingDetectionId === detection.detectionId}
                     onPress={() => void resolveDetection(detection, "accept", candidate.jobId)}
                     style={styles.gmailCandidate}
@@ -3643,7 +3654,7 @@ function Applications({
                   onPress={() => void resolveDetection(detection, "dismiss")}
                   style={styles.gmailDismiss}
                 >
-                  <Text style={styles.gmailDismissText}>Dismiss detection</Text>
+                  <Text style={styles.gmailDismissText}>None of these roles</Text>
                 </TouchableOpacity>
               </View>
             ))}
@@ -5854,6 +5865,8 @@ const styles = StyleSheet.create({
   applicationActionGap: { marginTop: 14 },
   gmailDetected: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 8 },
   gmailReviewSection: { marginBottom: 18 },
+  gmailWhy: { alignSelf: "flex-start", justifyContent: "center", minHeight: 44 },
+  gmailWhyText: { color: colors.signal, fontSize: 14, fontWeight: "700" },
   gmailReviewRow: { borderTopColor: colors.separator, borderTopWidth: 1, marginTop: 14, paddingTop: 14 },
   gmailSubject: { color: colors.ink, fontSize: 16, fontWeight: "700", lineHeight: 22 },
   gmailMetadata: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 3 },
