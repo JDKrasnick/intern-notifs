@@ -45,6 +45,8 @@ export interface RuntimeDependencies {
   groupedPipelineUserIds?: ReadonlySet<string> | '*';
   /** Per-source queue runs already validate their incoming listings. */
   validateCatalogOnPoll?: boolean;
+  /** Reviewed complete sources may close their final role with an explicit empty snapshot. */
+  allowCompleteEmptySnapshot?: boolean;
 }
 
 export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies: RuntimeDependencies) {
@@ -56,7 +58,7 @@ export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies
       undefined,
       dependencies.linkValidator ?? validateApplicationUrlWithEvidence,
       dependencies.validateCatalogOnPoll === false ? false : undefined,
-    ).poll();
+    ).poll({ allowCompleteEmptySnapshot: dependencies.allowCompleteEmptySnapshot });
     if (dependencies.userStore) {
       const publisher = dependencies.expoPublisher ?? new ExpoPushPublisher();
       const templates = { ...defaultPushTemplates, titleTemplate: dependencies.config.ntfyTitleTemplate ?? defaultPushTemplates.titleTemplate, descriptionTemplate: dependencies.config.ntfyDescriptionTemplate ?? defaultPushTemplates.descriptionTemplate };

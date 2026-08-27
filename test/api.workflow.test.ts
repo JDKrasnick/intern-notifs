@@ -46,18 +46,18 @@ describe('public catalog and authenticated applicant workflow', () => {
     await jobs.putInternship({ ...job('new', '2026-07-03T00:00:00.000Z'), company: 'Recent Co' });
     await jobs.putInternship({
       ...job('lever', '2026-07-01T00:00:00.000Z'), company: 'Older Lever Co',
-      sourceReferences: [{ sourceId: 'lever-older', document: 'role', sourceUrl: 'https://jobs.lever.co/older', row: 1, company: 'Older Lever Co', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/lever', compensation: { raw: '' }, state: 'open' }],
+      sourceReferences: [{ sourceId: 'lever-older', provenance: 'official-ats', document: 'role', sourceUrl: 'https://jobs.lever.co/older', row: 1, company: 'Older Lever Co', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/lever', compensation: { raw: '' }, state: 'open' }],
     });
     await jobs.putInternship({
       ...job('corroborated', '2026-06-30T00:00:00.000Z'), company: 'Corroborated Co',
       sourceReferences: [
-        { sourceId: 'greenhouse-corroborated', document: 'role', sourceUrl: 'https://boards.greenhouse.io/corroborated', row: 1, company: 'Corroborated Co', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/corroborated', compensation: { raw: '' }, state: 'open' },
-        { sourceId: 'github-community', document: 'README', sourceUrl: 'https://github.com/community/roles', row: 2, company: 'Corroborated Co', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/corroborated', compensation: { raw: '' }, state: 'open' },
+        { sourceId: 'greenhouse-corroborated', provenance: 'official-ats', document: 'role', sourceUrl: 'https://boards.greenhouse.io/corroborated', row: 1, company: 'Corroborated Co', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/corroborated', compensation: { raw: '' }, state: 'open' },
+        { sourceId: 'github-community', provenance: 'reviewed-community', document: 'README', sourceUrl: 'https://github.com/community/roles', row: 2, company: 'Corroborated Co', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/corroborated', compensation: { raw: '' }, state: 'open' },
       ],
     });
     await jobs.putInternship({
       ...job('community', '2026-06-29T00:00:00.000Z'), company: 'Community Co',
-      sourceReferences: [{ sourceId: 'zapply-2027', document: 'README.md', sourceUrl: 'https://raw.githubusercontent.com/zapplyjobs/Internships-2027/main/README.md', row: 3, company: 'Community Co', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/community', compensation: { raw: '' }, state: 'open' }],
+      sourceReferences: [{ sourceId: 'zapply-2027', provenance: 'reviewed-community', document: 'README.md', sourceUrl: 'https://raw.githubusercontent.com/zapplyjobs/Internships-2027/main/README.md', row: 3, company: 'Community Co', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/community', compensation: { raw: '' }, state: 'open' }],
     });
     const handler = createApiHandler({ jobs, users: new MemoryUserStore() });
     expect(body<{ jobs: Internship[] }>(await handler(event(undefined, 'GET', '/jobs', undefined, { q: 'older lever' }))).jobs).toMatchObject([{ jobId: 'lever' }]);

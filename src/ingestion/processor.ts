@@ -72,6 +72,7 @@ export function processPosting(
   const workMode = inferWorkMode(posting.declaredWorkMode) ?? inferWorkMode(`${location} ${content}`);
   const listing: ProcessedListing = normalizeListing({
     sourceId: posting.sourceId,
+    ...(posting.provenance ? { provenance: posting.provenance } : {}),
     externalId: posting.externalId,
     document: posting.document ?? posting.externalId,
     sourceUrl: posting.sourceUrl,

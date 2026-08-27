@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { queueHasBacklog } from '../cloudflare/queue-backlog.js';
-import { cloudflareOperationsQueueClient, documentContent, readDocumentUpload } from '../cloudflare/worker.js';
+import { cloudflareOperationsQueueClient, documentContent, failedStructuredRecoveryHealth, readDocumentUpload, recoveredStructuredSourceHealth, structuredSourceRunBlocked } from '../cloudflare/worker.js';
 import type { Environment } from '../cloudflare/worker.js';
 import type { Queue } from '../cloudflare/types.js';
 
@@ -23,6 +23,38 @@ describe('Cloudflare scheduled dispatch cost guard', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await expect(queueHasBacklog(queue(async () => { throw new Error('metrics unavailable'); }), 'greenhouse')).resolves.toBe(false);
     vi.restoreAllMocks();
+  });
+});
+
+describe('structured source recovery guard', () => {
+  const quarantined = {
+    sourceId: 'structured-acme', state: 'quarantined' as const, sourceStatus: 'paused' as const,
+    lastAttemptAt: '2026-08-26T12:00:00.000Z', consecutiveFailures: 2, durationMs: 4,
+    backoffUntil: '2099-01-01T00:00:00.000Z', quarantineReason: 'Invalid schema', quarantinedAt: '2026-08-26T12:00:00.000Z',
+    incidentState: 'open' as const,
+  };
+
+  it('blocks normal work but lets an explicit recovery probe run', () => {
+    expect(structuredSourceRunBlocked(quarantined)).toBe(true);
+    expect(structuredSourceRunBlocked(quarantined, true)).toBe(false);
+  });
+
+  it('clears pause, quarantine, and backoff only from successful recovery health', () => {
+    expect(recoveredStructuredSourceHealth({ ...quarantined, state: 'healthy', lastSuccessAt: '2026-08-26T12:01:00.000Z' }))
+      .toMatchObject({ state: 'healthy', sourceStatus: 'active', consecutiveFailures: 0, incidentState: 'resolved' });
+    const recovered = recoveredStructuredSourceHealth({ ...quarantined, state: 'healthy' });
+    expect(recovered).not.toHaveProperty('backoffUntil');
+    expect(recovered).not.toHaveProperty('quarantineReason');
+    expect(recovered).not.toHaveProperty('quarantinedAt');
+  });
+
+  it('retains quarantine and pause after a failed recovery probe', () => {
+    const failed = { ...quarantined, state: 'degraded' as const, sourceStatus: 'paused' as const,
+      lastAttemptAt: '2026-08-26T12:02:00.000Z', consecutiveFailures: 3 };
+    expect(failedStructuredRecoveryHealth(quarantined, failed)).toMatchObject({
+      state: 'quarantined', sourceStatus: 'paused', quarantineReason: 'Invalid schema',
+      quarantinedAt: '2026-08-26T12:00:00.000Z', consecutiveFailures: 3,
+    });
   });
 });
 

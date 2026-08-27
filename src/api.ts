@@ -3,16 +3,17 @@ import { DeleteObjectCommand, GetObjectCommand, S3Client, PutObjectCommand } fro
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { jobCategories, matchesJobFilter, parseJobFilter } from './core/filters.js';
 import { DynamoInternshipStore, DynamoReleaseStore, DynamoUserStore, type InternshipStore, type ReleaseStore, type UserStore } from './store.js';
-import { ACCOUNT_EXPORT_SCHEMA_VERSION, type AccountDataExport, type ApplicantProfile, type ApplicationRecord, type ApplicationStatus, type DeviceToken, type UserPreferences } from './types.js';
+import { ACCOUNT_EXPORT_SCHEMA_VERSION, type AccountDataExport, type ApplicantProfile, type ApplicationRecord, type ApplicationStatus, type DeviceToken, type OccurrenceProvenance, type UserPreferences } from './types.js';
 import { EmployerIntegrationRegistry } from './providers.js';
 import { assistanceAvailability } from './application-assistance.js';
 import { createApplicationSession, transitionApplicationSession, type ApplicationFieldDraft, type ApplicationSession, type ApplicationSessionEvent } from './application-automation.js';
 import { companyCoverage } from '../coverage/summary.js';
 import { catalogGroupDetails, filterCatalogGroupDetails, filterCatalogGroups, groupCatalogJobs, type CatalogGroupFilter } from './catalog-groups.js';
+import { occurrenceProvenance } from './sources/provenance.js';
 
 type ApiEvent = { requestContext?: { authorizer?: { jwt?: { claims?: Record<string, string> } }; http?: { method?: string }; requestId?: string }; rawPath?: string; routeKey?: string; pathParameters?: Record<string, string>; queryStringParameters?: Record<string, string>; headers?: Record<string, string | undefined>; body?: string | null };
 type ApiResponse = { statusCode: number; headers: Record<string, string>; body: string };
-const headers = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization,Content-Type', 'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS' };
+const headers = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization,Content-Type,Idempotency-Key', 'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS' };
 const reply = (statusCode: number, body: unknown): ApiResponse => ({ statusCode, headers, body: JSON.stringify(body) });
 const parseBody = (event: ApiEvent): Record<string, unknown> => { try { return event.body ? JSON.parse(event.body) as Record<string, unknown> : {}; } catch { throw new Error('Request body must be valid JSON'); } };
 const identity = (event: ApiEvent) => event.requestContext?.authorizer?.jwt?.claims?.sub;
@@ -21,6 +22,10 @@ const statuses: ApplicationStatus[] = ['saved', 'applied', 'assessment', 'interv
 const hashSecret = (value: string) => createHash('sha256').update(value).digest('base64url');
 const inMinutes = (iso: string, minutes: number) => new Date(new Date(iso).getTime() + minutes * 60_000).toISOString();
 const isBefore = (left: string, right: string) => new Date(left).getTime() < new Date(right).getTime();
+const publicJob = <T extends { sourceReferences: Array<{ sourceId: string; provenance?: OccurrenceProvenance }> }>(job: T): T => ({
+  ...job,
+  sourceReferences: job.sourceReferences.map((reference) => ({ ...reference, provenance: occurrenceProvenance(reference) })),
+});
 
 function catalogFilter(parameters: Record<string, string> | undefined): CatalogGroupFilter {
   const list = (...names: string[]) => {
@@ -100,7 +105,7 @@ function applicationSummary(application: ApplicationRecord, job: Awaited<ReturnT
         season: job.season,
         applyUrl: job.applyUrl,
         open: job.open,
-        sourceReferences: job.sourceReferences.map(({ sourceId, sourceUrl }) => ({ sourceId, sourceUrl })),
+        sourceReferences: publicJob(job).sourceReferences.map(({ sourceId, sourceUrl, provenance, state }) => ({ sourceId, sourceUrl, provenance, state })),
         assistance: assistanceAvailability(job, application.applyMode),
       },
     } : {}),
@@ -330,7 +335,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
         const source = event.queryStringParameters?.source;
         if (source && !['all', 'direct', 'community', 'corroborated'].includes(source)) return reply(400, { message: 'source is not supported' });
         const page = await dependencies.jobs.listOpen?.(event.queryStringParameters?.cursor, limit, status, { ...(query ? { query } : {}), ...(source ? { source: source as 'all' | 'direct' | 'community' | 'corroborated' } : {}) });
-        return reply(200, page ?? { jobs: [] });
+        return reply(200, page ? { ...page, jobs: page.jobs.map(publicJob) } : { jobs: [] });
       }
       if (method === 'GET' && path === '/catalog') {
         const requestedLimit = Number(event.queryStringParameters?.limit ?? 25);
@@ -369,7 +374,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
       const jobMatch = path.match(/^\/jobs\/([^/]+)$/);
       if (method === 'GET' && jobMatch) {
         const job = await dependencies.jobs.getJob?.(decodeURIComponent(jobMatch[1]));
-        return job ? reply(200, { ...job, assistance: assistanceAvailability(job) }) : reply(404, { message: 'Job not found' });
+        return job ? reply(200, { ...publicJob(job), assistance: assistanceAvailability(job) }) : reply(404, { message: 'Job not found' });
       }
       if (method === 'POST' && path === '/assist/exchange') {
         const body = parseBody(event);
@@ -419,7 +424,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
           deepLink: `internnotifs://releases/${encodeURIComponent(release.releaseId)}`,
           // Mobile clients render the complete role list directly; grouped
           // metadata remains alongside it for collapsed release summaries.
-          jobs,
+          jobs: jobs.map(publicJob),
           groups: groupCatalogJobs(jobs, { includeClosed: true }).map(catalogGroupDetails),
         });
       }
@@ -455,7 +460,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
         const limit = 50;
         await dependencies.users.putPreferences(preferences);
         const visible = matches.slice(0, limit);
-        return reply(200, { jobs: visible, groups: groupCatalogJobs(visible).map(catalogGroupDetails), total: matches.length, hasMore: matches.length > limit, previousOpenedAt, openedAt });
+        return reply(200, { jobs: visible.map(publicJob), groups: groupCatalogJobs(visible).map(catalogGroupDetails), total: matches.length, hasMore: matches.length > limit, previousOpenedAt, openedAt });
       }
       if (method === 'POST' && path === '/me/devices') { const body = parseBody(event); if (typeof body.token !== 'string' || !body.token.startsWith('ExponentPushToken[') || (body.platform !== 'ios' && body.platform !== 'android')) return reply(400, { message: 'A valid Expo token and platform are required' }); const value: DeviceToken = { userId, token: body.token, platform: body.platform, active: true, createdAt: now(), updatedAt: now() }; await dependencies.users.putDevice(value); return reply(201, value); }
       if (method === 'DELETE' && path.startsWith('/me/devices/')) { await dependencies.users.deleteDevice(userId, decodeURIComponent(path.slice('/me/devices/'.length))); return reply(204, {}); }

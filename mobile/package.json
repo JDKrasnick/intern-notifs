@@ -6,6 +6,7 @@
     "start": "expo start",
     "ios": "expo run:ios",
     "android": "expo run:android",
+    "web:export": "node scripts/export-web.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "release:check": "node scripts/release-check.mjs"

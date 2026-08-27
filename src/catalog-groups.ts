@@ -4,6 +4,7 @@ import { catalogSourceClasses, type CatalogSource } from './catalog-fields.js';
 import { catalogVisibleAt, compareCatalogRecency } from './catalog-recency.js';
 import { canonicalCompanyKey } from './core/normalize.js';
 import { employerCategory, type EmployerCategory } from './core/employers.js';
+import { occurrenceProvenance } from './sources/provenance.js';
 import type { Internship } from './types.js';
 
 export type CatalogGroupKind = 'program-group' | 'employer-release' | 'individual';
@@ -57,6 +58,7 @@ export interface CatalogGroupRole {
   disciplines: string[];
   workModes: string[];
   sourceCredibility: 'official' | 'corroborated' | 'community' | 'unspecified';
+  provenanceLabels: string[];
   detailUrl: string;
   officialApplyUrl: string;
   applicationUrlValidated: boolean;
@@ -65,6 +67,10 @@ export interface CatalogGroupRole {
   requiresUsCitizenship: boolean;
   advancedDegreeRequired: boolean;
   compensation: Internship['compensation'];
+  workAuthorizationStatus: NonNullable<Internship['workAuthorizationStatus']>;
+  applicationDeadline?: Internship['applicationDeadline'];
+  graduationWindow?: Internship['graduationWindow'];
+  programType?: Internship['programType'];
   firstSeenAt: string;
   lastSeenAt: string;
   sourceReferences: Internship['sourceReferences'];
@@ -312,6 +318,19 @@ function sourceCredibility(job: Internship): CatalogGroupRole['sourceCredibility
   return 'unspecified';
 }
 
+function provenanceLabels(job: Internship): string[] {
+  const active = new Set(job.sourceReferences
+    .filter((reference) => reference.state === 'open')
+    .map(occurrenceProvenance)
+    .filter((value): value is NonNullable<ReturnType<typeof occurrenceProvenance>> => Boolean(value)));
+  return [
+    ...(active.has('employer-submitted') ? ['Employer submitted'] : []),
+    ...(active.has('official-ats') ? ['Official ATS'] : []),
+    ...(active.has('official-structured') ? ['Official structured source'] : []),
+    ...(active.has('reviewed-community') ? ['Reviewed community source'] : []),
+  ];
+}
+
 export function catalogGroupDetails(group: BuiltGroup): CatalogGroupDetails {
   return {
     group: group.row,
@@ -324,12 +343,16 @@ function catalogGroupRole(job: Internship): CatalogGroupRole {
     jobId: job.jobId, company: job.company, title: titleFor(job), location: job.location, season: seasonFor(job),
     locations: locationsFor(job), visibleAt: catalogVisibleAt(job),
     education: catalogEducation(job), disciplines: disciplinesFor(job), workModes: workModesFor(job),
-    sourceCredibility: sourceCredibility(job), detailUrl: `/jobs/${encodeURIComponent(job.jobId)}`,
+    sourceCredibility: sourceCredibility(job), provenanceLabels: provenanceLabels(job), detailUrl: `/jobs/${encodeURIComponent(job.jobId)}`,
     officialApplyUrl: job.applyUrl, applicationUrlValidated: Boolean(job.applicationUrlValidatedAt), open: job.open,
     employerCategory: job.employerCategory ?? employerCategory(job.company),
     requiresUsCitizenship: Boolean(job.requirements?.requiresUsCitizenship),
     advancedDegreeRequired: Boolean(job.requirements?.advancedDegreeRequired),
-    compensation: job.compensation, firstSeenAt: job.firstSeenAt, lastSeenAt: job.lastSeenAt,
+    compensation: job.compensation, workAuthorizationStatus: job.workAuthorizationStatus ?? 'unknown',
+    ...(job.applicationDeadline ? { applicationDeadline: job.applicationDeadline } : {}),
+    ...(job.graduationWindow ? { graduationWindow: job.graduationWindow } : {}),
+    ...(job.programType ? { programType: job.programType } : {}),
+    firstSeenAt: job.firstSeenAt, lastSeenAt: job.lastSeenAt,
     sourceReferences: job.sourceReferences,
     ...(job.applicationUrlValidatedAt ? { applicationUrlValidatedAt: job.applicationUrlValidatedAt } : {}),
     ...(job.invalidApplicationUrl ? { invalidApplicationUrl: job.invalidApplicationUrl } : {}),

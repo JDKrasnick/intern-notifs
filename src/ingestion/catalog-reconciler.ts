@@ -3,6 +3,7 @@ import { employerCategory } from '../core/employers.js';
 import { isTechnicalJob, matchesJobFilter, type JobFilter } from '../core/filters.js';
 import { fingerprint, jobId, normalizeUrl } from '../core/normalize.js';
 import { normalizeInternship, normalizeListing } from '../catalog-quality.js';
+import { isOfficialOccurrence } from '../sources/provenance.js';
 import { isPastSeason } from '../core/early-career.js';
 import type {
   Internship,
@@ -38,6 +39,7 @@ export interface ReconciliationPlan {
 function occurrence(listing: ProcessedListing, externalId: string): SourceOccurrence {
   return {
     sourceId: listing.sourceId,
+    ...(listing.provenance ? { provenance: listing.provenance } : {}),
     externalId,
     document: listing.document,
     sourceUrl: listing.sourceUrl,
@@ -91,7 +93,7 @@ function anyOpenTechnicalOccurrence(references: SourceOccurrence[]): boolean {
 function seasonAllowsOpen(season: string, identity: Internship['internshipIdentity'], references: SourceOccurrence[], now: string): boolean {
   if (!isPastSeason(season, new Date(now))) return true;
   const evidence = (identity as { season?: { evidenceStatus?: string } } | undefined)?.season?.evidenceStatus;
-  return evidence === 'explicit' && references.some((reference) => reference.state === 'open' && /^(greenhouse|lever|ashby)-/iu.test(reference.sourceId));
+  return evidence === 'explicit' && references.some((reference) => reference.state === 'open' && isOfficialOccurrence(reference));
 }
 
 function merge(existing: Internship, listing: ProcessedListing, externalId: string, now: string, applicationUrlValidatedAt?: string, metadataVersion?: number): Internship {
@@ -101,7 +103,7 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
   const match = existing.sourceReferences.findIndex((item) =>
     item.sourceId === reference.sourceId
     && (item.externalId ? item.externalId === externalId : item.document === reference.document && item.row === reference.row));
-  const incomingOfficial = /^(greenhouse|lever|ashby)-/iu.test(listing.sourceId);
+  const incomingOfficial = isOfficialOccurrence(listing);
   const preferIncoming = incomingOfficial;
   const useIncomingLocation = genericLocation(existing.location) || (!genericLocation(listing.location) && preferIncoming);
   const location = useIncomingLocation ? listing.location || existing.location : existing.location;

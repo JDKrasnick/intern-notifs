@@ -22,6 +22,7 @@
 | Catalog definition | In progress | Continuous employer discovery, source rules, taxonomy, and reliability targets operate without an owner-selected roster |
 | Official source adapters | In progress | SQS-backed Greenhouse, Lever, and Ashby runtimes poll reviewed boards; Ashby is collecting production shadow evidence before per-board promotion, while SmartRecruiters remains planned |
 | Catalog operations | In progress | Standardized ingestion, shared source-quality gates, durable source health, private live dashboard, source-candidate review queue, and bounded Firecrawl research workflow operate |
+| Verified employer channel (#113) | In progress | D1 trust/publishing controls, web employer workspace, reviewed registry, provenance, direct submissions, reports, and operator queues are implemented behind a disabled rollout flag; production migration, dashboard enablement, and pilot remain |
 | Mobile discovery MVP | In progress | Filtered feed, native deep-link alerts, official-form handoff, and tracker are polished |
 | Human-reviewed application assistance | In progress | Headed pilot fills a supported official form, pauses for unknowns and verification, and leaves final submission to the user |
 | Headless application preparation | Planned | Isolated runner reuses proven mappings, supports live user handoff, and never bypasses verification or non-partner submission controls |
@@ -42,6 +43,10 @@
 - [ ] Export any recoverable AWS development data after the suspended account is reactivated; do not block the source-backed development cutover on that export.
 
 - [ ] Continuously discover and verify the broadest practical employer set, then prioritize active sources by technical early-career relevance and international/student-friendly coverage.
+- [x] Implement issue #113's staged verified-employer channel behind `EMPLOYER_PORTAL_ENABLED`, including organization roles, domain challenges and human review, immutable audits, D1-reviewed source registry, metadata proposals, direct submissions, public employer provenance, reports, quarantine/revocation, and explicit automatic-publishing enablement.
+- [x] Land #107's bounded JSON-LD, job-sitemap, and explicit embedded-payload connector with reviewed D1 admission, shadow polling, complete-snapshot reconciliation, public-host enforcement, and `official-structured` provenance; the measured employer pilot remains part of the #113 rollout.
+- [ ] Finish #56's shared statement-level work-authorization classifier, retained evidence reason, student filters, and alert matching; #113 supplies the provider-neutral status model and honest `unknown` default without inferring eligibility.
+- [ ] Roll out #113 in order: apply the D1 migration and seed/verify registry parity, enable operator queues, pilot one manually approved employer, then consider the portal flag and automatic publishing only after its documented threshold.
 - [x] Define source-admission, attribution, removal, and source-quality policies.
 - [x] Add internal source-aware filtering (FAANG, verified startups/YC, normal, U.S.-citizenship requirement, advanced-degree requirement, and open/closed status) to catalog ingestion, alerts, and mobile discovery.
 - [x] Add the signed-in “new since last open” inbox with a calm first-open baseline, saved-filter matching, and count-led mobile launch screen.

@@ -24,6 +24,35 @@ InternNotifs is an Expo mobile app with a serverless AWS backend.
 
 The catalog is public. Accounts, preferences, device tokens, profiles, documents, and application tracking are private to the verified user identity.
 
+## Verified employer channel rollout
+
+### Web workspace hosting
+
+The employer workspace is an Expo single-page web application. It is not served by the API Worker and must be exported and deployed to a static host with an SPA fallback:
+
+```bash
+npm run build:web
+npm run serve:web
+```
+
+The export includes Cloudflare Pages security headers plus the public policy pages. Do not add a top-level `404.html`: Pages uses its built-in SPA fallback when that file is absent. Before the first production deployment, create the Pages project with `npx wrangler pages project create internnotifs --production-branch main`, then attach a registered custom domain. Deploy with `npm run deploy:web`. Both `/` and a direct request to `/employer/verification` must return the application shell; refreshing any `/employer/*` section must not return a host-level 404.
+
+`https://internnotifs.app` is the canonical public web address. It is registered, delegated to Cloudflare, and attached to the `internnotifs` Pages project through a proxied apex CNAME to `internnotifs.pages.dev`; the Pages custom-domain validation, verification, and HTTPS certificate must remain active. The customer catalog owns `/`, while the employer workspace is isolated to `/employer/*`. The similarly spelled `internotifs.app` is not the project domain. The web bundle calls the API Worker at `https://intern-notifs.jdkrasnick.workers.dev`; set `EXPO_PUBLIC_API_URL` explicitly on the build command only when deploying against another approved API origin. Local `.env` files cannot silently replace the production default.
+
+Keep `EMPLOYER_PORTAL_ENABLED=false` while deploying the persistence layer. Apply D1 migrations before the Worker so employer routes can never observe a partial schema:
+
+```bash
+npm run cloudflare:migrate:remote
+npm run build:cloudflare
+npx wrangler deploy
+```
+
+The first provider dispatch idempotently seeds the checked-in Greenhouse, Lever, and Ashby records into `reviewed_source_registry`; scheduled dispatch and queue consumers then read reviewed runtime configuration from D1. Before enabling the portal, compare D1 registry counts and exact source IDs with the checked-in manifests, then verify source health, catalog ordering, grouped projections, and notification outbox counts are unchanged.
+
+Next, enable and exercise `GET /operations/employers/queues` behind the existing operations secret. Pilot one employer through domain challenge, human verification, source shadow admission, and manual direct-role approval. Set the non-secret Worker variable to `EMPLOYER_PORTAL_ENABLED=true` only after that review path is staffed. Automatic publishing remains off per organization until a reviewer explicitly enables it after 90 continuously verified days, 10 approved submissions, and a clean 90-day trust history. Roll back the user surface by restoring the flag to `false`; do not roll back the migration or delete audit/provenance records.
+
+Monitor verification failures and expiry, review-queue age, source freshness, duplicate merges, rejection/quarantine rates, reports, and automatic-publishing suspensions. `GET /operations/employers/reviewed-sources/export` provides the redacted reviewed-source evidence export without members, tokens, private notes, or reviewer identities. The daily maintenance run deletes expired challenge secrets, removes invitations after their grace period, closes date-deadline submissions at the end of their IANA-local date, and suspends expired organizations.
+
 ## Catalog quality D1 repair
 
 Deploy the Worker code before inspecting or repairing legacy catalog values. The

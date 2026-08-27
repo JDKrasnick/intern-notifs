@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createApiHandler, type DocumentStorage } from '../src/api.js';
 import { ashbyWorkMessages, isAshbySourceDue } from '../src/ashby-dispatch.js';
 import { processAshbyQueue } from '../src/ashby-worker.js';
@@ -9,9 +10,9 @@ import { drainPendingExpoNotifications, ExpoPushPublisher, type EmailSender } fr
 import { runRuntimeCommand } from '../src/runtime.js';
 import { catalogGroupDetails, groupCatalogJobs } from '../src/catalog-groups.js';
 import { createSourceOperationsHandler } from '../src/greenhouse-operations-api.js';
-import { reviewedAshbySources } from '../src/sources/ashby-config.js';
-import { reviewedGreenhouseSources } from '../src/sources/greenhouse-config.js';
-import { reviewedLeverSources } from '../src/sources/lever-config.js';
+import type { reviewedAshbySources } from '../src/sources/ashby-config.js';
+import type { reviewedGreenhouseSources } from '../src/sources/greenhouse-config.js';
+import type { reviewedLeverSources } from '../src/sources/lever-config.js';
 import { defaultSources } from '../src/sources/index.js';
 import type { SourceCheckpoint, SourceHealth } from '../src/types.js';
 import { authenticatedInstallation, authenticatedUser, cleanupExpiredAuth, consumeAuthRateLimit, createInstallation, deleteAuthUser, handleAuthRequest, type AuthEnvironment } from './auth.js';
@@ -19,6 +20,14 @@ import { runCatalogQualityBackfill } from '../src/catalog-quality-backfill.js';
 import { cleanupExpiredUserData, D1InternshipStore, D1ReleaseStore, D1UserStore } from './d1-store.js';
 import { queueHasBacklog } from './queue-backlog.js';
 import type { MessageBatch, Queue, R2Bucket, ScheduledController } from './types.js';
+import { D1EmployerStore } from './employer-store.js';
+import { handleEmployerApi } from './employer-api.js';
+import { closeEmployerOccurrence, handleEmployerOperations, runEmployerMaintenance } from './employer-operations-api.js';
+import { assertPublicHttpsUrl, verifyDnsChallenge, verifyWellKnownChallenge } from '../src/employer/index.js';
+import type { EmployerVerificationChallenge } from '../src/employer-types.js';
+import { reviewedProviderRegistry, reviewedStructuredRegistry } from './employer-registry.js';
+import { StructuredCareerSourceConnector } from '../src/sources/structured/index.js';
+import { failedSourceHealth, successfulSourceHealth } from '../src/source-health.js';
 
 export interface Environment extends AuthEnvironment {
   DOCUMENTS: R2Bucket;
@@ -36,6 +45,7 @@ export interface Environment extends AuthEnvironment {
   NTFY_TOPIC?: string;
   NTFY_ENDPOINT?: string;
   OPERATIONS_SHARED_SECRET: string;
+  EMPLOYER_PORTAL_ENABLED?: string;
   BILLING_WEBHOOK_SECRET?: string;
   CLOUDFLARE_SHUTDOWN_TOKEN?: string;
   CLOUDFLARE_ACCOUNT_ID: string;
@@ -44,6 +54,160 @@ export interface Environment extends AuthEnvironment {
   LEVER_QUEUE_ID: string;
   ASHBY_QUEUE_ID: string;
   GITHUB_QUEUE_ID: string;
+}
+
+async function dnsJson(name: string, type: 'A' | 'AAAA' | 'TXT'): Promise<Array<{ data?: string }>> {
+  const endpoint = new URL('https://cloudflare-dns.com/dns-query');
+  endpoint.searchParams.set('name', name); endpoint.searchParams.set('type', type);
+  const response = await fetch(endpoint, { headers: { Accept: 'application/dns-json' } });
+  if (!response.ok) throw new Error('DNS verification is temporarily unavailable');
+  const value = await response.json() as { Answer?: Array<{ data?: string }> };
+  return value.Answer ?? [];
+}
+
+const publicHostResolver = {
+  async resolve(hostname: string): Promise<string[]> {
+    const [ipv4, ipv6] = await Promise.all([dnsJson(hostname, 'A'), dnsJson(hostname, 'AAAA')]);
+    return [...ipv4, ...ipv6].map((answer) => answer.data).filter((value): value is string => Boolean(value));
+  },
+};
+
+async function verifyPublishedChallenge(challenge: EmployerVerificationChallenge, domain: string, token: string): Promise<boolean> {
+  if (challenge.method === 'dns-txt') {
+    const result = await verifyDnsChallenge({
+      domain, token,
+      resolver: { async resolveTxt(hostname) { return (await dnsJson(hostname, 'TXT')).map((answer) => (answer.data ?? '').replace(/^"|"$/gu, '').replace(/"\s+"/gu, '')); } },
+    });
+    return result.verified;
+  }
+  if (challenge.method === 'well-known') return (await verifyWellKnownChallenge({ domain, token, resolver: publicHostResolver })).verified;
+  return false;
+}
+
+async function validateReviewedHost(host: string): Promise<void> {
+  const normalized = host.trim().toLowerCase().replace(/\.$/u, '');
+  if (!normalized || normalized.includes('/') || normalized.includes('@') || normalized.includes(':')) throw new Error('Reviewed application hosts must be exact hostnames');
+  const url = await assertPublicHttpsUrl(`https://${normalized}/`, publicHostResolver);
+  if (url.hostname.toLowerCase() !== normalized) throw new Error('Reviewed application host is invalid');
+}
+
+type ReviewedStructuredSource = Awaited<ReturnType<typeof reviewedStructuredRegistry>>[number];
+
+export function structuredSourceRunBlocked(health: SourceHealth | undefined, force = false): boolean {
+  if (force) return false;
+  return health?.sourceStatus === 'paused' || health?.state === 'quarantined'
+    || Boolean(health?.backoffUntil && Date.parse(health.backoffUntil) > Date.now());
+}
+
+export function recoveredStructuredSourceHealth(health: SourceHealth): SourceHealth {
+  const clean = { ...health };
+  delete clean.backoffUntil;
+  delete clean.quarantineReason;
+  delete clean.quarantinedAt;
+  return { ...clean, state: 'healthy', sourceStatus: 'active', consecutiveFailures: 0, incidentState: 'resolved' };
+}
+
+export function failedStructuredRecoveryHealth(previous: SourceHealth | undefined, failed: SourceHealth): SourceHealth {
+  if (!previous || (previous.state !== 'quarantined' && previous.sourceStatus !== 'paused')) return failed;
+  return {
+    ...failed,
+    ...(previous.state === 'quarantined' ? {
+      state: 'quarantined' as const,
+      quarantinedAt: previous.quarantinedAt ?? failed.lastAttemptAt,
+      quarantineReason: previous.quarantineReason ?? failed.lastSafeDiagnostic ?? 'Recovery validation failed',
+    } : {}),
+    sourceStatus: 'paused',
+  };
+}
+
+async function runStructuredSource(source: ReviewedStructuredSource, env: Environment, options: { forceRecovery?: boolean } = {}): Promise<void> {
+  const store = new D1InternshipStore(env.DB); const userStore = new D1UserStore(env.DB);
+  const priorHealth = await store.getSourceHealth(source.id);
+  const recoveryProbe = options.forceRecovery === true && structuredSourceRunBlocked(priorHealth);
+  if (recoveryProbe) {
+    const startedAt = new Date().toISOString();
+    const connector = new StructuredCareerSourceConnector({ source: { ...source, id: `recovery-${source.id}` }, resolver: publicHostResolver });
+    try {
+      const snapshot = await connector.fetch();
+      const completedAt = new Date().toISOString();
+      const success = successfulSourceHealth({ sourceId: source.id, employerId: source.employer.id,
+        provider: 'unknown', previous: priorHealth, startedAt, completedAt, contentHash: snapshot.contentHash,
+        rawRows: snapshot.rawCount, validRows: snapshot.postings.length, eligibleRows: snapshot.listings.length,
+        outcome: snapshot.outcome === 'changed' ? 'success_changed' : 'success_unchanged_hash' });
+      await store.putSourceHealth(recoveredStructuredSourceHealth(success));
+    } catch (error) {
+      const failed = failedSourceHealth({ sourceId: source.id, employerId: source.employer.id,
+        provider: 'unknown', previous: priorHealth, startedAt, completedAt: new Date().toISOString(), error });
+      await store.putSourceHealth(failedStructuredRecoveryHealth(priorHealth, failed));
+      throw error;
+    }
+    return;
+  }
+  if (structuredSourceRunBlocked(priorHealth)) return;
+  if (source.status === 'shadow') {
+    const startedAt = new Date().toISOString();
+    const connector = new StructuredCareerSourceConnector({ source: { ...source, id: `shadow-${source.id}` }, resolver: publicHostResolver });
+    try {
+      const snapshot = await connector.fetch(await store.getCheckpoint(connector.id));
+      await store.putCheckpoint(snapshot.checkpoint);
+      const completedAt = new Date().toISOString();
+      const success = successfulSourceHealth({ sourceId: source.id, employerId: source.employer.id,
+        provider: 'unknown', previous: priorHealth, startedAt, completedAt, contentHash: snapshot.contentHash,
+        rawRows: snapshot.rawCount, validRows: snapshot.postings.length, eligibleRows: snapshot.listings.length,
+        outcome: snapshot.outcome === 'changed' ? 'success_changed' : 'success_unchanged_hash' });
+      await store.putSourceHealth(success);
+    } catch (error) {
+      await store.putSourceHealth(failedSourceHealth({ sourceId: source.id, employerId: source.employer.id,
+        provider: 'unknown', previous: priorHealth, startedAt, completedAt: new Date().toISOString(), error }));
+      throw error;
+    }
+    return;
+  }
+  const connector = new StructuredCareerSourceConnector({ source, resolver: publicHostResolver });
+  const result = await runRuntimeCommand('poll', { store, userStore, sources: [connector], validateCatalogOnPoll: false,
+    allowCompleteEmptySnapshot: true,
+    config: { sesFrom: env.AUTH_FROM_EMAIL ?? '', sesTo: env.DIGEST_TO_EMAIL ?? '', ntfyTopic: env.NTFY_TOPIC, ntfyEndpoint: env.NTFY_ENDPOINT } });
+  if ('poll' in result && result.poll?.failures.length) throw new Error(result.poll.failures.join('; '));
+}
+
+async function verifiedAccountEmail(env: Environment, userId: string): Promise<string | undefined> {
+  const row = await env.DB.prepare('SELECT email, verified_at FROM auth_users WHERE user_id = ?').bind(userId).first<{ email: string; verified_at: string | null }>();
+  return row?.verified_at ? row.email : undefined;
+}
+
+async function accountEmail(env: Environment, userId: string): Promise<string | undefined> {
+  return (await env.DB.prepare('SELECT email FROM auth_users WHERE user_id = ?').bind(userId).first<{ email: string }>())?.email;
+}
+
+async function removeEmployerAccessForDeletedAccount(env: Environment, userId: string, email?: string): Promise<void> {
+  const store = new D1EmployerStore(env.DB); const jobs = new D1InternshipStore(env.DB);
+  const timestamp = new Date().toISOString();
+  for (const { organization, membership } of await store.listOrganizationsForUser(userId)) {
+    if (membership.role !== 'owner') continue;
+    const hasAnotherOwner = (await store.listMemberProfiles(organization.id)).some((member) => member.userId !== userId && member.role === 'owner');
+    if (hasAnotherOwner) continue;
+    const retainUntil = new Date(Date.parse(timestamp) + 365 * 86_400_000).toISOString();
+    const event = (action: string, subjectType: string, subjectId?: string, details?: Record<string, unknown>) => ({
+      id: crypto.randomUUID(), organizationId: organization.id, action, actorType: 'system' as const,
+      subjectType, subjectId, details, createdAt: timestamp,
+    });
+    await store.putOrganization({ ...organization, state: 'closed', closedAt: timestamp, retainUntil, updatedAt: timestamp },
+      event('organization.closed_for_owner_deletion', 'organization', organization.id, { retainUntil }));
+    const verification = await store.getVerification(organization.id);
+    if (verification) await store.putVerification({ ...verification, state: 'revoked', reason: 'The organization no longer has an owner', updatedAt: timestamp },
+      event('verification.revoked_for_owner_deletion', 'organization', organization.id));
+    const privilege = await store.getPublishingPrivilege(organization.id);
+    await store.putPublishingPrivilege({ organizationId: organization.id, automaticPublishingEnabled: false,
+      enabledAt: privilege?.enabledAt, enabledBy: privilege?.enabledBy, suspendedAt: timestamp,
+      suspensionReason: 'The organization no longer has an owner', updatedAt: timestamp },
+    event('automatic-publishing.suspended_for_owner_deletion', 'organization', organization.id));
+    for (const submission of await store.listSubmissions(organization.id, 'published')) {
+      await store.putSubmission({ ...submission, state: 'quarantined', reason: 'The organization no longer has an owner', updatedAt: timestamp },
+        event('submission.quarantined_for_owner_deletion', 'submission', submission.id));
+      await closeEmployerOccurrence(jobs, organization.id, submission.id, submission.applicationUrl);
+    }
+  }
+  await store.removeUserAccess(userId, email);
 }
 
 type OperationsQueueEnvironment = Pick<Environment,
@@ -85,7 +249,7 @@ export function cloudflareOperationsQueueClient(env: OperationsQueueEnvironment)
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Authorization,Content-Type,X-Operations-Key,X-Operations-Actor',
+  'Access-Control-Allow-Headers': 'Authorization,Content-Type,Idempotency-Key,X-Operations-Key,X-Operations-Actor',
   'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
 };
 
@@ -322,10 +486,22 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
     const provider = url.searchParams.get('provider');
     const sourceId = url.searchParams.get('sourceId');
-    if (!sourceId || (provider !== 'greenhouse' && provider !== 'lever' && provider !== 'ashby')) {
+    if (!sourceId || !['greenhouse', 'lever', 'ashby', 'structured'].includes(provider ?? '')) {
       return withCors(Response.json({ message: 'provider and sourceId are required' }, { status: 400 }));
     }
-    const registry = provider === 'greenhouse' ? reviewedGreenhouseSources : provider === 'lever' ? reviewedLeverSources : reviewedAshbySources;
+    const employerStore = new D1EmployerStore(env.DB);
+    if (provider === 'structured') {
+      const source = (await reviewedStructuredRegistry(employerStore)).find((candidate) => candidate.id === sourceId);
+      if (!source) return withCors(Response.json({ message: 'Source not found' }, { status: 404 }));
+      try {
+        await runStructuredSource(source, env, { forceRecovery: true });
+        return withCors(Response.json({ sourceId, processed: true }));
+      } catch (error) {
+        return withCors(Response.json({ sourceId, processed: false, message: error instanceof Error ? error.message : 'Structured poll failed' }, { status: 502 }));
+      }
+    }
+    const providers = await reviewedProviderRegistry(employerStore);
+    const registry = provider === 'greenhouse' ? providers.greenhouse : provider === 'lever' ? providers.lever : providers.ashby;
     const source = registry.find((candidate) => candidate.id === sourceId);
     if (!source) return withCors(Response.json({ message: 'Source not found' }, { status: 404 }));
     const now = new Date();
@@ -337,17 +513,17 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
     const event = { Records: [{ messageId: crypto.randomUUID(), body: JSON.stringify(message) }] };
     const dependencies = { store: new D1InternshipStore(env.DB), userStore: new D1UserStore(env.DB) };
     const result = provider === 'greenhouse'
-      ? await processGreenhouseQueue(event, dependencies)
+      ? await processGreenhouseQueue(event, { ...dependencies, sources: providers.greenhouse })
       : provider === 'lever'
-        ? await processLeverQueue(event, dependencies)
-        : await processAshbyQueue(event, dependencies);
+        ? await processLeverQueue(event, { ...dependencies, sources: providers.lever })
+        : await processAshbyQueue(event, { ...dependencies, sources: providers.ashby });
     if (result.batchItemFailures.length) return withCors(Response.json({ sourceId, processed: false }, { status: 502 }));
     return withCors(Response.json({ sourceId, processed: true }));
   }
   if (request.method === 'POST' && url.pathname === '/internal/backfill') {
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
     const provider = url.searchParams.get('provider') ?? 'all';
-    if (!['all', 'github', 'greenhouse', 'lever', 'ashby'].includes(provider)) {
+    if (!['all', 'github', 'structured', 'greenhouse', 'lever', 'ashby'].includes(provider)) {
       return withCors(Response.json({ message: 'provider is invalid' }, { status: 400 }));
     }
     const queued: Record<string, number> = {};
@@ -355,12 +531,24 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
       await sendQueueMessages(env.GITHUB_QUEUE, defaultSources.map((source) => ({ sourceId: source.id })));
       queued.github = defaultSources.length;
     }
+    if (provider === 'all' || provider === 'structured') {
+      const structured = await reviewedStructuredRegistry(new D1EmployerStore(env.DB));
+      await sendQueueMessages(env.GITHUB_QUEUE, structured.map((source) => ({ sourceId: source.id, sourceKind: 'structured' })));
+      queued.structured = structured.length;
+    }
     for (const candidate of ['greenhouse', 'lever', 'ashby'] as const) {
       if (provider === 'all' || provider === candidate) queued[candidate] = await dispatchProviders(env, candidate, new Date(), true);
     }
     return withCors(Response.json({ queued }));
   }
   if (url.pathname.startsWith('/operations/') || url.pathname.startsWith('/internal/operations/')) {
+    if (url.pathname.startsWith('/operations/employers/')) {
+      if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
+      return withCors(await handleEmployerOperations(request, {
+        store: new D1EmployerStore(env.DB), jobs: new D1InternshipStore(env.DB),
+        actor: 'operations-reviewer', validateReviewedHost,
+      }));
+    }
     const queueClient = cloudflareOperationsQueueClient(env);
     const cloudwatch = { async send() { return { MetricAlarms: [] }; } };
     const operations = createSourceOperationsHandler({
@@ -413,12 +601,51 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
       headers: { 'Cache-Control': 'no-store' },
     }));
   }
+  const roleReportMatch = url.pathname.match(/^\/roles\/([^/]+)\/reports$/u);
+  if (request.method === 'POST' && roleReportMatch) {
+    const accountId = await authenticatedUser(request, env);
+    const reporterId = accountId ?? await authenticatedInstallation(request, env);
+    if (!reporterId) return withCors(Response.json({ message: 'Account or installation authorization required' }, { status: 401 }));
+    const rateLimit = await consumeAuthRateLimit(env, 'role-report:reporter', reporterId, { limit: 10, windowMs: 24 * 60 * 60_000, blockMs: 24 * 60 * 60_000 });
+    if (!rateLimit.allowed) return withCors(Response.json({ message: 'Too many reports. Try again later.' }, { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSeconds) } }));
+    const declaredLength = Number(request.headers.get('Content-Length'));
+    if (Number.isFinite(declaredLength) && declaredLength > 8 * 1024) return withCors(Response.json({ message: 'Request body is too large' }, { status: 413 }));
+    const reportText = await request.text();
+    if (new TextEncoder().encode(reportText).byteLength > 8 * 1024) return withCors(Response.json({ message: 'Request body is too large' }, { status: 413 }));
+    const input = (() => { try { return JSON.parse(reportText) as { category?: unknown; details?: unknown }; } catch { return null; } })();
+    const categories = ['identity', 'destination', 'closed-role', 'misleading-metadata', 'other'] as const;
+    if (!input || !categories.includes(input.category as typeof categories[number]) || (input.details !== undefined && (typeof input.details !== 'string' || input.details.length > 1_000))) {
+      return withCors(Response.json({ message: 'A supported report category and at most 1,000 characters of detail are required' }, { status: 400 }));
+    }
+    const jobId = decodeURIComponent(roleReportMatch[1]!);
+    const job = await new D1InternshipStore(env.DB).getJob(jobId);
+    const submitted = job?.sourceReferences.find((reference) => reference.provenance === 'employer-submitted' && reference.externalId);
+    const match = submitted?.sourceId.match(/^employer:([^:]+):submission:/u);
+    if (!job || !submitted?.externalId || !match) return withCors(Response.json({ message: 'Employer-submitted role not found' }, { status: 404 }));
+    const key = request.headers.get('Idempotency-Key')?.trim();
+    if (!key || key.length > 160) return withCors(Response.json({ message: 'Idempotency-Key is required' }, { status: 400 }));
+    const timestamp = new Date().toISOString(); const organizationId = match[1]!;
+    const reportId = `report-${createHash('sha256').update(`${organizationId}:${reporterId}:${key}`).digest('hex').slice(0, 24)}`;
+    const employerStore = new D1EmployerStore(env.DB);
+    const result = { reportId, state: 'open' as const };
+    if (await employerStore.idempotencyResult(organizationId, 'role.report', key)) return withCors(Response.json({ ...result, replayed: true }));
+    await employerStore.putReport({ id: reportId, organizationId, submissionId: submitted.externalId, reporterKey: createHash('sha256').update(reporterId).digest('hex'), category: input.category as typeof categories[number], details: typeof input.details === 'string' ? input.details.trim() : undefined, state: 'open', createdAt: timestamp }, {
+      id: crypto.randomUUID(), organizationId, action: 'report.created', actorType: 'system', subjectType: 'submission', subjectId: submitted.externalId,
+      details: { category: input.category, jobId }, createdAt: timestamp, idempotencyKey: key,
+    });
+    await employerStore.claimIdempotency(organizationId, 'role.report', key, timestamp, result);
+    return withCors(Response.json(result, { status: 201, headers: { 'Cache-Control': 'no-store' } }));
+  }
   const handler = createApiHandler({
     jobs: new D1InternshipStore(env.DB),
     users: new D1UserStore(env.DB),
     releases: new D1ReleaseStore(env.DB),
     documentStorage: documentStorage(env),
-    deleteIdentity: (id) => deleteAuthUser(id, env),
+    deleteIdentity: async (id) => {
+      const email = await accountEmail(env, id);
+      await removeEmployerAccessForDeletedAccount(env, id, email);
+      await deleteAuthUser(id, env);
+    },
   });
   if (url.pathname.startsWith('/installation/')) {
     const installationUserId = await authenticatedInstallation(request, env);
@@ -435,6 +662,16 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
     return eventResponse(await handler(installationEvent));
   }
   const userId = await authenticatedUser(request, env);
+  if (url.pathname.startsWith('/employer/')) {
+    if (env.EMPLOYER_PORTAL_ENABLED !== 'true') return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
+    if (!userId) return withCors(Response.json({ message: 'Authentication required' }, { status: 401 }));
+    const userEmail = await verifiedAccountEmail(env, userId);
+    if (!userEmail) return withCors(Response.json({ message: 'A verified account is required' }, { status: 403 }));
+    return withCors(await handleEmployerApi(request, {
+      store: new D1EmployerStore(env.DB), jobs: new D1InternshipStore(env.DB), userId, userEmail, verifyPublishedChallenge,
+      validateSourceUrl: async (value) => { await assertPublicHttpsUrl(value, publicHostResolver); },
+    }));
+  }
   const contentMatch = url.pathname.match(/^\/me\/documents\/([^/]+)\/content$/u);
   if (contentMatch && (request.method === 'GET' || request.method === 'PUT')) {
     if (!userId) return withCors(Response.json({ message: 'Authentication required' }, { status: 401 }));
@@ -472,21 +709,22 @@ async function dispatchProviders(
   force = false,
 ): Promise<number> {
   const store = new D1InternshipStore(env.DB);
+  const registry = await reviewedProviderRegistry(new D1EmployerStore(env.DB));
   if (provider === 'greenhouse') {
-    const sources = force ? reviewedGreenhouseSources : await due(reviewedGreenhouseSources, store, now, isGreenhouseSourceDue);
+    const sources = force ? registry.greenhouse : await due(registry.greenhouse, store, now, isGreenhouseSourceDue);
     const messages = greenhouseWorkMessages(sources, now);
     await sendQueueMessages(env.GREENHOUSE_QUEUE, messages);
     return messages.length;
   }
   if (provider === 'lever') {
     const dynamic = (await store.listLeverAdmissions?.() ?? []).map(({ source }) => source);
-    const registry = [...reviewedLeverSources, ...dynamic];
-    const sources = force ? registry : await due(registry, store, now, isLeverSourceDue);
+    const leverRegistry = [...registry.lever, ...dynamic.filter((source) => !registry.lever.some((candidate) => candidate.id === source.id))];
+    const sources = force ? leverRegistry : await due(leverRegistry, store, now, isLeverSourceDue);
     const messages = leverWorkMessages(sources, now, crypto.randomUUID());
     await sendQueueMessages(env.LEVER_QUEUE, messages);
     return messages.length;
   }
-  const sources = force ? reviewedAshbySources : await due(reviewedAshbySources, store, now, isAshbySourceDue);
+  const sources = force ? registry.ashby : await due(registry.ashby, store, now, isAshbySourceDue);
   const messages = ashbyWorkMessages(sources, now, crypto.randomUUID());
   await sendQueueMessages(env.ASHBY_QUEUE, messages);
   return messages.length;
@@ -508,7 +746,18 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
   const store = new D1InternshipStore(env.DB);
   if (event.cron === '7-57/10 * * * *') {
     if (await queueHasBacklog(env.GITHUB_QUEUE, 'github')) return;
-    await sendQueueMessages(env.GITHUB_QUEUE, defaultSources.map((source) => ({ sourceId: source.id })));
+    const structured = await reviewedStructuredRegistry(new D1EmployerStore(env.DB));
+    const dueStructured = (await Promise.all(structured.map(async (source) => {
+      const health = await store.getSourceHealth(source.id);
+      if (health?.sourceStatus === 'paused' || health?.state === 'quarantined') return undefined;
+      if (health?.backoffUntil && Date.parse(health.backoffUntil) > Date.now()) return undefined;
+      if (health?.lastAttemptAt && Date.parse(health.lastAttemptAt) > Date.now() - 30 * 60_000) return undefined;
+      return source;
+    }))).filter((source): source is ReviewedStructuredSource => Boolean(source));
+    await sendQueueMessages(env.GITHUB_QUEUE, [
+      ...defaultSources.map((source) => ({ sourceId: source.id })),
+      ...dueStructured.map((source) => ({ sourceId: source.id, sourceKind: 'structured' })),
+    ]);
     return;
   }
   if (event.cron === '9-59/10 * * * *') {
@@ -543,6 +792,8 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
   if (event.cron === '42 8 * * *') {
     await cleanupExpiredAuth(env);
     await cleanupExpiredUserData(env.DB);
+    const employerMaintenance = await runEmployerMaintenance(new D1EmployerStore(env.DB), store, new Date(event.scheduledTime));
+    console.log(JSON.stringify({ event: 'employer_maintenance_complete', ...employerMaintenance }));
   }
 }
 
@@ -554,11 +805,19 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
   const records = batch.messages.map((message) => ({ messageId: message.id, body: typeof message.body === 'string' ? message.body : JSON.stringify(message.body) }));
   if (batch.queue.includes('github')) {
     const failed = new Set<string>();
+    const employerStore = new D1EmployerStore(env.DB);
+    const structured = await reviewedStructuredRegistry(employerStore);
     for (const record of records) {
       try {
-        const sourceId = (JSON.parse(record.body) as { sourceId?: string }).sourceId;
+        const message = JSON.parse(record.body) as { sourceId?: string; sourceKind?: string };
+        const sourceId = message.sourceId;
+        const reviewedStructured = message.sourceKind === 'structured' ? structured.find((candidate) => candidate.id === sourceId) : undefined;
         const source = defaultSources.find((candidate) => candidate.id === sourceId);
-        if (!source) throw new Error(`Unknown GitHub source ${JSON.stringify(sourceId)}`);
+        if (reviewedStructured) {
+          await runStructuredSource(reviewedStructured, env);
+          continue;
+        }
+        if (!source) throw new Error(`Unknown reviewed source ${JSON.stringify(sourceId)}`);
         await runRuntimeCommand('poll', {
           store: new D1InternshipStore(env.DB),
           userStore: new D1UserStore(env.DB),
@@ -578,12 +837,15 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
     return;
   }
   const event = { Records: records };
+  const registry = await reviewedProviderRegistry(new D1EmployerStore(env.DB));
   const dependencies = { store: new D1InternshipStore(env.DB), userStore: new D1UserStore(env.DB) };
+  const legacyLever = (await dependencies.store.listLeverAdmissions?.() ?? []).map(({ source }) => source);
+  const leverRegistry = [...registry.lever, ...legacyLever.filter((source) => !registry.lever.some((candidate) => candidate.id === source.id))];
   const result = batch.queue.includes('greenhouse')
-    ? await processGreenhouseQueue(event, dependencies)
+    ? await processGreenhouseQueue(event, { ...dependencies, sources: registry.greenhouse })
     : batch.queue.includes('lever')
-      ? await processLeverQueue(event, dependencies)
-      : await processAshbyQueue(event, dependencies);
+      ? await processLeverQueue(event, { ...dependencies, sources: leverRegistry })
+      : await processAshbyQueue(event, { ...dependencies, sources: registry.ashby });
   const failed = new Set(result.batchItemFailures.map(({ itemIdentifier }) => itemIdentifier));
   for (const message of batch.messages) {
     if (failed.has(message.id)) message.retry();

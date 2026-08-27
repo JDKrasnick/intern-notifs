@@ -80,8 +80,9 @@ describe('snapshot reconciliation', () => {
 
   it('closes an elapsed role when its last official occurrence closes', async () => {
     const store = new MemoryInternshipStore();
-    const community = new MutableAdapter('github-list', [listing('github-list', { season: 'summer-2025' })]);
+    const community = new MutableAdapter('github-list', [listing('github-list', { season: 'summer-2025', provenance: 'reviewed-community' })]);
     const officialListing = listing('greenhouse-acme', {
+      provenance: 'official-ats',
       season: 'summer-2025',
       internshipIdentity: buildInternshipIdentity({
         sourceId: 'greenhouse-acme', sourceUrl: 'https://source.example.test/greenhouse-acme', observedAt: '2026-07-29T12:00:00.000Z',
@@ -226,18 +227,18 @@ describe('snapshot reconciliation', () => {
   it('prefers cleaned official evidence over community display fields', async () => {
     const store = new MemoryInternshipStore();
     const community = new MutableAdapter('community-list', [listing('community-list', {
-      company: 'Community Acme', title: 'SWE Intern', location: 'Unspecified',
+      provenance: 'reviewed-community', company: 'Community Acme', title: 'SWE Intern', location: 'Unspecified',
     })]);
     await new IngestionRunner([community], store).run();
     const official = new MutableAdapter('greenhouse-acme', [listing('greenhouse-acme', {
-      company: '🇺🇸 Acme', title: '🎓 Advanced Degree Required · Software Engineering Intern', location: 'NYC',
+      provenance: 'official-ats', company: '🇺🇸 Acme', title: '🎓 Advanced Degree Required · Software Engineering Intern', location: 'NYC',
     })]);
     await new IngestionRunner([official], store).run();
     expect([...store.jobs.values()][0]).toMatchObject({
       company: 'Acme', title: 'Software Engineering Intern', location: 'New York, NY',
       requirements: { requiresUsCitizenship: true, advancedDegreeRequired: true },
     });
-    community.rows = [listing('community-list', { company: 'Bad community value', title: 'Bad title', location: 'Unspecified' })];
+    community.rows = [listing('community-list', { provenance: 'reviewed-community', company: 'Bad community value', title: 'Bad title', location: 'Unspecified' })];
     await new IngestionRunner([community], store).run();
     expect([...store.jobs.values()][0]).toMatchObject({ company: 'Acme', title: 'Software Engineering Intern', location: 'New York, NY' });
   });
