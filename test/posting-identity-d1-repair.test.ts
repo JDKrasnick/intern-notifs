@@ -100,7 +100,9 @@ async function historicalDatabase(options: { presentationAgrees?: boolean } = {}
   insertUser.run('user-1', 'RECEIPT#old-a#token', 'receipt', JSON.stringify({ userId: 'user-1', jobId: 'plus-old', token: 'token', status: 'error', deliveryState: 'definitive-failure', createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' }));
   insertUser.run('user-1', 'RECEIPT#old-b#token', 'receipt', JSON.stringify({ userId: 'user-1', jobId: 'plus-duplicate', token: 'token', status: 'ok', deliveryState: 'delivered', createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-02T00:00:00Z' }));
   insertUser.run('user-1', 'RELEASE#release', 'catalog-release', JSON.stringify({ releaseId: 'release', userId: 'user-1', jobIds: ['plus-old', 'plus-duplicate', 'regular-a'], newJobIds: ['plus-duplicate'], createdAt: '2026-08-02T00:00:00Z' }));
-  sqlite.prepare("INSERT INTO catalog_items (pk, sk, kind, value) VALUES ('OUTBOX#existing', 'EVENT', 'notification-event', ?)").run(JSON.stringify({ eventId: 'existing', jobId: 'plus-duplicate' }));
+  sqlite.prepare("INSERT INTO catalog_items (pk, sk, kind, value) VALUES ('OUTBOX#existing', 'EVENT', 'notification-event', ?)").run(JSON.stringify({
+    eventId: 'existing', jobId: 'drw-duplicate', kind: 'new-job', createdAt: '2026-08-02T00:00:00.000Z',
+  }));
   sqlite.prepare("INSERT INTO employer_organizations (id, name, domain, state, created_at, updated_at) VALUES ('org', 'Org', 'org.test', 'active', '2026-01-01', '2026-01-01')").run();
   sqlite.prepare("INSERT INTO employer_field_proposals (id, organization_id, job_id, field, proposed_value, evidence_at, state, created_by, created_at) VALUES ('proposal', 'org', 'plus-duplicate', 'title', 'Title', '2026-01-01', 'pending-review', 'reviewer', '2026-01-01')").run();
   return { sqlite, db, store };
@@ -166,6 +168,14 @@ describe('D1 posting identity repair', () => {
     expect(release).toMatchObject({ jobIds: ['plus-old', 'regular-a'], newJobIds: ['plus-old'] });
     const receipts = sqlite.prepare("SELECT value FROM user_items WHERE kind = 'receipt'").all().map((row) => JSON.parse((row as { value: string }).value));
     expect(receipts).toEqual([expect.objectContaining({ jobId: 'plus-old', status: 'ok', deliveryState: 'delivered' })]);
+    const recovery = await store.recoverUndeliveredNotifications({
+      since: '2026-08-01T00:00:00.000Z', limit: 10, apply: false,
+    });
+    expect(recovery).toEqual({ candidates: 1, candidateJobIds: ['drw-old'], requeued: 0 });
+    await store.recoverUndeliveredNotifications({
+      since: '2026-08-01T00:00:00.000Z', limit: 10, apply: true, expectedCandidateJobIds: ['drw-old'],
+    });
+    expect(await store.pendingSms()).toEqual(expect.arrayContaining([expect.objectContaining({ jobId: 'drw-old' })]));
     const verification = await runPostingIdentityRepair(db);
     expect(verification).toMatchObject({ duplicateJobs: 0, expectedChanges: 0, conflicts: [] });
   });

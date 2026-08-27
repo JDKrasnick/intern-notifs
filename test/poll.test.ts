@@ -165,6 +165,24 @@ describe('polling', () => {
     expect(job.applyUrl).toBe('https://lifeattiktok.com/search/7623166667125508357');
     expect(job.sourceReferences[0].applyUrl).toBe(job.applyUrl);
   });
+  it.each([
+    [
+      'Workday',
+      'https://micron.wd1.myworkdayjobs.com/External/job/Boise/Intern_JR108448',
+      'https://micron.wd5.myworkdayjobs.com/en-US/External/job/Intern_JR108448',
+    ],
+    [
+      'ByteDance',
+      'https://lifeattiktok.com/search/7672883129493948677',
+      'https://jobs.bytedance.com/en/position/7672883129493948677/detail',
+    ],
+  ])('converges exact %s provider routes during ingestion', async (_provider, first, second) => {
+    const store = new MemoryInternshipStore();
+    await new Poller([new Adapter('one', [listing(first)])], store).poll();
+    await new Poller([new Adapter('two', [listing(second, 'two')])], store).poll();
+    expect(store.jobs.size).toBe(1);
+    expect([...store.jobs.values()][0]?.sourceReferences.map((reference) => reference.sourceId)).toEqual(['one', 'two']);
+  });
   it('retains a checkpoint when an established adapter suddenly returns zero rows', async () => {
     const store = new MemoryInternshipStore(); const initial = new Adapter('one', [listing('https://jobs.example.com/a')]); await new Poller([initial], store).poll();
     const report = await new Poller([new Adapter('one', [])], store).poll();

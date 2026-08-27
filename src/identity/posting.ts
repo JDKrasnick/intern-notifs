@@ -122,7 +122,11 @@ export function buildPostingIdentity(input: BuildPostingIdentityInput): PostingI
     tenant: input.providerEvidence.tenant.toLowerCase(),
     postingId: input.providerEvidence.postingId.toLowerCase(),
   } satisfies ProviderPostingReference : undefined;
-  const references = [explicitReference, ...(input.reviewedProviderReferences ?? [])]
+  // Greenhouse and Lever references require connector/checkpoint evidence, but
+  // the other exact route contracts remain safe to derive from their URLs.
+  const exactRouteReferences = urls.map(providerPostingReference)
+    .filter((candidate) => candidate.provider !== 'greenhouse' && candidate.provider !== 'lever');
+  const references = [explicitReference, ...(input.reviewedProviderReferences ?? []), ...exactRouteReferences]
     .filter((candidate): candidate is ProviderPostingReference => Boolean(candidate?.postingId));
   const reference = references[0] ?? { provider: 'unknown' as const };
   const aliases: PostingAlias[] = [];

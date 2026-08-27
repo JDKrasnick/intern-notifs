@@ -231,10 +231,21 @@ export class D1InternshipStore implements InternshipStore {
     expectedCandidateJobIds?: string[];
   }): Promise<{ candidates: number; candidateJobIds: string[]; requeued: number }> {
     const result = await this.db.prepare(`
-      SELECT json_extract(event.value, '$.jobId') AS jobId
+      SELECT COALESCE(
+        json_extract(alias.value, '$.canonicalJobId'),
+        json_extract(event.value, '$.jobId')
+      ) AS jobId
       FROM catalog_items AS event
+      LEFT JOIN catalog_items AS alias
+        ON alias.pk = 'JOB_ID_ALIAS#' || json_extract(event.value, '$.jobId')
+        AND alias.sk = 'TARGET'
+        AND alias.kind = 'job-id-alias'
       JOIN catalog_items AS job
-        ON job.pk = 'JOB#' || json_extract(event.value, '$.jobId') AND job.sk = 'META'
+        ON job.pk = 'JOB#' || COALESCE(
+          json_extract(alias.value, '$.canonicalJobId'),
+          json_extract(event.value, '$.jobId')
+        )
+        AND job.sk = 'META'
       WHERE event.kind = 'notification-event'
         AND json_extract(event.value, '$.createdAt') >= ?
         AND job.kind = 'internship'
@@ -243,7 +254,10 @@ export class D1InternshipStore implements InternshipStore {
         AND NOT EXISTS (
           SELECT 1 FROM user_items AS receipt
           WHERE receipt.kind = 'receipt'
-            AND json_extract(receipt.value, '$.jobId') = json_extract(event.value, '$.jobId')
+            AND json_extract(receipt.value, '$.jobId') = COALESCE(
+              json_extract(alias.value, '$.canonicalJobId'),
+              json_extract(event.value, '$.jobId')
+            )
         )
       GROUP BY job.pk
       ORDER BY MAX(json_extract(event.value, '$.createdAt')) DESC, job.pk ASC
