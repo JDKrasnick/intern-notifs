@@ -54,7 +54,8 @@ function meaningfulWords(value: string): string[] {
 function containsIdentity(text: string, value: string | undefined): boolean {
   if (!value) return false;
   const identity = normalized(value);
-  return identity.length >= 3 && normalized(text).includes(identity);
+  if (identity.length < 3) return false;
+  return ` ${normalized(text)} `.includes(` ${identity} `);
 }
 
 function postingSignals(identity: PostingIdentity | undefined, text: string) {
@@ -71,12 +72,14 @@ function postingSignals(identity: PostingIdentity | undefined, text: string) {
 function candidate(metadata: GmailMetadata, job: Internship): GmailDetectionCandidate | undefined {
   const text = `${metadata.sender} ${metadata.subject}`;
   const subject = normalized(metadata.subject);
+  const textWords = new Set(normalized(text).split(' ').filter(Boolean));
+  const subjectWords = new Set(subject.split(' ').filter(Boolean));
   const companyWords = meaningfulWords(job.company);
   const titleWords = meaningfulWords(job.title);
-  const company = companyWords.length > 0 && companyWords.every((word) => normalized(text).includes(word));
+  const company = companyWords.length > 0 && companyWords.every((word) => textWords.has(word));
   const distinctiveTitleWords = titleWords.filter((word) => word.length >= 4);
   const title = distinctiveTitleWords.length > 0
-    && distinctiveTitleWords.filter((word) => subject.includes(word)).length >= Math.min(2, distinctiveTitleWords.length);
+    && distinctiveTitleWords.filter((word) => subjectWords.has(word)).length >= Math.min(2, distinctiveTitleWords.length);
   const posting = postingSignals(job.postingIdentity, text);
   const signals: GmailDetectionCandidate['signals'] = [];
   if (company) signals.push('employer');
@@ -117,6 +120,7 @@ export function matchClickedGmailApplication(metadata: GmailMetadata, clickedRol
   const result = matchGmailApplication(metadata, clickedRoles);
   if (result.outcome !== 'review' || result.candidates.length !== 1) return result;
   const only = result.candidates[0]!;
+  if (!only.signals.some((signal) => signal === 'employer' || signal === 'provider-tenant' || signal === 'requisition-id')) return result;
   return {
     outcome: 'applied',
     candidate: only,

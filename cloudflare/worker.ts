@@ -841,6 +841,17 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
         message.ack();
       } catch (error) {
         const failure = await recordGmailFailure(body.userId, error, env);
+        console.error(JSON.stringify({
+          event: 'gmail_work_failed',
+          messageId: message.id,
+          mode: body.mode,
+          advanceChecks: body.advanceChecks === true,
+          retry: failure.retry,
+          retryDelaySeconds: failure.delaySeconds,
+          error: error instanceof Error ? error.message : String(error),
+          status: (error as { status?: unknown }).status ?? null,
+          googleStatus: (error as { googleStatus?: unknown }).googleStatus ?? null,
+        }));
         if (failure.retry) message.retry({ delaySeconds: failure.delaySeconds });
         else message.ack();
       }

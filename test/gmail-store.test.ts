@@ -181,8 +181,11 @@ describe('Gmail credential and state storage', () => {
       if (url.endsWith('/gmail/v1/users/me/profile')) return Response.json({ emailAddress: 'student@example.com', historyId: 'history-before-scan' });
       if (url.includes('/gmail/v1/users/me/messages?')) return Response.json({ messages: [] });
       if (url.includes('/gmail/v1/users/me/history?')) return Response.json({
-        history: [{ messagesAdded: [{ message: { id: 'arrived-during-scan' } }] }], historyId: 'history-after-scan',
+        history: [{ messagesAdded: [{ message: { id: 'vanished-message' } }, { message: { id: 'arrived-during-scan' } }] }], historyId: 'history-after-scan',
       });
+      if (url.includes('/gmail/v1/users/me/messages/vanished-message?')) return Response.json(
+        { error: { status: 'NOT_FOUND' } }, { status: 404 },
+      );
       if (url.includes('/gmail/v1/users/me/messages/arrived-during-scan?')) return Response.json({
         id: 'arrived-during-scan', internalDate: String(now.getTime()), labelIds: ['INBOX'],
         payload: { headers: [

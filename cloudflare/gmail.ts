@@ -368,7 +368,8 @@ async function googleJson<T>(url: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(url, init);
   const value = await response.json().catch(() => ({})) as T & { error?: { message?: string; status?: string } | string };
   if (!response.ok) {
-    const error = new Error(`Google API request failed (${response.status})`) as Error & { status?: number; googleStatus?: string };
+    const endpoint = new URL(url);
+    const error = new Error(`Google API request failed (${response.status}) at ${endpoint.hostname}${endpoint.pathname}`) as Error & { status?: number; googleStatus?: string };
     error.status = response.status;
     error.googleStatus = typeof value.error === 'object' ? value.error?.status : value.error;
     throw error;
@@ -427,7 +428,17 @@ async function processMessage(userId: string, messageId: string, token: string, 
   const config = requireGmailConfig(env); const store = new GmailStore(env.DB);
   const messageKey = await hmac(`${userId}:${messageId}`, config.messageSecret);
   if (await store.processed(userId, messageKey)) return { olderThanBoundary: false };
-  const message = await gmailGet<GmailMessage>(`/messages/${encodeURIComponent(messageId)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, token);
+  let message: GmailMessage;
+  try {
+    message = await gmailGet<GmailMessage>(`/messages/${encodeURIComponent(messageId)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, token);
+  } catch (error) {
+    // A message can leave the mailbox between history/list and metadata fetch.
+    // Treat that race as processed so one vanished message cannot block every
+    // later Apply confirmation in the account.
+    if ((error as { status?: number }).status !== 404) throw error;
+    await store.markProcessed(userId, messageKey, now);
+    return { olderThanBoundary: false };
+  }
   const metadata = metadataFrom(message);
   if (!metadata) { await store.markProcessed(userId, messageKey, now); return { olderThanBoundary: false }; }
   const earliestClick = Math.min(...clickedRoles.map(({ check }) => Date.parse(check.clicked_at)));

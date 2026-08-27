@@ -54,6 +54,30 @@ describe('Gmail application matcher', () => {
     expect(result).toMatchObject({ outcome: 'review' });
   });
 
+  it.each([
+    role({ company: 'ING', postingIdentity: { provider: 'greenhouse', tenant: 'ing', providerPostingId: '12345', canonicalApplicationUrl: 'https://boards.greenhouse.io/ing/jobs/12345', canonicalJobId: 'job-1', aliases: [] } }),
+    role({ company: 'Exa', postingIdentity: { provider: 'greenhouse', tenant: 'exa', providerPostingId: '12345', canonicalApplicationUrl: 'https://boards.greenhouse.io/exa/jobs/12345', canonicalJobId: 'job-1', aliases: [] } }),
+  ])('does not match short employer identities inside unrelated words or domains', (clickedRole) => {
+    const result = matchClickedGmailApplication(
+      metadata('Thank you for applying to Software Engineering Intern', 'Recruiting <unrelated@example.com>'),
+      [clickedRole],
+    );
+    expect(result.outcome).toBe('review');
+  });
+
+  it('still applies a SpaceX confirmation to the clicked SpaceX role', () => {
+    const spacex = role({
+      company: 'SpaceX',
+      title: 'Summer 2027 Software Engineering Internship/Co-op',
+      postingIdentity: { provider: 'greenhouse', tenant: 'spacex', providerPostingId: '8621757002', canonicalApplicationUrl: 'https://job-boards.greenhouse.io/spacex/jobs/8621757002', canonicalJobId: 'job-1', aliases: [] },
+    });
+    const result = matchClickedGmailApplication(metadata(
+      'Thank you for applying to SpaceX Summer 2027 Software Engineering Internship/Co-op',
+      'SpaceX Recruiting <notifications@greenhouse-mail.io>',
+    ), [spacex]);
+    expect(result).toMatchObject({ outcome: 'applied', candidate: { jobId: 'job-1' } });
+  });
+
   it.each(['Interview invitation — Northstar Labs', 'Complete your coding assessment', 'New job alert from Northstar Labs', 'Your application was rejected'])(
     'excludes stage and alert mail: %s', (subject) => expect(matchGmailApplication(metadata(subject), [role()]).outcome).toBe('ignore'),
   );
