@@ -7,12 +7,13 @@ import { parseQuantInternshipMarkdown } from '../src/sources/quant.js';
 import { acmeSource, technicalInternship } from './fixtures/greenhouse.js';
 
 const fetchedAt = '2026-07-29T12:00:00.000Z';
+const leverPostingId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
 const leverPosting = {
-  id: 'lever-role-1',
+  id: leverPostingId,
   text: 'Software Engineering Intern, Summer 2027',
-  applyUrl: 'https://jobs.lever.co/acme/lever-role-1/apply',
-  hostedUrl: 'https://jobs.lever.co/acme/lever-role-1',
+  applyUrl: `https://jobs.lever.co/acme/${leverPostingId}/apply`,
+  hostedUrl: `https://jobs.lever.co/acme/${leverPostingId}`,
   descriptionPlain: 'Applicants must be a U.S. citizen. Pays $40-$50/hour.',
   createdAt: 1_783_072_000_000,
   categories: { location: 'New York, NY', commitment: 'Internship' },
@@ -24,14 +25,14 @@ describe('legacy ingestion characterization', () => {
   it('preserves the exact Lever listing boundary', () => {
     expect(mapLeverPosting(leverPosting, leverOptions, fetchedAt, 7)).toEqual({
       sourceId: 'lever-acme',
-      document: 'lever-role-1',
+      document: leverPostingId,
       sourceUrl: 'https://api.lever.co/v0/postings/acme?mode=json',
       row: 7,
       company: 'Acme',
       title: 'Software Engineering Intern, Summer 2027',
       location: 'New York, NY',
       season: 'summer-2027',
-      applyUrl: 'https://jobs.lever.co/acme/lever-role-1/apply',
+      applyUrl: `https://jobs.lever.co/acme/${leverPostingId}/apply`,
       compensation: { raw: '$40-$50/hour', minHourlyUSD: 40, maxHourlyUSD: 50 },
       requirements: { requiresUsCitizenship: true, advancedDegreeRequired: false },
       state: 'open',
@@ -118,6 +119,7 @@ describe('neutral boundary parity', () => {
     externalId: expect.any(String) as unknown as string,
     provenance: 'official-ats' as const,
     technical: true,
+    providerEvidence: expect.any(Object) as unknown as object,
     internshipIdentity: expect.any(Object) as unknown as object,
   };
 
@@ -129,7 +131,7 @@ describe('neutral boundary parity', () => {
     expect(processed).toEqual({
       ...legacy,
       ...additions,
-      externalId: 'lever-role-1', locations: ['New York, NY'],
+      externalId: leverPostingId, locations: ['New York, NY'],
     });
   });
 

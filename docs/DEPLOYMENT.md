@@ -272,45 +272,67 @@ baseline roles. Also verify a signed-in opening interval does not return any
 repaired baseline job IDs. Production execution is an operator action separate
 from deployment and this code change.
 
-### Posting identity, receipt, and grouped-catalog migration
+### Posting identity D1 repair
 
-Run this guarded migration before enabling the grouped notification stream for
-existing users. It scans open catalog roles and every retained delivery receipt,
-claims only exact provider/URL aliases, consolidates exact duplicate open rows,
-rewrites affected source-occurrence job IDs, and copies receipt tombstones to
-the hardened posting key. It also indexes existing opted-in preferences for the
-grouped release workers. The migration never creates an outbox event and never
-sends a notification.
+Deploy the runtime identity support first. Greenhouse and Lever workers then
+retain reviewed board/site and immutable public posting evidence, while legacy
+IDs can resolve through permanent one-hop aliases after consolidation. The
+operational repair runs only against active D1; retained DynamoDB resources are
+rollback/export sources and must not receive this repair.
 
-Validate the assumed role first, then export both physical table names. The
-default command is read-only:
-
-```bash
-AWS_PROFILE=intern-notifs aws sts get-caller-identity
-export AWS_PROFILE=intern-notifs
-export INTERNSHIPS_TABLE="$(aws cloudformation describe-stacks --stack-name InternNotifs --query 'Stacks[0].Outputs[?OutputKey==`InternshipsTableName`].OutputValue | [0]' --output text)"
-export USERS_TABLE="$(aws cloudformation describe-stacks --stack-name InternNotifs --query 'Stacks[0].Outputs[?OutputKey==`UserDataTableName`].OutputValue | [0]' --output text)"
-AWS_PROFILE=intern-notifs npm run migrate:posting-identity
-```
-
-Review every reported conflict and the exact duplicate count. Do not apply with
-any conflicts. Apply only with the deterministic token from that same dry run:
+The default command calls the protected Worker endpoint in read-only mode. It
+builds identity from reviewed source occurrences, provider IDs, and active
+checkpoints rather than trusting a stored application URL by itself:
 
 ```bash
-AWS_PROFILE=intern-notifs npm run migrate:posting-identity -- \
-  --apply --expected-repair-token EXACT_TOKEN
+export CATALOG_API_URL=https://intern-notifs.jdkrasnick.workers.dev
+export OPERATIONS_SHARED_SECRET='use-the-deployed-operations-secret'
+npm run migrate:posting-identity
 ```
 
-The apply is idempotent: alias claims converge on the preserved oldest job,
-colliding receipt rows select the strongest delivery tombstone deterministically,
-and legacy receipt rows remain available during rollback. Application collisions
-retain the furthest workflow state rather than allowing a newer saved/applied
-alias to erase interview or offer progress. Catalog rewrites and duplicate
-deletes are conditional on the dry-run snapshot, so concurrent ingestion stops
-the apply and requires a fresh token instead of being overwritten. After the infrastructure deployment,
-wait for `CatalogGroupProjectionSchedule` or invoke the notifier once with
-`{"command":"refresh-catalog-groups"}`. Verify `GET /catalog?limit=1` and one
-returned `/catalog/groups/{groupId}` before enabling an owner cohort.
+Save the complete report. It exposes disagreements in employer identity/name,
+title, location, destination URL, and the future #120 admission state/reasons.
+Provider identity does not choose any of those fields. Do not apply while
+`presentationDisagreements` is non-empty; the endpoint also refuses that apply.
+Keep the production dry run for the combined #50/#120 review.
+
+Only a dry run with zero conflicts and zero unresolved presentation groups may
+be applied, using all three exact guards copied from that report:
+
+```bash
+npm run migrate:posting-identity -- --apply \
+  --repair-token EXACT_TOKEN \
+  --expected-changes EXACT_COUNT \
+  --expected-duplicate-jobs EXACT_COUNT
+```
+
+For eligible groups whose presentation already agrees, the repair preserves the
+oldest catalog job, merges source references,
+visibility/observation dates, open and notification state, remaps source
+occurrences, applications, sessions, receipts, catalog releases, and employer
+field proposals, and retains the furthest application status plus all distinct
+notes. Exact before-images are staged; a transaction guard refuses concurrent
+changes. No notification/outbox row is inserted or rewritten. A successful
+apply rebuilds the grouped catalog projection and returns a verification dry
+run.
+
+After #120 provides a reviewed employer/metadata/destination/admission decision,
+run the combined reviewed repair and quarantine any group it leaves unresolved.
+Run the standalone dry run again and require `eligibleDuplicateJobs: 0`,
+`expectedChanges: 0`, and no conflicts. Unresolved identity matches remain in
+`duplicateJobs` until #120 resolves them; they must not be silently
+consolidated. Record notification/outbox counts before and after and require
+them to be unchanged. Verify both canonical and sampled
+legacy job IDs through `GET /jobs/{jobId}`, representative Greenhouse standard,
+`gh_jid`, DRW/Roblox custom-host, and Lever hosted/`apply` URLs, saved
+applications, releases, `GET /catalog?limit=1`, and one returned
+`/catalog/groups/{groupId}`. Never put the operations secret in Git,
+documentation, or shell history.
+
+After the infrastructure deployment, wait for `CatalogGroupProjectionSchedule`
+or invoke the notifier once with `{"command":"refresh-catalog-groups"}`. Verify
+`GET /catalog?limit=1` and one returned `/catalog/groups/{groupId}` before
+enabling an owner cohort.
 Set the deployment parameter to a comma-separated list of reviewed Cognito user
 IDs for that cohort. The main stack publishes the same versioned cohort to
 `/intern-notifs/grouped-notification-user-ids`; the Greenhouse, Lever, and Ashby

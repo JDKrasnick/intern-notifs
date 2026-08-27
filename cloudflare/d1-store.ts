@@ -189,7 +189,14 @@ export class D1InternshipStore implements InternshipStore {
   async putInternship(job: Internship): Promise<void> {
     await this.internshipStatement(job).run();
   }
-  getJob(jobId: string) { return this.get<Internship>(`JOB#${jobId}`, 'META').then((job) => job && withEmployerCategory(job)); }
+  async getJob(jobId: string) {
+    const direct = await this.get<Internship>(`JOB#${jobId}`, 'META');
+    if (direct) return withEmployerCategory(direct);
+    const alias = await this.get<{ canonicalJobId: string }>(`JOB_ID_ALIAS#${jobId}`, 'TARGET');
+    if (!alias?.canonicalJobId || alias.canonicalJobId === jobId) return undefined;
+    const canonical = await this.get<Internship>(`JOB#${alias.canonicalJobId}`, 'META');
+    return canonical && withEmployerCategory(canonical);
+  }
   async getSourceOccurrences(sourceId: string): Promise<SourceOccurrenceState[]> {
     const result = await this.db.prepare("SELECT value FROM catalog_items WHERE pk = ? AND sk LIKE 'OCCURRENCE#%'").bind(`SOURCE#${sourceId}`).all<JsonRow>();
     return result.results.map((row) => JSON.parse(row.value) as SourceOccurrenceState);

@@ -1,0 +1,20 @@
+const args = new Set(process.argv.slice(2));
+const value = (name: string) => process.argv[process.argv.indexOf(name) + 1];
+const apply = args.has('--apply');
+const repairToken = args.has('--repair-token') ? value('--repair-token') : undefined;
+const expectedChanges = args.has('--expected-changes') ? Number(value('--expected-changes')) : undefined;
+const expectedDuplicateJobs = args.has('--expected-duplicate-jobs') ? Number(value('--expected-duplicate-jobs')) : undefined;
+if (apply && (!repairToken || !Number.isSafeInteger(expectedChanges) || !Number.isSafeInteger(expectedDuplicateJobs))) {
+  throw new Error('--apply requires --repair-token, --expected-changes, and --expected-duplicate-jobs');
+}
+const baseUrl = process.env.CATALOG_API_URL ?? 'https://intern-notifs.jdkrasnick.workers.dev';
+const secret = process.env.OPERATIONS_SHARED_SECRET;
+if (!secret) throw new Error('OPERATIONS_SHARED_SECRET is required');
+const response = await fetch(`${baseUrl.replace(/\/$/u, '')}/internal/posting-identity-repair`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'X-Operations-Key': secret },
+  body: JSON.stringify({ apply, repairToken, expectedChanges, expectedDuplicateJobs }),
+});
+const body = await response.text();
+console.log(body);
+if (!response.ok) process.exitCode = 1;

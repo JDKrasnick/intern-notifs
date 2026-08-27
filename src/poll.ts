@@ -3,7 +3,8 @@ import { assessApplicationPageForListing, canonicalApplicationUrl, type Applicat
 import { boardReference, reachabilityFromFailure, reachabilityFromSignals, verifyApplication, type AttributionBasis, type Reachability } from './core/application-verification.js';
 import { inferSeason, isPastSeason } from './core/early-career.js';
 import { normalizeUrl } from './core/normalize.js';
-import { buildPostingIdentity } from './identity/posting.js';
+import { buildPostingIdentity, type ProviderPostingReference } from './identity/posting.js';
+import { reviewedProviderEvidenceError, reviewedProviderUrlReference } from './identity/reviewed-provider.js';
 import { isTechnicalJob, type JobFilter } from './core/filters.js';
 import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
 import { evaluateSourceFreshness } from './ingestion/monitoring.js';
@@ -316,23 +317,48 @@ export class IngestionRunner {
   private readonly boardIndex = reviewedBoardIndex();
   private readonly boardActiveIds = new Map<string, Promise<Set<string>>>();
 
-  /**
-   * A posting served by a reviewed connector is attributed by its own URL
-   * contract. A posting merely referenced by a list is attributed when the board
-   * it points at is one this catalog polls and that board's checkpoint still
-   * lists it — evidence already held, so no employer request is made.
-   */
-  private async attribute(listing: ProcessedListing): Promise<AttributionBasis> {
-    if ([...this.boardIndex.values()].includes(listing.sourceId)) return 'provider-api';
-    const reference = boardReference(listing.applyUrl);
-    const sourceId = reference && this.boardIndex.get(`${reference.provider}:${reference.token}`);
-    if (!reference || !sourceId) return 'unattributed';
+  private activePostingIds(sourceId: string): Promise<Set<string>> {
     if (!this.boardActiveIds.has(sourceId)) {
       this.boardActiveIds.set(sourceId, this.store.getCheckpoint(sourceId)
         .then((checkpoint) => new Set(checkpoint?.activeExternalIds ?? []))
         .catch(() => new Set<string>()));
     }
-    return (await this.boardActiveIds.get(sourceId)!).has(reference.postingId) ? 'reviewed-board' : 'unattributed';
+    return this.boardActiveIds.get(sourceId)!;
+  }
+
+  private async reviewedReferences(listing: ProcessedListing): Promise<ProviderPostingReference[]> {
+    if (listing.providerEvidence) {
+      const error = reviewedProviderEvidenceError(listing.providerEvidence);
+      if (error) throw new Error(error);
+    }
+    const references: ProviderPostingReference[] = [];
+    const urls = [listing.applyUrl, ...(listing.providerEvidence?.urls ?? [])];
+    for (const url of urls) {
+      const result = reviewedProviderUrlReference(url);
+      if (result.outcome === 'conflict') throw new Error(result.reason);
+      if (result.outcome !== 'match') continue;
+      const direct = listing.providerEvidence?.sourceId === result.reference.sourceId;
+      if (direct || listing.providerEvidence || (await this.activePostingIds(result.reference.sourceId)).has(result.reference.postingId)) {
+        references.push(result.reference);
+      }
+    }
+    return references;
+  }
+
+  /** Provider existence and destination validity are separate facts. Attribution
+   * requires an exact hosted/apply route; a provider ID on a generic custom page
+   * is still inspected like any other destination. */
+  private async attribute(listing: ProcessedListing): Promise<AttributionBasis> {
+    const reference = boardReference(listing.applyUrl);
+    const sourceId = reference && this.boardIndex.get(`${reference.provider}:${reference.token}`);
+    if (!reference || !sourceId) return 'unattributed';
+    const evidence = listing.providerEvidence;
+    if (evidence
+      && evidence.provider === reference.provider
+      && evidence.tenant.toLowerCase() === reference.token
+      && evidence.postingId.toLowerCase() === reference.postingId.toLowerCase()
+      && evidence.sourceId === sourceId) return 'provider-api';
+    return (await this.activePostingIds(sourceId)).has(reference.postingId) ? 'reviewed-board' : 'unattributed';
   }
 
   private async resolveListings(listings: ProcessedListing[], report: PollReport) {
@@ -357,7 +383,12 @@ export class IngestionRunner {
       let validatingLink = false;
       try {
         const normalizedUrl = normalizeUrl(listing.applyUrl);
-        const identity = buildPostingIdentity({ applicationUrl: listing.applyUrl });
+        const reviewedProviderReferences = await this.reviewedReferences(listing);
+        const identity = buildPostingIdentity({
+          applicationUrl: listing.applyUrl,
+          ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
+          reviewedProviderReferences,
+        });
         // A legacy row may be adopted only through its exact canonical URL.
         // Title/location fingerprints are search hints, not proof that two
         // employer requisitions are the same posting.

@@ -41,6 +41,7 @@ function occurrence(listing: ProcessedListing, externalId: string): SourceOccurr
     sourceId: listing.sourceId,
     ...(listing.provenance ? { provenance: listing.provenance } : {}),
     externalId,
+    ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
     document: listing.document,
     sourceUrl: listing.sourceUrl,
     row: listing.row,

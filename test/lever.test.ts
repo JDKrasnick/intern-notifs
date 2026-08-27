@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { inferLeverSeason, LeverPostingsAdapter, leverRequirements, mapLeverPosting } from '../src/sources/lever.js';
 
+const postingId = (index: number) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
 const posting = {
-  id: 'job-1',
+  id: postingId(1),
   text: 'Software Engineering Intern, Summer 2027',
-  applyUrl: 'https://jobs.lever.co/acme/job-1/apply',
-  hostedUrl: 'https://jobs.lever.co/acme/job-1',
+  applyUrl: `https://jobs.lever.co/acme/${postingId(1)}/apply`,
+  hostedUrl: `https://jobs.lever.co/acme/${postingId(1)}`,
   descriptionPlain: 'Applicants must be a U.S. citizen. A master\'s degree is required.',
   createdAt: 1_783_072_000_000,
   categories: { location: 'New York, NY', commitment: 'Internship' },
@@ -17,9 +18,9 @@ describe('LeverPostingsAdapter', () => {
   it('maps direct application URLs, Lever metadata, requirements, and a named season', () => {
     const mapped = mapLeverPosting(posting, options, '2026-07-20T00:00:00.000Z', 3);
     expect(mapped).toMatchObject({
-      sourceId: 'lever-acme', document: 'job-1', sourceUrl: 'https://api.lever.co/v0/postings/acme?mode=json',
+      sourceId: 'lever-acme', document: postingId(1), sourceUrl: 'https://api.lever.co/v0/postings/acme?mode=json',
       row: 3, company: 'Acme', title: 'Software Engineering Intern, Summer 2027', location: 'New York, NY', season: 'summer-2027',
-      applyUrl: 'https://jobs.lever.co/acme/job-1/apply', postedAt: '2026-07-03T09:46:40.000Z', workMode: 'hybrid',
+      applyUrl: `https://jobs.lever.co/acme/${postingId(1)}/apply`, postedAt: '2026-07-03T09:46:40.000Z', workMode: 'hybrid',
       providerTimestamp: { value: '2026-07-03T09:46:40.000Z', semantics: 'published' },
       requirements: { requiresUsCitizenship: true, advancedDegreeRequired: true }
     });
@@ -56,9 +57,9 @@ describe('LeverPostingsAdapter', () => {
     const calls: RequestInit[] = [];
     const page = Array.from({ length: 100 }, (_, index) => ({
       ...posting,
-      id: `job-${index}`,
-      hostedUrl: `https://jobs.lever.co/acme/job-${index}`,
-      applyUrl: `https://jobs.lever.co/acme/job-${index}/apply`,
+      id: postingId(index),
+      hostedUrl: `https://jobs.lever.co/acme/${postingId(index)}`,
+      applyUrl: `https://jobs.lever.co/acme/${postingId(index)}/apply`,
     }));
     const adapter = new LeverPostingsAdapter({
       ...options,
@@ -75,9 +76,9 @@ describe('LeverPostingsAdapter', () => {
     const urls: string[] = [];
     const page = Array.from({ length: 100 }, (_, index) => ({
       ...posting,
-      id: `job-${index}`,
-      hostedUrl: `https://jobs.lever.co/acme/job-${index}`,
-      applyUrl: `https://jobs.lever.co/acme/job-${index}/apply`,
+      id: postingId(index),
+      hostedUrl: `https://jobs.lever.co/acme/${postingId(index)}`,
+      applyUrl: `https://jobs.lever.co/acme/${postingId(index)}/apply`,
     }));
     const adapter = new LeverPostingsAdapter({
       ...options,
@@ -85,9 +86,9 @@ describe('LeverPostingsAdapter', () => {
         urls.push(String(url));
         return new Response(JSON.stringify(urls.length === 1 ? page : [{
           ...posting,
-          id: 'job-100',
-          hostedUrl: 'https://jobs.lever.co/acme/job-100',
-          applyUrl: 'https://jobs.lever.co/acme/job-100/apply',
+          id: postingId(100),
+          hostedUrl: `https://jobs.lever.co/acme/${postingId(100)}`,
+          applyUrl: `https://jobs.lever.co/acme/${postingId(100)}/apply`,
         }]), { status: 200 });
       },
     });

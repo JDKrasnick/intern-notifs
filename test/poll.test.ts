@@ -4,6 +4,14 @@ import { Poller } from '../src/poll.js';
 import type { RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult } from '../src/types.js';
 
 const listing = (url: string, sourceId = 'one'): RawListing => ({ sourceId, document: 'README.md', sourceUrl: 'https://github.com/x', row: 5, company: 'Acme', title: 'Software Engineering Intern', location: 'NYC', season: 'summer-2027', applyUrl: url, compensation: { raw: '$40/hr', maxHourlyUSD: 40 }, state: 'open', fetchedAt: '2026-01-01T00:00:00Z' });
+const greenhouseListing = (postingId: string, url: string): RawListing => ({
+  ...listing(url, 'greenhouse-figma'), externalId: postingId, document: postingId,
+  providerEvidence: { provider: 'greenhouse', tenant: 'figma', postingId, sourceId: 'greenhouse-figma', urls: [url] },
+});
+const reviewedListing = (input: { provider: 'greenhouse' | 'lever'; tenant: string; postingId: string; sourceId: string; url: string }): RawListing => ({
+  ...listing(input.url, input.sourceId), externalId: input.postingId, document: input.postingId,
+  providerEvidence: { provider: input.provider, tenant: input.tenant, postingId: input.postingId, sourceId: input.sourceId, urls: [input.url] },
+});
 class Adapter implements SourceAdapter {
   constructor(readonly id: string, private readonly rows: RawListing[]) {}
   async fetch(previous?: SourceCheckpoint): Promise<SourceFetchResult> { return { sourceId: this.id, listings: this.rows, notModified: false, checkpoint: { sourceId: this.id, successfulFetches: (previous?.successfulFetches ?? 0) + 1, lastRowCount: this.rows.length } }; }
@@ -70,20 +78,85 @@ describe('polling', () => {
   });
   it('keeps distinct provider requisitions even when every display field matches', async () => {
     const store = new MemoryInternshipStore();
-    await new Poller([new Adapter('one', [listing('https://job-boards.greenhouse.io/acme/jobs/100')])], store).poll();
-    await new Poller([new Adapter('two', [listing('https://job-boards.greenhouse.io/acme/jobs/101', 'two')])], store).poll();
+    await new Poller([new Adapter('greenhouse-figma', [greenhouseListing('100', 'https://job-boards.greenhouse.io/figma/jobs/100')])], store).poll();
+    await new Poller([new Adapter('greenhouse-figma', [greenhouseListing('101', 'https://job-boards.greenhouse.io/figma/jobs/101')])], store).poll();
     expect(store.jobs.size).toBe(2);
     expect([...store.jobs.values()].map((job) => job.postingIdentity?.providerPostingId).sort()).toEqual(['100', '101']);
   });
   it('converges reviewed URL variants on one provider posting identity', async () => {
     const store = new MemoryInternshipStore();
-    await new Poller([new Adapter('one', [listing('https://boards.greenhouse.io/acme?gh_jid=100')])], store).poll();
-    await new Poller([new Adapter('two', [listing('https://job-boards.greenhouse.io/acme/jobs/100', 'two')])], store).poll();
+    await new Poller([new Adapter('greenhouse-figma', [greenhouseListing('100', 'https://boards.greenhouse.io/figma?gh_jid=100')])], store).poll();
+    await new Poller([new Adapter('community', [listing('https://job-boards.greenhouse.io/figma/jobs/100', 'community')])], store).poll();
     expect(store.jobs.size).toBe(1);
     expect([...store.jobs.values()][0]).toMatchObject({
-      postingIdentity: { provider: 'greenhouse', tenant: 'acme', providerPostingId: '100' },
-      sourceReferences: [{ sourceId: 'one' }, { sourceId: 'two' }],
+      postingIdentity: { provider: 'greenhouse', tenant: 'figma', providerPostingId: '100' },
+      sourceReferences: [{ sourceId: 'greenhouse-figma' }, { sourceId: 'community' }],
     });
+  });
+  it('converges historical DRW custom and standard routes only after the active public ID confirms them', async () => {
+    const store = new MemoryInternshipStore();
+    await new Poller([new Adapter('greenhouse-drweng', [reviewedListing({ provider: 'greenhouse', tenant: 'drweng', postingId: '3413670', sourceId: 'greenhouse-drweng', url: 'https://job-boards.greenhouse.io/drweng/jobs/3413670' })])], store).poll();
+    await new Poller([new Adapter('community', [listing('https://www.drw.com/work-at-drw/listings/quantitative-research-intern-3413670?utm_source=community', 'community')])], store).poll();
+    expect(store.jobs.size).toBe(1);
+    expect([...store.jobs.values()][0]).toMatchObject({ postingIdentity: { tenant: 'drweng', providerPostingId: '3413670' }, sourceReferences: [{ sourceId: 'greenhouse-drweng' }, { sourceId: 'community' }] });
+  });
+  it('converges the historical PlusAI Lever hosted/apply pair', async () => {
+    const store = new MemoryInternshipStore(); const id = 'b4f750e7-0148-41f0-b2b1-ff054450a320';
+    await new Poller([new Adapter('lever-plusai', [reviewedListing({ provider: 'lever', tenant: 'plus-2', postingId: id, sourceId: 'lever-plusai', url: `https://jobs.lever.co/plus-2/${id}/apply` })])], store).poll();
+    await new Poller([new Adapter('community', [listing(`https://jobs.lever.co/plus-2/${id}?ref=community`, 'community')])], store).poll();
+    expect(store.jobs.size).toBe(1);
+    expect([...store.jobs.values()][0]?.postingIdentity).toMatchObject({ provider: 'lever', tenant: 'plus-2', providerPostingId: id });
+  });
+  it('does not infer a provider identity for an inactive custom-host public ID', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putCheckpoint({ sourceId: 'greenhouse-drweng', successfulFetches: 1, activeExternalIds: ['3413670'] });
+    await new Poller([new Adapter('community', [listing('https://www.drw.com/work-at-drw/listings/software-developer-intern-9999999', 'community')])], store).poll();
+    expect([...store.jobs.values()][0]?.postingIdentity).toMatchObject({ provider: 'unknown' });
+  });
+  it('uses a reviewed custom-host ID for identity without treating a generic destination as alert eligible', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putCheckpoint({ sourceId: 'greenhouse-drweng', successfulFetches: 1, activeExternalIds: ['3413670'], lastRowCount: 1 });
+    const generic = reviewedListing({
+      provider: 'greenhouse',
+      tenant: 'drweng',
+      postingId: '3413670',
+      sourceId: 'greenhouse-drweng',
+      url: 'https://www.drw.com/open-roles?gh_jid=3413670',
+    });
+    const inspected: string[] = [];
+    const report = await new Poller(
+      [new Adapter('greenhouse-drweng', [generic])],
+      store,
+      undefined,
+      undefined,
+      async (url) => {
+        inspected.push(url);
+        return {
+          url,
+          evidence: {
+            url,
+            title: 'Open roles',
+            confidence: { score: 50, level: 'medium', recommendation: 'catalog-only', signals: ['destination reached'] },
+          },
+        };
+      },
+    ).poll();
+    expect(inspected).not.toHaveLength(0);
+    expect(new Set(inspected)).toEqual(new Set([generic.applyUrl]));
+    expect(report.newJobs).toEqual([]);
+    expect(report.filteredJobs).toHaveLength(1);
+    expect([...store.jobs.values()][0]).toMatchObject({
+      company: 'Acme',
+      postingIdentity: { provider: 'greenhouse', tenant: 'drweng', providerPostingId: '3413670' },
+      notification: { smsPending: false, digestPending: false },
+    });
+  });
+  it('quarantines direct provider evidence whose reviewed route points at another board', async () => {
+    const store = new MemoryInternshipStore();
+    const mismatched = reviewedListing({ provider: 'greenhouse', tenant: 'figma', postingId: '123', sourceId: 'greenhouse-figma', url: 'https://job-boards.greenhouse.io/spacex/jobs/123' });
+    const report = await new Poller([new Adapter('greenhouse-figma', [mismatched])], store).poll();
+    expect(store.jobs.size).toBe(0);
+    expect(report.failures).toEqual([expect.stringContaining('provider-scope-mismatch')]);
   });
   it('persists TikTok source aliases as their canonical job URL', async () => {
     const store = new MemoryInternshipStore();

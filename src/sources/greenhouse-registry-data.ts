@@ -51,7 +51,7 @@ const apiProbedBoards: Array<{
   { token: "docugami", name: "Docugami", initialHosts: ["job-boards.greenhouse.io"], finalHosts: ["job-boards.greenhouse.io"] },
   { token: "doubleverify", name: "DoubleVerify", initialHosts: ["job-boards.greenhouse.io"], finalHosts: ["job-boards.greenhouse.io"] },
   { token: "dropbox", name: "Dropbox", initialHosts: ["jobs.dropbox.com"], finalHosts: ["jobs.dropbox.com"] },
-  { token: "drweng", name: "DRW", initialHosts: ["job-boards.greenhouse.io"], finalHosts: ["job-boards.greenhouse.io"] },
+  { token: "drweng", name: "DRW", initialHosts: ["job-boards.greenhouse.io","drw.com"], finalHosts: ["job-boards.greenhouse.io","drw.com"] },
   { token: "engineersgate", name: "Engineers Gate", initialHosts: ["job-boards.greenhouse.io"], finalHosts: ["job-boards.greenhouse.io"] },
   { token: "enova", name: "Enova International", initialHosts: ["job-boards.greenhouse.io"], finalHosts: ["job-boards.greenhouse.io"] },
   { token: "eulerity", name: "Eulerity", initialHosts: ["job-boards.greenhouse.io"], finalHosts: ["job-boards.greenhouse.io"] },
