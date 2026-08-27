@@ -106,7 +106,14 @@ async function historicalDatabase(options: { presentationAgrees?: boolean } = {}
   const regularA = job('regular-a', 'https://careers.example.test/jobs/backend', '2026-08-04T00:00:00.000Z', [occurrence('community-list', 'regular-a', 'https://careers.example.test/jobs/backend')]);
   const regularB = job('regular-b', 'https://careers.example.test/jobs/frontend', '2026-08-04T00:00:00.000Z', [occurrence('community-list', 'regular-b', 'https://careers.example.test/jobs/frontend')]);
   for (const value of [plusOld, plusDuplicate, drwOld, drwDuplicate, spacexA, spacexB, regularA, regularB]) await store.putInternship(value);
-  await store.putSourceOccurrence({ sourceId: 'lever-plusai', externalId: plusId, jobId: 'plus-duplicate', occurrence: plusDuplicate.sourceReferences[0]!, present: true, consecutiveOmissions: 0, changedSnapshotHash: 'a', changedAt: '2026-08-01T13:44:06.281Z' });
+  // Historical occurrence rows predate providerEvidence. The repair must infer
+  // and merge it into the canonical job during the same pass that remaps this
+  // row, even when its occurrence key replaces a richer in-record reference.
+  await store.putSourceOccurrence({
+    sourceId: 'lever-plusai', externalId: plusId, jobId: 'plus-duplicate',
+    occurrence: occurrence('lever-plusai', plusId, `https://jobs.lever.co/plus-2/${plusId}/apply`),
+    present: true, consecutiveOmissions: 0, changedSnapshotHash: 'a', changedAt: '2026-08-01T13:44:06.281Z',
+  });
 
   const insertUser = sqlite.prepare('INSERT INTO user_items (user_id, item_key, kind, value) VALUES (?, ?, ?, ?)');
   insertUser.run('user-1', 'APPLICATION#saved', 'application', JSON.stringify({ applicationId: 'saved', jobId: 'plus-old', status: 'saved', notes: 'latest note', createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-04T00:00:00Z' }));
@@ -164,7 +171,14 @@ describe('D1 posting identity repair', () => {
     expect(dry).toMatchObject({ eligibleDuplicateGroups: 2, eligibleDuplicateJobs: 2, unresolvedDuplicateGroups: 0 });
     const applied = await runPostingIdentityRepair(db, { apply: true, repairToken: dry.repairToken, expectedChanges: dry.expectedChanges, expectedDuplicateJobs: dry.duplicateJobs });
     expect(applied).toMatchObject({ applied: true, projectionRefreshRequired: true });
-    expect(await store.getJob('plus-duplicate')).toMatchObject({ jobId: 'plus-old', open: true, notification: { smsPending: false, digestPending: false, smsSentAt: '2026-07-28T03:13:00.000Z', digestedAt: '2026-07-28T12:00:00.000Z' } });
+    expect(await store.getJob('plus-duplicate')).toMatchObject({
+      jobId: 'plus-old', open: true,
+      notification: { smsPending: false, digestPending: false, smsSentAt: '2026-07-28T03:13:00.000Z', digestedAt: '2026-07-28T12:00:00.000Z' },
+      sourceReferences: expect.arrayContaining([expect.objectContaining({
+        sourceId: 'lever-plusai',
+        providerEvidence: expect.objectContaining({ provider: 'lever', tenant: 'plus-2', postingId: plusId }),
+      })]),
+    });
     expect(await store.pendingSms()).not.toEqual(expect.arrayContaining([expect.objectContaining({ jobId: 'plus-old' })]));
     expect(await store.pendingDigest()).not.toEqual(expect.arrayContaining([expect.objectContaining({ jobId: 'plus-old' })]));
     expect(sqlite.prepare("SELECT COUNT(*) AS count FROM catalog_items WHERE kind = 'notification-event'").get()).toEqual({ count: 1 });

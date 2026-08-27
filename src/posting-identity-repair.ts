@@ -82,6 +82,12 @@ const latest = (values: string[]) => [...values].sort().at(-1)!;
 const firstSeen = (job: Internship) => job.firstSeenAt || job.catalogVisibleAt || job.lastSeenAt;
 const occurrenceKey = (value: SourceOccurrence) => `${value.sourceId}\0${value.externalId ?? ''}\0${value.document ?? ''}\0${value.row ?? ''}`;
 
+function withProviderEvidence(occurrence: SourceOccurrence): SourceOccurrence {
+  if (occurrence.providerEvidence || !occurrence.externalId) return occurrence;
+  const evidence = providerEvidenceForOccurrence(occurrence.sourceId, occurrence.externalId, [occurrence.applyUrl]);
+  return evidence ? { ...occurrence, providerEvidence: evidence } : occurrence;
+}
+
 function jobColumns(job: Internship): Partial<CatalogRow> {
   return {
     url_key: job.normalizedUrl,
@@ -233,7 +239,7 @@ export function postingIdentityRepairPlan(catalogRows: CatalogRow[], userRows: U
       job = parse<Internship>(row.value);
       job = { ...job, sourceReferences: [...new Map([
         ...job.sourceReferences, ...(occurrencesByJob.get(job.jobId) ?? []),
-      ].map((item) => [occurrenceKey(item), item])).values()] };
+      ].map(withProviderEvidence).map((item) => [occurrenceKey(item), item])).values()] };
     } catch { conflicts.push(`${row.pk}: malformed internship JSON`); continue; }
     const invalidEvidence = job.sourceReferences.flatMap((reference) => {
       if (!reference.providerEvidence) return [];
@@ -331,10 +337,8 @@ export function postingIdentityRepairPlan(catalogRows: CatalogRow[], userRows: U
       const canonical = canonicalByJobId.get(value.jobId);
       if (!canonical || canonical === value.jobId) continue;
       occurrenceRemaps += 1;
-      const evidence = value.occurrence.providerEvidence ?? (value.occurrence.externalId
-        ? providerEvidenceForOccurrence(value.occurrence.sourceId, value.occurrence.externalId, [value.occurrence.applyUrl]) : undefined);
       catalogWrites.push({ before: row, pk: row.pk, sk: row.sk, kind: row.kind, value: JSON.stringify({
-        ...value, jobId: canonical, occurrence: evidence ? { ...value.occurrence, providerEvidence: evidence } : value.occurrence,
+        ...value, jobId: canonical, occurrence: withProviderEvidence(value.occurrence),
       }) });
     } catch { /* Malformed occurrence JSON was reported while building reviewed evidence. */ }
   }
