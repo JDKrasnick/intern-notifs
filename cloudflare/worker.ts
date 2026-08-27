@@ -20,6 +20,7 @@ import { runCatalogQualityBackfill } from '../src/catalog-quality-backfill.js';
 import { cleanupExpiredUserData, D1InternshipStore, D1ReleaseStore, D1UserStore } from './d1-store.js';
 import { queueHasBacklog } from './queue-backlog.js';
 import type { MessageBatch, Queue, R2Bucket, ScheduledController } from './types.js';
+import { disconnectGmail, gmailApi, gmailCallback, GmailStore, processGmailWork, recordGmailFailure, type GmailWorkMessage } from './gmail.js';
 import { D1EmployerStore } from './employer-store.js';
 import { handleEmployerApi } from './employer-api.js';
 import { closeEmployerOccurrence, handleEmployerOperations, runEmployerMaintenance } from './employer-operations-api.js';
@@ -35,9 +36,11 @@ export interface Environment extends AuthEnvironment {
   LEVER_QUEUE: Queue;
   ASHBY_QUEUE: Queue;
   GITHUB_QUEUE: Queue;
+  GMAIL_QUEUE: Queue;
   GREENHOUSE_DLQ: Queue;
   LEVER_DLQ: Queue;
   ASHBY_DLQ: Queue;
+  GMAIL_DLQ: Queue;
   PUBLIC_API_URL: string;
   RESEND_API_KEY?: string;
   AUTH_FROM_EMAIL?: string;
@@ -54,6 +57,13 @@ export interface Environment extends AuthEnvironment {
   LEVER_QUEUE_ID: string;
   ASHBY_QUEUE_ID: string;
   GITHUB_QUEUE_ID: string;
+  GMAIL_QUEUE_ID: string;
+  GMAIL_ENABLED?: string;
+  GMAIL_CLIENT_ID?: string;
+  GMAIL_CLIENT_SECRET?: string;
+  GMAIL_TOKEN_ENCRYPTION_KEY?: string;
+  GMAIL_MESSAGE_HMAC_KEY?: string;
+  GMAIL_REDIRECT_URI?: string;
 }
 
 async function dnsJson(name: string, type: 'A' | 'AAAA' | 'TXT'): Promise<Array<{ data?: string }>> {
@@ -309,7 +319,7 @@ async function billingShutdown(request: Request, env: Environment): Promise<Resp
     return Response.json({ message: 'Not found' }, { status: 404 });
   }
 
-  const queueIds = [env.GREENHOUSE_QUEUE_ID, env.LEVER_QUEUE_ID, env.ASHBY_QUEUE_ID, env.GITHUB_QUEUE_ID];
+  const queueIds = [env.GREENHOUSE_QUEUE_ID, env.LEVER_QUEUE_ID, env.ASHBY_QUEUE_ID, env.GITHUB_QUEUE_ID, env.GMAIL_QUEUE_ID];
   const scriptPath = `/workers/scripts/${encodeURIComponent(env.WORKER_NAME)}`;
   if (new URL(request.url).searchParams.get('dry-run') === 'true') {
     await Promise.all([
@@ -437,6 +447,7 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
   const url = new URL(request.url);
   if (url.pathname === '/internal/billing-shutdown') return billingShutdown(request, env);
   if (await isShutdown(env)) return withCors(Response.json({ message: 'Service paused by billing guard' }, { status: 503 }));
+  if (request.method === 'GET' && url.pathname === '/oauth/gmail/callback') return withCors(await gmailCallback(request, env));
   if (request.method === 'POST' && url.pathname === '/internal/refresh-catalog') {
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
     return withCors(Response.json(await refreshCatalogProjection(new D1InternshipStore(env.DB))));
@@ -641,6 +652,7 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
     users: new D1UserStore(env.DB),
     releases: new D1ReleaseStore(env.DB),
     documentStorage: documentStorage(env),
+    beforeDeleteUser: (userId) => disconnectGmail(userId, env),
     deleteIdentity: async (id) => {
       const email = await accountEmail(env, id);
       await removeEmployerAccessForDeletedAccount(env, id, email);
@@ -662,6 +674,10 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
     return eventResponse(await handler(installationEvent));
   }
   const userId = await authenticatedUser(request, env);
+  if (userId && url.pathname.startsWith('/me/gmail')) {
+    const response = await gmailApi(request, env, userId);
+    if (response) return withCors(response);
+  }
   if (url.pathname.startsWith('/employer/')) {
     if (env.EMPLOYER_PORTAL_ENABLED !== 'true') return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
     if (!userId) return withCors(Response.json({ message: 'Authentication required' }, { status: 401 }));
@@ -766,6 +782,13 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
     console.log(JSON.stringify({ event: 'cloudflare_maintenance_complete', projection, notifications }));
     return;
   }
+  if (event.cron === '5-55/10 * * * *') {
+    if (env.GMAIL_ENABLED !== 'true') return;
+    const gmail = new GmailStore(env.DB);
+    const userIds = await gmail.due(new Date(event.scheduledTime));
+    await sendQueueMessages(env.GMAIL_QUEUE, userIds.map((userId) => ({ version: 1, userId, mode: 'history', requestedAt: new Date(event.scheduledTime).toISOString() } satisfies GmailWorkMessage)));
+    return;
+  }
   if (event.cron === '12,42 * * * *') {
     if (!await queueHasBacklog(env.GREENHOUSE_QUEUE, 'greenhouse')) await dispatchProviders(env, 'greenhouse');
     return;
@@ -792,6 +815,7 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
   if (event.cron === '42 8 * * *') {
     await cleanupExpiredAuth(env);
     await cleanupExpiredUserData(env.DB);
+    await new GmailStore(env.DB).cleanup(new Date(event.scheduledTime));
     const employerMaintenance = await runEmployerMaintenance(new D1EmployerStore(env.DB), store, new Date(event.scheduledTime));
     console.log(JSON.stringify({ event: 'employer_maintenance_complete', ...employerMaintenance }));
   }
@@ -803,6 +827,20 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
     return;
   }
   const records = batch.messages.map((message) => ({ messageId: message.id, body: typeof message.body === 'string' ? message.body : JSON.stringify(message.body) }));
+  if (batch.queue.includes('gmail')) {
+    for (const message of batch.messages) {
+      const body = (typeof message.body === 'string' ? JSON.parse(message.body) : message.body) as GmailWorkMessage;
+      try {
+        await processGmailWork(body, env);
+        message.ack();
+      } catch (error) {
+        const failure = await recordGmailFailure(body.userId, error, env);
+        if (failure.retry) message.retry({ delaySeconds: failure.delaySeconds });
+        else message.ack();
+      }
+    }
+    return;
+  }
   if (batch.queue.includes('github')) {
     const failed = new Set<string>();
     const employerStore = new D1EmployerStore(env.DB);

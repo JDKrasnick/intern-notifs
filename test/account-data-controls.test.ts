@@ -115,6 +115,20 @@ describe('account data controls', () => {
     expect(await users.getPreferences('installation:mock-device')).toMatchObject({ alertsEnabled: true, filter: { includeKeywords: ['security'] } });
   });
 
+  it('cleans up linked providers before deleting account data and identity', async () => {
+    const users = new MemoryUserStore();
+    await users.putPreferences({ userId: 'mock-linked-account', filter: {}, alertsEnabled: false, onboardingComplete: true, updatedAt: 'now' });
+    const beforeDeleteUser = vi.fn().mockResolvedValue(undefined);
+    const deleteUser = vi.spyOn(users, 'deleteUser');
+    const deleteIdentity = vi.fn().mockResolvedValue(undefined);
+    const handler = createApiHandler({ jobs: new MemoryInternshipStore(), users, beforeDeleteUser, deleteIdentity });
+
+    expect((await handler(event('mock-linked-account', 'DELETE', '/me'))).statusCode).toBe(204);
+    expect(beforeDeleteUser).toHaveBeenCalledWith('mock-linked-account');
+    expect(beforeDeleteUser.mock.invocationCallOrder[0]).toBeLessThan(deleteUser.mock.invocationCallOrder[0]!);
+    expect(deleteUser.mock.invocationCallOrder[0]).toBeLessThan(deleteIdentity.mock.invocationCallOrder[0]!);
+  });
+
   it('fails closed before changing data when identity deletion is not configured', async () => {
     const users = new MemoryUserStore();
     await users.putPreferences({ userId: 'mock-retired-service', filter: {}, alertsEnabled: false, onboardingComplete: true, updatedAt: 'now' });

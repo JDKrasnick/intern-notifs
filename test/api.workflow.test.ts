@@ -120,7 +120,7 @@ describe('public catalog and authenticated applicant workflow', () => {
     expect(application).toMatchObject({ status: 'saved', officialApplyUrl: 'https://careers.example.test/role-1' });
     const repeated = await handler(event('student-a', 'POST', '/me/applications', { jobId: 'role-1', status: 'applied' }));
     expect(repeated.statusCode).toBe(200);
-    expect(body<{ applicationId: string; status: string }>(repeated)).toMatchObject({ applicationId: application.applicationId, status: 'applied' });
+    expect(body<{ applicationId: string; status: string; appliedAt: string }>(repeated)).toMatchObject({ applicationId: application.applicationId, status: 'applied', appliedAt: expect.any(String) });
     expect((await handler(event('student-b', 'PATCH', `/me/applications/${application.applicationId}`, { status: 'offer' }))).statusCode).toBe(404);
     expect(body<{ applications: Array<{ status: string }> }>(await handler(event('student-a', 'GET', '/me/applications'))).applications).toMatchObject([{ status: 'applied' }]);
   });

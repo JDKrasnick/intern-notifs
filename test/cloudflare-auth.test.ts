@@ -125,7 +125,7 @@ describe('Cloudflare authentication abuse controls', () => {
       headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '192.0.2.1' },
       body: JSON.stringify({
         email: 'student@example.test', password: 'ValidPassword123', ageAttested: true,
-        termsVersion: '2026-08-25', privacyVersion: '2026-08-25',
+        termsVersion: '2026-08-25', privacyVersion: '2026-08-26',
       }),
     }), {
       AUTH_SESSION_SECRET: 'a-production-length-session-secret-value',
@@ -181,7 +181,7 @@ describe('Cloudflare authentication abuse controls', () => {
       method: 'POST',
       body: JSON.stringify({
         email: 'student@example.test', password: 'ValidPassword123', ageAttested: true,
-        termsVersion: '2026-08-25', privacyVersion: '2026-08-25',
+        termsVersion: '2026-08-25', privacyVersion: '2026-08-26',
       }),
     }), env);
     vi.stubGlobal('fetch', vi.fn()
@@ -205,9 +205,9 @@ describe('Cloudflare authentication abuse controls', () => {
       body: JSON.stringify({ email: 'student@example.test', password: 'ValidPassword123', ...body }),
     }), env);
 
-    await expect(signup({ ageAttested: false, termsVersion: '2026-08-25', privacyVersion: '2026-08-25' }))
+    await expect(signup({ ageAttested: false, termsVersion: '2026-08-25', privacyVersion: '2026-08-26' }))
       .resolves.toMatchObject({ status: 400 });
-    await expect(signup({ ageAttested: true, termsVersion: 'old', privacyVersion: '2026-08-25' }))
+    await expect(signup({ ageAttested: true, termsVersion: 'old', privacyVersion: '2026-08-26' }))
       .resolves.toMatchObject({ status: 400 });
     expect(prepare).not.toHaveBeenCalled();
   });

@@ -162,7 +162,7 @@ Every screen follows these rules. They are as important as colors and type.
 - One-pixel soft border; no required shadow.
 - 12 pt gap between cards.
 - Company is teal metadata, role is ink, and location/season is muted body text.
-- When the signed-in user has an application record for the role, display its current status in a compact teal pill. For example, show **APPLIED** after the user starts the employer handoff; continue to show later statuses such as assessment or interview.
+- When the signed-in user has an application record for the role, display its current status in a compact teal pill. Opening the employer form does not create or change that record. Show **APPLIED** only after a manual status change or a confirmed Gmail detection; continue to show later statuses such as assessment or interview.
 
 ### Save for web
 
@@ -220,7 +220,15 @@ Onboarding must always offer **Continue without alerts**. It may request notific
 
 Every save uses the same inline feedback treatment: a neutral saving message, a green success confirmation, or a red readable error with **Try again**. Avoid transient spinner-only or alert-only save feedback.
 
-Application progress is initially based only on actions the user takes inside InternNotifs: saving or applying to a role, changing its tracked status, and a follow-up reminder scheduled after the selected interval. Do not imply that an external employer portal updates application progress unless a supported employer integration exists. Deadline reminders belong in the next delivery-service release and require a reliable source deadline.
+Application progress comes from explicit user changes and, when the user opts in, Gmail application-confirmation metadata. Opening an employer form alone never creates or advances a record. A unique deterministic Gmail match may create Applied or advance Saved to Applied; assessment, interview, offer, rejected, and withdrawn statuses never regress. Automatic detections do not trigger push notifications. Do not imply that employer portals expose broader progress than a supported integration actually provides. Deadline reminders belong in the next delivery-service release and require a reliable source deadline.
+
+### Gmail application detection
+
+Place Gmail application detection in **App & account**. Before consent, explain in plain language that InternNotifs reads only sender, subject, date, and labels; checks 30 days of Inbox metadata on first sync; and then checks new confirmations within 15 minutes. State that bodies and attachments are never read and Gmail data is not used for AI or model training.
+
+The connected state shows one Gmail address, syncing/connected/error state, last successful sync, retry when appropriate, and a destructive **Disconnect Gmail** action. Disconnect copy must explain that credentials, sync history, and pending detections are deleted while application statuses remain without Gmail evidence.
+
+At the top of **Applications**, show ambiguous matches under a compact **Needs review** section. Each row names the confirmation subject/date and the candidate catalog roles; the user can choose one role or dismiss the detection. Automatically matched records show “Detected from Gmail · date” beneath the status. Keep review controls native, accessible, and secondary to the saved-application list.
 
 The notification backend must apply the saved role, company-type, U.S.-citizenship, and advanced-degree filters, delivery cadence, quiet-hours timezone, and per-device deduplication before it delivers. Closed listings are browse-only and never trigger alerts. Use a concise internal role deep link for mobile pushes; the employer application URL remains the explicit handoff after opening a role.
 

@@ -97,7 +97,7 @@ describe('Cloudflare session restoration', () => {
         password: 'Password12345',
         ageAttested: true,
         termsVersion: '2026-08-25',
-        privacyVersion: '2026-08-25',
+        privacyVersion: '2026-08-26',
       }),
     }));
   });

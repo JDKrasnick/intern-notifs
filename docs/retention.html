@@ -22,6 +22,10 @@
           <tr><td>Authentication session</td><td>Up to 30 days</td><td>Sign-out, account deletion, or automatic expiry</td></tr>
           <tr><td>Application-assistance access credential</td><td>1 hour or less</td><td>Use, cancellation, completion, or expiry</td></tr>
           <tr><td>Application-assistance metadata and masked field plan</td><td>30 days</td><td>Automatic expiry or earlier account deletion</td></tr>
+          <tr><td>Gmail OAuth credential, account address, incremental history cursor, and sync state</td><td>While Gmail remains connected</td><td>Gmail disconnect or account deletion; local deletion proceeds even if remote revocation fails</td></tr>
+          <tr><td>Pending Gmail confirmation metadata and candidate evidence</td><td>30 days</td><td>Acceptance, dismissal, automatic expiry, Gmail disconnect, or account deletion</td></tr>
+          <tr><td>Keyed Gmail message deduplication value</td><td>180 days</td><td>Automatic expiry, Gmail disconnect, or account deletion</td></tr>
+          <tr><td>Single-use Gmail OAuth state and PKCE verifier</td><td>10 minutes or less</td><td>Callback use or automatic expiry</td></tr>
           <tr><td>Anonymous installation, alert settings, and push token</td><td>Until 12 months without installation activity</td><td>Automatic inactivity cleanup; invalid push tokens are disabled earlier</td></tr>
           <tr><td>Notification delivery receipt</td><td>90 days after its last update</td><td>Automatic expiry or deletion of its inactive installation</td></tr>
           <tr><td>Hashed authentication and installation rate-limit keys</td><td>Up to 7 days after the applicable window or block ends</td><td>Automatic cleanup</td></tr>
@@ -37,6 +41,7 @@
 
       <h2>Deletion and recovery history</h2>
       <p>Deletion removes information from the active service. Cloudflare D1 maintains automatic point-in-time recovery history for up to 30 days depending on the account plan. Deleted database records may remain in that protected recovery history until it ages out and are not used for ordinary product operation. InternNotifs does not restore deleted personal data except when necessary to recover from a service-wide incident, and any restored deletion must be re-applied.</p>
+      <p>Disconnecting Gmail deletes the active OAuth credential, connection and sync state, processed-message deduplication values, and pending detections. Existing application status and applied timestamp remain while Gmail-specific provenance is removed. Account deletion attempts Google grant revocation and applies the same local cleanup.</p>
 
       <h2>Legal and safety exceptions</h2>
       <p>Specific information may be kept longer when reasonably necessary to comply with law, resolve a dispute, investigate abuse, protect users, or demonstrate that a deletion or consent request was handled. Any exception is limited to the information and duration needed for that purpose.</p>

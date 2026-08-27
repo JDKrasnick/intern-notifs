@@ -18,11 +18,55 @@ InternNotifs is an Expo mobile app with a serverless AWS backend.
 | Job catalog | D1 indexed canonical records and grouped projections |
 | Personal data | D1 user records and releases |
 | Résumés | Private R2 objects behind authenticated Worker routes |
-| Ingestion and delivery | Cron Triggers, four Queues with DLQs, Worker consumers, Expo Push Service |
+| Ingestion, delivery, and Gmail sync | Cron Triggers, five Queues with DLQs, Worker consumers, Gmail metadata API, Expo Push Service |
 | Infrastructure | OpenTofu with Cloudflare provider v5 in `infra/cloudflare/` |
 | CI | GitHub Actions in `.github/workflows/ci.yml` |
 
 The catalog is public. Accounts, preferences, device tokens, profiles, documents, and application tracking are private to the verified user identity.
+
+## Gmail application detection rollout
+
+Gmail detection is optional, account-gated, and disabled by default. It requests
+only `https://www.googleapis.com/auth/gmail.metadata`. The OAuth project must
+remain in testing mode with explicit test users until Google restricted-scope
+verification and the required annual third-party security assessment are
+complete. Do not substitute `gmail.readonly`; Gmail metadata scope deliberately
+does not support search queries, so the initial sync paginates Inbox metadata to
+the 30-day boundary.
+
+In Google Cloud, configure a Web application OAuth client with the exact callback
+`https://API_HOST/oauth/gmail/callback`, add only approved test users, and keep
+the consent-screen policy/support URLs aligned with this repository. Configure
+public identifiers through OpenTofu variables:
+
+```bash
+export TF_VAR_gmail_client_id='approved OAuth web client ID'
+export TF_VAR_gmail_redirect_uri='https://API_HOST/oauth/gmail/callback'
+export TF_VAR_gmail_enabled='true'
+```
+
+Set secrets interactively; never put their values in Git, Terraform variables,
+shell arguments, mobile configuration, or `EXPO_PUBLIC_*` values:
+
+```bash
+npx wrangler secret put GMAIL_CLIENT_SECRET
+npx wrangler secret put GMAIL_TOKEN_ENCRYPTION_KEY
+npx wrangler secret put GMAIL_MESSAGE_HMAC_KEY
+```
+
+The encryption key and message-HMAC key must be independently generated and
+managed. Apply migration `0006_gmail_detection.sql`, provision the dedicated
+`intern-notifs-gmail` queue and DLQ through OpenTofu, deploy the Worker, and then
+exercise connect/cancel/replay, 30-day backfill, history continuation, expired
+history recovery, ambiguous review, disconnect, revocation failure, and account
+deletion using test users. Inspect structured logs only for operation/error codes;
+sender, subject, Gmail IDs, OAuth tokens, bodies, attachments, and raw headers
+must never appear in logs.
+
+For general availability, keep `GMAIL_ENABLED=false` until the verification and
+assessment evidence is recorded, store disclosures are entered, and closed-beta
+acceptance passes. Then enable it through a reviewed infrastructure change; do
+not turn it on ad hoc in the dashboard.
 
 ## Verified employer channel rollout
 

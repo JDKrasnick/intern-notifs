@@ -86,6 +86,8 @@ import {
   type EmployerWorkspaceSection,
 } from "./src/employer";
 
+WebBrowser.maybeCompleteAuthSession();
+
 type Job = {
   jobId: string;
   company: string;
@@ -165,8 +167,25 @@ type Application = {
   applicationId: string;
   jobId: string;
   status: string;
+  appliedAt?: string;
+  detection?: { source: "gmail"; detectedAt: string };
   notes?: string;
   job?: ApplicationJobSummary;
+};
+type GmailStatus = {
+  connected: boolean;
+  email?: string;
+  state?: "syncing" | "connected" | "error";
+  lastSuccessfulSync?: string;
+  error?: { retryable: boolean; message: string };
+};
+type GmailDetection = {
+  detectionId: string;
+  receivedAt: string;
+  sender: string;
+  subject: string;
+  candidates: Array<{ jobId: string; company: string; title: string; signals: string[] }>;
+  reasons: string[];
 };
 type LaunchInbox = {
   jobs: Job[];
@@ -289,6 +308,7 @@ const colors = {
   dangerBorder: "#F2AAA4",
   successSoft: "#ECFDF3",
   successBorder: "#86D6A5",
+  success: "#067647",
   danger: "#B42318",
 };
 const MotionAllowedContext = createContext(false);
@@ -911,7 +931,7 @@ function JobDetailSheet({
                     hint={
                       greenhouseQuickApply
                         ? "Opens the official Greenhouse application. If this employer enables Quick Apply, MyGreenhouse can fill details you have saved there."
-                        : "Opens the official employer form and saves this role to To Apply."
+                        : "Opens the official employer form."
                     }
                     onPress={() => startRoleAction("apply")}
                   />
@@ -934,7 +954,7 @@ function JobDetailSheet({
                   : greenhouseQuickApply
                   ? "If this employer enables Quick Apply, MyGreenhouse can fill the details you have saved there. Review every answer before submitting."
                   : signedIn
-                  ? "Apply now opens the employer form and saves this role to To Apply."
+                  ? "Apply now opens the employer form. Use Save if you want to track it."
                   : "You’ll complete the employer’s application in your browser."}
               </Text>
             </ScrollView>
@@ -2714,41 +2734,6 @@ function AppContent() {
   if (!preferences) return <AppLoadingSkeleton />;
   if (!preferences.onboardingComplete)
     return <Onboarding onDone={setPreferences} />;
-  const apply = (job: Job) => {
-    const browser = openOfficialApplication(job.applyUrl);
-    void (async () => {
-      try {
-        const created = await api<Application>("/me/applications", token, {
-          method: "POST",
-          // Opening an official form adds the role to To Apply. Only a
-          // confirmed successful submission may move it to Applied.
-          body: JSON.stringify({ jobId: job.jobId }),
-        });
-        setApplications((current) => [created, ...current.filter((item) => item.applicationId !== created.applicationId)]);
-        const alertSettings = preferences.alertSettings ?? defaultAlertSettings;
-        if (preferences.alertsEnabled && alertSettings.applicationReminders) {
-          void notifyApplicationProgress(
-            created.applicationId,
-            "Added to To Apply",
-            `${job.title} at ${job.company} is ready when you are.`,
-          ).catch(() => undefined);
-          void scheduleApplicationFollowUp(
-            created.applicationId,
-            `${job.title} at ${job.company}`,
-            alertSettings.followUpDays,
-          ).catch(() => undefined);
-        }
-      } catch {
-        // Presenting an alert while iOS is presenting SFSafariViewController
-        // can interrupt the browser handoff. Wait until the browser closes.
-        await browser;
-        Alert.alert(
-          "Application tracking unavailable",
-          "The official application is open, but we could not save this role to your tracker.",
-        );
-      }
-    })();
-  };
   const saveForWeb = (job: Job) => {
     if (applicationStatuses.has(job.jobId) || savingJobIds.has(job.jobId)) return;
     setSavingJobIds((current) => new Set(current).add(job.jobId));
@@ -2869,8 +2854,7 @@ function AppContent() {
         onModalDismissed={finishDetailDismissal}
         onRetry={retryRoutedJob}
         onApply={(job) => {
-          if (job.open) void apply(job);
-          else void openOfficialApplication(job.applyUrl);
+          void openOfficialApplication(job.applyUrl);
         }}
         onOpenListing={(job) => {
           void openOfficialApplication(job.applyUrl);
@@ -3582,19 +3566,86 @@ function Applications({
   onChanged: () => void;
   onOpenOfficialApplication: (applyUrl: string) => void;
 }) {
+  const [detections, setDetections] = useState<GmailDetection[]>([]);
+  const [detectionError, setDetectionError] = useState<string>();
+  const [reviewingDetectionId, setReviewingDetectionId] = useState<string>();
+  const loadDetections = () =>
+    api<{ detections: GmailDetection[] }>("/me/gmail/detections", token)
+      .then((response) => {
+        setDetections(response.detections);
+        setDetectionError(undefined);
+      })
+      .catch((error) => setDetectionError(error instanceof Error ? error.message : "Gmail detections could not be loaded."));
+  useEffect(() => { void loadDetections(); }, [token]);
+  const resolveDetection = async (detection: GmailDetection, action: "accept" | "dismiss", jobId?: string) => {
+    setReviewingDetectionId(detection.detectionId);
+    try {
+      await api(`/me/gmail/detections/${encodeURIComponent(detection.detectionId)}/${action}`, token, {
+        method: "POST",
+        ...(jobId ? { body: JSON.stringify({ jobId }) } : {}),
+      });
+      setDetections((current) => current.filter((item) => item.detectionId !== detection.detectionId));
+      if (action === "accept") onChanged();
+    } catch (error) {
+      Alert.alert("Could not update detection", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setReviewingDetectionId(undefined);
+    }
+  };
   return (
     <FlatList
       style={styles.list}
       data={applications}
       keyExtractor={(item) => item.applicationId}
       contentContainerStyle={styles.feedListContent}
-      ListHeaderComponent={
+      ListHeaderComponent={<>
         <PageHeading
           eyebrow="Applications"
           title="Saved applications"
-          description="Keep track of the roles you have started or applied to."
+          description="Track roles you save, update manually, or confirm through Gmail."
         />
-      }
+        {detections.length ? (
+          <View style={styles.gmailReviewSection}>
+            <Text style={styles.sectionTitle}>Needs review</Text>
+            <Text style={styles.muted}>Choose the catalog role that matches each confirmation, or dismiss it.</Text>
+            {detections.map((detection) => (
+              <View key={detection.detectionId} style={styles.gmailReviewRow}>
+                <Text style={styles.gmailSubject} numberOfLines={2}>{detection.subject || "Application confirmation"}</Text>
+                <Text style={styles.gmailMetadata}>Gmail · {new Date(detection.receivedAt).toLocaleDateString()}</Text>
+                {detection.candidates.map((candidate) => (
+                  <TouchableOpacity
+                    key={candidate.jobId}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Mark ${candidate.title} at ${candidate.company} as applied`}
+                    disabled={reviewingDetectionId === detection.detectionId}
+                    onPress={() => void resolveDetection(detection, "accept", candidate.jobId)}
+                    style={styles.gmailCandidate}
+                  >
+                    <View style={styles.gmailCandidateCopy}>
+                      <Text style={styles.preferenceTitle}>{candidate.title}</Text>
+                      <Text style={styles.muted}>{candidate.company}</Text>
+                    </View>
+                    <Ionicons name="checkmark-circle-outline" size={24} color={colors.signal} />
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  disabled={reviewingDetectionId === detection.detectionId}
+                  onPress={() => void resolveDetection(detection, "dismiss")}
+                  style={styles.gmailDismiss}
+                >
+                  <Text style={styles.gmailDismissText}>Dismiss detection</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+        ) : detectionError ? (
+          <View style={styles.gmailReviewSection}>
+            <Text style={styles.errorText}>{detectionError}</Text>
+            <ActionButton compact variant="secondary" label="Try again" onPress={() => void loadDetections()} />
+          </View>
+        ) : null}
+      </>}
       renderItem={({ item }) => {
         const job = resolveApplicationJob(item, jobs);
         const source = sourcePresentation(job?.sourceReferences ?? []);
@@ -3610,6 +3661,9 @@ function Applications({
             <View style={styles.statusPill}>
               <Text style={styles.statusPillText}>{item.status.toUpperCase()}</Text>
             </View>
+            {item.detection?.source === "gmail" ? (
+              <Text style={styles.gmailDetected}>Detected from Gmail · {new Date(item.detection.detectedAt).toLocaleDateString()}</Text>
+            ) : null}
             {job?.open ? (
               <View style={styles.applicationActionGap}>
                 <ApplyNowButton
@@ -3669,7 +3723,7 @@ function Applications({
         <EmptyState
           eyebrow="Applications"
           title="Your application list starts here."
-          description="Save a role or begin an application to keep its progress in view."
+          description="Save a role, mark it manually, or connect Gmail to detect confirmations."
         />
       }
     />
@@ -3764,6 +3818,9 @@ function Profile({
   const [destination, setDestination] = useState<SettingsDestination>("home");
   const [profile, setProfile] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
+  const [gmailStatus, setGmailStatus] = useState<GmailStatus>({ connected: false });
+  const [gmailLoading, setGmailLoading] = useState(false);
+  const [gmailStatusError, setGmailStatusError] = useState<string>();
   const [includeCategories, setIncludeCategories] = useState<string[]>(
     preferences.filter.includeCategories ?? [],
   );
@@ -3852,6 +3909,13 @@ function Profile({
       .then((value) => setProfile(value ?? {}))
       .finally(() => setLoading(false));
   }, [token]);
+  const loadGmailStatus = () => {
+    if (!token) { setGmailStatus({ connected: false }); return Promise.resolve(); }
+    return api<GmailStatus>("/me/gmail", token)
+      .then((status) => { setGmailStatus(status); setGmailStatusError(undefined); })
+      .catch((error) => setGmailStatusError(error instanceof Error ? error.message : "Gmail status could not be loaded."));
+  };
+  useEffect(() => { void loadGmailStatus(); }, [token]);
   useEffect(() => {
     const sync = settingsDraftSyncPlan(
       draftRevisions.current,
@@ -4135,6 +4199,46 @@ function Profile({
         },
       ],
     );
+  const connectGmail = async () => {
+    if (!token || gmailLoading) return;
+    setGmailLoading(true);
+    try {
+      const start = await api<{ authorizationUrl: string; returnUrl: string }>("/me/gmail/authorization", token, { method: "POST" });
+      const result = await WebBrowser.openAuthSessionAsync(start.authorizationUrl, start.returnUrl);
+      if (result.type === "success") {
+        const callback = new URL(result.url);
+        if (callback.searchParams.get("status") === "error") throw new Error(callback.searchParams.get("message") ?? "Gmail could not be connected.");
+      }
+      await loadGmailStatus();
+    } catch (error) {
+      Alert.alert("Could not connect Gmail", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setGmailLoading(false);
+    }
+  };
+  const retryGmailSync = async () => {
+    if (!token || gmailLoading) return;
+    setGmailLoading(true);
+    try {
+      await api("/me/gmail/sync", token, { method: "POST" });
+      setGmailStatus((current) => ({ ...current, state: "syncing", error: undefined }));
+    } catch (error) {
+      Alert.alert("Could not retry Gmail sync", error instanceof Error ? error.message : "Please try again.");
+    } finally { setGmailLoading(false); }
+  };
+  const confirmDisconnectGmail = () => token && Alert.alert(
+    "Disconnect Gmail?",
+    "This removes Gmail credentials, sync history, and pending detections. Existing application statuses stay in your list without Gmail evidence.",
+    [
+      { text: "Cancel", style: "cancel" },
+      { text: "Disconnect Gmail", style: "destructive", onPress: () => void (async () => {
+        setGmailLoading(true);
+        try { await api("/me/gmail", token, { method: "DELETE" }); setGmailStatus({ connected: false }); }
+        catch (error) { Alert.alert("Could not disconnect Gmail", error instanceof Error ? error.message : "Please try again."); }
+        finally { setGmailLoading(false); }
+      })() },
+    ],
+  );
   const openLink = (label: string, value: string | undefined) => {
     if (!value || !/^https:\/\//.test(value)) {
       Alert.alert(
@@ -4546,6 +4650,35 @@ function Profile({
       ) : null}
       {destination === "app-account" ? (
         <>
+      <Text style={styles.sectionTitle}>Gmail application detection</Text>
+      <Text style={styles.muted}>
+        Optional. InternNotifs reads only sender, subject, date, and labels from Gmail. The first sync checks 30 days of Inbox metadata; later checks run within 15 minutes. Email bodies and attachments are never read, and Gmail data is never used for AI or model training.
+      </Text>
+      {token ? gmailStatus.connected ? (
+        <View style={styles.gmailConnection}>
+          <View style={styles.gmailConnectionHeading}>
+            <Ionicons name={gmailStatus.state === "error" ? "alert-circle-outline" : "checkmark-circle"} size={24} color={gmailStatus.state === "error" ? colors.danger : colors.success} />
+            <View style={styles.gmailConnectionCopy}>
+              <Text style={styles.preferenceTitle}>{gmailStatus.email}</Text>
+              <Text style={styles.muted}>
+                {gmailStatus.state === "syncing" ? "Syncing Gmail metadata…" : gmailStatus.lastSuccessfulSync ? `Last synced ${new Date(gmailStatus.lastSuccessfulSync).toLocaleString()}` : "Connected"}
+              </Text>
+            </View>
+          </View>
+          {gmailStatus.error ? <Text style={styles.errorText}>{gmailStatus.error.message}</Text> : null}
+          {gmailStatus.error?.retryable ? <ActionButton compact variant="secondary" label={gmailLoading ? "Retrying…" : "Retry sync"} disabled={gmailLoading} onPress={() => void retryGmailSync()} /> : null}
+          <View style={styles.buttonGap} />
+          <ActionButton variant="danger" label="Disconnect Gmail" disabled={gmailLoading} onPress={confirmDisconnectGmail} />
+        </View>
+      ) : (
+        <>
+          {gmailStatusError ? <Text style={styles.errorText}>{gmailStatusError}</Text> : null}
+          <ActionButton label={gmailLoading ? "Connecting…" : "Connect Gmail"} disabled={gmailLoading} onPress={() => void connectGmail()} />
+        </>
+      ) : (
+        <AccountGate feature="detect application confirmations from Gmail" onSignIn={onSignIn} />
+      )}
+      <View style={styles.spacer} />
       <Text style={styles.profileSectionLabel}>Notifications</Text>
       <Text style={styles.preferenceTitle}>Notification wording</Text>
       <Text style={styles.muted}>
@@ -4745,6 +4878,12 @@ function PlainTextInput(props: TextInputProps) {
   return <TextInput {...props} secureTextEntry={false} />;
 }
 
+function webInputValue(nativeId: string, fallback: string) {
+  if (Platform.OS !== "web" || typeof document === "undefined") return fallback;
+  const input = document.getElementById(nativeId) as { value?: unknown } | null;
+  return typeof input?.value === "string" ? input.value : fallback;
+}
+
 function SignIn({
   onSession,
   onBrowse,
@@ -4761,6 +4900,10 @@ function SignIn({
   const [ageAttested, setAgeAttested] = useState(false);
   const [policiesAccepted, setPoliciesAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
+  const currentCredentials = () => ({
+    email: webInputValue("auth-email", email),
+    password: webInputValue("auth-password", password),
+  });
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
     try {
@@ -4775,7 +4918,8 @@ function SignIn({
     }
   };
   const createAccount = async () => {
-    const result = await signUp(email, password, { ageAttested, policiesAccepted });
+    const credentials = currentCredentials();
+    const result = await signUp(credentials.email, credentials.password, { ageAttested, policiesAccepted });
     if (result.confirmationCode) {
       setCode(result.confirmationCode);
       setDevelopmentConfirmationCode(true);
@@ -4829,6 +4973,7 @@ function SignIn({
             <Text style={styles.inputLabel}>Email</Text>
             <PlainTextInput
               key="auth-email"
+              nativeID="auth-email"
               autoCapitalize="none"
               autoComplete="email"
               accessibilityLabel="Email"
@@ -4876,6 +5021,7 @@ function SignIn({
                 <Text style={styles.inputLabel}>Password</Text>
                 <TextInput
                   key="auth-password"
+                  nativeID="auth-password"
                   autoComplete={
                     createMode ? "new-password" : "current-password"
                   }
@@ -4891,11 +5037,14 @@ function SignIn({
                   onChangeText={setPassword}
                   onSubmitEditing={() => {
                     if (!busy)
-                      void run(async () =>
-                        createMode
-                          ? canCreateAccount ? await createAccount() : undefined
-                          : onSession(await signIn(email, password)),
-                      );
+                      void run(async () => {
+                        if (createMode) {
+                          if (canCreateAccount) await createAccount();
+                        } else {
+                          const credentials = currentCredentials();
+                          onSession(await signIn(credentials.email, credentials.password));
+                        }
+                      });
                   }}
                 />
                 {createMode ? (
@@ -4945,7 +5094,8 @@ function SignIn({
                       if (createMode) {
                         await createAccount();
                       } else {
-                        onSession(await signIn(email, password));
+                        const credentials = currentCredentials();
+                        onSession(await signIn(credentials.email, credentials.password));
                       }
                     })
                   }
@@ -5693,6 +5843,19 @@ const styles = StyleSheet.create({
   hiddenRoleCopy: { flex: 1 },
   hiddenRoleTitle: { color: colors.ink, fontSize: 15, fontWeight: "700", lineHeight: 20, marginTop: 2 },
   applicationActionGap: { marginTop: 14 },
+  gmailDetected: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 8 },
+  gmailReviewSection: { marginBottom: 18 },
+  gmailReviewRow: { borderTopColor: colors.separator, borderTopWidth: 1, marginTop: 14, paddingTop: 14 },
+  gmailSubject: { color: colors.ink, fontSize: 16, fontWeight: "700", lineHeight: 22 },
+  gmailMetadata: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 3 },
+  gmailCandidate: { alignItems: "center", flexDirection: "row", minHeight: 52, paddingVertical: 8 },
+  gmailCandidateCopy: { flex: 1, paddingRight: 12 },
+  gmailDismiss: { alignItems: "center", justifyContent: "center", minHeight: 48 },
+  gmailDismissText: { color: colors.danger, fontSize: 15, fontWeight: "700" },
+  gmailConnection: { borderTopColor: colors.separator, borderTopWidth: 1, marginTop: 16, paddingTop: 16 },
+  gmailConnectionHeading: { alignItems: "center", flexDirection: "row", marginBottom: 12 },
+  gmailConnectionCopy: { flex: 1, paddingLeft: 12 },
+  errorText: { color: colors.danger, fontSize: 14, lineHeight: 20, marginBottom: 12 },
   buttonGap: { height: 12 },
   spacer: { height: 24 },
   gate: { flex: 1, justifyContent: "flex-start", paddingHorizontal: 20, paddingTop: 32 },

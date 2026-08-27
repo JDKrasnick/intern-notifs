@@ -4,11 +4,14 @@ locals {
     [
       { name = "PUBLIC_API_URL", type = "plain_text", text = var.public_api_url },
       { name = "AUTH_DEV_MODE", type = "plain_text", text = tostring(var.auth_dev_mode) },
+      { name = "GMAIL_ENABLED", type = "plain_text", text = tostring(var.gmail_enabled) },
     ],
     var.auth_from_email == null ? [] : [{ name = "AUTH_FROM_EMAIL", type = "plain_text", text = var.auth_from_email }],
     var.digest_to_email == null ? [] : [{ name = "DIGEST_TO_EMAIL", type = "plain_text", text = var.digest_to_email }],
     var.ntfy_topic == null ? [] : [{ name = "NTFY_TOPIC", type = "plain_text", text = var.ntfy_topic }],
     var.ntfy_endpoint == null ? [] : [{ name = "NTFY_ENDPOINT", type = "plain_text", text = var.ntfy_endpoint }],
+    var.gmail_client_id == null ? [] : [{ name = "GMAIL_CLIENT_ID", type = "plain_text", text = var.gmail_client_id }],
+    var.gmail_redirect_uri == null ? [] : [{ name = "GMAIL_REDIRECT_URI", type = "plain_text", text = var.gmail_redirect_uri }],
   )
 }
 
@@ -29,7 +32,7 @@ resource "cloudflare_r2_bucket" "documents" {
 }
 
 resource "cloudflare_queue" "work" {
-  for_each   = toset(["greenhouse", "lever", "ashby", "github"])
+  for_each   = toset(["greenhouse", "lever", "ashby", "github", "gmail"])
   account_id = var.cloudflare_account_id
   queue_name = "${var.worker_name}-${each.key}"
   settings = {
@@ -39,7 +42,7 @@ resource "cloudflare_queue" "work" {
 }
 
 resource "cloudflare_queue" "dead_letter" {
-  for_each   = toset(["greenhouse", "lever", "ashby", "github"])
+  for_each   = toset(["greenhouse", "lever", "ashby", "github", "gmail"])
   account_id = var.cloudflare_account_id
   queue_name = "${var.worker_name}-${each.key}-dlq"
   settings = {
@@ -53,7 +56,7 @@ resource "cloudflare_workers_script" "application" {
   main_module         = "worker.js"
   content_file        = local.worker_bundle
   content_sha256      = filesha256(local.worker_bundle)
-  compatibility_date  = "2026-08-24"
+  compatibility_date  = "2026-08-26"
   compatibility_flags = ["nodejs_compat"]
   keep_bindings       = ["secret_text"]
 
@@ -65,15 +68,18 @@ resource "cloudflare_workers_script" "application" {
       { name = "LEVER_QUEUE", type = "queue", queue_name = cloudflare_queue.work["lever"].queue_name },
       { name = "ASHBY_QUEUE", type = "queue", queue_name = cloudflare_queue.work["ashby"].queue_name },
       { name = "GITHUB_QUEUE", type = "queue", queue_name = cloudflare_queue.work["github"].queue_name },
+      { name = "GMAIL_QUEUE", type = "queue", queue_name = cloudflare_queue.work["gmail"].queue_name },
       { name = "GREENHOUSE_DLQ", type = "queue", queue_name = cloudflare_queue.dead_letter["greenhouse"].queue_name },
       { name = "LEVER_DLQ", type = "queue", queue_name = cloudflare_queue.dead_letter["lever"].queue_name },
       { name = "ASHBY_DLQ", type = "queue", queue_name = cloudflare_queue.dead_letter["ashby"].queue_name },
+      { name = "GMAIL_DLQ", type = "queue", queue_name = cloudflare_queue.dead_letter["gmail"].queue_name },
       { name = "CLOUDFLARE_ACCOUNT_ID", type = "plain_text", text = var.cloudflare_account_id },
       { name = "WORKER_NAME", type = "plain_text", text = var.worker_name },
       { name = "GREENHOUSE_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["greenhouse"].queue_id },
       { name = "LEVER_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["lever"].queue_id },
       { name = "ASHBY_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["ashby"].queue_id },
       { name = "GITHUB_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["github"].queue_id },
+      { name = "GMAIL_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["gmail"].queue_id },
     ],
     local.plain_bindings,
   )
@@ -110,11 +116,10 @@ resource "cloudflare_queue_consumer" "application" {
   dead_letter_queue = cloudflare_queue.dead_letter[each.key].queue_name
   settings = {
     batch_size = 1
-    # The high-volume fleets get two consumers; the already-clear fleets stay
-    # at one. This matches the six-worker account budget reserved by the
-    # application cadence contract while avoiding unnecessary idle capacity.
+    # The high-volume ingestion fleets get two consumers. Gmail stays at one
+    # because per-account leases serialize sync work.
     max_concurrency  = contains(["greenhouse", "github"], each.key) ? 2 : 1
-    max_retries      = 2
+    max_retries      = each.key == "gmail" ? 5 : 2
     max_wait_time_ms = 5000
   }
 }
@@ -123,6 +128,7 @@ resource "cloudflare_workers_cron_trigger" "application" {
   account_id  = var.cloudflare_account_id
   script_name = cloudflare_workers_script.application.script_name
   schedules = [
+    { cron = "5-55/10 * * * *" },
     { cron = "7-57/10 * * * *" },
     { cron = "9-59/10 * * * *" },
     { cron = "12,42 * * * *" },
