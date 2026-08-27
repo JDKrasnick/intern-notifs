@@ -4499,6 +4499,12 @@ function PlainTextInput(props: TextInputProps) {
   return <TextInput {...props} secureTextEntry={false} />;
 }
 
+function webInputValue(nativeId: string, fallback: string) {
+  if (Platform.OS !== "web" || typeof document === "undefined") return fallback;
+  const input = document.getElementById(nativeId) as { value?: unknown } | null;
+  return typeof input?.value === "string" ? input.value : fallback;
+}
+
 function SignIn({
   onSession,
   onBrowse,
@@ -4515,6 +4521,10 @@ function SignIn({
   const [ageAttested, setAgeAttested] = useState(false);
   const [policiesAccepted, setPoliciesAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
+  const currentCredentials = () => ({
+    email: webInputValue("auth-email", email),
+    password: webInputValue("auth-password", password),
+  });
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
     try {
@@ -4529,7 +4539,8 @@ function SignIn({
     }
   };
   const createAccount = async () => {
-    const result = await signUp(email, password, { ageAttested, policiesAccepted });
+    const credentials = currentCredentials();
+    const result = await signUp(credentials.email, credentials.password, { ageAttested, policiesAccepted });
     if (result.confirmationCode) {
       setCode(result.confirmationCode);
       setDevelopmentConfirmationCode(true);
@@ -4583,6 +4594,7 @@ function SignIn({
             <Text style={styles.inputLabel}>Email</Text>
             <PlainTextInput
               key="auth-email"
+              nativeID="auth-email"
               autoCapitalize="none"
               autoComplete="email"
               accessibilityLabel="Email"
@@ -4630,6 +4642,7 @@ function SignIn({
                 <Text style={styles.inputLabel}>Password</Text>
                 <TextInput
                   key="auth-password"
+                  nativeID="auth-password"
                   autoComplete={
                     createMode ? "new-password" : "current-password"
                   }
@@ -4645,11 +4658,14 @@ function SignIn({
                   onChangeText={setPassword}
                   onSubmitEditing={() => {
                     if (!busy)
-                      void run(async () =>
-                        createMode
-                          ? canCreateAccount ? await createAccount() : undefined
-                          : onSession(await signIn(email, password)),
-                      );
+                      void run(async () => {
+                        if (createMode) {
+                          if (canCreateAccount) await createAccount();
+                        } else {
+                          const credentials = currentCredentials();
+                          onSession(await signIn(credentials.email, credentials.password));
+                        }
+                      });
                   }}
                 />
                 {createMode ? (
@@ -4699,7 +4715,8 @@ function SignIn({
                       if (createMode) {
                         await createAccount();
                       } else {
-                        onSession(await signIn(email, password));
+                        const credentials = currentCredentials();
+                        onSession(await signIn(credentials.email, credentials.password));
                       }
                     })
                   }
