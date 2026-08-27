@@ -4246,19 +4246,25 @@ function Profile({
       Alert.alert("Could not retry Gmail sync", error instanceof Error ? error.message : "Please try again.");
     } finally { setGmailLoading(false); }
   };
-  const confirmDisconnectGmail = () => token && Alert.alert(
-    "Disconnect Gmail?",
-    "This removes Gmail credentials, sync history, and pending detections. Existing application statuses stay in your list without Gmail evidence.",
-    [
+  const disconnectGmail = async () => {
+    if (!token || gmailLoading) return;
+    setGmailLoading(true);
+    try { await api("/me/gmail", token, { method: "DELETE" }); setGmailStatus({ connected: false }); }
+    catch (error) { Alert.alert("Could not disconnect Gmail", error instanceof Error ? error.message : "Please try again."); }
+    finally { setGmailLoading(false); }
+  };
+  const confirmDisconnectGmail = () => {
+    if (!token || gmailLoading) return;
+    const message = "This removes Gmail credentials, sync history, and pending detections. Existing application statuses stay in your list without Gmail evidence.";
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      if (window.confirm(`Disconnect Gmail?\n\n${message}`)) void disconnectGmail();
+      return;
+    }
+    Alert.alert("Disconnect Gmail?", message, [
       { text: "Cancel", style: "cancel" },
-      { text: "Disconnect Gmail", style: "destructive", onPress: () => void (async () => {
-        setGmailLoading(true);
-        try { await api("/me/gmail", token, { method: "DELETE" }); setGmailStatus({ connected: false }); }
-        catch (error) { Alert.alert("Could not disconnect Gmail", error instanceof Error ? error.message : "Please try again."); }
-        finally { setGmailLoading(false); }
-      })() },
-    ],
-  );
+      { text: "Disconnect Gmail", style: "destructive", onPress: () => void disconnectGmail() },
+    ]);
+  };
   const openLink = (label: string, value: string | undefined) => {
     if (!value || !/^https:\/\//.test(value)) {
       Alert.alert(
