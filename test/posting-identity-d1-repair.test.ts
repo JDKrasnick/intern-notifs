@@ -3,26 +3,41 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
-import { runPostingIdentityRepair } from '../src/posting-identity-repair.js';
+import { postingIdentityRepairQueryCount, runPostingIdentityRepair } from '../src/posting-identity-repair.js';
 import type { Internship, ProviderPostingEvidence, SourceOccurrence } from '../src/types.js';
 
 type SqliteValue = string | number | bigint | null | Uint8Array;
-function sqliteD1(database: DatabaseSync): D1Database {
+type QueryMetrics = { statements: number; calls: number; maxBoundParameters: number; inBatch: boolean };
+function sqliteD1(database: DatabaseSync, metrics?: QueryMetrics): D1Database {
   const prepared = (query: string, values: unknown[] = []): D1PreparedStatement => {
     const statement: StatementSync = database.prepare(query); const bound = values as SqliteValue[];
     return {
-      bind(...next: unknown[]) { return prepared(query, next); },
-      async first<T>() { return (statement.get(...bound) as T | undefined) ?? null; },
-      async all<T>() { return { results: statement.all(...bound) as T[] }; },
-      async run() { return { meta: { changes: Number(statement.run(...bound).changes) } }; },
+      bind(...next: unknown[]) {
+        if (metrics) metrics.maxBoundParameters = Math.max(metrics.maxBoundParameters, next.length);
+        return prepared(query, next);
+      },
+      async first<T>() {
+        if (metrics && !metrics.inBatch) { metrics.statements += 1; metrics.calls += 1; }
+        return (statement.get(...bound) as T | undefined) ?? null;
+      },
+      async all<T>() {
+        if (metrics && !metrics.inBatch) { metrics.statements += 1; metrics.calls += 1; }
+        return { results: statement.all(...bound) as T[] };
+      },
+      async run() {
+        if (metrics && !metrics.inBatch) { metrics.statements += 1; metrics.calls += 1; }
+        return { meta: { changes: Number(statement.run(...bound).changes) } };
+      },
     };
   };
   return {
     prepare(query) { return prepared(query); },
     async batch(statements) {
+      if (metrics) { metrics.statements += statements.length; metrics.calls += 1; metrics.inBatch = true; }
       database.exec('BEGIN');
       try { const result = []; for (const statement of statements) result.push(await statement.run()); database.exec('COMMIT'); return result; }
       catch (error) { database.exec('ROLLBACK'); throw error; }
+      finally { if (metrics) metrics.inBatch = false; }
     },
   };
 }
@@ -186,5 +201,37 @@ describe('D1 posting identity repair', () => {
     stale.sqlite.prepare("INSERT INTO catalog_items (pk, sk, kind, value) VALUES (?, 'CLAIM', 'posting-alias', ?)")
       .run(`POSTING_ALIAS#provider:lever:plus-2:${plusId}`, JSON.stringify({ alias: `provider:lever:plus-2:${plusId}`, canonicalJobId: 'wrong-job' }));
     expect(await runPostingIdentityRepair(stale.db)).toMatchObject({ conflicts: [expect.stringContaining('already claimed')] });
+  });
+
+  it('keeps a production-sized guarded apply under the paid D1 query budget', async () => {
+    const sqlite = database();
+    const metrics: QueryMetrics = { statements: 0, calls: 0, maxBoundParameters: 0, inBatch: false };
+    const db = sqliteD1(sqlite, metrics); const store = new D1InternshipStore(db);
+    for (let index = 0; index < 390; index += 1) {
+      const postingId = String(9_000_000 + index);
+      const url = `https://job-boards.greenhouse.io/figma/jobs/${postingId}`;
+      const evidence: ProviderPostingEvidence = {
+        provider: 'greenhouse', tenant: 'figma', postingId, sourceId: 'greenhouse-figma', urls: [url],
+      };
+      await store.putInternship(job(`historical-${index}`, url, '2026-08-01T00:00:00.000Z', [
+        occurrence('greenhouse-figma', postingId, url, evidence),
+      ]));
+    }
+    metrics.statements = 0; metrics.calls = 0; metrics.maxBoundParameters = 0;
+    const dry = await runPostingIdentityRepair(db);
+    expect(dry).toMatchObject({ expectedChanges: 780, conflicts: [], unresolvedDuplicateGroups: 0 });
+    metrics.statements = 0; metrics.calls = 0; metrics.maxBoundParameters = 0;
+    const applied = await runPostingIdentityRepair(db, {
+      apply: true, repairToken: dry.repairToken,
+      expectedChanges: dry.expectedChanges, expectedDuplicateJobs: dry.duplicateJobs,
+    });
+    const verification = await runPostingIdentityRepair(db);
+    expect(applied).toMatchObject({ applied: true, projectionRefreshRequired: true });
+    expect(verification).toMatchObject({ expectedChanges: 0, conflicts: [] });
+    expect(postingIdentityRepairQueryCount(dry.expectedChanges)).toBe(825);
+    expect(metrics.statements).toBe(828);
+    expect(metrics.statements).toBeLessThanOrEqual(900);
+    expect(metrics.maxBoundParameters).toBeLessThanOrEqual(100);
+    sqlite.close();
   });
 });

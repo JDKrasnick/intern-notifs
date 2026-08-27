@@ -8,7 +8,7 @@ import { resolvePostingAliases, type AliasResolution } from '../src/identity/pos
 import { deletedUserTombstoneKey, type InternshipStore, type LeverAdmission, type ReleaseStore, type UserStore, type CatalogQuery } from '../src/store.js';
 import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from '../src/catalog-groups.js';
 import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from '../src/types.js';
-import type { D1Database } from './types.js';
+import type { D1Database, D1PreparedStatement } from './types.js';
 
 type JsonRow = { value: string };
 const deliveryReceiptLifetimeSeconds = 90 * 24 * 60 * 60;
@@ -328,10 +328,20 @@ export class D1InternshipStore implements InternshipStore {
   async putCatalogProjection(groups: CatalogGroupDetails[], generatedAt: string): Promise<void> {
     const previous = await this.get<{ version: string }>('CATALOG_PROJECTION', 'CURRENT');
     const version = createHash('sha256').update(`${generatedAt}\0${groups.map((group) => group.group.groupId).join('\0')}`).digest('hex').slice(0, 20);
-    const statements = groups.map((details, index) => this.db.prepare(`
-      INSERT INTO catalog_items (pk, sk, kind, value, catalog_sort_key) VALUES (?, ?, 'catalog-projection', ?, ?)
-      ON CONFLICT(pk, sk) DO UPDATE SET value = excluded.value, catalog_sort_key = excluded.catalog_sort_key
-    `).bind(`CATALOG_PROJECTION#${version}`, `GROUP#${details.group.groupId}`, JSON.stringify(details), String(index).padStart(8, '0')));
+    const statements: D1PreparedStatement[] = [];
+    for (let offset = 0; offset < groups.length; offset += 25) {
+      const chunk = groups.slice(offset, offset + 25);
+      const placeholders = chunk.map(() => `(?, ?, 'catalog-projection', ?, ?)`).join(', ');
+      statements.push(this.db.prepare(`
+        INSERT INTO catalog_items (pk, sk, kind, value, catalog_sort_key) VALUES ${placeholders}
+        ON CONFLICT(pk, sk) DO UPDATE SET value = excluded.value, catalog_sort_key = excluded.catalog_sort_key
+      `).bind(...chunk.flatMap((details, index) => [
+        `CATALOG_PROJECTION#${version}`,
+        `GROUP#${details.group.groupId}`,
+        JSON.stringify(details),
+        String(offset + index).padStart(8, '0'),
+      ])));
+    }
     for (let offset = 0; offset < statements.length; offset += 50) await this.db.batch(statements.slice(offset, offset + 50));
     await this.put('CATALOG_PROJECTION', 'CURRENT', 'catalog-projection-pointer', { version, generatedAt, schemaVersion: 3 });
     // Projection versions are rebuildable caches. Deleting only the version

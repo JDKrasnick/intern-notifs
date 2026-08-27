@@ -453,7 +453,20 @@ export function postingIdentityRepairPlan(catalogRows: CatalogRow[], userRows: U
 }
 
 const STAGE_KIND = 'posting-identity-repair-stage';
+const STAGE_ROWS_PER_STATEMENT = 20;
+const D1_PAID_QUERY_LIMIT = 1_000;
+const POST_REPAIR_QUERY_RESERVE = 100;
 function operationId(value: unknown) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
+
+/**
+ * Conservative statement budget for the repair itself. Twenty staged rows use
+ * D1's full 100-bound-parameter allowance; the remaining statements are the
+ * three snapshot reads, stage reset, guard plus mutations, and stage cleanup.
+ * The endpoint keeps a reserve for verification and projection refresh.
+ */
+export function postingIdentityRepairQueryCount(expectedChanges: number) {
+  return expectedChanges + Math.ceil(expectedChanges / STAGE_ROWS_PER_STATEMENT) + 6;
+}
 
 async function stage(db: D1Database, plan: InternalPlan) {
   const pk = `POSTING_IDENTITY_REPAIR#${plan.repairToken}`;
@@ -465,9 +478,15 @@ async function stage(db: D1Database, plan: InternalPlan) {
     ...plan.userDeletes.map((item) => ({ table: 'user', key1: item.user_id, key2: item.item_key, old: item.value })),
     ...plan.proposalUpdates.map((item) => ({ table: 'proposal', key1: item.id, key2: '', old: item.job_id })),
   ];
-  for (let offset = 0; offset < values.length; offset += 50) await db.batch(values.slice(offset, offset + 50).map((item) => db.prepare(
-    `INSERT INTO catalog_items (pk, sk, kind, value, source_id, external_id) VALUES (?, ?, '${STAGE_KIND}', ?, ?, ?)`,
-  ).bind(pk, operationId(item), JSON.stringify(item), item.key1, item.key2)));
+  const statements: D1PreparedStatement[] = [];
+  for (let offset = 0; offset < values.length; offset += STAGE_ROWS_PER_STATEMENT) {
+    const chunk = values.slice(offset, offset + STAGE_ROWS_PER_STATEMENT);
+    const placeholders = chunk.map(() => `(?, ?, '${STAGE_KIND}', ?, ?, ?)`).join(', ');
+    statements.push(db.prepare(
+      `INSERT INTO catalog_items (pk, sk, kind, value, source_id, external_id) VALUES ${placeholders}`,
+    ).bind(...chunk.flatMap((item) => [pk, operationId(item), JSON.stringify(item), item.key1, item.key2])));
+  }
+  for (let offset = 0; offset < statements.length; offset += 50) await db.batch(statements.slice(offset, offset + 50));
   return pk;
 }
 
@@ -517,6 +536,9 @@ export async function runPostingIdentityRepair(db: D1Database, options: { apply?
     throw new Error('Catalog changed after dry run; use its exact repair token, changed-record count, and duplicate-job count');
   }
   if (!plan.expectedChanges) return { ...report, applied: true };
+  if (postingIdentityRepairQueryCount(plan.expectedChanges) > D1_PAID_QUERY_LIMIT - POST_REPAIR_QUERY_RESERVE) {
+    throw new Error('Posting identity repair exceeds the guarded D1 query budget; split the reviewed repair plan');
+  }
   const stagePk = await stage(db, plan);
   const guard = db.prepare(`
     INSERT INTO catalog_items (pk, sk, kind, value)
