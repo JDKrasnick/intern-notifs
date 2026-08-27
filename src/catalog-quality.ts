@@ -61,7 +61,7 @@ export function normalizeLocations(values: readonly string[]): string[] {
 
 export function locationSummary(locations: readonly string[]): string {
   const clean = normalizeLocations(locations);
-  if (!clean.length) return 'Unspecified';
+  if (!clean.length) return 'Location not specified';
   const suffix = clean.length > 2 ? ` + ${clean.length - 2} more` : '';
   return boundedText(`${clean.slice(0, 2).join(' · ')}${suffix}`, 160);
 }

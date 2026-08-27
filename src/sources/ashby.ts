@@ -155,6 +155,7 @@ function mapPosting(row: AshbyPosting, source: ReviewedSourceRecord, fetchedAt: 
   return {
     sourceId: source.id, provenance: 'official-ats', externalId: row.id, document: row.id, sourceUrl: sourceUrl(boardName), row: index + 1, fetchedAt,
     employer: { name: source.company, authority: 'reviewed-registry' }, title: row.title,
+    providerIdentity: { provider: 'ashby', tenant: boardName },
     content: description ? [description] : [], locations: uniqueLocations(row), applyUrl: row.applyUrl,
     hostedUrl: row.jobUrl, sourceState: 'open',
     ...(row.employmentType?.toLowerCase() === 'intern' ? { lifecycleAuthority: 'posting' as const } : {}),

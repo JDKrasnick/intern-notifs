@@ -143,6 +143,7 @@ export function mapLeverSourcedPosting(
     row,
     fetchedAt,
     employer: { name: options.company, authority: 'reviewed-registry' },
+    providerIdentity: { provider: 'lever', tenant: options.site },
     title: posting.text,
     content,
     locations: posting.categories?.location

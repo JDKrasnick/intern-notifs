@@ -270,6 +270,7 @@ export function mapGreenhouseSourcedPosting(
     row,
     fetchedAt,
     employer: { id: source.employerId, name: source.displayName, authority: 'reviewed-registry' },
+    providerIdentity: { provider: 'greenhouse', tenant: source.boardToken },
     title,
     content: [{ kind: 'description', format: 'html', value: description }],
     locations: [htmlToText(job.location?.name ?? undefined)].filter(Boolean),

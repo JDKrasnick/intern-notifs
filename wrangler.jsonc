@@ -12,6 +12,7 @@
   "r2_buckets": [
     { "binding": "DOCUMENTS", "bucket_name": "intern-notifs-documents" }
   ],
+  "browser": { "binding": "DESTINATION_BROWSER" },
   "queues": {
     "producers": [
       { "binding": "GREENHOUSE_QUEUE", "queue": "intern-notifs-greenhouse" },
@@ -19,17 +20,20 @@
       { "binding": "ASHBY_QUEUE", "queue": "intern-notifs-ashby" },
       { "binding": "GITHUB_QUEUE", "queue": "intern-notifs-github" },
       { "binding": "GMAIL_QUEUE", "queue": "intern-notifs-gmail" },
+      { "binding": "DESTINATION_VERIFICATION_QUEUE", "queue": "intern-notifs-destination-verification" },
       { "binding": "GREENHOUSE_DLQ", "queue": "intern-notifs-greenhouse-dlq" },
       { "binding": "LEVER_DLQ", "queue": "intern-notifs-lever-dlq" },
       { "binding": "ASHBY_DLQ", "queue": "intern-notifs-ashby-dlq" },
-      { "binding": "GMAIL_DLQ", "queue": "intern-notifs-gmail-dlq" }
+      { "binding": "GMAIL_DLQ", "queue": "intern-notifs-gmail-dlq" },
+      { "binding": "DESTINATION_VERIFICATION_DLQ", "queue": "intern-notifs-destination-verification-dlq" }
     ],
     "consumers": [
       { "queue": "intern-notifs-greenhouse", "max_batch_size": 1, "max_retries": 2, "dead_letter_queue": "intern-notifs-greenhouse-dlq" },
       { "queue": "intern-notifs-lever", "max_batch_size": 1, "max_retries": 2, "dead_letter_queue": "intern-notifs-lever-dlq" },
       { "queue": "intern-notifs-ashby", "max_batch_size": 1, "max_retries": 2, "dead_letter_queue": "intern-notifs-ashby-dlq" },
       { "queue": "intern-notifs-github", "max_batch_size": 1, "max_retries": 2, "dead_letter_queue": "intern-notifs-github-dlq" },
-      { "queue": "intern-notifs-gmail", "max_batch_size": 1, "max_retries": 5, "dead_letter_queue": "intern-notifs-gmail-dlq" }
+      { "queue": "intern-notifs-gmail", "max_batch_size": 1, "max_retries": 5, "dead_letter_queue": "intern-notifs-gmail-dlq" },
+      { "queue": "intern-notifs-destination-verification", "max_batch_size": 20, "max_batch_timeout": 60, "max_retries": 2, "dead_letter_queue": "intern-notifs-destination-verification-dlq" }
     ]
   },
   "triggers": {

@@ -129,6 +129,49 @@ summaries, structured `locations`, bounded compensation, and unchanged
 notification flags. Never store the operations secret in shell history, Git, or
 documentation.
 
+## Catalog admission rollout (#120)
+
+Deploy the Worker before applying `0007_catalog_admission.sql`; the code treats
+legacy rows without an admission record as eligible until the guarded repair is
+approved. Create the `intern-notifs-destination-verification` queue and its
+`-dlq`, enable the `DESTINATION_BROWSER` Browser Rendering binding, and set
+`RESEND_API_KEY` plus `ADMISSION_SUPPORT_RECIPIENT` as Worker secrets. The
+checked-in consumer processes at most 20 URLs per batch, retries twice before
+the DLQ, rechecks open incidents daily, and samples reviewed host rules weekly.
+
+Apply the migration and deploy only after reviewing the generated resource diff:
+
+```bash
+npm run build:cloudflare
+npm run cloudflare:migrate:remote
+npx wrangler deploy
+```
+
+All review and repair endpoints are hidden behind the existing operations
+secret under `/internal/admission/`. Begin with read-only `GET` requests to
+`audit`, `employers`, `mappings`, `host-rules`, and `incidents`. Use `PUT
+/internal/admission/employers`, `POST /internal/admission/mappings`, and `PUT
+/internal/admission/host-rules` only for reviewed decisions; replacing a
+source-scoped employer mapping requires its explicit `supersedesMappingId`.
+
+Stage legacy changes with `POST /internal/admission/repair` and a `changes`
+array. Save the returned `repairToken`, `changed` count, and candidate IDs for
+owner review. Apply only the exact approved stage with `apply: true`, that token,
+and `expectedChanged`. The D1 transaction refuses changed source JSON or a count
+mismatch, writes no notification outbox entries, and refreshes the grouped
+projection only after a successful batch. Re-run `GET /internal/admission/audit`
+and sample public catalog, Saved, and release APIs afterward. Confirm job IDs,
+`firstSeenAt`, catalog recency, source references, posting identities, and
+notification markers are unchanged. Do not delete incident, evidence, attempt,
+review-decision, or email-delivery history during rollback; roll back exposure
+by superseding reviewed rules/mappings and staging a new guarded repair.
+
+Operational alerts should cover destination-verification queue age and depth,
+any DLQ message, active/quarantined incident counts by reason, grace deadlines,
+and Resend failures. Immediate aggregate/gone quarantines, incident openings,
+and grace-deadline warnings are grouped by source, host, and reason and deduped
+through the D1 delivery ledger.
+
 Greenhouse, Lever, and Ashby use dedicated half-hour EventBridge schedules,
 dispatcher Lambdas, FIFO work queues, two-minute workers, and dead-letter
 queues. Published boards are checked every thirty minutes whether active or

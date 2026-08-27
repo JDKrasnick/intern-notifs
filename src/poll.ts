@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { assessApplicationPageForListing, canonicalApplicationUrl, type ApplicationUrlValidator } from './core/application-url.js';
+import { assessApplicationPageForListing, canonicalApplicationUrl, type ApplicationPageEvidence, type ApplicationUrlValidator } from './core/application-url.js';
 import { boardReference, reachabilityFromFailure, reachabilityFromSignals, verifyApplication, type AttributionBasis, type Reachability } from './core/application-verification.js';
 import { inferSeason, isPastSeason } from './core/early-career.js';
 import { normalizeUrl } from './core/normalize.js';
@@ -8,6 +8,8 @@ import { isTechnicalJob, type JobFilter } from './core/filters.js';
 import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
 import { evaluateSourceFreshness } from './ingestion/monitoring.js';
 import { processSnapshot } from './ingestion/processor.js';
+import { evaluateCatalogAdmission } from './catalog-admission.js';
+import { classifyDestination, requiresBrowserVerification, type DestinationVerificationRequest } from './destination-verification.js';
 import { reviewedBoardIndex } from './sources/index.js';
 import { sourceQualityFailures } from './sources/quality.js';
 import { SourceFetchError } from './sources/source-error.js';
@@ -274,6 +276,7 @@ export class IngestionRunner {
     private readonly filter?: JobFilter,
     private readonly validateApplicationUrl?: ApplicationUrlValidator,
     private readonly validateCatalogApplicationUrl: ApplicationUrlValidator | false | undefined = validateApplicationUrl,
+    private readonly enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>,
   ) {}
 
   private async quarantine(job: Internship) {
@@ -345,6 +348,11 @@ export class IngestionRunner {
     const accepted = new Array<ProcessedListing | undefined>(listings.length);
     const failures = new Array<string | undefined>(listings.length);
     await forEachBounded(listings, async (sourceListing, slot) => {
+      // Transitional RawListing adapters predate provider-neutral evidence.
+      // Real connectors now emit SourceSnapshot postings and are always managed
+      // by record-level admission; legacy rows retain their rollout behavior
+      // until the reviewed backfill classifies them.
+      const admissionManaged = Boolean(sourceListing.employerEvidence || sourceListing.providerIdentity);
       const canonicalUrl = canonicalApplicationUrl(sourceListing.applyUrl);
       let listing = {
         ...sourceListing,
@@ -354,7 +362,6 @@ export class IngestionRunner {
       };
       const id = listing.externalId;
       let existing: Internship | undefined;
-      let validatingLink = false;
       try {
         const normalizedUrl = normalizeUrl(listing.applyUrl);
         const identity = buildPostingIdentity({ applicationUrl: listing.applyUrl });
@@ -382,45 +389,79 @@ export class IngestionRunner {
         }
         let reachability: Reachability = 'implied';
         let described: boolean | undefined;
-        // Attribution already proves the destination, and shelved roles never
-        // surface, so neither is worth an employer request.
+        let pageEvidence: ApplicationPageEvidence | undefined;
         const needsMetadataValidation = listing.seasonSource === 'source-default'
           && existing?.applicationPageMetadataVersion !== applicationPageMetadataVersion;
+        const initialDestination = classifyDestination({ listing, reachability, inspectedAt: this.now().toISOString() });
+        // Standard provider routes are proven by immutable IDs. Custom routes
+        // need page evidence even when the provider API attributed the posting.
         const needsValidation = Boolean(this.validateApplicationUrl && listing.technical !== false
-          && attribution === 'unattributed'
+          && (admissionManaged ? initialDestination.classification === 'unresolved' : attribution === 'unattributed')
           && existing?.invalidApplicationUrl !== normalizedUrl
           && (needsMetadataValidation || !existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
-        validatingLink = needsValidation;
         if (needsValidation) {
-          const validation = await this.validateApplicationUrl!(listing.applyUrl);
-          if (typeof validation === 'string') reachability = 'live';
-          else {
-            const confidence = assessApplicationPageForListing(listing.title, validation.evidence);
-            reachability = reachabilityFromSignals(confidence.signals);
-            described = confidence.recommendation === 'alert-eligible';
-            const titleSeason = inferSeason(listing.title, '', this.now());
-            const pageSeason = inferSeason(
-              validation.evidence.title ?? '',
-              [validation.evidence.description, validation.evidence.contentExcerpt].filter(Boolean).join(' '),
-              this.now(),
-            );
-            const verifiedSeason = titleSeason !== 'ongoing' ? titleSeason : pageSeason;
-            if (verifiedSeason !== 'ongoing') listing = { ...listing, season: verifiedSeason, seasonSource: 'posting' };
-            metadataValidated.set(id, applicationPageMetadataVersion);
+          try {
+            const validation = await this.validateApplicationUrl!(listing.applyUrl);
+            if (typeof validation === 'string') reachability = 'live';
+            else {
+              pageEvidence = validation.evidence;
+              const confidence = assessApplicationPageForListing(listing.title, validation.evidence);
+              reachability = reachabilityFromSignals(confidence.signals);
+              described = confidence.recommendation === 'alert-eligible';
+              const titleSeason = inferSeason(listing.title, '', this.now());
+              const pageSeason = inferSeason(
+                validation.evidence.title ?? '',
+                [validation.evidence.description, validation.evidence.contentExcerpt].filter(Boolean).join(' '),
+                this.now(),
+              );
+              const verifiedSeason = titleSeason !== 'ongoing' ? titleSeason : pageSeason;
+              if (verifiedSeason !== 'ongoing') listing = { ...listing, season: verifiedSeason, seasonSource: 'posting' };
+              metadataValidated.set(id, applicationPageMetadataVersion);
+            }
+          } catch (error) {
+            reachability = reachabilityFromFailure(error);
+            failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
+            if (!admissionManaged) {
+              if (existing?.open && reachability === 'gone') await this.quarantine(existing);
+              return;
+            }
           }
         }
-        validatingLink = false;
         const verification = verifyApplication({ attribution, reachability, ...(described === undefined ? {} : { described }) });
-        if (attribution !== 'unattributed' || (needsValidation && verification.alertEligible)) {
+        if (!admissionManaged) {
+          if (attribution !== 'unattributed' || (needsValidation && verification.alertEligible)) validatedAt.set(id, this.now().toISOString());
+          if (verification.alertEligible) alertEligible.add(id);
+          resolved.set(id, existing);
+          accepted[slot] = listing;
+          return;
+        }
+        const inspectedAt = this.now().toISOString();
+        const destination = classifyDestination({ listing, reachability, ...(pageEvidence ? { evidence: pageEvidence } : {}), inspectedAt });
+        const admission = evaluateCatalogAdmission({
+          listing,
+          destination,
+          postingAttributed: listing.provenance !== 'reviewed-community' || attribution !== 'unattributed' || described === true,
+          evaluatedAt: inspectedAt,
+          previous: existing?.admission,
+        });
+        listing = { ...listing, admission };
+        if (this.enqueueDestinationVerification && requiresBrowserVerification(destination) && listing.providerIdentity) {
+          await this.enqueueDestinationVerification({
+            jobId: listing.postingIdentity!.canonicalJobId,
+            sourceId: listing.sourceId,
+            externalId: id,
+            providerIdentity: listing.providerIdentity,
+            candidateUrl: listing.applyUrl,
+            reason: existing?.normalizedUrl && existing.normalizedUrl !== normalizedUrl ? 'url-change' : 'first-sight',
+          });
+        }
+        if (admission.catalogEligible && ['posting-detail', 'application-form'].includes(destination.classification)) {
           validatedAt.set(id, this.now().toISOString());
         }
-        if (verification.alertEligible) alertEligible.add(id);
+        if (admission.alertEligible) alertEligible.add(id);
         resolved.set(id, existing);
         accepted[slot] = listing;
       } catch (error) {
-        // Only a destination proven gone hides a live role; a timeout or a
-        // refused read leaves it exactly as it was.
-        if (validatingLink && existing?.open && reachabilityFromFailure(error) === 'gone') await this.quarantine(existing);
         failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
       }
     });

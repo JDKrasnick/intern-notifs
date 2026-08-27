@@ -10,6 +10,7 @@ import { createApplicationSession, transitionApplicationSession, type Applicatio
 import { companyCoverage } from '../coverage/summary.js';
 import { catalogGroupDetails, filterCatalogGroupDetails, filterCatalogGroups, groupCatalogJobs, type CatalogGroupFilter } from './catalog-groups.js';
 import { occurrenceProvenance } from './sources/provenance.js';
+import { catalogEligible } from './catalog-admission.js';
 
 type ApiEvent = { requestContext?: { authorizer?: { jwt?: { claims?: Record<string, string> } }; http?: { method?: string }; requestId?: string }; rawPath?: string; routeKey?: string; pathParameters?: Record<string, string>; queryStringParameters?: Record<string, string>; headers?: Record<string, string | undefined>; body?: string | null };
 type ApiResponse = { statusCode: number; headers: Record<string, string>; body: string };
@@ -94,6 +95,9 @@ function safeSession(session: ApplicationSession) {
 }
 
 function applicationSummary(application: ApplicationRecord, job: Awaited<ReturnType<NonNullable<InternshipStore['getJob']>>>) {
+  const availability = !job ? 'catalog-review' as const
+    : !job.open ? 'closed' as const
+      : catalogEligible(job) ? 'available' as const : 'catalog-review' as const;
   return {
     ...application,
     ...(job ? {
@@ -103,12 +107,17 @@ function applicationSummary(application: ApplicationRecord, job: Awaited<ReturnT
         title: job.title,
         location: job.location,
         season: job.season,
-        applyUrl: job.applyUrl,
         open: job.open,
+        availability,
+        ...(availability !== 'catalog-review' ? {
+          applyUrl: job.applyUrl,
+          assistance: assistanceAvailability(job, application.applyMode),
+        } : {
+          unavailableReason: 'InternNotifs couldn’t verify the official role page and is reviewing it.',
+        }),
         sourceReferences: publicJob(job).sourceReferences.map(({ sourceId, sourceUrl, provenance, state }) => ({ sourceId, sourceUrl, provenance, state })),
-        assistance: assistanceAvailability(job, application.applyMode),
       },
-    } : {}),
+    } : { availability }),
   };
 }
 
@@ -376,7 +385,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
       const jobMatch = path.match(/^\/jobs\/([^/]+)$/);
       if (method === 'GET' && jobMatch) {
         const job = await dependencies.jobs.getJob?.(decodeURIComponent(jobMatch[1]));
-        return job ? reply(200, { ...publicJob(job), assistance: assistanceAvailability(job) }) : reply(404, { message: 'Job not found' });
+        return job && catalogEligible(job) ? reply(200, { ...publicJob(job), assistance: assistanceAvailability(job) }) : reply(404, { message: 'Job not found' });
       }
       if (method === 'POST' && path === '/assist/exchange') {
         const body = parseBody(event);
@@ -418,7 +427,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
         const release = await dependencies.releases?.getRelease(userId, releaseId);
         if (!release) return reply(404, { message: 'Release not found' });
         const jobs = (await Promise.all(release.jobIds.map((jobId) => dependencies.jobs.getJob(jobId))))
-          .filter((job): job is NonNullable<typeof job> => Boolean(job));
+          .filter((job): job is NonNullable<typeof job> => Boolean(job) && catalogEligible(job!));
         return reply(200, {
           releaseId: release.releaseId,
           createdAt: release.createdAt,
@@ -494,7 +503,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
       }
       if (method === 'POST' && path === '/me/applications') {
         const body = parseBody(event); if (typeof body.jobId !== 'string') return reply(400, { message: 'jobId is required' });
-        const job = await dependencies.jobs.getJob?.(body.jobId); if (!job) return reply(404, { message: 'Job not found' });
+        const job = await dependencies.jobs.getJob?.(body.jobId); if (!job || !catalogEligible(job)) return reply(404, { message: 'Job not found' });
         const timestamp = now(); const existing = (await dependencies.users.listApplications(userId)).find((application) => application.jobId === job.jobId);
         const status = statuses.includes(body.status as ApplicationStatus) ? body.status as ApplicationStatus : existing?.status ?? 'saved';
         const application: ApplicationRecord = {
@@ -516,6 +525,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
         if (application.status !== 'saved') return reply(409, { message: 'Only To Apply roles can start assistance' });
         const job = await dependencies.jobs.getJob?.(application.jobId);
         if (!job) return reply(404, { message: 'Job not found' });
+        if (!catalogEligible(job)) return reply(409, { message: 'Assistance is unavailable while InternNotifs reviews the official role page' });
         const body = parseBody(event);
         if (body.mode !== 'headed' && body.mode !== 'headless') return reply(400, { message: 'mode must be headed or headless' });
         const availability = assistanceAvailability(job, application.applyMode);

@@ -9,6 +9,7 @@ import { deletedUserTombstoneKey, type InternshipStore, type LeverAdmission, typ
 import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from '../src/catalog-groups.js';
 import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from '../src/types.js';
 import type { D1Database } from './types.js';
+import { alertEligible, catalogEligible } from '../src/catalog-admission.js';
 
 type JsonRow = { value: string };
 const deliveryReceiptLifetimeSeconds = 90 * 24 * 60 * 60;
@@ -102,12 +103,12 @@ export class D1InternshipStore implements InternshipStore {
       JSON.stringify(canonical),
       canonical.normalizedUrl,
       canonical.fingerprint,
-      canonical.notification.smsPending ? 1 : 0,
-      canonical.notification.digestPending ? 1 : 0,
-      canonical.technical === false ? null : canonical.open ? 'OPEN' : 'CLOSED',
-      canonical.technical === false ? null : canonical.open ? openCatalogSortKey(canonical) : `${canonical.lastSeenAt}#${canonical.jobId}`,
-      canonical.technical === false ? null : catalogSearchText(canonical),
-      canonical.technical === false ? null : JSON.stringify(catalogSourceClasses(canonical)),
+      canonical.notification.smsPending && alertEligible(canonical) ? 1 : 0,
+      canonical.notification.digestPending && alertEligible(canonical) ? 1 : 0,
+      canonical.technical === false || !catalogEligible(canonical) ? null : canonical.open ? 'OPEN' : 'CLOSED',
+      canonical.technical === false || !catalogEligible(canonical) ? null : canonical.open ? openCatalogSortKey(canonical) : `${canonical.lastSeenAt}#${canonical.jobId}`,
+      canonical.technical === false || !catalogEligible(canonical) ? null : catalogSearchText(canonical),
+      canonical.technical === false || !catalogEligible(canonical) ? null : JSON.stringify(catalogSourceClasses(canonical)),
     );
   }
 
@@ -301,7 +302,7 @@ export class D1InternshipStore implements InternshipStore {
   async listCatalog(): Promise<Internship[]> {
     const result = await this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'internship'").all<JsonRow>();
     return result.results.map((row) => JSON.parse(row.value) as Internship)
-      .filter((job) => job.technical !== false && !isPastSeason(job.season))
+      .filter((job) => job.technical !== false && catalogEligible(job) && !isPastSeason(job.season))
       .sort(compareCatalogRecency).map(withEmployerCategory);
   }
   async putCatalogProjection(groups: CatalogGroupDetails[], generatedAt: string): Promise<void> {

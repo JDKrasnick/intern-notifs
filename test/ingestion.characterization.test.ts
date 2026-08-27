@@ -119,6 +119,9 @@ describe('neutral boundary parity', () => {
     provenance: 'official-ats' as const,
     technical: true,
     internshipIdentity: expect.any(Object) as unknown as object,
+    employerEvidence: expect.any(Object) as unknown as object,
+    providerIdentity: expect.any(Object) as unknown as object,
+    metadataCompleteness: { complete: true, title: 'complete', location: 'complete' } as const,
   };
 
   it('produces the legacy Lever listing from the connector and shared processor', () => {

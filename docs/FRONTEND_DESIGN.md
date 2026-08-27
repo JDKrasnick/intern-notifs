@@ -169,6 +169,7 @@ Every screen follows these rules. They are as important as colors and type.
 - On the signed-in mobile feed, a deliberate left swipe on an unsaved role reveals a teal bookmark action and saves the role to the shared **Saved** queue. The card returns to its resting position, then shows its **SAVED** status; do not remove it from the feed.
 - The reveal uses a short 100 ms follow-through and 120 ms hold before the card settles back. With Reduce Motion enabled, save immediately without movement.
 - Saving never opens the employer form. The same account-backed role is available in the responsive web app’s **Saved** queue, where **Open official application** is the clear primary handoff. Keep status changes explicit; opening a form alone must not mark a role applied.
+- If a saved role remains open but fails catalog admission, preserve its title, employer, location, season, and application history. Replace the handoff with the quiet shield notice **InternNotifs couldn’t verify the official role page and is reviewing it.** Do not expose the unverified URL or application-assistance action. Closed roles keep the established closed state instead.
 - Expose the same action to assistive technology as **Save for web**, with a hint that it can be applied to later in the web app.
 
 ### Hide from feed

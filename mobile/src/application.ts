@@ -2,8 +2,10 @@ export type ApplicationJobSummary = {
   jobId: string;
   company: string;
   title: string;
-  applyUrl: string;
+  applyUrl?: string;
   open: boolean;
+  availability?: 'available' | 'closed' | 'catalog-review';
+  unavailableReason?: string;
   sourceReferences?: Array<{ sourceId: string; sourceUrl: string }>;
 };
 

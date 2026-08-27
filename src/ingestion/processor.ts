@@ -3,6 +3,8 @@ import { assessTechnicalRole } from '../core/filters.js';
 import { parseCompensation } from '../core/normalize.js';
 import { isTruncatedTitle, repairTitle } from '../core/role-title.js';
 import { buildInternshipIdentity } from '../identity/enrichment.js';
+import { canonicalCompanyKey } from '../core/normalize.js';
+import { metadataCompleteness } from '../catalog-admission.js';
 import { normalizeListing, normalizeLocations, locationSummary } from '../catalog-quality.js';
 import { applicationUrlRejection } from '../sources/quality.js';
 import type {
@@ -57,7 +59,8 @@ export function processPosting(
     return { decision: { externalId: posting.externalId, outcome: 'filtered', reason: 'not-early-career' } };
   }
   const company = htmlToText(posting.employer.name);
-  const locations = normalizeLocations(posting.locations.map(htmlToText).filter(Boolean));
+  const sourceLocations = posting.locations.map(htmlToText).filter(Boolean);
+  const locations = normalizeLocations(sourceLocations);
   const location = locationSummary(locations);
   const titleSeason = inferSeason(title, '');
   const season = titleSeason !== 'ongoing' ? titleSeason : posting.seasonHint ?? inferSeason('', content);
@@ -110,6 +113,29 @@ export function processPosting(
     fetchedAt: posting.fetchedAt,
     technical: assessment.technical,
     ...(title === sourceTitle ? {} : { titleRepaired: true }),
+    providerIdentity: {
+      provider: posting.providerIdentity?.provider
+        ?? (posting.sourceId.startsWith('greenhouse-') ? 'greenhouse'
+          : posting.sourceId.startsWith('lever-') ? 'lever'
+            : posting.sourceId.startsWith('ashby-') ? 'ashby'
+              : posting.provenance === 'official-structured' ? 'structured'
+                : posting.provenance === 'employer-submitted' ? 'employer-submission' : 'github'),
+      sourceId: posting.sourceId,
+      sourceUrl: posting.sourceUrl,
+      ...(posting.providerIdentity?.tenant ? { tenant: posting.providerIdentity.tenant } : {}),
+      postingId: posting.externalId,
+    },
+    employerEvidence: {
+      authority: posting.employer.authority,
+      ...(posting.employer.authority === 'reviewed-registry' && company ? {
+        canonicalEmployer: { id: posting.employer.id ?? canonicalCompanyKey(company), displayName: company },
+      } : {}),
+    },
+    metadataCompleteness: metadataCompleteness({
+      title: sourceTitle,
+      locations: sourceLocations,
+      titleRepaired: title !== sourceTitle,
+    }),
   });
   // A non-technical early-career role is still worth keeping: it is persisted,
   // stays out of every catalog index and alert, and remains available if the

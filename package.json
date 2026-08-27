@@ -65,6 +65,7 @@
     "@aws-sdk/s3-request-presigner": "^3.883.0"
   },
   "devDependencies": {
+    "@cloudflare/puppeteer": "^1.4.0",
     "@cloudflare/workers-types": "^5.20260823.1",
     "@eslint/js": "^9.35.0",
     "@types/node": "^22.18.0",

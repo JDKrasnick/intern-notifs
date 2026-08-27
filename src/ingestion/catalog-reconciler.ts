@@ -5,6 +5,7 @@ import { fingerprint, jobId, normalizeUrl } from '../core/normalize.js';
 import { normalizeInternship, normalizeListing } from '../catalog-quality.js';
 import { isOfficialOccurrence } from '../sources/provenance.js';
 import { isPastSeason } from '../core/early-career.js';
+import { deriveCanonicalAdmission } from '../catalog-admission.js';
 import type {
   Internship,
   NotificationEvent,
@@ -57,6 +58,7 @@ function occurrence(listing: ProcessedListing, externalId: string): SourceOccurr
     ...(listing.requirements ? { requirements: listing.requirements } : {}),
     technical: listing.technical ?? true,
     state: listing.state,
+    ...(listing.admission ? { admission: listing.admission } : {}),
   };
 }
 
@@ -104,7 +106,7 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
     item.sourceId === reference.sourceId
     && (item.externalId ? item.externalId === externalId : item.document === reference.document && item.row === reference.row));
   const incomingOfficial = isOfficialOccurrence(listing);
-  const preferIncoming = incomingOfficial;
+  const preferIncoming = incomingOfficial && (listing.admission?.catalogEligible ?? true);
   const useIncomingLocation = genericLocation(existing.location) || (!genericLocation(listing.location) && preferIncoming);
   const location = useIncomingLocation ? listing.location || existing.location : existing.location;
   const locations = useIncomingLocation ? listing.locations ?? existing.locations : existing.locations ?? listing.locations;
@@ -117,15 +119,17 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
       ...(item.firstAttachedAtPrecision ? { firstAttachedAtPrecision: item.firstAttachedAtPrecision } : item.firstAttachedAt ? { firstAttachedAtPrecision: 'exact' as const } : { firstAttachedAtPrecision: 'unknown' as const }),
     } : item)
     : [...existing.sourceReferences, { ...reference, firstAttachedAt: now, firstAttachedAtPrecision: 'exact' as const }];
+  const admission = deriveCanonicalAdmission(sourceReferences, now);
   const listingNormalizedUrl = normalizeUrl(listing.applyUrl);
   const keepQuarantined = existing.invalidApplicationUrl === listingNormalizedUrl;
   const replaceStoredUrl = Boolean(applicationUrlValidatedAt && (!existing.applicationUrlValidatedAt || existing.normalizedUrl !== listingNormalizedUrl));
   const base = { ...existing };
   if (!keepQuarantined) delete base.invalidApplicationUrl;
   const internshipIdentity = listing.internshipIdentity ?? existing.internshipIdentity;
+  const canonicalCompany = admission?.canonicalEmployer?.displayName;
   return normalizeInternship({
     ...base,
-    company,
+    company: canonicalCompany ?? company,
     title,
     location,
     ...(locations ? { locations } : {}),
@@ -142,6 +146,7 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
     },
     employerCategory: employerCategory(company),
     sourceReferences,
+    ...(admission ? { admission } : {}),
     technical: anyOpenTechnicalOccurrence(sourceReferences),
     open: keepQuarantined ? false : sourceReferences.some((item) => item.state === 'open') && seasonAllowsOpen(listing.season, internshipIdentity, sourceReferences, now),
     lastSeenAt: now,
@@ -155,9 +160,10 @@ function create(listing: ProcessedListing, externalId: string, now: string, base
   const normalizedUrl = normalizeUrl(listing.applyUrl);
   const key = fingerprint(listing.company, listing.title, listing.location, listing.season);
   const reference = { ...occurrence(listing, externalId), firstAttachedAt: now, firstAttachedAtPrecision: 'exact' as const };
+  const admission = deriveCanonicalAdmission([reference], now);
   return {
     jobId: listing.postingIdentity?.canonicalJobId ?? jobId(normalizedUrl, key),
-    company: listing.company,
+    company: admission?.canonicalEmployer?.displayName ?? listing.company,
     title: listing.title,
     location: listing.location,
     ...(listing.locations ? { locations: listing.locations } : {}),
@@ -173,6 +179,7 @@ function create(listing: ProcessedListing, externalId: string, now: string, base
     ...(listing.requirements ? { requirements: listing.requirements } : {}),
     employerCategory: employerCategory(listing.company),
     sourceReferences: [reference],
+    ...(admission ? { admission } : {}),
     technical: listing.technical ?? isTechnicalJob(listing),
     open: listing.state === 'open' && seasonAllowsOpen(listing.season, listing.internshipIdentity, [reference], now),
     firstSeenAt: now,
@@ -203,6 +210,7 @@ function closeOccurrence(job: Internship, state: SourceOccurrenceState, now: str
   return {
     ...job,
     sourceReferences,
+    ...(deriveCanonicalAdmission(sourceReferences, now) ? { admission: deriveCanonicalAdmission(sourceReferences, now) } : {}),
     technical: anyOpenTechnicalOccurrence(sourceReferences),
     open: sourceReferences.some((reference) => reference.state === 'open')
       && seasonAllowsOpen(job.season, job.internshipIdentity, sourceReferences, now),
@@ -252,6 +260,7 @@ export class CatalogReconciler {
         && stored.sourceReferences[0]?.externalId === externalId);
       if (!existing || retryingUncommittedCreate) {
         if (input.baseline || !job.open || !job.technical || !matchesJobFilter(job, input.filter)
+          || job.admission?.alertEligible === false
           || (input.alertEligible && !input.alertEligible.has(externalId))) {
           job.notification = { smsPending: false, digestPending: false };
           filteredJobs.push(job);

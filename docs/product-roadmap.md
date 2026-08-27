@@ -49,6 +49,12 @@
 - [ ] Finish #56's shared statement-level work-authorization classifier, retained evidence reason, student filters, and alert matching; #113 supplies the provider-neutral status model and honest `unknown` default without inferring eligibility.
 - [ ] Roll out #113 in order: apply the D1 migration and seed/verify registry parity, enable operator queues, pilot one manually approved employer, then consider the portal flag and automatic publishing only after its documented threshold.
 - [x] Define source-admission, attribution, removal, and source-quality policies.
+- [ ] Complete issue #120's catalog-admission rollout.
+  - [x] Add the provider-neutral employer, posting-attribution, destination, and metadata admission record; derive canonical eligibility from source occurrences; and gate catalog indexes and alert outbox writes.
+  - [x] Add reviewed D1 employer mappings and destination rules, browser-verification queue/DLQ processing, evidence and incident history, grouped support email states, guarded silent repair, and the Saved unavailable state.
+  - [ ] Deploy migration `0007_catalog_admission.sql`, configure the Browser Rendering and Resend bindings, and verify queue/DLQ health plus the admission audit in production.
+  - [ ] Review the production candidate set, approve the exact guarded repair token/count, apply it, and verify unchanged job IDs, first-seen timestamps, recency, source references, and notification state.
+  - [ ] Verify representative iOS/Android Saved rendering and the seven-day custom-route grace transition on physical devices.
 - [x] Add internal source-aware filtering (FAANG, verified startups/YC, normal, U.S.-citizenship requirement, advanced-degree requirement, and open/closed status) to catalog ingestion, alerts, and mobile discovery.
 - [x] Add the signed-in “new since last open” inbox with a calm first-open baseline, saved-filter matching, and count-led mobile launch screen.
 - [x] Add signed-in swipe-left save for later, synced to the responsive web Saved queue and official-form handoff.
@@ -144,3 +150,4 @@
 | 2026-08-25 | Publish code under MIT and InternNotifs-authored catalog metadata under CC BY 4.0, excluding employer text, trademarks, and third-party material | Supports an open-source project without relicensing material InternNotifs does not own |
 | 2026-08-25 | Acknowledge source corrections within 2 business days, target resolution within 7 days, and promptly hide credible safety-sensitive listings during review | Makes the public correction path predictable while prioritizing user safety |
 | 2026-08-26 | Make Gmail confirmation detection optional, metadata-only, deterministic, account-gated, and unavailable to general users until restricted-scope verification and annual security assessment are complete | Reduces manual tracking without treating link opens as applications or expanding access to message content |
+| 2026-08-26 | Require reviewed canonical employer identity, posting attribution, a single-role official destination, and complete display metadata before catalog or alert admission | Prevents aggregate boards, broken handoffs, generic employer labels, and malformed cards from reaching students while preserving source evidence and saved history |
