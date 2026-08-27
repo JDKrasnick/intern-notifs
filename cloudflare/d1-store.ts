@@ -5,13 +5,14 @@ import { isPastSeason } from '../src/core/early-career.js';
 import { employerCategory } from '../src/core/employers.js';
 import type { ApplicationSession } from '../src/application-automation.js';
 import { resolvePostingAliases, type AliasResolution } from '../src/identity/posting.js';
-import type { InternshipStore, LeverAdmission, ReleaseStore, UserStore, CatalogQuery } from '../src/store.js';
+import { deletedUserTombstoneKey, type InternshipStore, type LeverAdmission, type ReleaseStore, type UserStore, type CatalogQuery } from '../src/store.js';
 import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from '../src/catalog-groups.js';
 import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from '../src/types.js';
 import type { D1Database } from './types.js';
 
 type JsonRow = { value: string };
 const deliveryReceiptLifetimeSeconds = 90 * 24 * 60 * 60;
+const documentUploadLeaseSeconds = 15 * 60;
 
 function receiptExpiry(value: Pick<DeliveryReceipt, 'updatedAt'>): number {
   return Math.floor(new Date(value.updatedAt).getTime() / 1_000) + deliveryReceiptLifetimeSeconds;
@@ -426,14 +427,51 @@ export class D1InternshipStore implements InternshipStore {
 export class D1UserStore implements UserStore {
   constructor(private readonly db: D1Database) {}
 
+  private deletionOwner(userId: string) { return deletedUserTombstoneKey(userId).pk; }
+  async beginUserDeletion(userId: string): Promise<void> {
+    await this.db.prepare(`
+      INSERT INTO user_items (user_id, item_key, kind, value)
+      VALUES (?, 'TOMBSTONE', 'deleted-user-tombstone', '{}')
+      ON CONFLICT(user_id, item_key) DO NOTHING
+    `).bind(this.deletionOwner(userId)).run();
+  }
+  async isUserDeletionPending(userId: string): Promise<boolean> {
+    return Boolean(await this.db.prepare("SELECT 1 AS present FROM user_items WHERE user_id = ? AND item_key = 'TOMBSTONE'")
+      .bind(this.deletionOwner(userId)).first<{ present: number }>());
+  }
+  async beginDocumentUpload(userId: string, documentId: string, leaseId: string, now = new Date()): Promise<boolean> {
+    const expires = Math.floor(now.getTime() / 1_000) + documentUploadLeaseSeconds;
+    const result = await this.db.prepare(`
+      INSERT INTO user_items (user_id, item_key, kind, value, expires_at)
+      SELECT ?, ?, 'document-upload', ?, ?
+      WHERE NOT EXISTS (SELECT 1 FROM user_items WHERE user_id = ? AND item_key = 'TOMBSTONE')
+      ON CONFLICT(user_id, item_key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at
+      WHERE user_items.expires_at <= ?
+    `).bind(userId, `DOCUMENT_UPLOAD#${documentId}`, JSON.stringify(leaseId), expires, this.deletionOwner(userId), Math.floor(now.getTime() / 1_000)).run();
+    return result.meta.changes > 0;
+  }
+  async finishDocumentUpload(userId: string, documentId: string, leaseId: string): Promise<void> {
+    await this.db.prepare('DELETE FROM user_items WHERE user_id = ? AND item_key = ? AND value = ?')
+      .bind(userId, `DOCUMENT_UPLOAD#${documentId}`, JSON.stringify(leaseId)).run();
+  }
+  async hasActiveDocumentUploads(userId: string, now = new Date()): Promise<boolean> {
+    return Boolean(await this.db.prepare("SELECT 1 AS present FROM user_items WHERE user_id = ? AND kind = 'document-upload' AND expires_at > ? LIMIT 1")
+      .bind(userId, Math.floor(now.getTime() / 1_000)).first<{ present: number }>());
+  }
+
   private async get<T>(userId: string, key: string): Promise<T | undefined> {
     return parse<T>(await this.db.prepare('SELECT value FROM user_items WHERE user_id = ? AND item_key = ?').bind(userId, key).first<JsonRow>());
   }
   private async put(userId: string, key: string, kind: string, value: unknown, columns: Record<string, string | number | null> = {}): Promise<void> {
     const names = Object.keys(columns);
     const updates = ['kind = excluded.kind', 'value = excluded.value', ...names.map((name) => `${name} = excluded.${name}`)].join(', ');
-    await this.db.prepare(`INSERT INTO user_items (user_id, item_key, kind, value${names.length ? `, ${names.join(', ')}` : ''}) VALUES (${Array.from({ length: 4 + names.length }, () => '?').join(', ')}) ON CONFLICT(user_id, item_key) DO UPDATE SET ${updates}`)
-      .bind(userId, key, kind, JSON.stringify(value), ...names.map((name) => columns[name])).run();
+    const result = await this.db.prepare(`
+      INSERT INTO user_items (user_id, item_key, kind, value${names.length ? `, ${names.join(', ')}` : ''})
+      SELECT ${Array.from({ length: 4 + names.length }, () => '?').join(', ')}
+      WHERE NOT EXISTS (SELECT 1 FROM user_items WHERE user_id = ? AND item_key = 'TOMBSTONE')
+      ON CONFLICT(user_id, item_key) DO UPDATE SET ${updates}
+    `).bind(userId, key, kind, JSON.stringify(value), ...names.map((name) => columns[name]), this.deletionOwner(userId)).run();
+    if (result.meta.changes === 0) throw new Error('Account deletion is in progress');
   }
   private async list<T>(userId: string, prefix: string): Promise<T[]> {
     const result = await this.db.prepare('SELECT value FROM user_items WHERE user_id = ? AND item_key LIKE ?').bind(userId, `${prefix}%`).all<JsonRow>();
@@ -450,19 +488,23 @@ export class D1UserStore implements UserStore {
     // One Expo token represents one physical installation. Transfer a token
     // away from any legacy account owner before assigning it to the anonymous
     // installation so the same phone cannot receive duplicate alerts.
-    await this.db.batch([
-      this.db.prepare("DELETE FROM user_items WHERE kind = 'device' AND device_token = ? AND user_id <> ?")
-        .bind(value.token, value.userId),
+    const results = await this.db.batch([
+      this.db.prepare(`
+        DELETE FROM user_items WHERE kind = 'device' AND device_token = ? AND user_id <> ?
+          AND NOT EXISTS (SELECT 1 FROM user_items WHERE user_id = ? AND item_key = 'TOMBSTONE')
+      `).bind(value.token, value.userId, this.deletionOwner(value.userId)),
       this.db.prepare(`
         INSERT INTO user_items (user_id, item_key, kind, value, active_device, device_token)
-        VALUES (?, ?, 'device', ?, ?, ?)
+        SELECT ?, ?, 'device', ?, ?, ?
+        WHERE NOT EXISTS (SELECT 1 FROM user_items WHERE user_id = ? AND item_key = 'TOMBSTONE')
         ON CONFLICT(user_id, item_key) DO UPDATE SET
           kind = excluded.kind,
           value = excluded.value,
           active_device = excluded.active_device,
           device_token = excluded.device_token
-      `).bind(value.userId, `DEVICE#${value.token}`, JSON.stringify(value), value.active ? 1 : 0, value.token),
+      `).bind(value.userId, `DEVICE#${value.token}`, JSON.stringify(value), value.active ? 1 : 0, value.token, this.deletionOwner(value.userId)),
     ]);
+    if (results[1]?.meta.changes === 0) throw new Error('Account deletion is in progress');
   }
   async deleteDevice(userId: string, token: string) { await this.db.prepare('DELETE FROM user_items WHERE user_id = ? AND item_key = ?').bind(userId, `DEVICE#${token}`).run(); }
   getProfile(userId: string) { return this.get<ApplicantProfile>(userId, 'PROFILE'); }
@@ -477,12 +519,19 @@ export class D1UserStore implements UserStore {
     const active = !['submitted', 'failed', 'cancelled'].includes(value.status) ? value.sessionId : null;
     const expires = Math.floor(new Date(value.metadataExpiresAt).getTime() / 1000);
     if (expectedVersion === undefined) {
-      const result = await this.db.prepare("INSERT INTO user_items (user_id, item_key, kind, value, session_id, expires_at) VALUES (?, ?, 'application-session', ?, ?, ?) ON CONFLICT(user_id, item_key) DO NOTHING")
-        .bind(userId, key, JSON.stringify(value), active, expires).run();
+      const result = await this.db.prepare(`
+        INSERT INTO user_items (user_id, item_key, kind, value, session_id, expires_at)
+        SELECT ?, ?, 'application-session', ?, ?, ?
+        WHERE NOT EXISTS (SELECT 1 FROM user_items WHERE user_id = ? AND item_key = 'TOMBSTONE')
+        ON CONFLICT(user_id, item_key) DO NOTHING
+      `).bind(userId, key, JSON.stringify(value), active, expires, this.deletionOwner(userId)).run();
       return result.meta.changes > 0;
     }
-    const result = await this.db.prepare("UPDATE user_items SET value = ?, session_id = ?, expires_at = ? WHERE user_id = ? AND item_key = ? AND CAST(json_extract(value, '$.version') AS INTEGER) = ?")
-      .bind(JSON.stringify(value), active, expires, userId, key, expectedVersion).run();
+    const result = await this.db.prepare(`
+      UPDATE user_items SET value = ?, session_id = ?, expires_at = ?
+      WHERE user_id = ? AND item_key = ? AND CAST(json_extract(value, '$.version') AS INTEGER) = ?
+        AND NOT EXISTS (SELECT 1 FROM user_items WHERE user_id = ? AND item_key = 'TOMBSTONE')
+    `).bind(JSON.stringify(value), active, expires, userId, key, expectedVersion, this.deletionOwner(userId)).run();
     return result.meta.changes > 0;
   }
   async listApplicationSessions(userId: string, applicationId?: string) { return (await this.list<ApplicationSession>(userId, 'APPLICATION_SESSION#')).filter((session) => !applicationId || session.applicationId === applicationId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
@@ -492,12 +541,13 @@ export class D1UserStore implements UserStore {
     const result = await this.db.prepare(`
       INSERT INTO user_items (user_id, item_key, kind, value)
       SELECT ?, ?, 'document', ?
-      WHERE EXISTS (SELECT 1 FROM user_items WHERE user_id = ? AND item_key = ?)
+      WHERE NOT EXISTS (SELECT 1 FROM user_items WHERE user_id = ? AND item_key = 'TOMBSTONE')
+        AND (EXISTS (SELECT 1 FROM user_items WHERE user_id = ? AND item_key = ?)
          OR ((SELECT COUNT(*) FROM user_items WHERE kind = 'document') < 100
-         AND (SELECT COUNT(*) FROM user_items WHERE kind = 'document' AND user_id = ?) < 5)
+         AND (SELECT COUNT(*) FROM user_items WHERE kind = 'document' AND user_id = ?) < 5))
       ON CONFLICT(user_id, item_key) DO UPDATE SET value = excluded.value
-    `).bind(value.userId, key, JSON.stringify(value), value.userId, key, value.userId).run();
-    if (result.meta.changes === 0) throw new Error('Document storage quota reached');
+    `).bind(value.userId, key, JSON.stringify(value), this.deletionOwner(value.userId), value.userId, key, value.userId).run();
+    if (result.meta.changes === 0) throw new Error(await this.isUserDeletionPending(value.userId) ? 'Account deletion is in progress' : 'Document storage quota reached');
   }
   async claimDocumentUpload(period: string): Promise<boolean> {
     const result = await this.db.prepare(`
@@ -511,24 +561,28 @@ export class D1UserStore implements UserStore {
   async claimReceipt(value: DeliveryReceipt): Promise<boolean> {
     const key = `RECEIPT#${value.dedupeKey ?? value.jobId}#${value.token}`;
     const result = await this.db.prepare(`
-      INSERT INTO user_items (user_id, item_key, kind, value, receipt_state, expires_at) VALUES (?, ?, 'receipt', ?, 'PENDING', ?)
+      INSERT INTO user_items (user_id, item_key, kind, value, receipt_state, expires_at)
+      SELECT ?, ?, 'receipt', ?, 'PENDING', ?
+      WHERE NOT EXISTS (SELECT 1 FROM user_items WHERE user_id = ? AND item_key = 'TOMBSTONE')
       ON CONFLICT(user_id, item_key) DO UPDATE SET value = excluded.value, receipt_state = excluded.receipt_state, expires_at = excluded.expires_at
       WHERE json_extract(user_items.value, '$.status') = 'error'
-    `).bind(value.userId, key, JSON.stringify(value), receiptExpiry(value)).run();
+    `).bind(value.userId, key, JSON.stringify(value), receiptExpiry(value), this.deletionOwner(value.userId)).run();
     return result.meta.changes > 0;
   }
   putReceipt(value: DeliveryReceipt) { return this.put(value.userId, `RECEIPT#${value.dedupeKey ?? value.jobId}#${value.token}`, 'receipt', value, { receipt_state: value.status === 'pending' ? 'PENDING' : value.status === 'retryable' ? 'RETRYABLE' : null, expires_at: receiptExpiry(value) }); }
   async migrateReceipt(value: DeliveryReceipt, dedupeKey: string): Promise<boolean> {
     const migrated = { ...value, dedupeKey };
     const result = await this.db.prepare(`
-      INSERT INTO user_items (user_id, item_key, kind, value, receipt_state, expires_at) VALUES (?, ?, 'receipt', ?, ?, ?)
+      INSERT INTO user_items (user_id, item_key, kind, value, receipt_state, expires_at)
+      SELECT ?, ?, 'receipt', ?, ?, ?
+      WHERE NOT EXISTS (SELECT 1 FROM user_items WHERE user_id = ? AND item_key = 'TOMBSTONE')
       ON CONFLICT(user_id, item_key) DO NOTHING
-    `).bind(value.userId, `RECEIPT#${dedupeKey}#${value.token}`, JSON.stringify(migrated), value.status === 'pending' ? 'PENDING' : value.status === 'retryable' ? 'RETRYABLE' : null, receiptExpiry(migrated)).run();
+    `).bind(value.userId, `RECEIPT#${dedupeKey}#${value.token}`, JSON.stringify(migrated), value.status === 'pending' ? 'PENDING' : value.status === 'retryable' ? 'RETRYABLE' : null, receiptExpiry(migrated), this.deletionOwner(value.userId)).run();
     return result.meta.changes > 0;
   }
   async pendingReceipts() { const rows = await this.db.prepare("SELECT value FROM user_items WHERE receipt_state = 'PENDING'").all<JsonRow>(); return rows.results.map((row) => JSON.parse(row.value) as DeliveryReceipt); }
   async retryableReceipts() { const rows = await this.db.prepare("SELECT value FROM user_items WHERE receipt_state = 'RETRYABLE'").all<JsonRow>(); return rows.results.map((row) => JSON.parse(row.value) as DeliveryReceipt); }
-  async deleteUser(userId: string): Promise<UserDocument[]> { const documents = await this.listDocuments(userId); await this.db.prepare('DELETE FROM user_items WHERE user_id = ?').bind(userId).run(); return documents; }
+  async deleteUser(userId: string): Promise<UserDocument[]> { await this.beginUserDeletion(userId); const documents = await this.listDocuments(userId); await this.db.prepare('DELETE FROM user_items WHERE user_id = ?').bind(userId).run(); return documents; }
 }
 
 export class D1ReleaseStore implements ReleaseStore {
@@ -539,12 +593,16 @@ export class D1ReleaseStore implements ReleaseStore {
   }
 
   async putRelease(release: CatalogRelease): Promise<void> {
+    const deletionOwner = deletedUserTombstoneKey(release.userId).pk;
     const result = await this.db.prepare(`
-      INSERT INTO user_items (user_id, item_key, kind, value) VALUES (?, ?, 'catalog-release', ?)
+      INSERT INTO user_items (user_id, item_key, kind, value)
+      SELECT ?, ?, 'catalog-release', ?
+      WHERE NOT EXISTS (SELECT 1 FROM user_items WHERE user_id = ? AND item_key = 'TOMBSTONE')
       ON CONFLICT(user_id, item_key) DO NOTHING
-    `).bind(release.userId, `RELEASE#${release.releaseId}`, JSON.stringify(release)).run();
+    `).bind(release.userId, `RELEASE#${release.releaseId}`, JSON.stringify(release), deletionOwner).run();
     if (result.meta.changes > 0) return;
     const existing = await this.getRelease(release.userId, release.releaseId);
+    if (!existing && await this.db.prepare("SELECT 1 AS present FROM user_items WHERE user_id = ? AND item_key = 'TOMBSTONE'").bind(deletionOwner).first()) return;
     if (JSON.stringify(existing) !== JSON.stringify(release)) throw new Error(`Release identity conflict for ${release.releaseId}`);
   }
 }

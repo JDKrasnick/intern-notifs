@@ -1,4 +1,5 @@
 import type { Internship } from './types.js';
+import { occurrenceProvenance } from './sources/provenance.js';
 
 export type CatalogSource = 'all' | 'direct' | 'community' | 'corroborated';
 
@@ -7,10 +8,10 @@ export function catalogSearchText(job: Internship) {
 }
 
 export function catalogSourceClasses(job: Internship): CatalogSource[] {
-  const direct = job.sourceReferences.some((reference) => /^(greenhouse|lever|ashby)-/i.test(reference.sourceId));
-  // Community rows come from GitHub Markdown adapters. Their configured IDs
-  // are publisher-specific, while persisted source URLs use raw.githubusercontent.com.
-  const community = job.sourceReferences.some((reference) => /^github-/i.test(reference.sourceId)
-    || /(?:^|\/\/)(?:raw\.)?github(?:usercontent)?\.com(?:[/:]|$)/i.test(reference.sourceUrl));
+  const direct = job.sourceReferences.some((reference) => {
+    const provenance = occurrenceProvenance(reference);
+    return provenance === 'official-ats' || provenance === 'official-structured' || provenance === 'employer-submitted';
+  });
+  const community = job.sourceReferences.some((reference) => occurrenceProvenance(reference) === 'reviewed-community');
   return ['all', ...(direct ? ['direct'] as const : []), ...(community ? ['community'] as const : []), ...(direct && community ? ['corroborated'] as const : [])];
 }

@@ -87,6 +87,18 @@ export interface UserDocument {
   createdAt: string;
 }
 
+export const ACCOUNT_EXPORT_SCHEMA_VERSION = 1 as const;
+
+export interface AccountDataExport {
+  schemaVersion: typeof ACCOUNT_EXPORT_SCHEMA_VERSION;
+  exportedAt: string;
+  account: {
+    profile: ApplicantProfile | null;
+    applications: ApplicationRecord[];
+    documents: Array<Pick<UserDocument, 'documentId' | 'fileName' | 'contentType' | 'createdAt'>>;
+  };
+}
+
 export interface DeliveryReceipt {
   userId: string;
   jobId: string;
@@ -239,6 +251,8 @@ export interface MonitoringChecklist {
 
 export interface SourceReference {
   sourceId: string;
+  /** Reviewed provenance attached at ingestion; legacy rows are resolved through the reviewed registry. */
+  provenance?: OccurrenceProvenance;
   document: string;
   sourceUrl: string;
   row: number;
@@ -247,6 +261,26 @@ export interface SourceReference {
   providerTimestamp?: ProviderTimestamp;
   /** Source-declared workplace arrangement; absent when the source does not declare one. */
   workMode?: 'remote' | 'hybrid' | 'onsite';
+}
+
+export type OccurrenceProvenance =
+  | 'official-ats'
+  | 'official-structured'
+  | 'employer-submitted'
+  | 'reviewed-community';
+
+export type WorkAuthorizationStatus =
+  | 'sponsorship-available'
+  | 'no-sponsorship'
+  | 'existing-authorization-required'
+  | 'citizenship-required'
+  | 'unknown';
+
+export interface ApplicationDeadline {
+  kind: 'date' | 'rolling';
+  /** Required for `date`; the role closes at the end of this date in `timezone`. */
+  date?: string;
+  timezone?: string;
 }
 
 /** The meaning the provider assigns to a timestamp; it is never an InternNotifs observation time. */
@@ -452,6 +486,7 @@ export type RawListing = ProcessedListing;
 
 export interface SourcedPosting {
   sourceId: string;
+  provenance?: OccurrenceProvenance;
   externalId: string;
   sourceUrl: string;
   document?: string;
@@ -552,6 +587,14 @@ export interface Internship {
   invalidApplicationUrl?: string;
   fingerprint: string;
   compensation: Compensation;
+  /** Provider-neutral status. Missing legacy values are rendered as `unknown`. */
+  workAuthorizationStatus?: WorkAuthorizationStatus;
+  applicationDeadline?: ApplicationDeadline;
+  graduationWindow?: GraduationDateWindow;
+  programType?: InternshipProgramType;
+  workMode?: WorkMode;
+  /** Employer co-attribution for accepted field-level evidence; history remains in proposal/audit tables. */
+  employerMetadataAttribution?: Record<string, Array<{ organizationId: string; proposalId: string; evidenceAt: string }>>;
   requirements?: JobRequirements;
   /** Set at ingest time; older stored records are classified from company name when read. */
   employerCategory?: EmployerCategory;

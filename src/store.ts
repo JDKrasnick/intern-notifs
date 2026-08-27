@@ -508,6 +508,10 @@ export class DynamoInternshipStore implements InternshipStore {
 }
 
 export interface UserStore {
+  /** Permanently blocks new writes before account deletion starts. */
+  beginUserDeletion(userId: string): Promise<void>;
+  isUserDeletionPending(userId: string): Promise<boolean>;
+  hasActiveDocumentUploads(userId: string): Promise<boolean>;
   getPreferences(userId: string): Promise<UserPreferences | undefined>;
   putPreferences(value: UserPreferences): Promise<void>;
   activePreferences(): Promise<UserPreferences[]>;
@@ -579,22 +583,27 @@ export class DynamoReleaseStore implements ReleaseStore {
 export class MemoryUserStore implements UserStore {
   readonly preferences = new Map<string, UserPreferences>(); readonly devices = new Map<string, DeviceToken>(); readonly profiles = new Map<string, ApplicantProfile>(); readonly applications = new Map<string, ApplicationRecord>(); readonly sessions = new Map<string, ApplicationSession>(); readonly documents = new Map<string, UserDocument>(); readonly receipts = new Map<string, DeliveryReceipt>();
   readonly deletedUsers = new Set<string>();
-  async getPreferences(userId: string) { return this.preferences.get(userId); } async putPreferences(value: UserPreferences) { this.preferences.set(value.userId, structuredClone(value)); }
+  private writable(userId: string) { if (this.deletedUsers.has(deletedUserTombstoneKey(userId).pk)) throw new Error('Account deletion is in progress'); }
+  async beginUserDeletion(userId: string) { this.deletedUsers.add(deletedUserTombstoneKey(userId).pk); }
+  async isUserDeletionPending(userId: string) { return this.deletedUsers.has(deletedUserTombstoneKey(userId).pk); }
+  async hasActiveDocumentUploads() { return false; }
+  async getPreferences(userId: string) { return this.preferences.get(userId); } async putPreferences(value: UserPreferences) { this.writable(value.userId); this.preferences.set(value.userId, structuredClone(value)); }
   async activePreferences() { return [...this.preferences.values()].filter((value) => value.alertsEnabled && value.onboardingComplete).map((value) => structuredClone(value)); }
   async activeDevices() { return [...this.devices.values()].filter((d) => d.active).map((d) => structuredClone(d)); }
-  async putDevice(value: DeviceToken) { this.devices.set(`${value.userId}#${value.token}`, structuredClone(value)); } async deleteDevice(userId: string, token: string) { this.devices.delete(`${userId}#${token}`); }
-  async getProfile(userId: string) { return this.profiles.get(userId); } async putProfile(value: ApplicantProfile) { this.profiles.set(value.userId, structuredClone(value)); }
+  async putDevice(value: DeviceToken) { this.writable(value.userId); this.devices.set(`${value.userId}#${value.token}`, structuredClone(value)); } async deleteDevice(userId: string, token: string) { this.devices.delete(`${userId}#${token}`); }
+  async getProfile(userId: string) { return this.profiles.get(userId); } async putProfile(value: ApplicantProfile) { this.writable(value.userId); this.profiles.set(value.userId, structuredClone(value)); }
   async listApplications(userId: string) { return [...this.applications.entries()].filter(([key]) => key.startsWith(`${userId}#`)).map(([, value]) => value).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((a) => structuredClone(a)); }
-  async getApplication(userId: string, applicationId: string) { const value = this.applications.get(`${userId}#${applicationId}`); return value && structuredClone(value); } async putApplication(userId: string, value: ApplicationRecord) { this.applications.set(`${userId}#${value.applicationId}`, structuredClone(value)); }
+  async getApplication(userId: string, applicationId: string) { const value = this.applications.get(`${userId}#${applicationId}`); return value && structuredClone(value); } async putApplication(userId: string, value: ApplicationRecord) { this.writable(userId); this.applications.set(`${userId}#${value.applicationId}`, structuredClone(value)); }
   async getApplicationSession(userId: string, sessionId: string) { const value = this.sessions.get(`${userId}#${sessionId}`); return value && structuredClone(value); }
   async getApplicationSessionById(sessionId: string) { const value = [...this.sessions.values()].find((session) => session.sessionId === sessionId); return value && structuredClone(value); }
-  async putApplicationSession(userId: string, value: ApplicationSession, expectedVersion?: number) { const key = `${userId}#${value.sessionId}`; const current = this.sessions.get(key); if (expectedVersion !== undefined && current?.version !== expectedVersion) return false; if (expectedVersion === undefined && current) return false; this.sessions.set(key, structuredClone(value)); return true; }
+  async putApplicationSession(userId: string, value: ApplicationSession, expectedVersion?: number) { if (await this.isUserDeletionPending(userId)) return false; const key = `${userId}#${value.sessionId}`; const current = this.sessions.get(key); if (expectedVersion !== undefined && current?.version !== expectedVersion) return false; if (expectedVersion === undefined && current) return false; this.sessions.set(key, structuredClone(value)); return true; }
   async listApplicationSessions(userId: string, applicationId?: string) { return [...this.sessions.entries()].filter(([key, value]) => key.startsWith(`${userId}#`) && (!applicationId || value.applicationId === applicationId)).map(([, value]) => structuredClone(value)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
-  async listDocuments(userId: string) { return [...this.documents.values()].filter((d) => d.userId === userId).map((d) => structuredClone(d)); } async putDocument(value: UserDocument) { this.documents.set(`${value.userId}#${value.documentId}`, structuredClone(value)); } async deleteDocument(userId: string, documentId: string) { this.documents.delete(`${userId}#${documentId}`); }
+  async listDocuments(userId: string) { return [...this.documents.values()].filter((d) => d.userId === userId).map((d) => structuredClone(d)); } async putDocument(value: UserDocument) { this.writable(value.userId); this.documents.set(`${value.userId}#${value.documentId}`, structuredClone(value)); } async deleteDocument(userId: string, documentId: string) { this.documents.delete(`${userId}#${documentId}`); }
   async getReceipt(userId: string, dedupeKey: string, token: string) { return this.receipts.get(`${userId}#${dedupeKey}#${token}`); }
-  async claimReceipt(value: DeliveryReceipt) { const key = `${value.userId}#${value.dedupeKey ?? value.jobId}#${value.token}`; const existing = this.receipts.get(key); if (existing && existing.status !== 'error') return false; this.receipts.set(key, structuredClone(value)); return true; }
-  async putReceipt(value: DeliveryReceipt) { this.receipts.set(`${value.userId}#${value.dedupeKey ?? value.jobId}#${value.token}`, structuredClone(value)); }
+  async claimReceipt(value: DeliveryReceipt) { if (await this.isUserDeletionPending(value.userId)) return false; const key = `${value.userId}#${value.dedupeKey ?? value.jobId}#${value.token}`; const existing = this.receipts.get(key); if (existing && existing.status !== 'error') return false; this.receipts.set(key, structuredClone(value)); return true; }
+  async putReceipt(value: DeliveryReceipt) { this.writable(value.userId); this.receipts.set(`${value.userId}#${value.dedupeKey ?? value.jobId}#${value.token}`, structuredClone(value)); }
   async migrateReceipt(value: DeliveryReceipt, dedupeKey: string) {
+    if (await this.isUserDeletionPending(value.userId)) return false;
     const key = `${value.userId}#${dedupeKey}#${value.token}`;
     if (this.receipts.has(key)) return false;
     this.receipts.set(key, structuredClone({ ...value, dedupeKey }));
@@ -602,7 +611,7 @@ export class MemoryUserStore implements UserStore {
   }
   async pendingReceipts() { return [...this.receipts.values()].filter((receipt) => receipt.status === 'pending' && receipt.ticketId).map((receipt) => structuredClone(receipt)); }
   async retryableReceipts() { return [...this.receipts.values()].filter((receipt) => receipt.status === 'retryable').map((receipt) => structuredClone(receipt)); }
-  async deleteUser(userId: string) { this.deletedUsers.add(deletedUserTombstoneKey(userId).pk); const docs = await this.listDocuments(userId); for (const map of [this.preferences, this.profiles]) map.delete(userId); for (const [key] of this.devices) if (key.startsWith(`${userId}#`)) this.devices.delete(key); for (const [key] of this.applications) if (key.startsWith(`${userId}#`)) this.applications.delete(key); for (const [key] of this.sessions) if (key.startsWith(`${userId}#`)) this.sessions.delete(key); for (const [key] of this.documents) if (key.startsWith(`${userId}#`)) this.documents.delete(key); for (const [key] of this.receipts) if (key.startsWith(`${userId}#`)) this.receipts.delete(key); return docs; }
+  async deleteUser(userId: string) { await this.beginUserDeletion(userId); const docs = await this.listDocuments(userId); for (const map of [this.preferences, this.profiles]) map.delete(userId); for (const [key] of this.devices) if (key.startsWith(`${userId}#`)) this.devices.delete(key); for (const [key] of this.applications) if (key.startsWith(`${userId}#`)) this.applications.delete(key); for (const [key] of this.sessions) if (key.startsWith(`${userId}#`)) this.sessions.delete(key); for (const [key] of this.documents) if (key.startsWith(`${userId}#`)) this.documents.delete(key); for (const [key] of this.receipts) if (key.startsWith(`${userId}#`)) this.receipts.delete(key); return docs; }
 }
 
 type UserItem = { pk: string; sk: string; kind: string; value: unknown; activePk?: string; tokenPk?: string; receiptPk?: string; alertPk?: string; activeSessionPk?: string; expiresAtEpoch?: number };
@@ -618,6 +627,9 @@ export class DynamoUserStore implements UserStore {
     return items;
   }
   private async get<T>(userId: string, sk: string) { return (await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: `USER#${userId}`, sk } }))).Item?.value as T | undefined; }
+  async beginUserDeletion(userId: string) { await this.client.send(new PutCommand({ TableName: this.tableName, Item: { ...deletedUserTombstoneKey(userId), kind: 'deleted-user-tombstone' } })); }
+  async isUserDeletionPending(userId: string) { return Boolean((await this.client.send(new GetCommand({ TableName: this.tableName, Key: deletedUserTombstoneKey(userId), ConsistentRead: true }))).Item); }
+  async hasActiveDocumentUploads() { return false; }
   private async put(userId: string, sk: string, kind: string, value: unknown, extra: Partial<UserItem> = {}) { await this.client.send(new PutCommand({ TableName: this.tableName, Item: { pk: `USER#${userId}`, sk, kind, value, ...extra } })); }
   getPreferences(userId: string) { return this.get<UserPreferences>(userId, 'PREFERENCES'); }
   putPreferences(value: UserPreferences) { return this.put(value.userId, 'PREFERENCES', 'preferences', value, value.alertsEnabled && value.onboardingComplete ? { alertPk: 'ACTIVE' } : {}); }
@@ -684,11 +696,7 @@ export class DynamoUserStore implements UserStore {
   async pendingReceipts() { return (await this.queryAll({ TableName: this.tableName, IndexName: 'pendingReceiptsIndex', KeyConditionExpression: 'receiptPk = :pending', ExpressionAttributeValues: { ':pending': 'PENDING' } })).map((item) => item.value as DeliveryReceipt); }
   async retryableReceipts() { return (await this.queryAll({ TableName: this.tableName, IndexName: 'pendingReceiptsIndex', KeyConditionExpression: 'receiptPk = :retryable', ExpressionAttributeValues: { ':retryable': 'RETRYABLE' } })).map((item) => item.value as DeliveryReceipt); }
   async deleteUser(userId: string) {
-    const deletionKey = deletedUserTombstoneKey(userId);
-    await this.client.send(new PutCommand({
-      TableName: this.tableName,
-      Item: { ...deletionKey, kind: 'deleted-user-tombstone' },
-    }));
+    await this.beginUserDeletion(userId);
     const documents = await this.listDocuments(userId);
     const items = await this.queryAll({ TableName: this.tableName, KeyConditionExpression: 'pk = :pk', ExpressionAttributeValues: { ':pk': `USER#${userId}` } });
     await Promise.all(items.map((item) => this.client.send(new DeleteCommand({ TableName: this.tableName, Key: { pk: item.pk, sk: item.sk } }))));

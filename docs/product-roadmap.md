@@ -22,6 +22,7 @@
 | Catalog definition | In progress | Continuous employer discovery, source rules, taxonomy, and reliability targets operate without an owner-selected roster |
 | Official source adapters | In progress | SQS-backed Greenhouse, Lever, and Ashby runtimes poll reviewed boards; Ashby is collecting production shadow evidence before per-board promotion, while SmartRecruiters remains planned |
 | Catalog operations | In progress | Standardized ingestion, shared source-quality gates, durable source health, private live dashboard, source-candidate review queue, and bounded Firecrawl research workflow operate |
+| Verified employer channel (#113) | In progress | D1 trust/publishing controls, web employer workspace, reviewed registry, provenance, direct submissions, reports, and operator queues are implemented behind a disabled rollout flag; production migration, dashboard enablement, and pilot remain |
 | Mobile discovery MVP | In progress | Filtered feed, native deep-link alerts, official-form handoff, and tracker are polished |
 | Gmail application detection | In progress | Test-user OAuth flow detects catalog confirmations reliably; Google restricted-scope verification, annual security assessment, closed-beta validation, and store disclosures are complete before general availability |
 | Human-reviewed application assistance | In progress | Headed pilot fills a supported official form, pauses for unknowns and verification, and leaves final submission to the user |
@@ -43,6 +44,10 @@
 - [ ] Export any recoverable AWS development data after the suspended account is reactivated; do not block the source-backed development cutover on that export.
 
 - [ ] Continuously discover and verify the broadest practical employer set, then prioritize active sources by technical early-career relevance and international/student-friendly coverage.
+- [x] Implement issue #113's staged verified-employer channel behind `EMPLOYER_PORTAL_ENABLED`, including organization roles, domain challenges and human review, immutable audits, D1-reviewed source registry, metadata proposals, direct submissions, public employer provenance, reports, quarantine/revocation, and explicit automatic-publishing enablement.
+- [x] Land #107's bounded JSON-LD, job-sitemap, and explicit embedded-payload connector with reviewed D1 admission, shadow polling, complete-snapshot reconciliation, public-host enforcement, and `official-structured` provenance; the measured employer pilot remains part of the #113 rollout.
+- [ ] Finish #56's shared statement-level work-authorization classifier, retained evidence reason, student filters, and alert matching; #113 supplies the provider-neutral status model and honest `unknown` default without inferring eligibility.
+- [ ] Roll out #113 in order: apply the D1 migration and seed/verify registry parity, enable operator queues, pilot one manually approved employer, then consider the portal flag and automatic publishing only after its documented threshold.
 - [x] Define source-admission, attribution, removal, and source-quality policies.
 - [x] Add internal source-aware filtering (FAANG, verified startups/YC, normal, U.S.-citizenship requirement, advanced-degree requirement, and open/closed status) to catalog ingestion, alerts, and mobile discovery.
 - [x] Add the signed-in “new since last open” inbox with a calm first-open baseline, saved-filter matching, and count-led mobile launch screen.
@@ -87,10 +92,10 @@
 - [x] Decouple official-form opens from application tracking; only Save, manual status changes, or confirmed Gmail detections create or advance records.
 - [x] Implement optional Gmail metadata OAuth, encrypted credential storage, bounded initial/history sync, deterministic matching, review/dismiss actions, disconnect/account-deletion cleanup, queue retries/DLQ, and mobile connection/review states.
 - [x] Update privacy, retention, store-disclosure, support, frontend, deployment, and roadmap documentation for Gmail metadata and Google Limited Use.
-- [ ] Validate Gmail connect, cancellation, initial sync, incremental sync, review, disconnect, and account deletion with OAuth-console test users and representative real confirmations.
+- [ ] Complete Gmail live acceptance with OAuth-console test users and representative confirmations. Connect, the 30-day backfill, scheduled incremental sync, and the needs-review queue were validated in production on 2026-08-26; cancellation, accept/dismiss, disconnect, revoked-grant recovery, and account deletion remain.
 - [ ] Complete Google restricted-scope verification and the required annual third-party security assessment before enabling Gmail detection outside test users.
 - [ ] Reconcile Gmail metadata collection in App Store Connect and Google Play Console, then release to closed beta before general availability.
-- [ ] Add a user-facing data export surface.
+- [x] Add a user-facing data export surface.
 - [x] Add source-quality reports, drift gates, nightly live probing, source-candidate review artifacts, and Firecrawl discovery-only workflow.
 - [x] Define the shared headed/headless application-session state machine and trust boundaries.
 - [x] Keep official-form opens mutation-free; Save is the explicit To Apply action and Applied requires a manual or confirmed Gmail transition.

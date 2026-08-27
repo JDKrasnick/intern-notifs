@@ -83,29 +83,27 @@ export function jobOpenDisposition(
 
 type SourceReference = {
   sourceId: string;
+  provenance?: 'official-ats' | 'official-structured' | 'employer-submitted' | 'reviewed-community';
+  state?: 'open' | 'closed';
   sourceUrl?: string;
   postedAt?: string;
   providerTimestamp?: { value: string; semantics: 'published' | 'updated' };
 };
-const officialProvider = (sourceId: string) => {
-  const normalized = sourceId.toLowerCase();
-  if (normalized.startsWith('greenhouse-')) return 'Greenhouse';
-  if (normalized.startsWith('lever-')) return 'Lever';
-  if (normalized.startsWith('ashby-')) return 'Ashby';
-  return undefined;
-};
-
+// Timestamp compatibility only: catalog credibility is driven by explicit
+// occurrence provenance, while legacy rows retain their provider date semantics.
+const officialProvider = (sourceId: string) => /^(greenhouse|lever|ashby)-/iu.test(sourceId);
 export function sourcePresentation(references: SourceReference[]) {
-  const official = [...new Set(references.map((reference) => officialProvider(reference.sourceId)).filter((provider): provider is NonNullable<ReturnType<typeof officialProvider>> => Boolean(provider)))];
-  const hasCommunity = references.some((reference) => /^github-/i.test(reference.sourceId)
-    || /(?:^|\/\/)(?:raw\.)?github(?:usercontent)?\.com(?:[/:]|$)/i.test(reference.sourceUrl ?? ''));
+  const provenance = new Set(references.filter((reference) => reference.state !== 'closed').map((reference) => reference.provenance).filter(Boolean));
+  const labels = [
+    ...(provenance.has('employer-submitted') ? ['Employer submitted'] : []),
+    ...(provenance.has('official-ats') ? ['Official ATS'] : []),
+    ...(provenance.has('official-structured') ? ['Official structured source'] : []),
+    ...(provenance.has('reviewed-community') ? ['Reviewed community source'] : []),
+  ];
   return {
-    primary: official.length
-      ? `Official employer source · ${official.join(' + ')}`
-      : references.length
-        ? 'Community listing'
-        : 'Source unavailable',
-    corroboration: official.length && hasCommunity ? 'Also corroborated by a community listing' : undefined,
+    primary: labels[0] ?? 'Source unavailable',
+    corroboration: labels.length > 1 ? `Also: ${labels.slice(1).join(' · ')}` : undefined,
+    labels,
   };
 }
 
@@ -129,7 +127,8 @@ function parsedAbsoluteDate(value: string | undefined) {
 
 function publicationDate(references: SourceReference[]) {
   const candidates = references.flatMap((reference) => {
-    const official = Boolean(officialProvider(reference.sourceId));
+    const official = reference.provenance === 'official-ats' || reference.provenance === 'official-structured'
+      || (reference.provenance === undefined && officialProvider(reference.sourceId));
     const providerTimestamp = reference.providerTimestamp;
     const explicitlyPublished = providerTimestamp?.semantics === 'published';
     const providerValue = explicitlyPublished

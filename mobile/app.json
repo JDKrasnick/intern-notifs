@@ -21,6 +21,10 @@
         "POST_NOTIFICATIONS"
       ]
     },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
     "plugins": [
       [
         "expo-notifications",
@@ -38,7 +42,8 @@
         }
       ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-sharing"
     ],
     "extra": {
       "eas": {

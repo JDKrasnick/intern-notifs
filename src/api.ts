@@ -1,19 +1,19 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { DeleteObjectCommand, GetObjectCommand, S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { CognitoIdentityProviderClient, AdminDeleteUserCommand } from '@aws-sdk/client-cognito-identity-provider';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { jobCategories, matchesJobFilter, parseJobFilter } from './core/filters.js';
 import { DynamoInternshipStore, DynamoReleaseStore, DynamoUserStore, type InternshipStore, type ReleaseStore, type UserStore } from './store.js';
-import type { ApplicantProfile, ApplicationRecord, ApplicationStatus, DeviceToken, UserPreferences } from './types.js';
+import { ACCOUNT_EXPORT_SCHEMA_VERSION, type AccountDataExport, type ApplicantProfile, type ApplicationRecord, type ApplicationStatus, type DeviceToken, type OccurrenceProvenance, type UserPreferences } from './types.js';
 import { EmployerIntegrationRegistry } from './providers.js';
 import { assistanceAvailability } from './application-assistance.js';
 import { createApplicationSession, transitionApplicationSession, type ApplicationFieldDraft, type ApplicationSession, type ApplicationSessionEvent } from './application-automation.js';
 import { companyCoverage } from '../coverage/summary.js';
 import { catalogGroupDetails, filterCatalogGroupDetails, filterCatalogGroups, groupCatalogJobs, type CatalogGroupFilter } from './catalog-groups.js';
+import { occurrenceProvenance } from './sources/provenance.js';
 
 type ApiEvent = { requestContext?: { authorizer?: { jwt?: { claims?: Record<string, string> } }; http?: { method?: string }; requestId?: string }; rawPath?: string; routeKey?: string; pathParameters?: Record<string, string>; queryStringParameters?: Record<string, string>; headers?: Record<string, string | undefined>; body?: string | null };
 type ApiResponse = { statusCode: number; headers: Record<string, string>; body: string };
-const headers = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization,Content-Type', 'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS' };
+const headers = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization,Content-Type,Idempotency-Key', 'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS' };
 const reply = (statusCode: number, body: unknown): ApiResponse => ({ statusCode, headers, body: JSON.stringify(body) });
 const parseBody = (event: ApiEvent): Record<string, unknown> => { try { return event.body ? JSON.parse(event.body) as Record<string, unknown> : {}; } catch { throw new Error('Request body must be valid JSON'); } };
 const identity = (event: ApiEvent) => event.requestContext?.authorizer?.jwt?.claims?.sub;
@@ -22,6 +22,10 @@ const statuses: ApplicationStatus[] = ['saved', 'applied', 'assessment', 'interv
 const hashSecret = (value: string) => createHash('sha256').update(value).digest('base64url');
 const inMinutes = (iso: string, minutes: number) => new Date(new Date(iso).getTime() + minutes * 60_000).toISOString();
 const isBefore = (left: string, right: string) => new Date(left).getTime() < new Date(right).getTime();
+const publicJob = <T extends { sourceReferences: Array<{ sourceId: string; provenance?: OccurrenceProvenance }> }>(job: T): T => ({
+  ...job,
+  sourceReferences: job.sourceReferences.map((reference) => ({ ...reference, provenance: occurrenceProvenance(reference) })),
+});
 
 function catalogFilter(parameters: Record<string, string> | undefined): CatalogGroupFilter {
   const list = (...names: string[]) => {
@@ -101,7 +105,7 @@ function applicationSummary(application: ApplicationRecord, job: Awaited<ReturnT
         season: job.season,
         applyUrl: job.applyUrl,
         open: job.open,
-        sourceReferences: job.sourceReferences.map(({ sourceId, sourceUrl }) => ({ sourceId, sourceUrl })),
+        sourceReferences: publicJob(job).sourceReferences.map(({ sourceId, sourceUrl, provenance, state }) => ({ sourceId, sourceUrl, provenance, state })),
         assistance: assistanceAvailability(job, application.applyMode),
       },
     } : {}),
@@ -273,12 +277,10 @@ export interface ApiDependencies {
   deleteIdentity?: (userId: string) => Promise<void>;
   /** Revokes and deletes linked-provider data before the account record disappears. */
   beforeDeleteUser?: (userId: string) => Promise<void>;
-  /** AWS compatibility fields retained until the Cloudflare cutover completes. */
+  /** AWS document compatibility retained for rollback and export only. */
   documentsBucket?: string;
-  userPoolId?: string;
   integrations?: EmployerIntegrationRegistry;
   s3?: S3Client;
-  cognito?: CognitoIdentityProviderClient;
   now?: () => string;
 }
 export function createApiHandler(dependencies: ApiDependencies) {
@@ -335,7 +337,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
         const source = event.queryStringParameters?.source;
         if (source && !['all', 'direct', 'community', 'corroborated'].includes(source)) return reply(400, { message: 'source is not supported' });
         const page = await dependencies.jobs.listOpen?.(event.queryStringParameters?.cursor, limit, status, { ...(query ? { query } : {}), ...(source ? { source: source as 'all' | 'direct' | 'community' | 'corroborated' } : {}) });
-        return reply(200, page ?? { jobs: [] });
+        return reply(200, page ? { ...page, jobs: page.jobs.map(publicJob) } : { jobs: [] });
       }
       if (method === 'GET' && path === '/catalog') {
         const requestedLimit = Number(event.queryStringParameters?.limit ?? 25);
@@ -374,7 +376,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
       const jobMatch = path.match(/^\/jobs\/([^/]+)$/);
       if (method === 'GET' && jobMatch) {
         const job = await dependencies.jobs.getJob?.(decodeURIComponent(jobMatch[1]));
-        return job ? reply(200, { ...job, assistance: assistanceAvailability(job) }) : reply(404, { message: 'Job not found' });
+        return job ? reply(200, { ...publicJob(job), assistance: assistanceAvailability(job) }) : reply(404, { message: 'Job not found' });
       }
       if (method === 'POST' && path === '/assist/exchange') {
         const body = parseBody(event);
@@ -406,6 +408,10 @@ export function createApiHandler(dependencies: ApiDependencies) {
         return reply(result.statusCode, result.body);
       }
       const userId = identity(event); if (!userId) return reply(401, { message: 'Authentication required' });
+      const deletingAccount = method === 'DELETE' && path === '/me';
+      if (!deletingAccount && method !== 'GET' && method !== 'HEAD' && await dependencies.users.isUserDeletionPending(userId)) {
+        return reply(409, { code: 'ACCOUNT_DELETION_IN_PROGRESS', retryable: false, message: 'Account deletion is already in progress. Finish or retry deletion before changing account data.' });
+      }
       const releaseMatch = path.match(/^\/me\/releases\/([^/]+)$/);
       if (method === 'GET' && releaseMatch) {
         const releaseId = decodeURIComponent(releaseMatch[1]!);
@@ -420,7 +426,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
           deepLink: `internnotifs://releases/${encodeURIComponent(release.releaseId)}`,
           // Mobile clients render the complete role list directly; grouped
           // metadata remains alongside it for collapsed release summaries.
-          jobs,
+          jobs: jobs.map(publicJob),
           groups: groupCatalogJobs(jobs, { includeClosed: true }).map(catalogGroupDetails),
         });
       }
@@ -456,12 +462,29 @@ export function createApiHandler(dependencies: ApiDependencies) {
         const limit = 50;
         await dependencies.users.putPreferences(preferences);
         const visible = matches.slice(0, limit);
-        return reply(200, { jobs: visible, groups: groupCatalogJobs(visible).map(catalogGroupDetails), total: matches.length, hasMore: matches.length > limit, previousOpenedAt, openedAt });
+        return reply(200, { jobs: visible.map(publicJob), groups: groupCatalogJobs(visible).map(catalogGroupDetails), total: matches.length, hasMore: matches.length > limit, previousOpenedAt, openedAt });
       }
       if (method === 'POST' && path === '/me/devices') { const body = parseBody(event); if (typeof body.token !== 'string' || !body.token.startsWith('ExponentPushToken[') || (body.platform !== 'ios' && body.platform !== 'android')) return reply(400, { message: 'A valid Expo token and platform are required' }); const value: DeviceToken = { userId, token: body.token, platform: body.platform, active: true, createdAt: now(), updatedAt: now() }; await dependencies.users.putDevice(value); return reply(201, value); }
       if (method === 'DELETE' && path.startsWith('/me/devices/')) { await dependencies.users.deleteDevice(userId, decodeURIComponent(path.slice('/me/devices/'.length))); return reply(204, {}); }
       if (method === 'GET' && path === '/me/profile') return reply(200, (await dependencies.users.getProfile(userId)) ?? null);
       if (method === 'PUT' && path === '/me/profile') { const profile = requireProfile(parseBody(event), userId); await dependencies.users.putProfile(profile); return reply(200, profile); }
+      if (method === 'GET' && path === '/me/export') {
+        const [profile, applications, documents] = await Promise.all([
+          dependencies.users.getProfile(userId),
+          dependencies.users.listApplications(userId),
+          dependencies.users.listDocuments(userId),
+        ]);
+        const exported: AccountDataExport = {
+          schemaVersion: ACCOUNT_EXPORT_SCHEMA_VERSION,
+          exportedAt: dependencies.now?.() ?? now(),
+          account: {
+            profile: profile ?? null,
+            applications,
+            documents: documents.map(({ documentId, fileName, contentType, createdAt }) => ({ documentId, fileName, contentType, createdAt })),
+          },
+        };
+        return reply(200, exported);
+      }
       if (method === 'GET' && path === '/me/applications') {
         const requestedStatus = event.queryStringParameters?.status;
         if (requestedStatus !== undefined && !statuses.includes(requestedStatus as ApplicationStatus)) return reply(400, { message: `status must be one of ${statuses.join(', ')}` });
@@ -531,10 +554,50 @@ export function createApiHandler(dependencies: ApiDependencies) {
       const docMatch = path.match(/^\/me\/documents\/([^/]+)$/);
       if (method === 'GET' && docMatch) { if (!documentStorage) return reply(503, { message: 'Document storage is unavailable' }); const document = (await dependencies.users.listDocuments(userId)).find((item) => item.documentId === decodeURIComponent(docMatch[1])); if (!document) return reply(404, { message: 'Document not found' }); return reply(200, { document, downloadUrl: await documentStorage.createDownloadUrl(document) }); }
       if (method === 'DELETE' && docMatch) { const document = (await dependencies.users.listDocuments(userId)).find((item) => item.documentId === decodeURIComponent(docMatch[1])); if (!document) return reply(404, { message: 'Document not found' }); if (documentStorage) await documentStorage.deleteObject(document.objectKey); await dependencies.users.deleteDocument(userId, document.documentId); return reply(204, {}); }
-      if (method === 'DELETE' && path === '/me') { await dependencies.beforeDeleteUser?.(userId); const documents = await dependencies.users.deleteUser(userId); if (documentStorage) await Promise.all(documents.map((document) => documentStorage.deleteObject(document.objectKey))); if (dependencies.deleteIdentity) await dependencies.deleteIdentity(userId); else if (dependencies.userPoolId) await (dependencies.cognito ?? new CognitoIdentityProviderClient({})).send(new AdminDeleteUserCommand({ UserPoolId: dependencies.userPoolId, Username: userId })); return reply(204, {}); }
+      if (method === 'DELETE' && path === '/me') {
+        if (!dependencies.deleteIdentity) {
+          return reply(503, { code: 'ACCOUNT_DELETION_UNAVAILABLE', retryable: false, message: 'Account deletion is unavailable on this retired service. Update InternNotifs and try again.' });
+        }
+        let documents: Awaited<ReturnType<UserStore['listDocuments']>>;
+        let activeDocumentUploads: boolean;
+        try {
+          await dependencies.users.beginUserDeletion(userId);
+          [documents, activeDocumentUploads] = await Promise.all([
+            dependencies.users.listDocuments(userId),
+            dependencies.users.hasActiveDocumentUploads(userId),
+          ]);
+        } catch {
+          return reply(503, { code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'account-data', retryable: true, message: 'Account deletion could not be prepared. Your account data and sign-in were kept so you can retry.' });
+        }
+        if (activeDocumentUploads) {
+          return reply(503, { code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'document-storage', retryable: true, message: 'A document upload is still finishing. Your account data and sign-in were kept so you can retry deletion.' });
+        }
+        if (documents.length > 0 && !documentStorage) {
+          return reply(503, { code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'document-storage', retryable: true, message: 'Document storage is unavailable. Your account data and sign-in were kept so you can retry.' });
+        }
+        try {
+          if (documentStorage) await Promise.all(documents.map((document) => documentStorage.deleteObject(document.objectKey)));
+        } catch {
+          return reply(503, { code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'document-storage', retryable: true, message: 'Account deletion is incomplete. Your document records and sign-in are still available so you can retry.' });
+        }
+        try {
+          await dependencies.beforeDeleteUser?.(userId);
+          await dependencies.users.deleteUser(userId);
+        } catch {
+          return reply(503, { code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'account-data', retryable: true, message: 'Document cleanup finished, but account data could not be fully deleted. Please retry.' });
+        }
+        try {
+          await dependencies.deleteIdentity(userId);
+        } catch (error) {
+          if ((error as { name?: string }).name !== 'UserNotFoundException') {
+            return reply(503, { code: 'ACCOUNT_DELETION_INCOMPLETE', stage: 'identity', retryable: true, message: 'Your account data was deleted, but sign-in cleanup is incomplete. Please retry while you are still signed in.' });
+          }
+        }
+        return reply(204, {});
+      }
       return reply(404, { message: 'Not found', supportedCategories: jobCategories });
     } catch (error) { return reply(400, { message: error instanceof Error ? error.message : 'Invalid request' }); }
   };
 }
 
-export const handler = createApiHandler({ jobs: new DynamoInternshipStore(process.env.INTERNSHIPS_TABLE ?? ''), users: new DynamoUserStore(process.env.USERS_TABLE ?? ''), releases: new DynamoReleaseStore(process.env.USERS_TABLE ?? ''), documentsBucket: process.env.DOCUMENTS_BUCKET, userPoolId: process.env.USER_POOL_ID });
+export const handler = createApiHandler({ jobs: new DynamoInternshipStore(process.env.INTERNSHIPS_TABLE ?? ''), users: new DynamoUserStore(process.env.USERS_TABLE ?? ''), releases: new DynamoReleaseStore(process.env.USERS_TABLE ?? ''), documentsBucket: process.env.DOCUMENTS_BUCKET });
