@@ -5,7 +5,13 @@ import { openCatalogSortKey } from './catalog-recency.js';
 import { inferSeason } from './core/early-career.js';
 import { fingerprint, normalizeUrl } from './core/normalize.js';
 import { buildPostingIdentity, canonicalizePostingUrl } from './identity/posting.js';
-import { providerEvidenceForOccurrence, reviewedProviderEvidenceError, reviewedProviderUrlReference } from './identity/reviewed-provider.js';
+import {
+  providerEvidenceForOccurrence,
+  reviewedProviderEvidenceError,
+  reviewedProviderUrlReference,
+  uniqueGreenhouseEvidenceForSources,
+  unscopedGreenhouseEmbedPostingId,
+} from './identity/reviewed-provider.js';
 import { notificationDedupeKey } from './notifications.js';
 import type { CatalogRelease } from './catalog-groups.js';
 import { isOfficialOccurrence } from './sources/provenance.js';
@@ -231,20 +237,12 @@ function checkpointEvidenceForUnscopedGreenhouseEmbed(
   input: string,
   checkpoints: Map<string, SourceCheckpoint>,
 ): ProviderPostingEvidence | undefined {
-  let url: URL;
-  try { url = new URL(input); } catch { return undefined; }
-  const host = url.hostname.toLowerCase().replace(/^www\./, '');
-  if ((host !== 'boards.greenhouse.io' && host !== 'job-boards.greenhouse.io')
-      || !/^\/embed\/job_app\/?$/i.test(url.pathname)) return undefined;
-  const postingId = url.searchParams.get('token');
-  if (!postingId || !/^\d+$/.test(postingId)) return undefined;
-  const matches = [...checkpoints.entries()].flatMap(([sourceId, checkpoint]) => {
-    if (!checkpoint.activeExternalIds?.includes(postingId)) return [];
-    const evidence = providerEvidenceForOccurrence(sourceId, postingId, [input]);
-    return evidence?.provider === 'greenhouse' ? [evidence] : [];
-  });
-  const unique = [...new Map(matches.map((item) => [providerKey(item), item])).values()];
-  return unique.length === 1 ? unique[0] : undefined;
+  const postingId = unscopedGreenhouseEmbedPostingId(input);
+  if (!postingId) return undefined;
+  const activeSources = [...checkpoints.entries()]
+    .filter(([, checkpoint]) => checkpoint.activeExternalIds?.includes(postingId))
+    .map(([sourceId]) => sourceId);
+  return uniqueGreenhouseEvidenceForSources(postingId, activeSources, [input]);
 }
 
 function evidenceForJob(job: Internship, checkpoints: Map<string, SourceCheckpoint>): ProviderPostingEvidence[] {

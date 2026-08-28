@@ -65,8 +65,10 @@
 - [ ] Complete issue #50's conservative Greenhouse/Lever posting identity repair.
   - [x] Carry provider-scoped reviewed evidence through ingestion, reconcile standard/apply/tracking/custom-host variants without fingerprint or general internal-ID merging, preserve legacy job-ID lookup, and add the guarded D1 repair workflow without letting posting identity establish employer, destination, catalog, or alert eligibility.
   - [x] Report employer/name/title/location/destination and future #120 admission disagreements, and refuse repair apply while any matched group lacks a reviewed presentation decision.
-  - [ ] Deploy runtime support and save the production dry-run report, but defer unresolved production consolidation until #120 supplies reviewed admission and presentation decisions.
+  - [x] Deploy runtime support and save the production dry-run report, while deferring unresolved production consolidation until #120 supplies reviewed admission and presentation decisions.
+  - [x] Reconcile tenant-less Greenhouse embed URLs in both arrival orders only when one active reviewed checkpoint proves the provider scope; leave ambiguous public IDs separate.
   - [ ] After #120, apply the combined reviewed repair with exact token/count guards, then verify zero remaining approved candidates, legacy links, projections, saved applications, and unchanged notification/outbox counts.
+- [ ] Complete issue #124's high-priority normalized display contract across catalog cards, grouped results, role detail, saved roles, and notification previews without company-specific mappings.
 - [ ] Complete issue #99 catalog quality hardening and backfill.
   - [x] Add shared catalog normalization, structured locations/pay, defensive mobile presentation, and the guarded D1 repair workflow.
   - [x] Deploy the normalization and dry-run endpoint, then save the production dry-run report for owner approval.

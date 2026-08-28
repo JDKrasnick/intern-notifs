@@ -1,4 +1,4 @@
-import type { BatchWriteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
+import type { BatchGetCommand, BatchWriteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it, vi } from 'vitest';
 import { createDynamoDocumentClient, deletedUserTombstoneKey, DynamoInternshipStore, DynamoUserStore, MemoryUserStore } from '../src/store.js';
 import { buildPostingIdentity } from '../src/identity/posting.js';
@@ -24,6 +24,24 @@ describe('DynamoDB persistence contract', () => {
     expect(client.config.translateConfig).toMatchObject({
       marshallOptions: { removeUndefinedValues: true },
     });
+  });
+
+  it('loads checkpoint evidence in one bounded batch', async () => {
+    const { send, client } = fakeClient(); const store = new DynamoInternshipStore('jobs-table', client);
+    send.mockResolvedValueOnce({ Responses: { 'jobs-table': [
+      { checkpoint: { sourceId: 'greenhouse-a', successfulFetches: 1, activeExternalIds: ['100'] } },
+      { checkpoint: { sourceId: 'greenhouse-b', successfulFetches: 2, activeExternalIds: ['200'] } },
+    ] } });
+    expect(await store.getCheckpointsMany(['greenhouse-a', 'greenhouse-b'])).toMatchObject([
+      { sourceId: 'greenhouse-a', activeExternalIds: ['100'] },
+      { sourceId: 'greenhouse-b', activeExternalIds: ['200'] },
+    ]);
+    expect((send.mock.calls[0]?.[0] as BatchGetCommand).input).toMatchObject({ RequestItems: {
+      'jobs-table': { Keys: [
+        { pk: 'SOURCE#greenhouse-a', sk: 'CHECKPOINT' },
+        { pk: 'SOURCE#greenhouse-b', sk: 'CHECKPOINT' },
+      ] },
+    } });
   });
 
   it('writes canonical and query-index keys only for open technical roles', async () => {

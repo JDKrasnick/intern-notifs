@@ -42,6 +42,7 @@ export type CatalogQuery = { query?: string; source?: CatalogSource };
 
 export interface InternshipStore {
   getCheckpoint(sourceId: string): Promise<SourceCheckpoint | undefined>;
+  getCheckpointsMany(sourceIds: string[]): Promise<SourceCheckpoint[]>;
   putCheckpoint(checkpoint: SourceCheckpoint): Promise<void>;
   getSourceHealth(sourceId: string): Promise<SourceHealth | undefined>;
   getSourceHealthMany(sourceIds: string[]): Promise<SourceHealth[]>;
@@ -87,6 +88,7 @@ export class MemoryInternshipStore implements InternshipStore {
   readonly postingAliases = new Map<string, string>();
   catalogProjection?: { generatedAt: string; groups: CatalogGroupDetails[] };
   async getCheckpoint(sourceId: string) { return this.checkpoints.get(sourceId); }
+  async getCheckpointsMany(sourceIds: string[]) { return sourceIds.map((id) => this.checkpoints.get(id)).filter((value): value is SourceCheckpoint => Boolean(value)); }
   async putCheckpoint(checkpoint: SourceCheckpoint) { this.checkpoints.set(checkpoint.sourceId, checkpoint); }
   async getSourceHealth(sourceId: string) { return this.sourceHealth.get(sourceId); }
   async getSourceHealthMany(sourceIds: string[]) { return sourceIds.map((id) => this.sourceHealth.get(id)).filter((value): value is SourceHealth => Boolean(value)); }
@@ -203,6 +205,18 @@ export class DynamoInternshipStore implements InternshipStore {
   async getCheckpoint(sourceId: string): Promise<SourceCheckpoint | undefined> {
     const result = await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: `SOURCE#${sourceId}`, sk: 'CHECKPOINT' } }));
     return result.Item?.checkpoint as SourceCheckpoint | undefined;
+  }
+  async getCheckpointsMany(sourceIds: string[]): Promise<SourceCheckpoint[]> {
+    const checkpoints: SourceCheckpoint[] = [];
+    for (let offset = 0; offset < sourceIds.length; offset += 100) {
+      let keys = sourceIds.slice(offset, offset + 100).map((sourceId) => ({ pk: `SOURCE#${sourceId}`, sk: 'CHECKPOINT' }));
+      do {
+        const result = await this.client.send(new BatchGetCommand({ RequestItems: { [this.tableName]: { Keys: keys } } }));
+        checkpoints.push(...((result.Responses?.[this.tableName] ?? []).map((item) => item.checkpoint as SourceCheckpoint)));
+        keys = result.UnprocessedKeys?.[this.tableName]?.Keys as typeof keys ?? [];
+      } while (keys.length);
+    }
+    return checkpoints;
   }
   async putCheckpoint(checkpoint: SourceCheckpoint): Promise<void> {
     await this.client.send(new PutCommand({ TableName: this.tableName, Item: { pk: `SOURCE#${checkpoint.sourceId}`, sk: 'CHECKPOINT', checkpoint } }));

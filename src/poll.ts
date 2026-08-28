@@ -4,7 +4,14 @@ import { boardReference, reachabilityFromFailure, reachabilityFromSignals, verif
 import { inferSeason, isPastSeason } from './core/early-career.js';
 import { normalizeUrl } from './core/normalize.js';
 import { buildPostingIdentity, type ProviderPostingReference } from './identity/posting.js';
-import { reviewedProviderEvidenceError, reviewedProviderUrlReference } from './identity/reviewed-provider.js';
+import {
+  providerEvidenceForOccurrence,
+  reviewedProviderEvidenceError,
+  reviewedProviderUrlReference,
+  uniqueGreenhouseEvidenceForSources,
+  unscopedGreenhouseEmbedPostingId,
+  unscopedGreenhouseEmbedUrls,
+} from './identity/reviewed-provider.js';
 import { isTechnicalJob, type JobFilter } from './core/filters.js';
 import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
 import { evaluateSourceFreshness } from './ingestion/monitoring.js';
@@ -346,6 +353,7 @@ export class IngestionRunner {
 
   private readonly boardIndex = reviewedBoardIndex();
   private readonly boardActiveIds = new Map<string, Promise<Set<string>>>();
+  private boardCheckpoints?: Promise<Map<string, SourceCheckpoint>>;
 
   private activePostingIds(sourceId: string): Promise<Set<string>> {
     if (!this.boardActiveIds.has(sourceId)) {
@@ -354,6 +362,19 @@ export class IngestionRunner {
         .catch(() => new Set<string>()));
     }
     return this.boardActiveIds.get(sourceId)!;
+  }
+
+  private async uniqueActiveGreenhouseEvidence(postingId: string, urls: string[], confirmedSourceId?: string) {
+    const sourceIds = [...new Set(this.boardIndex.values())];
+    this.boardCheckpoints ??= this.store.getCheckpointsMany(sourceIds)
+      .then((checkpoints) => new Map(checkpoints.map((checkpoint) => [checkpoint.sourceId, checkpoint])));
+    const checkpoints = await this.boardCheckpoints;
+    const activeSources = sourceIds.flatMap((sourceId) => {
+      const evidence = providerEvidenceForOccurrence(sourceId, postingId, urls);
+      if (evidence?.provider !== 'greenhouse') return [];
+      return sourceId === confirmedSourceId || checkpoints.get(sourceId)?.activeExternalIds?.includes(postingId) ? [sourceId] : [];
+    });
+    return uniqueGreenhouseEvidenceForSources(postingId, activeSources, urls);
   }
 
   private async reviewedReferences(listing: ProcessedListing): Promise<ProviderPostingReference[]> {
@@ -366,13 +387,26 @@ export class IngestionRunner {
     for (const url of urls) {
       const result = reviewedProviderUrlReference(url);
       if (result.outcome === 'conflict') throw new Error(result.reason);
-      if (result.outcome !== 'match') continue;
+      if (result.outcome !== 'match') {
+        const postingId = unscopedGreenhouseEmbedPostingId(url);
+        const evidence = postingId ? await this.uniqueActiveGreenhouseEvidence(postingId, [url]) : undefined;
+        if (evidence) references.push({ provider: evidence.provider, tenant: evidence.tenant, postingId: evidence.postingId });
+        continue;
+      }
       const direct = listing.providerEvidence?.sourceId === result.reference.sourceId;
       if (direct || listing.providerEvidence || (await this.activePostingIds(result.reference.sourceId)).has(result.reference.postingId)) {
         references.push(result.reference);
       }
     }
     return references;
+  }
+
+  private async inferredEmbedAliases(listing: ProcessedListing): Promise<string[]> {
+    const evidence = listing.providerEvidence;
+    if (evidence?.provider !== 'greenhouse') return [];
+    const unique = await this.uniqueActiveGreenhouseEvidence(evidence.postingId, evidence.urls ?? [], evidence.sourceId);
+    if (!unique || unique.sourceId !== evidence.sourceId || unique.tenant.toLowerCase() !== evidence.tenant.toLowerCase()) return [];
+    return unscopedGreenhouseEmbedUrls(evidence.postingId);
   }
 
   /** Provider existence and destination validity are separate facts. Attribution
@@ -426,10 +460,12 @@ export class IngestionRunner {
       try {
         const normalizedUrl = normalizeUrl(listing.applyUrl);
         const reviewedProviderReferences = await this.reviewedReferences(listing);
+        const observedUrls = await this.inferredEmbedAliases(listing);
         const identity = buildPostingIdentity({
           applicationUrl: listing.applyUrl,
           ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
           reviewedProviderReferences,
+          observedUrls,
         });
         // A legacy row may be adopted only through its exact canonical URL.
         // Title/location fingerprints are search hints, not proof that two

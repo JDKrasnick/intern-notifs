@@ -122,6 +122,17 @@ export class D1InternshipStore implements InternshipStore {
 
   getCheckpoint(sourceId: string) { return this.get<SourceCheckpoint>(`SOURCE#${sourceId}`, 'CHECKPOINT'); }
   putCheckpoint(checkpoint: SourceCheckpoint) { return this.put(`SOURCE#${checkpoint.sourceId}`, 'CHECKPOINT', 'checkpoint', checkpoint); }
+  async getCheckpointsMany(sourceIds: string[]): Promise<SourceCheckpoint[]> {
+    if (!sourceIds.length) return [];
+    const checkpoints: SourceCheckpoint[] = [];
+    for (let offset = 0; offset < sourceIds.length; offset += 100) {
+      const chunk = sourceIds.slice(offset, offset + 100);
+      const rows = await this.db.prepare(`SELECT value FROM catalog_items WHERE sk = 'CHECKPOINT' AND pk IN (${chunk.map(() => '?').join(', ')})`)
+        .bind(...chunk.map((id) => `SOURCE#${id}`)).all<JsonRow>();
+      checkpoints.push(...rows.results.map((row) => JSON.parse(row.value) as SourceCheckpoint));
+    }
+    return checkpoints;
+  }
   getSourceHealth(sourceId: string) { return this.get<SourceHealth>(`SOURCE#${sourceId}`, 'HEALTH'); }
   putSourceHealth(health: SourceHealth) { return this.put(`SOURCE#${health.sourceId}`, 'HEALTH', 'source-health', health); }
   async getSourceHealthMany(sourceIds: string[]): Promise<SourceHealth[]> {

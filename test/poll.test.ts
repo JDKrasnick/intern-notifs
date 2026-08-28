@@ -119,6 +119,41 @@ describe('polling', () => {
       sourceReferences: [{ sourceId: 'greenhouse-figma' }, { sourceId: 'community' }],
     });
   });
+  it.each([
+    ['official first', true],
+    ['community first', false],
+  ])('converges a tenant-less Greenhouse embed when the %s occurrence arrives', async (_label, officialFirst) => {
+    const store = new MemoryInternshipStore();
+    const postingId = '6883068002';
+    const official = reviewedListing({
+      provider: 'greenhouse', tenant: 'databricks', postingId, sourceId: 'greenhouse-databricks',
+      url: `https://job-boards.greenhouse.io/databricks/jobs/${postingId}`,
+    });
+    const community = listing(`https://boards.greenhouse.io/embed/job_app?token=${postingId}`, 'community');
+    const polls = officialFirst
+      ? [new Adapter('greenhouse-databricks', [official]), new Adapter('community', [community])]
+      : [new Adapter('community', [community]), new Adapter('greenhouse-databricks', [official])];
+    for (const adapter of polls) await new Poller([adapter], store).poll();
+    expect(store.jobs.size).toBe(1);
+    expect([...store.jobs.values()][0]).toMatchObject({
+      postingIdentity: { provider: 'greenhouse', tenant: 'databricks', providerPostingId: postingId },
+    });
+    expect(new Set([...store.jobs.values()][0]!.sourceReferences.map(({ sourceId }) => sourceId)))
+      .toEqual(new Set(['greenhouse-databricks', 'community']));
+  });
+  it('does not scope a tenant-less Greenhouse embed when two active reviewed boards contain its ID', async () => {
+    const store = new MemoryInternshipStore();
+    const postingId = '6883068002';
+    await store.putCheckpoint({ sourceId: 'greenhouse-databricks', successfulFetches: 1, activeExternalIds: [postingId] });
+    await store.putCheckpoint({ sourceId: 'greenhouse-figma', successfulFetches: 1, activeExternalIds: [postingId] });
+    await new Poller([new Adapter('community', [listing(`https://boards.greenhouse.io/embed/job_app?token=${postingId}`, 'community')])], store).poll();
+    await new Poller([new Adapter('greenhouse-databricks', [reviewedListing({
+      provider: 'greenhouse', tenant: 'databricks', postingId, sourceId: 'greenhouse-databricks',
+      url: `https://job-boards.greenhouse.io/databricks/jobs/${postingId}`,
+    })])], store).poll();
+    expect(store.jobs.size).toBe(2);
+    expect([...store.jobs.values()].map((job) => job.postingIdentity?.provider).sort()).toEqual(['greenhouse', 'unknown']);
+  });
   it('converges historical DRW custom and standard routes only after the active public ID confirms them', async () => {
     const store = new MemoryInternshipStore();
     await new Poller([new Adapter('greenhouse-drweng', [reviewedListing({ provider: 'greenhouse', tenant: 'drweng', postingId: '3413670', sourceId: 'greenhouse-drweng', url: 'https://job-boards.greenhouse.io/drweng/jobs/3413670' })])], store).poll();
