@@ -510,6 +510,16 @@ export interface PostingAlias {
   sourceUrl?: string;
 }
 
+/** Immutable provider facts carried from a reviewed connector or checkpoint. */
+export interface ProviderPostingEvidence {
+  provider: Extract<PostingProvider, 'greenhouse' | 'lever'>;
+  tenant: string;
+  postingId: string;
+  sourceId: string;
+  /** Every provider-issued presentation URL observed in the same API row. */
+  urls: string[];
+}
+
 /** Exact requisition identity. It is intentionally independent from `InternshipIdentity`. */
 export interface PostingIdentity {
   provider: PostingProvider;
@@ -538,6 +548,8 @@ export interface JobRequirements {
 
 export interface SourceOccurrence extends SourceReference {
   externalId?: string;
+  /** Reviewed provider facts retained for identity repair and audit. */
+  providerEvidence?: ProviderPostingEvidence;
   /** Source-local classification retained so job eligibility is independent of poll order. */
   technical?: boolean;
   company: string;
@@ -606,6 +618,8 @@ export interface ProcessedListing extends SourceOccurrence {
   seasonSource?: 'posting' | 'source-default';
   /** Exact provider-aware identity resolved before reconciliation. */
   postingIdentity?: PostingIdentity;
+  /** Reviewed evidence used to build `postingIdentity`; never inferred from display fields. */
+  providerEvidence?: ProviderPostingEvidence;
   /** Descriptive identity used for program grouping and audience filtering. */
   internshipIdentity?: InternshipIdentity;
   providerIdentity?: ProviderIdentity;
@@ -642,6 +656,7 @@ export interface SourcedPosting {
   locations: string[];
   applyUrl: string;
   hostedUrl?: string;
+  providerEvidence?: ProviderPostingEvidence;
   sourceState: 'open' | 'closed' | 'prospect';
   /**
    * `title` requires an explicit early-career signal in the posting title.

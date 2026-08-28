@@ -42,6 +42,7 @@ function occurrence(listing: ProcessedListing, externalId: string): SourceOccurr
     sourceId: listing.sourceId,
     ...(listing.provenance ? { provenance: listing.provenance } : {}),
     externalId,
+    ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
     document: listing.document,
     sourceUrl: listing.sourceUrl,
     row: listing.row,
@@ -88,6 +89,18 @@ function genericLocation(value: string | undefined) {
   return !value || /^(unknown|unspecified|n\/?a|not (?:listed|specified)|tbd|see (?:description|job))$/i.test(value.trim());
 }
 
+function mergedPostingIdentity(existing: Internship['postingIdentity'], incoming: Internship['postingIdentity']) {
+  if (!incoming) return existing;
+  if (!existing) return incoming;
+  // Alias claims are persisted independently. Replaying another occurrence of
+  // the same canonical posting must not discard stronger provider evidence or
+  // rewrite an already-audited identity merely because its URL presentation
+  // was normalized by a newer writer.
+  if (existing.canonicalJobId === incoming.canonicalJobId
+    && (existing.provider !== 'unknown' || incoming.provider === 'unknown')) return existing;
+  return incoming;
+}
+
 function anyOpenTechnicalOccurrence(references: SourceOccurrence[]): boolean {
   return references.some((reference) => reference.state === 'open' && reference.technical !== false);
 }
@@ -127,18 +140,22 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
   if (!keepQuarantined) delete base.invalidApplicationUrl;
   const internshipIdentity = listing.internshipIdentity ?? existing.internshipIdentity;
   const canonicalCompany = admission?.canonicalEmployer?.displayName;
+  const season = preferIncoming || Boolean(applicationUrlValidatedAt) || (match >= 0 && existing.sourceReferences.length === 1)
+    ? listing.season
+    : existing.season;
+  const canRevive = existing.open || preferIncoming;
   return normalizeInternship({
     ...base,
     company: canonicalCompany ?? company,
     title,
     location,
     ...(locations ? { locations } : {}),
-    season: listing.season,
+    season,
     applyUrl: replaceStoredUrl ? listing.applyUrl : existing.applyUrl || listing.applyUrl,
     normalizedUrl: replaceStoredUrl ? listingNormalizedUrl : existing.normalizedUrl,
-    postingIdentity: listing.postingIdentity ?? existing.postingIdentity,
+    postingIdentity: mergedPostingIdentity(existing.postingIdentity, listing.postingIdentity),
     internshipIdentity,
-    fingerprint: fingerprint(company, title, location, listing.season),
+    fingerprint: fingerprint(company, title, location, season),
     compensation: listing.compensation.maxHourlyUSD ? listing.compensation : existing.compensation,
     requirements: {
       requiresUsCitizenship: Boolean(listing.requirements?.requiresUsCitizenship || existing.requirements?.requiresUsCitizenship),
@@ -147,8 +164,8 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
     employerCategory: employerCategory(company),
     sourceReferences,
     ...(admission ? { admission } : {}),
-    technical: anyOpenTechnicalOccurrence(sourceReferences),
-    open: keepQuarantined ? false : sourceReferences.some((item) => item.state === 'open') && seasonAllowsOpen(listing.season, internshipIdentity, sourceReferences, now),
+    technical: canRevive ? anyOpenTechnicalOccurrence(sourceReferences) : existing.technical,
+    open: keepQuarantined ? false : canRevive && sourceReferences.some((item) => item.state === 'open') && seasonAllowsOpen(season, internshipIdentity, sourceReferences, now),
     lastSeenAt: now,
     ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}),
     ...(metadataVersion ? { applicationPageMetadataVersion: metadataVersion } : {}),
@@ -211,8 +228,8 @@ function closeOccurrence(job: Internship, state: SourceOccurrenceState, now: str
     ...job,
     sourceReferences,
     ...(deriveCanonicalAdmission(sourceReferences, now) ? { admission: deriveCanonicalAdmission(sourceReferences, now) } : {}),
-    technical: anyOpenTechnicalOccurrence(sourceReferences),
-    open: sourceReferences.some((reference) => reference.state === 'open')
+    technical: job.open ? anyOpenTechnicalOccurrence(sourceReferences) : job.technical,
+    open: job.open && sourceReferences.some((reference) => reference.state === 'open')
       && seasonAllowsOpen(job.season, job.internshipIdentity, sourceReferences, now),
     lastSeenAt: now,
   };

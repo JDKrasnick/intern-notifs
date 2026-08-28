@@ -48,6 +48,65 @@ function sqliteD1(database: DatabaseSync): D1Database {
 }
 
 describe('D1 filtered catalog projection', () => {
+  it('packs a production-sized projection within D1 query and binding budgets', async () => {
+    const template = catalogGroupDetails(groupCatalogJobs([job('template', 'Software Engineering Intern')])[0]!);
+    const groups = Array.from({ length: 1_503 }, (_, index) => ({
+      ...template,
+      group: { ...template.group, groupId: `group-${index}` },
+      roles: template.roles.map((role) => ({ ...role, jobId: `job-${index}` })),
+    }));
+    const batchSizes: number[] = []; let maxBoundParameters = 0;
+    const database = {
+      prepare() {
+        const statement: D1PreparedStatement = {
+          bind(...values: unknown[]) { maxBoundParameters = Math.max(maxBoundParameters, values.length); return statement; },
+          async first<T>() { return null as T | null; },
+          async all<T>() { return { results: [] as T[] }; },
+          async run() { return { meta: { changes: 1 } }; },
+        };
+        return statement;
+      },
+      async batch(statements: D1PreparedStatement[]) {
+        batchSizes.push(statements.length);
+        return statements.map(() => ({ meta: { changes: 1 } }));
+      },
+    } satisfies D1Database;
+
+    await new D1InternshipStore(database).putCatalogProjection(groups, '2026-08-27T00:00:00.000Z');
+
+    expect(batchSizes).toEqual([50, 11]);
+    expect(batchSizes.reduce((total, size) => total + size, 0)).toBe(61);
+    expect(maxBoundParameters).toBeLessThanOrEqual(100);
+  });
+
+  it('writes multi-row projection batches with stable global ordering', async () => {
+    const database = new DatabaseSync(':memory:');
+    database.exec(`
+      CREATE TABLE catalog_items (
+        pk TEXT NOT NULL,
+        sk TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        value TEXT NOT NULL,
+        catalog_sort_key TEXT,
+        PRIMARY KEY (pk, sk)
+      )
+    `);
+    const template = catalogGroupDetails(groupCatalogJobs([job('template', 'Software Engineering Intern')])[0]!);
+    const groups = Array.from({ length: 26 }, (_, index) => ({
+      ...template,
+      group: { ...template.group, groupId: `group-${index}` },
+      roles: template.roles.map((role) => ({ ...role, jobId: `job-${index}` })),
+    }));
+    try {
+      await new D1InternshipStore(sqliteD1(database)).putCatalogProjection(groups, '2026-08-27T00:00:00.000Z');
+      expect(database.prepare("SELECT COUNT(*) AS count FROM catalog_items WHERE kind = 'catalog-projection'").get()).toEqual({ count: 26 });
+      expect(database.prepare("SELECT MIN(catalog_sort_key) AS first, MAX(catalog_sort_key) AS last FROM catalog_items WHERE kind = 'catalog-projection'").get())
+        .toEqual({ first: '00000000', last: '00000025' });
+    } finally {
+      database.close();
+    }
+  });
+
   it('matches normalized role locations when the raw label is generic', async () => {
     const database = new DatabaseSync(':memory:');
     database.exec(`

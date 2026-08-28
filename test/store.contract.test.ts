@@ -150,7 +150,10 @@ describe('DynamoDB persistence contract', () => {
 
   it('claims unowned posting aliases in one conditional transaction', async () => {
     const { send, client } = fakeClient(); const store = new DynamoInternshipStore('jobs-table', client);
-    const identity = buildPostingIdentity({ applicationUrl: 'https://boards.greenhouse.io/acme?gh_jid=100' });
+    const identity = buildPostingIdentity({
+      applicationUrl: 'https://boards.greenhouse.io/acme?gh_jid=100',
+      reviewedProviderReferences: [{ provider: 'greenhouse', tenant: 'acme', postingId: '100' }],
+    });
     send.mockResolvedValueOnce({ Responses: { 'jobs-table': [] } });
     const resolution = await store.claimPostingIdentity(identity, 'legacy-job');
     expect(resolution).toMatchObject({ outcome: 'create', canonicalJobId: 'legacy-job' });

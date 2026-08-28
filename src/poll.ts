@@ -3,7 +3,8 @@ import { assessApplicationPageForListing, canonicalApplicationUrl, type Applicat
 import { boardReference, reachabilityFromFailure, reachabilityFromSignals, verifyApplication, type AttributionBasis, type Reachability } from './core/application-verification.js';
 import { inferSeason, isPastSeason } from './core/early-career.js';
 import { normalizeUrl } from './core/normalize.js';
-import { buildPostingIdentity } from './identity/posting.js';
+import { buildPostingIdentity, type ProviderPostingReference } from './identity/posting.js';
+import { reviewedProviderEvidenceError, reviewedProviderUrlReference } from './identity/reviewed-provider.js';
 import { isTechnicalJob, type JobFilter } from './core/filters.js';
 import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
 import { evaluateSourceFreshness } from './ingestion/monitoring.js';
@@ -28,6 +29,26 @@ import type { InternshipStore } from './store.js';
 
 const applicationPageMetadataVersion = 1;
 
+// Catalog rows written before posting identity v1 retained gh_src while
+// removing the older, general tracking parameters. Keep this lookup shape
+// only for adoption during the migration window; all new writes use the
+// canonical posting URL.
+function legacyNormalizedUrl(input: string): string {
+  const tracking = new Set([
+    'fbclid', 'gclid', 'mc_cid', 'mc_eid', 'ref', 'source',
+    'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+  ]);
+  const url = new URL(input.trim());
+  url.hostname = url.hostname.toLowerCase();
+  url.hash = '';
+  if (url.pathname !== '/') url.pathname = url.pathname.replace(/\/+$/, '');
+  for (const key of [...url.searchParams.keys()]) {
+    if (tracking.has(key.toLowerCase()) || key.toLowerCase().startsWith('utm_')) url.searchParams.delete(key);
+  }
+  url.searchParams.sort();
+  return url.toString().replace(/\/$/, '');
+}
+
 export interface PollReport {
   fetchedSources: number;
   unchangedSources: string[];
@@ -35,6 +56,7 @@ export interface PollReport {
   processedListings: number;
   newJobs: Internship[];
   filteredJobs: Internship[];
+  quarantinedListings: Array<{ sourceId: string; row: number; reason: string }>;
   failures: string[];
 }
 
@@ -325,23 +347,48 @@ export class IngestionRunner {
   private readonly boardIndex = reviewedBoardIndex();
   private readonly boardActiveIds = new Map<string, Promise<Set<string>>>();
 
-  /**
-   * A posting served by a reviewed connector is attributed by its own URL
-   * contract. A posting merely referenced by a list is attributed when the board
-   * it points at is one this catalog polls and that board's checkpoint still
-   * lists it — evidence already held, so no employer request is made.
-   */
-  private async attribute(listing: ProcessedListing): Promise<AttributionBasis> {
-    if ([...this.boardIndex.values()].includes(listing.sourceId)) return 'provider-api';
-    const reference = boardReference(listing.applyUrl);
-    const sourceId = reference && this.boardIndex.get(`${reference.provider}:${reference.token}`);
-    if (!reference || !sourceId) return 'unattributed';
+  private activePostingIds(sourceId: string): Promise<Set<string>> {
     if (!this.boardActiveIds.has(sourceId)) {
       this.boardActiveIds.set(sourceId, this.store.getCheckpoint(sourceId)
         .then((checkpoint) => new Set(checkpoint?.activeExternalIds ?? []))
         .catch(() => new Set<string>()));
     }
-    return (await this.boardActiveIds.get(sourceId)!).has(reference.postingId) ? 'reviewed-board' : 'unattributed';
+    return this.boardActiveIds.get(sourceId)!;
+  }
+
+  private async reviewedReferences(listing: ProcessedListing): Promise<ProviderPostingReference[]> {
+    if (listing.providerEvidence) {
+      const error = reviewedProviderEvidenceError(listing.providerEvidence);
+      if (error) throw new Error(error);
+    }
+    const references: ProviderPostingReference[] = [];
+    const urls = [listing.applyUrl, ...(listing.providerEvidence?.urls ?? [])];
+    for (const url of urls) {
+      const result = reviewedProviderUrlReference(url);
+      if (result.outcome === 'conflict') throw new Error(result.reason);
+      if (result.outcome !== 'match') continue;
+      const direct = listing.providerEvidence?.sourceId === result.reference.sourceId;
+      if (direct || listing.providerEvidence || (await this.activePostingIds(result.reference.sourceId)).has(result.reference.postingId)) {
+        references.push(result.reference);
+      }
+    }
+    return references;
+  }
+
+  /** Provider existence and destination validity are separate facts. Attribution
+   * requires an exact hosted/apply route; a provider ID on a generic custom page
+   * is still inspected like any other destination. */
+  private async attribute(listing: ProcessedListing): Promise<AttributionBasis> {
+    const reference = boardReference(listing.applyUrl);
+    const sourceId = reference && this.boardIndex.get(`${reference.provider}:${reference.token}`);
+    if (!reference || !sourceId) return 'unattributed';
+    const evidence = listing.providerEvidence;
+    if (evidence
+      && evidence.provider === reference.provider
+      && evidence.tenant.toLowerCase() === reference.token
+      && evidence.postingId.toLowerCase() === reference.postingId.toLowerCase()
+      && evidence.sourceId === sourceId) return 'provider-api';
+    return (await this.activePostingIds(sourceId)).has(reference.postingId) ? 'reviewed-board' : 'unattributed';
   }
 
   private async resolveListings(listings: ProcessedListing[], report: PollReport) {
@@ -359,7 +406,15 @@ export class IngestionRunner {
       // by record-level admission; legacy rows retain their rollout behavior
       // until the reviewed backfill classifies them.
       const supportsAdmission = Boolean(sourceListing.employerEvidence || sourceListing.providerIdentity);
-      const canonicalUrl = canonicalApplicationUrl(sourceListing.applyUrl);
+      let legacyUrl: string;
+      let canonicalUrl: string;
+      try {
+        legacyUrl = legacyNormalizedUrl(sourceListing.applyUrl);
+        canonicalUrl = canonicalApplicationUrl(sourceListing.applyUrl);
+      } catch (error) {
+        failures[slot] = `${sourceListing.sourceId}: row ${sourceListing.row}: ${error instanceof Error ? error.message : String(error)}`;
+        return;
+      }
       let listing = {
         ...sourceListing,
         externalId: externalId(sourceListing),
@@ -370,14 +425,24 @@ export class IngestionRunner {
       let existing: Internship | undefined;
       try {
         const normalizedUrl = normalizeUrl(listing.applyUrl);
-        const identity = buildPostingIdentity({ applicationUrl: listing.applyUrl });
+        const reviewedProviderReferences = await this.reviewedReferences(listing);
+        const identity = buildPostingIdentity({
+          applicationUrl: listing.applyUrl,
+          ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
+          reviewedProviderReferences,
+        });
         // A legacy row may be adopted only through its exact canonical URL.
         // Title/location fingerprints are search hints, not proof that two
         // employer requisitions are the same posting.
-        existing = await this.store.findByUrl(normalizedUrl);
+        existing = await this.store.findByUrl(normalizedUrl)
+          ?? (legacyUrl === normalizedUrl ? undefined : await this.store.findByUrl(legacyUrl));
         const identityResolution = await this.store.claimPostingIdentity(identity, existing?.jobId);
         if (identityResolution.outcome === 'quarantine') {
-          failures[slot] = `${listing.sourceId}: row ${listing.row}: posting identity conflict (${identityResolution.reason})`;
+          report.quarantinedListings.push({
+            sourceId: listing.sourceId,
+            row: listing.row,
+            reason: `posting identity conflict (${identityResolution.reason})`,
+          });
           return;
         }
         if (!existing || existing.jobId !== identityResolution.canonicalJobId) {
@@ -516,7 +581,16 @@ export class IngestionRunner {
   }
 
   async run(options: { seedOnly?: boolean; runId?: string; allowCompleteEmptySnapshot?: boolean } = {}): Promise<PollReport> {
-    const report: PollReport = { fetchedSources: 0, unchangedSources: [], baselineSources: [], processedListings: 0, newJobs: [], filteredJobs: [], failures: [] };
+    const report: PollReport = {
+      fetchedSources: 0,
+      unchangedSources: [],
+      baselineSources: [],
+      processedListings: 0,
+      newJobs: [],
+      filteredJobs: [],
+      quarantinedListings: [],
+      failures: [],
+    };
     const health: SourceHealth[] = [];
     for (const connector of this.connectors) {
       const attemptedAt = this.now().toISOString();

@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
-import type { PostingAlias, PostingIdentity, PostingProvider } from '../types.js';
+import type { PostingAlias, PostingIdentity, PostingProvider, ProviderPostingEvidence } from '../types.js';
 
 const TRACKING_PARAMETERS = new Set([
-  'fbclid', 'gclid', 'mc_cid', 'mc_eid', 'ref', 'source',
+  'fbclid', 'gclid', 'gh_src', 'mc_cid', 'mc_eid', 'ref', 'source',
   'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
 ]);
 
@@ -96,6 +96,10 @@ export interface BuildPostingIdentityInput {
   applicationUrl: string;
   observedUrls?: string[];
   finalOfficialUrl?: string;
+  /** Strongest evidence: immutable fields carried directly from a reviewed provider row. */
+  providerEvidence?: ProviderPostingEvidence;
+  /** Provider references already checked against a reviewed registry/checkpoint. */
+  reviewedProviderReferences?: ProviderPostingReference[];
   employerId?: string;
   employerRequisitionId?: string;
   employerRequisitionAuthoritative?: boolean;
@@ -106,16 +110,33 @@ function alias(kind: PostingAlias['kind'], value: string, sourceUrl?: string): P
 }
 
 export function buildPostingIdentity(input: BuildPostingIdentityInput): PostingIdentity {
-  const urls = [input.applicationUrl, ...(input.observedUrls ?? []), ...(input.finalOfficialUrl ? [input.finalOfficialUrl] : [])];
+  const urls = [
+    input.applicationUrl,
+    ...(input.providerEvidence?.urls ?? []),
+    ...(input.observedUrls ?? []),
+    ...(input.finalOfficialUrl ? [input.finalOfficialUrl] : []),
+  ];
   const canonicalApplicationUrl = canonicalizePostingUrl(input.finalOfficialUrl ?? input.applicationUrl);
-  const references = urls.map(providerPostingReference);
-  const reference = references.find((candidate) => candidate.postingId) ?? { provider: 'unknown' as const };
+  const explicitReference = input.providerEvidence ? {
+    provider: input.providerEvidence.provider,
+    tenant: input.providerEvidence.tenant.toLowerCase(),
+    postingId: input.providerEvidence.postingId.toLowerCase(),
+  } satisfies ProviderPostingReference : undefined;
+  // Greenhouse and Lever references require connector/checkpoint evidence, but
+  // the other exact route contracts remain safe to derive from their URLs.
+  const exactRouteReferences = urls.map(providerPostingReference)
+    .filter((candidate) => candidate.provider !== 'greenhouse' && candidate.provider !== 'lever');
+  const references = [explicitReference, ...(input.reviewedProviderReferences ?? []), ...exactRouteReferences]
+    .filter((candidate): candidate is ProviderPostingReference => Boolean(candidate?.postingId));
+  const reference = references[0] ?? { provider: 'unknown' as const };
   const aliases: PostingAlias[] = [];
   for (const url of urls) {
     const canonicalUrl = canonicalizePostingUrl(url);
-    const providerAlias = providerPostingAlias(providerPostingReference(url));
-    if (providerAlias) aliases.push(alias('provider-route', providerAlias, url));
     aliases.push(alias(url === input.finalOfficialUrl ? 'official-url' : 'application-url', `url:${canonicalUrl}`, url));
+  }
+  for (const candidate of references) {
+    const providerAlias = providerPostingAlias(candidate);
+    if (providerAlias) aliases.push(alias('provider-route', providerAlias));
   }
   const primaryProviderAlias = providerPostingAlias(reference);
   if (primaryProviderAlias) aliases.push(alias('provider-posting', primaryProviderAlias));
@@ -146,7 +167,12 @@ export type AliasResolution =
       outcome: 'quarantine';
       aliases: string[];
       conflictingCanonicalJobIds: string[];
-      reason: 'aliases-resolve-to-different-jobs' | 'multiple-immutable-provider-postings';
+      reason:
+        | 'aliases-resolve-to-different-jobs'
+        | 'multiple-immutable-provider-postings'
+        | 'provider-scope-mismatch'
+        | 'employer-scope-mismatch'
+        | 'multiple-authoritative-requisitions';
     };
 
 /** Pure decision used before an atomic alias-registry transaction. */
@@ -161,8 +187,20 @@ export function resolvePostingAliases(identity: PostingIdentity, claims: Readonl
     ids.add(postingId);
     providerPostingGroups.set(group, ids);
   }
+  if (providerPostingGroups.size > 1) {
+    return { outcome: 'quarantine', aliases, conflictingCanonicalJobIds: [], reason: 'provider-scope-mismatch' };
+  }
   if ([...providerPostingGroups.values()].some((ids) => ids.size > 1)) {
     return { outcome: 'quarantine', aliases, conflictingCanonicalJobIds: [], reason: 'multiple-immutable-provider-postings' };
+  }
+  const requisitions = aliases.filter((value) => value.startsWith('requisition:'))
+    .map((value) => value.split(':')).filter((parts) => parts[1] && parts[2]);
+  const requisitionEmployers = new Set(requisitions.map((parts) => parts[1]!));
+  if (requisitionEmployers.size > 1) {
+    return { outcome: 'quarantine', aliases, conflictingCanonicalJobIds: [], reason: 'employer-scope-mismatch' };
+  }
+  if (new Set(requisitions.map((parts) => `${parts[1]}:${parts[2]}`)).size > 1) {
+    return { outcome: 'quarantine', aliases, conflictingCanonicalJobIds: [], reason: 'multiple-authoritative-requisitions' };
   }
   const claimedIds = [...new Set(aliases.map((item) => claims.get(item)).filter((item): item is string => Boolean(item)))].sort();
   if (claimedIds.length > 1) {

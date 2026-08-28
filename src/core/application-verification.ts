@@ -54,11 +54,11 @@ export function boardReference(applyUrl: string): BoardReference | undefined {
   try { url = new URL(applyUrl); } catch { return undefined; }
   const host = url.hostname.toLowerCase().replace(/^www\./, '');
   if (host === 'job-boards.greenhouse.io' || host === 'boards.greenhouse.io') {
-    const match = /^\/([^/]+)\/jobs\/(\d+)/.exec(url.pathname);
+    const match = /^\/([^/]+)\/jobs\/(\d+)\/?$/.exec(url.pathname);
     return match ? { provider: 'greenhouse', token: match[1]!.toLowerCase(), postingId: match[2]! } : undefined;
   }
   if (host === 'jobs.lever.co') {
-    const match = /^\/([^/]+)\/([^/]+)/.exec(url.pathname);
+    const match = /^\/([^/]+)\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})(?:\/apply)?\/?$/i.exec(url.pathname);
     return match ? { provider: 'lever', token: match[1]!.toLowerCase(), postingId: match[2]! } : undefined;
   }
   return undefined;

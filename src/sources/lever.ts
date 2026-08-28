@@ -107,7 +107,8 @@ export function mapLeverSourcedPosting(
   fetchedAt = new Date().toISOString(),
   row = 1,
 ): SourcedPosting {
-  if (!posting.id || !posting.text || !posting.applyUrl || !posting.hostedUrl) {
+  if (!posting.id || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(posting.id)
+    || !posting.text || !posting.applyUrl || !posting.hostedUrl) {
     throw new SourceFetchError(`${options.id}: Lever posting shape was invalid`, 'json');
   }
   const expectedHosted = new RegExp(`^/${options.site.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/${posting.id}/?$`);
@@ -151,6 +152,10 @@ export function mapLeverSourcedPosting(
       : posting.categories?.allLocations ?? [],
     applyUrl: posting.applyUrl,
     hostedUrl: posting.hostedUrl,
+    providerEvidence: {
+      provider: 'lever', tenant: options.site.toLowerCase(), postingId: posting.id.toLowerCase(),
+      sourceId: options.id, urls: [posting.hostedUrl, posting.applyUrl],
+    },
     sourceState: 'open',
     ...(providerTimestamp(posting) ? { publishedAt: providerTimestamp(posting)!.value, providerTimestamp: providerTimestamp(posting)! } : {}),
     classificationTags: [posting.categories?.commitment, posting.categories?.team].filter((value): value is string => Boolean(value)),

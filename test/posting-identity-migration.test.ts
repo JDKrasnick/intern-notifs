@@ -48,7 +48,7 @@ describe('posting identity migration plan', () => {
 
     expect(plan).toMatchObject({ jobUpdates: 1, duplicateOpenJobs: 1, receiptCopies: 1, conflicts: [] });
     expect(plan.duplicateIds).toEqual(['legacy-b']);
-    expect(plan.updates[0]).toMatchObject({ jobId: 'legacy-a', postingIdentity: { canonicalJobId: 'legacy-a', providerPostingId: '100' } });
+    expect(plan.updates[0]).toMatchObject({ jobId: 'legacy-a', postingIdentity: { canonicalJobId: 'legacy-a' } });
     expect(plan.receipts[0]).toMatchObject({ canonicalJobId: 'legacy-a', receipt: { status: 'ok' } });
   });
 

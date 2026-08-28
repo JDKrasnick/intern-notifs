@@ -102,6 +102,7 @@ export function processPosting(
       ? { seasonSource: 'source-default' as const }
       : {}),
     applyUrl: posting.applyUrl,
+    ...(posting.providerEvidence ? { providerEvidence: posting.providerEvidence } : {}),
     compensation: parseCompensation(posting.compensationText ?? content),
     requirements: requirements(posting, content),
     state: posting.sourceState,

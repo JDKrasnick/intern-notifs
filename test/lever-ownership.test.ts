@@ -113,7 +113,9 @@ describe('lever candidate ledger', () => {
 });
 
 describe('probeLeverCandidate', () => {
-  const posting = (id: string, title: string, overrides: Record<string, unknown> = {}) => ({
+  const posting = (label: string, title: string, overrides: Record<string, unknown> = {}) => {
+    const id = `00000000-0000-4000-8000-${label.padStart(12, '0')}`;
+    return {
     id,
     text: title,
     hostedUrl: `https://jobs.lever.co/acme/${id}`,
@@ -122,7 +124,8 @@ describe('probeLeverCandidate', () => {
     descriptionPlain: 'Currently pursuing a Bachelor of Science in Computer Science.',
     createdAt: Date.parse('2026-07-01T00:00:00Z'),
     ...overrides,
-  });
+    };
+  };
 
   const respond = (body: unknown, init: ResponseInit = {}) =>
     new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json', etag: '"abc"' }, ...init });

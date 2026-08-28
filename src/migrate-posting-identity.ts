@@ -4,6 +4,7 @@ import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DeleteCommand, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { ApplicationSession } from './application-automation.js';
 import { buildPostingIdentity } from './identity/posting.js';
+import { providerEvidenceForOccurrence } from './identity/reviewed-provider.js';
 import { notificationDedupeKey } from './notifications.js';
 import { createDynamoDocumentClient, DynamoInternshipStore, DynamoUserStore } from './store.js';
 import type { ApplicationRecord, DeliveryReceipt, Internship, PostingAlias, PostingIdentity, SourceOccurrence, UserPreferences } from './types.js';
@@ -109,6 +110,14 @@ function receiptRank(receipt: DeliveryReceipt) {
   return 1;
 }
 
+function migrationIdentity(job: Internship): PostingIdentity {
+  const urls = [job.applyUrl, ...job.sourceReferences.map((reference) => reference.applyUrl)];
+  const providerEvidence = job.sourceReferences.map((reference) => reference.providerEvidence
+    ?? (reference.externalId ? providerEvidenceForOccurrence(reference.sourceId, reference.externalId, [reference.applyUrl]) : undefined))
+    .find((value) => value !== undefined);
+  return buildPostingIdentity({ applicationUrl: job.applyUrl, observedUrls: urls, ...(providerEvidence ? { providerEvidence } : {}) });
+}
+
 export function planApplicationIdentityMigration(
   applications: MigrationApplication[],
   sessions: MigrationApplicationSession[],
@@ -172,7 +181,7 @@ export function planPostingIdentityMigration(
   const conflicts: string[] = [];
   const identities = new Map<string, PostingIdentity>();
   for (const job of selected) {
-    try { identities.set(job.jobId, buildPostingIdentity({ applicationUrl: job.applyUrl })); }
+    try { identities.set(job.jobId, migrationIdentity(job)); }
     catch (error) { conflicts.push(`${job.jobId}: ${error instanceof Error ? error.message : String(error)}`); }
   }
 
