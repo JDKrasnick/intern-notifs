@@ -2735,13 +2735,15 @@ function AppContent() {
   if (!preferences.onboardingComplete)
     return <Onboarding onDone={setPreferences} />;
   const openApplicationAndScheduleCheck = (job: Pick<Job, "jobId" | "applyUrl">) => {
-    void openOfficialApplication(job.applyUrl);
     void api("/me/gmail/checks", token, {
       method: "POST",
       body: JSON.stringify({ jobId: job.jobId }),
     }).catch((error) => {
       console.warn("Could not schedule Gmail application check", error);
     });
+    // Start the request before handing off to the system browser, which can
+    // immediately background the native app and suspend later JavaScript work.
+    void openOfficialApplication(job.applyUrl);
   };
   const saveForWeb = (job: Job) => {
     if (applicationStatuses.has(job.jobId) || savingJobIds.has(job.jobId)) return;
