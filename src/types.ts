@@ -323,6 +323,13 @@ export interface DestinationEvidence {
   distinctJobLinkCount?: number;
   applicationFormPresent?: boolean;
   browserVisible?: boolean;
+  evidenceFrameUrl?: string;
+  evidenceFrameKind?: 'main' | 'child';
+  renderedFrameCount?: number;
+  failedFrameCount?: number;
+  selfReferentialFrame?: boolean;
+  renderedEvidenceHash?: string;
+  identicalEvidenceForDifferentPosting?: boolean;
   lastKnownGoodAt?: string;
 }
 
@@ -346,6 +353,7 @@ export type CatalogAdmissionReason =
   | 'metadata-title-truncated'
   | 'metadata-title-malformed'
   | 'metadata-title-approximate-repair'
+  | 'metadata-conflict'
   | 'metadata-location-truncated'
   | 'metadata-location-malformed';
 

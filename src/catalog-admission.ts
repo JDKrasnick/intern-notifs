@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { sourceRoleAgreement } from './core/application-url.js';
 import type {
   CatalogAdmission,
   CatalogAdmissionReason,
@@ -147,6 +148,31 @@ export function deriveCanonicalAdmission(references: readonly SourceOccurrence[]
       reasonCodes: [...new Set([...latest.reasonCodes, 'employer-conflict' as const])].sort(),
       evaluatedAt,
     };
+  }
+  const identities = new Map<string, SourceOccurrence[]>();
+  for (const reference of relevantReferences) {
+    const destination = reference.admission?.destination;
+    if (!destination?.expectedPostingId) continue;
+    const key = `${destination.provider}\0${destination.tenant ?? ''}\0${destination.expectedPostingId}`;
+    identities.set(key, [...(identities.get(key) ?? []), reference]);
+  }
+  const metadataConflict = [...identities.values()].some((group) => {
+    const official = group.filter((reference) => reference.provenance !== 'reviewed-community' && reference.admission?.catalogEligible);
+    const authoritative = official.length ? official : group;
+    return authoritative.some((left, index) => authoritative.slice(index + 1).some((right) => {
+    if (left.title.trim().toLowerCase() === right.title.trim().toLowerCase()) return false;
+    const generic = (value: string) => /^(?:intern(?:ship)?|co-?op)$/iu.test(value.trim());
+    if (generic(left.title) !== generic(right.title)) return true;
+    return sourceRoleAgreement(left.title, { url: right.applyUrl, title: right.title,
+      confidence: { score: 0, level: 'low', recommendation: 'review', signals: [] } }) === 'weak'
+      && sourceRoleAgreement(right.title, { url: left.applyUrl, title: left.title,
+        confidence: { score: 0, level: 'low', recommendation: 'review', signals: [] } }) === 'weak';
+    }));
+  });
+  if (metadataConflict) {
+    const latest = [...decisions].sort((a, b) => b.evaluatedAt.localeCompare(a.evaluatedAt))[0]!;
+    return { ...latest, catalogEligible: false, alertEligible: false,
+      reasonCodes: [...new Set([...latest.reasonCodes, 'metadata-conflict' as const])].sort(), evaluatedAt };
   }
   const admissible = decisions.filter((decision) => decision.catalogEligible)
     .sort((a, b) => Number(b.alertEligible) - Number(a.alertEligible) || b.evaluatedAt.localeCompare(a.evaluatedAt))[0];

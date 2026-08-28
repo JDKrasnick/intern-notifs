@@ -3,6 +3,8 @@ import { catalogEligible } from '../src/catalog-admission.js';
 import { alertEligible } from '../src/catalog-admission.js';
 import { openCatalogSortKey } from '../src/catalog-recency.js';
 import { catalogSearchText, catalogSourceClasses } from '../src/catalog-fields.js';
+import { canonicalCompanyKey } from '../src/core/normalize.js';
+import { providerPostingReference } from '../src/identity/posting.js';
 import type {
   AdmissionIncident,
   CanonicalEmployer,
@@ -11,8 +13,12 @@ import type {
   EmployerMapping,
   Internship,
   ProviderIdentity,
+  SourceOccurrence,
+  SourceOccurrenceState,
 } from '../src/types.js';
 import type { D1Database } from './types.js';
+
+export const ATOMIC_REPAIR_RECORD_LIMIT = 900;
 
 type JsonRow = { value: string };
 export type RepairChange = {
@@ -24,17 +30,46 @@ export type RepairChange = {
   locations?: string[];
   applyUrl?: string;
   normalizedUrl?: string;
+  sourceReferences?: SourceOccurrence[];
 };
 
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function repairToken(rows: Array<{ jobId: string; original: string; proposed: string }>): string {
-  return createHash('sha256').update(rows.map((row) => `${row.jobId}\0${hash(row.original)}\0${hash(row.proposed)}`).sort().join('\n')).digest('hex');
+function repairToken(
+  rows: Array<{ jobId: string; original: string; proposed: string }>,
+  occurrences: Array<{ sourceId: string; externalId: string; original: string; proposed: string }> = [],
+): string {
+  const values = [
+    ...rows.map((row) => `job\0${row.jobId}\0${hash(row.original)}\0${hash(row.proposed)}`),
+    ...occurrences.map((row) => `occurrence\0${row.sourceId}\0${row.externalId}\0${hash(row.original)}\0${hash(row.proposed)}`),
+  ];
+  return createHash('sha256').update(values.sort().join('\n')).digest('hex');
+}
+
+function sourceReferenceKey(reference: SourceOccurrence): string {
+  return `${reference.sourceId}\0${reference.externalId ?? ''}`;
+}
+
+function repairedSourceReferences(current: Internship, proposed: SourceOccurrence[] | undefined): SourceOccurrence[] {
+  if (!proposed) return current.sourceReferences;
+  const currentByKey = new Map(current.sourceReferences.map((reference) => [sourceReferenceKey(reference), reference]));
+  if (currentByKey.size !== current.sourceReferences.length || proposed.length !== current.sourceReferences.length) {
+    throw new Error('Admission repair cannot add, remove, or duplicate source occurrences');
+  }
+  for (const reference of proposed) {
+    const original = currentByKey.get(sourceReferenceKey(reference));
+    if (!original) throw new Error('Admission repair cannot change source occurrence identity');
+    for (const field of ['sourceId', 'externalId', 'document', 'sourceUrl', 'row', 'provenance', 'state'] as const) {
+      if (reference[field] !== original[field]) throw new Error(`Admission repair cannot change source occurrence ${field}`);
+    }
+  }
+  return proposed;
 }
 
 function preserveDurableFields(current: Internship, change: RepairChange): Internship {
+  const sourceReferences = repairedSourceReferences(current, change.sourceReferences);
   return {
     ...current,
     ...(change.company ? { company: change.company } : {}),
@@ -50,7 +85,7 @@ function preserveDurableFields(current: Internship, change: RepairChange): Inter
     firstSeenAt: current.firstSeenAt,
     catalogVisibleAt: current.catalogVisibleAt,
     catalogRecency: current.catalogRecency,
-    sourceReferences: current.sourceReferences,
+    sourceReferences,
     postingIdentity: current.postingIdentity,
     notification: current.notification,
   };
@@ -65,21 +100,40 @@ export class D1CatalogAdmissionStore {
     review: number;
     legacyUnclassified: number;
     byReason: Record<string, number>;
-    records: Array<{ jobId: string; company: string; title: string; open: boolean; catalogEligible: boolean; reasonCodes: string[] }>;
+    bySource: Record<string, number>;
+    byDestination: Record<string, number>;
+    withNotificationHistory: number;
+    records: Array<{ jobId: string; company: string; title: string; open: boolean; catalogEligible: boolean;
+      reasonCodes: string[]; sourceIds: string[]; destinationClassification?: string; smsSent: boolean }>;
   }> {
     const rows = await this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'internship'").all<JsonRow>();
     const jobs = rows.results.map((row) => JSON.parse(row.value) as Internship);
     const byReason: Record<string, number> = {};
+    const bySource: Record<string, number> = {};
+    const byDestination: Record<string, number> = {};
     for (const job of jobs) for (const reason of job.admission?.reasonCodes ?? []) byReason[reason] = (byReason[reason] ?? 0) + 1;
+    for (const job of jobs) {
+      for (const sourceId of new Set(job.sourceReferences.map((reference) => reference.sourceId))) {
+        bySource[sourceId] = (bySource[sourceId] ?? 0) + 1;
+      }
+      const classification = job.admission?.destination.classification ?? 'legacy-unclassified';
+      byDestination[classification] = (byDestination[classification] ?? 0) + 1;
+    }
     return {
       scanned: jobs.length,
       eligible: jobs.filter(catalogEligible).length,
       review: jobs.filter((job) => job.admission?.catalogEligible === false).length,
       legacyUnclassified: jobs.filter((job) => !job.admission).length,
       byReason,
+      bySource,
+      byDestination,
+      withNotificationHistory: jobs.filter((job) => Boolean(job.notification.smsSentAt)).length,
       records: jobs.filter((job) => job.admission?.catalogEligible === false).map((job) => ({
         jobId: job.jobId, company: job.company, title: job.title, open: job.open,
         catalogEligible: false, reasonCodes: job.admission?.reasonCodes ?? [],
+        sourceIds: [...new Set(job.sourceReferences.map((reference) => reference.sourceId))].sort(),
+        ...(job.admission ? { destinationClassification: job.admission.destination.classification } : {}),
+        smsSent: Boolean(job.notification.smsSentAt),
       })),
     };
   }
@@ -234,6 +288,47 @@ export class D1CatalogAdmissionStore {
     return candidates;
   }
 
+  async legacyVerificationCandidates(limit = 100): Promise<Array<{
+    jobId: string; sourceId: string; externalId: string; candidateUrl: string; providerIdentity: ProviderIdentity;
+  }>> {
+    const rows = await this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'internship' ORDER BY pk").all<JsonRow>();
+    const candidates: Array<{ jobId: string; sourceId: string; externalId: string; candidateUrl: string;
+      providerIdentity: ProviderIdentity }> = [];
+    for (const row of rows.results) {
+      const job = JSON.parse(row.value) as Internship;
+      for (const reference of job.sourceReferences) {
+        if (!reference.externalId || reference.admission) continue;
+        let route: ReturnType<typeof providerPostingReference> = { provider: 'unknown' };
+        try { route = providerPostingReference(reference.applyUrl); } catch { /* Invalid destinations remain browser review candidates. */ }
+        let provider: ProviderIdentity['provider'] = route.provider;
+        let tenant = route.tenant;
+        let postingId = route.postingId;
+        if (provider === 'unknown') {
+          const source = /^(greenhouse|lever|ashby)-(.+)$/u.exec(reference.sourceId);
+          if (source) {
+            provider = source[1] as ProviderIdentity['provider'];
+            tenant = source[2];
+            postingId = reference.externalId;
+          } else {
+            try {
+              const queryId = new URL(reference.applyUrl).searchParams.get('gh_jid');
+              if (queryId && /^\d+$/u.test(queryId)) { provider = 'greenhouse'; postingId = queryId; }
+            } catch { /* Keep the unknown identity for fail-closed review. */ }
+          }
+        }
+        const providerIdentity: ProviderIdentity = {
+          provider, sourceId: reference.sourceId, sourceUrl: reference.sourceUrl,
+          employerScope: `employer:${canonicalCompanyKey(reference.company)}`,
+          ...(tenant ? { tenant } : {}), ...(postingId ? { postingId } : {}),
+        };
+        candidates.push({ jobId: job.jobId, sourceId: reference.sourceId, externalId: reference.externalId,
+          candidateUrl: reference.applyUrl, providerIdentity });
+        if (candidates.length >= limit) return candidates;
+      }
+    }
+    return candidates;
+  }
+
   async markReviewRuleSampled(id: string, sampleDueAt: string): Promise<void> {
     await this.db.prepare('UPDATE destination_review_rules SET sample_due_at = ? WHERE id = ?').bind(sampleDueAt, id).run();
   }
@@ -273,6 +368,19 @@ export class D1CatalogAdmissionStore {
     await this.db.batch(statements);
   }
 
+  async renderedEvidenceCollisionJobIds(jobId: string, renderedEvidenceHash: string, expectedPostingId: string): Promise<string[]> {
+    const rows = await this.db.prepare(`SELECT DISTINCT job_id FROM destination_verification_evidence
+      WHERE job_id <> ?
+        AND json_extract(value, '$.renderedEvidenceHash') = ?
+        AND coalesce(json_extract(value, '$.expectedPostingId'), '') <> ?
+      ORDER BY job_id`).bind(jobId, renderedEvidenceHash, expectedPostingId).all<{ job_id: string }>();
+    return rows.results.map((row) => row.job_id);
+  }
+
+  async hasRenderedEvidenceCollision(jobId: string, renderedEvidenceHash: string, expectedPostingId: string): Promise<boolean> {
+    return (await this.renderedEvidenceCollisionJobIds(jobId, renderedEvidenceHash, expectedPostingId)).length > 0;
+  }
+
   async upsertIncident(value: AdmissionIncident): Promise<void> {
     await this.db.prepare(`INSERT INTO admission_incidents
       (id, job_id, source_id, host, reason_code, state, opened_at, updated_at, grace_deadline, warning_sent_at, quarantine_sent_at)
@@ -300,10 +408,13 @@ export class D1CatalogAdmissionStore {
       .bind(sentAt, sentAt, id).run();
   }
 
-  async stageRepair(changes: RepairChange[], createdAt: string): Promise<{ repairToken: string; changed: number; candidates: string[] }> {
-    if (!changes.length) return { repairToken: repairToken([]), changed: 0, candidates: [] };
+  async stageRepair(changes: RepairChange[], createdAt: string): Promise<{
+    repairToken: string; changed: number; candidates: string[]; occurrencesChanged: number; occurrenceCandidates: string[];
+  }> {
+    if (!changes.length) return { repairToken: repairToken([]), changed: 0, candidates: [], occurrencesChanged: 0, occurrenceCandidates: [] };
     if (new Set(changes.map((change) => change.jobId)).size !== changes.length) throw new Error('Repair job IDs must be unique');
     const rows: Array<{ jobId: string; original: string; proposed: string; job: Internship }> = [];
+    const occurrences: Array<{ sourceId: string; externalId: string; original: string; proposed: string }> = [];
     for (const change of changes) {
       const row = await this.db.prepare("SELECT value FROM catalog_items WHERE pk = ? AND sk = 'META' AND kind = 'internship'")
         .bind(`JOB#${change.jobId}`).first<JsonRow>();
@@ -311,8 +422,27 @@ export class D1CatalogAdmissionStore {
       const current = JSON.parse(row.value) as Internship;
       const proposed = preserveDurableFields(current, change);
       rows.push({ jobId: change.jobId, original: row.value, proposed: JSON.stringify(proposed), job: proposed });
+      if (change.sourceReferences) {
+        const originalByKey = new Map(current.sourceReferences.map((reference) => [sourceReferenceKey(reference), reference]));
+        for (const reference of change.sourceReferences) {
+          if (!reference.externalId || JSON.stringify(originalByKey.get(sourceReferenceKey(reference))) === JSON.stringify(reference)) continue;
+          const occurrenceRow = await this.db.prepare("SELECT value FROM catalog_items WHERE pk = ? AND sk = ? AND kind = 'source-occurrence'")
+            .bind(`SOURCE#${reference.sourceId}`, `OCCURRENCE#${reference.externalId}`).first<JsonRow>();
+          if (!occurrenceRow) throw new Error(`Source occurrence ${reference.sourceId}:${reference.externalId} was not found`);
+          const state = JSON.parse(occurrenceRow.value) as SourceOccurrenceState;
+          if (state.jobId !== current.jobId) throw new Error(`Source occurrence ${reference.sourceId}:${reference.externalId} belongs to another job`);
+          occurrences.push({ sourceId: reference.sourceId, externalId: reference.externalId,
+            original: occurrenceRow.value, proposed: JSON.stringify({ ...state, occurrence: reference }) });
+        }
+      }
     }
-    const token = repairToken(rows);
+    if (new Set(occurrences.map((item) => `${item.sourceId}\0${item.externalId}`)).size !== occurrences.length) {
+      throw new Error('Admission repair source occurrences must be unique');
+    }
+    if (rows.length + occurrences.length > ATOMIC_REPAIR_RECORD_LIMIT) {
+      throw new Error(`Admission repair exceeds the atomic D1 limit of ${ATOMIC_REPAIR_RECORD_LIMIT} records`);
+    }
+    const token = repairToken(rows, occurrences);
     const statements = rows.map((row) => this.db.prepare(`INSERT INTO catalog_admission_repair_stage
       (token, job_id, original_value, proposed_value, url_key, fingerprint_key, sms_pending, digest_pending,
        catalog_state, catalog_sort_key, search_text, source_classes, created_at)
@@ -328,22 +458,45 @@ export class D1CatalogAdmissionStore {
         catalogEligible(row.job) ? catalogSearchText(row.job) : null,
         catalogEligible(row.job) ? JSON.stringify(catalogSourceClasses(row.job)) : null, createdAt));
     for (let offset = 0; offset < statements.length; offset += 50) await this.db.batch(statements.slice(offset, offset + 50));
-    return { repairToken: token, changed: rows.length, candidates: rows.map((row) => row.jobId) };
+    const occurrenceStatements = occurrences.map((row) => this.db.prepare(`INSERT INTO catalog_admission_occurrence_repair_stage
+      (token, source_id, external_id, original_value, proposed_value, created_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(token, source_id, external_id) DO UPDATE SET original_value=excluded.original_value,
+        proposed_value=excluded.proposed_value, created_at=excluded.created_at`)
+      .bind(token, row.sourceId, row.externalId, row.original, row.proposed, createdAt));
+    for (let offset = 0; offset < occurrenceStatements.length; offset += 50) await this.db.batch(occurrenceStatements.slice(offset, offset + 50));
+    return { repairToken: token, changed: rows.length, candidates: rows.map((row) => row.jobId),
+      occurrencesChanged: occurrences.length, occurrenceCandidates: occurrences.map((row) => `${row.sourceId}:${row.externalId}`) };
   }
 
-  async applyRepair(token: string, expectedChanged: number, appliedAt: string): Promise<{ changed: number; projectionRefreshRequired: boolean }> {
+  async applyRepair(token: string, expectedChanged: number, appliedAt: string, expectedOccurrencesChanged = 0): Promise<{
+    changed: number; occurrencesChanged: number; projectionRefreshRequired: boolean;
+  }> {
     const stage = await this.db.prepare('SELECT * FROM catalog_admission_repair_stage WHERE token = ? ORDER BY job_id')
       .bind(token).all<{ job_id: string; original_value: string; proposed_value: string; url_key: string; fingerprint_key: string; sms_pending: number; digest_pending: number; catalog_state: string | null; catalog_sort_key: string | null; search_text: string | null; source_classes: string | null }>();
     if (stage.results.length !== expectedChanged) throw new Error('Repair row count changed; run the dry-run again');
+    const occurrenceStage = await this.db.prepare(`SELECT * FROM catalog_admission_occurrence_repair_stage
+      WHERE token = ? ORDER BY source_id, external_id`).bind(token)
+      .all<{ source_id: string; external_id: string; original_value: string; proposed_value: string }>();
+    if (occurrenceStage.results.length !== expectedOccurrencesChanged) throw new Error('Repair occurrence count changed; run the dry-run again');
+    if (stage.results.length + occurrenceStage.results.length > ATOMIC_REPAIR_RECORD_LIMIT) {
+      throw new Error(`Admission repair exceeds the atomic D1 limit of ${ATOMIC_REPAIR_RECORD_LIMIT} records`);
+    }
     const guard = this.db.prepare(`INSERT INTO catalog_admission_repair_guards (token, ok, applied_at)
       SELECT ?, CASE WHEN
         (SELECT count(*) FROM catalog_admission_repair_stage WHERE token = ?) = ?
+        AND (SELECT count(*) FROM catalog_admission_occurrence_repair_stage WHERE token = ?) = ?
         AND NOT EXISTS (
           SELECT 1 FROM catalog_admission_repair_stage AS stage
           LEFT JOIN catalog_items AS item ON item.pk = 'JOB#' || stage.job_id AND item.sk = 'META' AND item.kind = 'internship'
           WHERE stage.token = ? AND (item.value IS NULL OR item.value <> stage.original_value)
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM catalog_admission_occurrence_repair_stage AS stage
+          LEFT JOIN catalog_items AS item ON item.pk = 'SOURCE#' || stage.source_id
+            AND item.sk = 'OCCURRENCE#' || stage.external_id AND item.kind = 'source-occurrence'
+          WHERE stage.token = ? AND (item.value IS NULL OR item.value <> stage.original_value)
         ) THEN 1 ELSE 0 END, ?`)
-      .bind(token, token, expectedChanged, token, appliedAt);
+      .bind(token, token, expectedChanged, token, expectedOccurrencesChanged, token, token, appliedAt);
     const updates = stage.results.map((row) => this.db.prepare(`UPDATE catalog_items SET value = ?,
       url_key = ?, fingerprint_key = ?, sms_pending = ?, digest_pending = ?, catalog_state = ?,
       catalog_sort_key = ?, search_text = ?, source_classes = ?
@@ -351,8 +504,15 @@ export class D1CatalogAdmissionStore {
       .bind(row.proposed_value, row.url_key, row.fingerprint_key, row.sms_pending, row.digest_pending,
         row.catalog_state, row.catalog_sort_key, row.search_text, row.source_classes,
         `JOB#${row.job_id}`, row.original_value));
-    await this.db.batch([guard, ...updates]);
-    await this.db.prepare('DELETE FROM catalog_admission_repair_stage WHERE token = ?').bind(token).run();
-    return { changed: stage.results.length, projectionRefreshRequired: stage.results.length > 0 };
+    const occurrenceUpdates = occurrenceStage.results.map((row) => this.db.prepare(`UPDATE catalog_items SET value = ?
+      WHERE pk = ? AND sk = ? AND kind = 'source-occurrence' AND value = ?`)
+      .bind(row.proposed_value, `SOURCE#${row.source_id}`, `OCCURRENCE#${row.external_id}`, row.original_value));
+    await this.db.batch([guard, ...updates, ...occurrenceUpdates]);
+    await this.db.batch([
+      this.db.prepare('DELETE FROM catalog_admission_repair_stage WHERE token = ?').bind(token),
+      this.db.prepare('DELETE FROM catalog_admission_occurrence_repair_stage WHERE token = ?').bind(token),
+    ]);
+    return { changed: stage.results.length, occurrencesChanged: occurrenceStage.results.length,
+      projectionRefreshRequired: stage.results.length > 0 };
   }
 }

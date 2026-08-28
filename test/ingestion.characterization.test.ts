@@ -153,4 +153,15 @@ describe('neutral boundary parity', () => {
       education: { levels: ['masters', 'undergraduate'], evidenceStatus: 'explicit' },
     });
   });
+
+  it('carries a custom Greenhouse query posting ID into shared destination verification', () => {
+    const processed = processPosting({
+      sourceId: 'community-list', provenance: 'reviewed-community', externalId: 'row-1', sourceUrl: 'https://github.com/example/jobs',
+      fetchedAt, employer: { name: 'Zipline', authority: 'source-row' }, title: 'Software Engineering Intern',
+      content: [{ kind: 'description', format: 'plain', value: 'Build flight software.' }], locations: ['California'],
+      applyUrl: 'https://www.zipline.com/open-roles?gh_jid=7974897003', sourceState: 'open', lifecycleAuthority: 'source',
+    }).listing!;
+    expect(processed.providerIdentity).toMatchObject({ provider: 'greenhouse', postingId: '7974897003',
+      sourceId: 'community-list', employerScope: 'employer:zipline' });
+  });
 });

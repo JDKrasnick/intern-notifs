@@ -5,6 +5,7 @@ import { classifyDestination } from '../src/destination-verification.js';
 import type { DestinationVerificationRequest } from '../src/destination-verification.js';
 import type { ApplicationPageEvidence } from '../src/core/application-url.js';
 import { reachabilityFromFailure, type Reachability } from '../src/core/application-verification.js';
+import { combineRenderedFrameEvidence, type RenderedFrameSnapshot } from '../src/rendered-destination-evidence.js';
 import type { CatalogAdmissionReason, Internship, ProcessedListing, ProviderIdentity, SourceOccurrence } from '../src/types.js';
 import { D1CatalogAdmissionStore } from './catalog-admission-store.js';
 import { D1InternshipStore } from './d1-store.js';
@@ -17,7 +18,7 @@ export interface DestinationVerificationMessage {
   externalId: string;
   providerIdentity: ProviderIdentity;
   candidateUrl: string;
-  reason: 'first-sight' | 'url-change' | 'content-change' | 'daily-retry' | 'weekly-sample';
+  reason: 'first-sight' | 'url-change' | 'content-change' | 'daily-retry' | 'weekly-sample' | 'historical-backfill';
   queuedAt: string;
 }
 
@@ -93,7 +94,9 @@ export async function persistDestinationAdmission(input: {
     ...(browserVisible !== undefined ? { browserVisible } : {}), ...(rule ? { rule } : {}) });
   const admission = evaluateCatalogAdmission({
     listing, destination,
-    postingAttributed: reference.provenance !== 'reviewed-community' || reference.admission?.postingAttribution === 'attributed',
+    postingAttributed: reference.provenance !== 'reviewed-community'
+      || reference.admission?.postingAttribution === 'attributed'
+      || (browserVisible === true && ['posting-detail', 'application-form'].includes(destination.classification)),
     evaluatedAt: inspectedAt, previous: reference.admission ?? job.admission,
   });
   const sourceReferences = job.sourceReferences.map((item) => item === reference ? { ...item, admission } : item);
@@ -168,38 +171,66 @@ export async function processDestinationVerificationBatch(
         const page = await browser.newPage();
         let reachability: Reachability = 'live';
         let evidence: ApplicationPageEvidence | undefined;
+        let collisionJobIds: string[] = [];
         let browserError: unknown;
         try {
           const response = await page.goto(message.candidateUrl, { waitUntil: 'networkidle0', timeout: 20_000 });
           reachability = reachabilityFromHttpStatus(response?.status());
           if (reachability === 'live') {
-            const browserEvidence = await page.evaluate((expectedPostingId) => {
-              const html = document.documentElement.outerHTML;
-              const jobPostingCount = [...document.querySelectorAll('script[type="application/ld+json"]')].reduce((total, node) => total + ((node.textContent?.match(/["']@type["']\s*:\s*["']JobPosting["']/gi) ?? []).length), 0);
-              const pageUrl = new URL(location.href); pageUrl.hash = '';
-              const jobRoute = /(?:^|\/)(?:careers?|jobs?|openings?|positions?|roles?|vacancies?)(?:\/|$)/i;
-              const distinctJobLinks = new Set([...document.querySelectorAll<HTMLAnchorElement>('a[href]')]
-                .filter((link) => link.getClientRects().length > 0)
-                .map((link) => { try { const value = new URL(link.href, location.href); value.hash = ''; return value; } catch { return undefined; } })
-                .filter((value): value is URL => Boolean(value && ['http:', 'https:'].includes(value.protocol)
-                  && value.toString() !== pageUrl.toString() && jobRoute.test(value.pathname)))
-                .map((value) => value.toString()));
-              const description = document.querySelector('meta[name="description"],meta[property="og:description"]')?.getAttribute('content') ?? undefined;
-              const main = (document.querySelector('main')?.textContent ?? document.body?.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 12_000);
-              return {
-                url: location.href, title: document.title || undefined, description,
-                postingIdPresent: expectedPostingId ? html.includes(expectedPostingId) : undefined,
-                jobPostingCount,
-                distinctJobLinkCount: distinctJobLinks.size,
-                applicationFormPresent: Boolean(document.querySelector('form[action*="apply" i],form[id*="apply" i],input[type="file"],input[name="resume" i],input[name="cv" i]')),
-                contentExcerpt: main || undefined,
-              };
-            }, message.providerIdentity.postingId);
-            evidence = {
-              ...browserEvidence,
-              expectedPostingId: message.providerIdentity.postingId,
-              confidence: { score: 100, level: 'high', recommendation: 'alert-eligible', signals: ['browser-visible evidence'] },
-            };
+            const renderedFrames: RenderedFrameSnapshot[] = [];
+            let failedFrameCount = 0;
+            for (const frame of page.frames()) {
+              try {
+                const snapshot = await frame.evaluate(() => {
+                  const visible = (element: Element) => element.getClientRects().length > 0;
+                  const structuredJobText: string[] = [];
+                  let jobPostingCount = 0;
+                  for (const node of document.querySelectorAll('script[type="application/ld+json"]')) {
+                    const text = node.textContent ?? '';
+                    const matches = text.match(/["']@type["']\s*:\s*["']JobPosting["']/gi) ?? [];
+                    jobPostingCount += matches.length;
+                    if (matches.length) structuredJobText.push(text.slice(0, 20_000));
+                  }
+                  const pageUrl = new URL(location.href); pageUrl.hash = '';
+                  const jobRoute = /(?:^|\/)(?:careers?|jobs?|openings?|positions?|roles?|vacancies?)(?:\/|$)/i;
+                  const distinctJobLinks = new Set([...document.querySelectorAll<HTMLAnchorElement>('a[href]')]
+                    .filter(visible)
+                    .map((link) => { try { const value = new URL(link.href, location.href); value.hash = ''; return value; } catch { return undefined; } })
+                    .filter((value): value is URL => Boolean(value && ['http:', 'https:'].includes(value.protocol)
+                      && value.toString() !== pageUrl.toString() && jobRoute.test(value.pathname)))
+                    .map((value) => value.toString()));
+                  const actionableApply = [...document.querySelectorAll<HTMLElement>('a[href],button')].some((control) => {
+                    if (!visible(control) || !/^apply(?:\s+now)?$/iu.test(control.innerText.trim())) return false;
+                    if (control instanceof HTMLButtonElement) return Boolean(control.closest('form'));
+                    try {
+                      const target = new URL((control as HTMLAnchorElement).href, location.href); target.hash = '';
+                      return target.toString() !== pageUrl.toString();
+                    } catch { return false; }
+                  });
+                  const description = document.querySelector('meta[name="description"],meta[property="og:description"]')?.getAttribute('content') ?? undefined;
+                  const main = (document.querySelector('main')?.innerText ?? document.body?.innerText ?? '').replace(/\s+/g, ' ').trim().slice(0, 12_000);
+                  return {
+                    url: location.href, title: document.title || undefined, description,
+                    visibleText: main || undefined, structuredJobText: structuredJobText.join(' ').slice(0, 40_000) || undefined,
+                    jobPostingCount, distinctJobLinkCount: distinctJobLinks.size,
+                    applicationFormPresent: actionableApply || [...document.querySelectorAll<Element>(
+                      'form[action*="apply" i],form[id*="apply" i],input[type="file"],input[name="resume" i],input[name="cv" i]',
+                    )].some(visible),
+                  };
+                });
+                renderedFrames.push({ ...snapshot, ...(frame.parentFrame() ? { parentUrl: frame.parentFrame()!.url() } : {}) });
+              } catch {
+                failedFrameCount += 1;
+              }
+            }
+            evidence = combineRenderedFrameEvidence({ role: reference.title, expectedPostingId: message.providerIdentity.postingId,
+              frames: renderedFrames, failedFrameCount });
+            if (evidence?.renderedEvidenceHash && message.providerIdentity.postingId) {
+              collisionJobIds = await operations.renderedEvidenceCollisionJobIds(
+                message.jobId, evidence.renderedEvidenceHash, message.providerIdentity.postingId,
+              );
+              if (collisionJobIds.length) evidence = { ...evidence, identicalEvidenceForDifferentPosting: true };
+            }
           }
         } catch (error) {
           browserError = error;
@@ -208,6 +239,25 @@ export async function processDestinationVerificationBatch(
           await page.close();
         }
         const inspectedAt = now().toISOString();
+        for (const collisionJobId of collisionJobIds) {
+          const collisionJob = await jobs.getJob(collisionJobId);
+          const collisionReference = collisionJob?.sourceReferences.find((item) => item.externalId
+            && item.admission?.destination.renderedEvidenceHash === evidence?.renderedEvidenceHash);
+          const prior = collisionReference?.admission?.destination;
+          if (!collisionJob || !collisionReference?.externalId || !prior?.expectedPostingId) continue;
+          const collisionMessage: DestinationVerificationMessage = {
+            version: 1, jobId: collisionJob.jobId, sourceId: collisionReference.sourceId,
+            externalId: collisionReference.externalId, candidateUrl: prior.candidateUrl, reason: 'weekly-sample', queuedAt: attemptedAt,
+            providerIdentity: { provider: prior.provider, sourceId: collisionReference.sourceId, sourceUrl: collisionReference.sourceUrl,
+              ...(prior.tenant ? { tenant: prior.tenant } : {}), postingId: prior.expectedPostingId },
+          };
+          const collisionResult = await persistDestinationAdmission({ jobs, operations, message: collisionMessage,
+            job: collisionJob, reference: collisionReference, reachability: 'live', inspectedAt, browserVisible: true,
+            evidence: { url: prior.finalUrl ?? prior.candidateUrl, expectedPostingId: prior.expectedPostingId,
+              renderedEvidenceHash: prior.renderedEvidenceHash, identicalEvidenceForDifferentPosting: true,
+              confidence: { score: 0, level: 'low', recommendation: 'review', signals: ['identical rendered evidence for different posting IDs'] } } });
+          if (collisionResult.incident) opened.push(collisionResult.incident);
+        }
         const result = await persistDestinationAdmission({ jobs, operations, message, job, reference, reachability, inspectedAt,
           ...(evidence ? { evidence, browserVisible: true } : {}) });
         if (result.incident) opened.push(result.incident);
@@ -295,6 +345,13 @@ export async function enqueueDueDestinationVerifications(
       queued += 1;
     }
     await operations.markReviewRuleSampled(rule.id, new Date(now.getTime() + 7 * 86_400_000).toISOString());
+  }
+  for (const candidate of await operations.legacyVerificationCandidates(100)) {
+    await env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage({
+      jobId: candidate.jobId, sourceId: candidate.sourceId, externalId: candidate.externalId,
+      providerIdentity: candidate.providerIdentity, candidateUrl: candidate.candidateUrl, reason: 'historical-backfill',
+    }, now.toISOString()));
+    queued += 1;
   }
   return queued;
 }

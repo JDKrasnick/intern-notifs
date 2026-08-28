@@ -421,12 +421,13 @@ export class IngestionRunner {
           ? await this.catalogAdmissionResolver.resolveDestinationRule(listing.providerIdentity, listing.applyUrl)
           : undefined;
         const initialDestination = classifyDestination({ listing, reachability, inspectedAt: this.now().toISOString(), ...(destinationRule ? { rule: destinationRule } : {}) });
+        const needsPostingAttribution = listing.provenance === 'reviewed-community' && attribution === 'unattributed';
         // Standard provider routes are proven by immutable IDs. Custom routes
         // need page evidence even when the provider API attributed the posting.
         const needsValidation = Boolean(this.validateApplicationUrl && listing.technical !== false
-          && (admissionManaged ? initialDestination.classification === 'unresolved' : attribution === 'unattributed')
+          && (admissionManaged ? initialDestination.classification === 'unresolved' || needsPostingAttribution : attribution === 'unattributed')
           && existing?.invalidApplicationUrl !== normalizedUrl
-          && (needsMetadataValidation || !existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
+          && (needsMetadataValidation || needsPostingAttribution || !existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
         if (needsValidation) {
           try {
             const validation = await this.validateApplicationUrl!(listing.applyUrl);
@@ -473,8 +474,18 @@ export class IngestionRunner {
           evaluatedAt: inspectedAt,
           previous: existing?.admission,
         });
-        listing = { ...listing, admission };
-        if (this.enqueueDestinationVerification && requiresBrowserVerification(destination) && listing.providerIdentity) {
+        // Activating reviewed employer mappings must not hide a previously
+        // visible exact-URL role merely because its per-posting browser check
+        // has not run yet. It receives no new alert and remains legacy-managed
+        // until the queued verifier supplies attribution. New rows still fail
+        // closed through the normal admission decision above.
+        const preserveLegacyWhileAttributionPending = Boolean(existing && !existing.admission
+          && knownLegacyDestination && listing.provenance === 'reviewed-community'
+          && destination.classification === 'posting-detail'
+          && admission.reasonCodes.length === 1 && admission.reasonCodes[0] === 'posting-unattributed');
+        if (!preserveLegacyWhileAttributionPending) listing = { ...listing, admission };
+        if (this.enqueueDestinationVerification && listing.providerIdentity
+          && (requiresBrowserVerification(destination) || admission.reasonCodes.includes('posting-unattributed'))) {
           await this.enqueueDestinationVerification({
             jobId: listing.postingIdentity!.canonicalJobId,
             sourceId: listing.sourceId,

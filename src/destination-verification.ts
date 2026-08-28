@@ -10,7 +10,7 @@ export interface DestinationVerificationRequest {
   externalId: string;
   providerIdentity: ProviderIdentity;
   candidateUrl: string;
-  reason: 'first-sight' | 'url-change' | 'content-change' | 'daily-retry' | 'weekly-sample';
+  reason: 'first-sight' | 'url-change' | 'content-change' | 'daily-retry' | 'weekly-sample' | 'historical-backfill';
 }
 
 export interface CatalogAdmissionResolver {
@@ -100,16 +100,38 @@ export function classifyDestination(input: {
       jobPostingCount: input.evidence.jobPostingCount,
       distinctJobLinkCount: input.evidence.distinctJobLinkCount,
       applicationFormPresent: input.evidence.applicationFormPresent,
+      evidenceFrameUrl: input.evidence.evidenceFrameUrl,
+      evidenceFrameKind: input.evidence.evidenceFrameKind,
+      renderedFrameCount: input.evidence.renderedFrameCount,
+      failedFrameCount: input.evidence.failedFrameCount,
+      selfReferentialFrame: input.evidence.selfReferentialFrame,
+      renderedEvidenceHash: input.evidence.renderedEvidenceHash,
+      identicalEvidenceForDifferentPosting: input.evidence.identicalEvidenceForDifferentPosting,
     }) } : {}),
     ...(input.evidence?.postingIdPresent !== undefined ? { postingIdPresent: input.evidence.postingIdPresent } : {}),
     ...(input.evidence?.jobPostingCount !== undefined ? { jobPostingCount: input.evidence.jobPostingCount } : {}),
     ...(input.evidence?.distinctJobLinkCount !== undefined ? { distinctJobLinkCount: input.evidence.distinctJobLinkCount } : {}),
     ...(input.evidence?.applicationFormPresent !== undefined ? { applicationFormPresent: input.evidence.applicationFormPresent } : {}),
+    ...(input.evidence?.evidenceFrameUrl ? { evidenceFrameUrl: input.evidence.evidenceFrameUrl } : {}),
+    ...(input.evidence?.evidenceFrameKind ? { evidenceFrameKind: input.evidence.evidenceFrameKind } : {}),
+    ...(input.evidence?.renderedFrameCount !== undefined ? { renderedFrameCount: input.evidence.renderedFrameCount } : {}),
+    ...(input.evidence?.failedFrameCount !== undefined ? { failedFrameCount: input.evidence.failedFrameCount } : {}),
+    ...(input.evidence?.selfReferentialFrame !== undefined ? { selfReferentialFrame: input.evidence.selfReferentialFrame } : {}),
+    ...(input.evidence?.renderedEvidenceHash ? { renderedEvidenceHash: input.evidence.renderedEvidenceHash } : {}),
+    ...(input.evidence?.identicalEvidenceForDifferentPosting !== undefined
+      ? { identicalEvidenceForDifferentPosting: input.evidence.identicalEvidenceForDifferentPosting } : {}),
     ...(input.browserVisible !== undefined ? { browserVisible: input.browserVisible } : {}),
   } satisfies Omit<DestinationEvidence, 'classification'>;
 
   if (input.reachability === 'gone') return { ...common, classification: 'gone' };
   if (input.rule?.decision === 'aggregate-board') return { ...common, classification: 'aggregate-board' };
+  const exactPostingEvidence = input.evidence?.postingIdPresent === true
+    || input.evidence?.jobPostingCount === 1 || input.evidence?.applicationFormPresent === true;
+  if (input.evidence?.identicalEvidenceForDifferentPosting || input.evidence?.redirectedToGenericDestination
+    || (input.evidence?.jobPostingCount ?? 0) > 1 || (input.evidence?.distinctJobLinkCount ?? 0) >= 8
+    || ((input.evidence?.distinctJobLinkCount ?? 0) > 1 && !exactPostingEvidence)) {
+    return { ...common, classification: 'aggregate-board' };
+  }
   if (input.reachability === 'blocked' && input.rule?.decision === 'blocked-accepted' && routeContainsPostingId(identity, candidateUrl)) {
     return { ...common, classification: looksLikeForm(finalUrl ?? candidateUrl, input.evidence) ? 'application-form' : 'posting-detail' };
   }
@@ -118,20 +140,20 @@ export function classifyDestination(input: {
   if (standard) {
     return { ...common, classification: looksLikeForm(finalUrl ?? candidateUrl, input.evidence) ? 'application-form' : 'posting-detail' };
   }
-  const exactPostingEvidence = input.evidence?.postingIdPresent === true
-    || input.evidence?.jobPostingCount === 1
-    || input.evidence?.applicationFormPresent === true;
-  if (input.evidence?.redirectedToGenericDestination || (input.evidence?.jobPostingCount ?? 0) > 1
-    || ((input.evidence?.distinctJobLinkCount ?? 0) > 1 && !exactPostingEvidence)) {
-    return { ...common, classification: 'aggregate-board' };
-  }
   if (input.rule?.decision === 'browser-required' && input.browserVisible !== true) {
     return { ...common, classification: input.reachability === 'blocked' ? 'blocked-uninspectable' : 'unresolved' };
   }
   if (input.reachability === 'blocked') return { ...common, classification: 'blocked-uninspectable' };
   if (input.reachability !== 'live') return { ...common, classification: 'unresolved' };
   const matchingRole = input.evidence ? sourceRoleAgreement(input.listing.title, input.evidence) !== 'weak' : false;
-  if (input.evidence?.postingIdPresent || input.evidence?.jobPostingCount === 1 || matchingRole || input.evidence?.applicationFormPresent) {
+  const renderedPostingArtifact = matchingRole && Boolean(input.evidence && (input.evidence.postingIdPresent
+    || input.evidence.jobPostingCount === 1 || input.evidence.applicationFormPresent
+    || (input.evidence.contentExcerpt?.length ?? 0) >= 300));
+  if (input.evidence?.selfReferentialFrame && !renderedPostingArtifact) return { ...common, classification: 'unresolved' };
+  const specificEvidence = input.browserVisible === true
+    ? renderedPostingArtifact
+    : Boolean(input.evidence?.postingIdPresent || input.evidence?.jobPostingCount === 1 || matchingRole || input.evidence?.applicationFormPresent);
+  if (specificEvidence) {
     return { ...common, classification: looksLikeForm(finalUrl ?? candidateUrl, input.evidence) ? 'application-form' : 'posting-detail' };
   }
   return { ...common, classification: 'unresolved' };

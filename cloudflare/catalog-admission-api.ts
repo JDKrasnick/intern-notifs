@@ -1,4 +1,5 @@
 import type { CanonicalEmployer, DestinationReviewRule, EmployerMapping } from '../src/types.js';
+import { ATOMIC_REPAIR_RECORD_LIMIT } from './catalog-admission-store.js';
 import type { D1CatalogAdmissionStore, RepairChange } from './catalog-admission-store.js';
 
 const json = (status: number, body: unknown) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -83,14 +84,21 @@ export async function handleCatalogAdmissionOperations(
       if (input.apply === true) {
         const repairToken = text(input.repairToken, 'repairToken', 128);
         const expectedChanged = input.expectedChanged;
-        if (typeof expectedChanged !== 'number' || !Number.isInteger(expectedChanged) || expectedChanged < 0 || expectedChanged > 10_000) throw new Error('expectedChanged is invalid');
-        const result = await store.applyRepair(repairToken, expectedChanged, timestamp);
+        if (typeof expectedChanged !== 'number' || !Number.isInteger(expectedChanged) || expectedChanged < 0
+          || expectedChanged > ATOMIC_REPAIR_RECORD_LIMIT) throw new Error('expectedChanged is invalid');
+        const expectedOccurrencesChanged = input.expectedOccurrencesChanged;
+        if (typeof expectedOccurrencesChanged !== 'number' || !Number.isInteger(expectedOccurrencesChanged)
+          || expectedOccurrencesChanged < 0 || expectedOccurrencesChanged > ATOMIC_REPAIR_RECORD_LIMIT
+          || expectedChanged + expectedOccurrencesChanged > ATOMIC_REPAIR_RECORD_LIMIT) throw new Error('expectedOccurrencesChanged is invalid');
+        const result = await store.applyRepair(repairToken, expectedChanged, timestamp, expectedOccurrencesChanged);
         await store.recordReviewerDecision({ id: crypto.randomUUID(), subjectType: 'catalog-repair', subjectId: repairToken,
           decision: 'applied', reason: reviewReason(input, 'Guarded catalog admission repair approved'), reviewedAt: timestamp, reviewedBy: actor });
         if (result.projectionRefreshRequired) await refreshProjection();
         return json(200, { ...result, applied: true });
       }
-      if (!Array.isArray(input.changes) || input.changes.length > 10_000) throw new Error('changes must be an array with at most 10,000 rows');
+      if (!Array.isArray(input.changes) || input.changes.length > ATOMIC_REPAIR_RECORD_LIMIT) {
+        throw new Error(`changes must be an array with at most ${ATOMIC_REPAIR_RECORD_LIMIT} rows`);
+      }
       const changes = input.changes as RepairChange[];
       if (changes.some((change) => !change || typeof change !== 'object' || typeof change.jobId !== 'string' || !change.admission || typeof change.admission !== 'object')) throw new Error('Every repair change needs a jobId and admission');
       return json(200, { ...(await store.stageRepair(changes, timestamp)), applied: false });

@@ -52,6 +52,16 @@ export interface ApplicationPageEvidence {
   jobPostingCount?: number;
   distinctJobLinkCount?: number;
   applicationFormPresent?: boolean;
+  /** Browser frame that supplied the selected rendered posting proof. */
+  evidenceFrameUrl?: string;
+  evidenceFrameKind?: 'main' | 'child';
+  renderedFrameCount?: number;
+  failedFrameCount?: number;
+  selfReferentialFrame?: boolean;
+  /** Hash of bounded rendered frame evidence, excluding applicant-entered values. */
+  renderedEvidenceHash?: string;
+  /** Another expected posting ID produced the same normalized rendered artifact. */
+  identicalEvidenceForDifferentPosting?: boolean;
   /** Bounded public job text, never applicant-entered data. */
   contentExcerpt?: string;
   contentHash?: string;

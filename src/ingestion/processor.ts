@@ -7,6 +7,7 @@ import { canonicalCompanyKey } from '../core/normalize.js';
 import { metadataCompleteness } from '../catalog-admission.js';
 import { normalizeListing, normalizeLocations, locationSummary } from '../catalog-quality.js';
 import { applicationUrlRejection } from '../sources/quality.js';
+import { providerPostingReference } from '../identity/posting.js';
 import type {
   JobRequirements,
   PostingDecision,
@@ -45,6 +46,17 @@ function withheldReason(url: string): PostingDecision['reason'] | undefined {
   return rejection.includes('aggregator') ? 'aggregator-destination' : 'invalid-application-url';
 }
 
+function destinationProviderReference(applyUrl: string) {
+  const reviewed = providerPostingReference(applyUrl);
+  if (reviewed.provider !== 'unknown') return reviewed;
+  try {
+    const url = new URL(applyUrl);
+    const greenhouseId = url.searchParams.get('gh_jid');
+    if (greenhouseId && /^\d+$/u.test(greenhouseId)) return { provider: 'greenhouse' as const, postingId: greenhouseId };
+  } catch { /* Invalid URLs are rejected before this evidence is used. */ }
+  return reviewed;
+}
+
 export function processPosting(
   posting: SourcedPosting,
   employerTitles: readonly string[] = [],
@@ -73,6 +85,7 @@ export function processPosting(
   // A structured provider field is authoritative; prose only fills the gap when
   // the source declares nothing usable.
   const workMode = inferWorkMode(posting.declaredWorkMode) ?? inferWorkMode(`${location} ${content}`);
+  const destinationReference = destinationProviderReference(posting.applyUrl);
   const listing: ProcessedListing = normalizeListing({
     sourceId: posting.sourceId,
     ...(posting.provenance ? { provenance: posting.provenance } : {}),
@@ -115,7 +128,8 @@ export function processPosting(
     ...(title === sourceTitle ? {} : { titleRepaired: true }),
     providerIdentity: {
       provider: posting.providerIdentity?.provider
-        ?? (posting.sourceId.startsWith('greenhouse-') ? 'greenhouse'
+        ?? (destinationReference.provider !== 'unknown' ? destinationReference.provider
+          : posting.sourceId.startsWith('greenhouse-') ? 'greenhouse'
           : posting.sourceId.startsWith('lever-') ? 'lever'
             : posting.sourceId.startsWith('ashby-') ? 'ashby'
               : posting.provenance === 'official-structured' ? 'structured'
@@ -123,8 +137,9 @@ export function processPosting(
       sourceId: posting.sourceId,
       sourceUrl: posting.sourceUrl,
       employerScope: `employer:${canonicalCompanyKey(company)}`,
-      ...(posting.providerIdentity?.tenant ? { tenant: posting.providerIdentity.tenant } : {}),
-      postingId: posting.externalId,
+      ...(posting.providerIdentity?.tenant ? { tenant: posting.providerIdentity.tenant }
+        : destinationReference.tenant ? { tenant: destinationReference.tenant } : {}),
+      postingId: destinationReference.postingId ?? posting.externalId,
     },
     employerEvidence: {
       authority: posting.employer.authority,

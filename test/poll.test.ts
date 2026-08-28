@@ -255,6 +255,60 @@ describe('polling', () => {
     });
   });
 
+  it('queues an attributed-provider check when a reviewed community URL is specific but the posting is not yet corroborated', async () => {
+    const store = new MemoryInternshipStore();
+    const queued: Array<{ candidateUrl: string; providerIdentity: { provider: string; postingId?: string }; reason: string }> = [];
+    const snapshot: SourceFetchResult & SourceSnapshot = {
+      sourceId: 'community-list', outcome: 'changed', complete: true, rawCount: 1, contentHash: 'community-axon',
+      listings: [], notModified: false, checkpoint: { sourceId: 'community-list', successfulFetches: 1 },
+      postings: [{ sourceId: 'community-list', provenance: 'reviewed-community', externalId: 'row-1',
+        sourceUrl: 'https://github.com/example/jobs', fetchedAt: '2026-08-28T00:00:00Z',
+        employer: { name: 'Axon', authority: 'source-row' }, title: '2027 US Mechanical Engineering Internship',
+        content: [], locations: ['Arizona, USA'], applyUrl: 'https://job-boards.greenhouse.io/axon/jobs/7978840003',
+        sourceState: 'open', lifecycleAuthority: 'source' }],
+    };
+    const resolver = {
+      async resolveCanonicalEmployer() { return { id: 'axon', displayName: 'Axon' }; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    await new Poller([{ id: snapshot.sourceId, async fetch() { return snapshot; } }], store,
+      undefined, undefined, undefined, undefined, async (request) => { queued.push(request); }, resolver).poll();
+    expect([...store.jobs.values()][0]).toMatchObject({ admission: { catalogEligible: false,
+      reasonCodes: ['posting-unattributed'], destination: { classification: 'posting-detail' } } });
+    expect(queued).toMatchObject([{ candidateUrl: 'https://job-boards.greenhouse.io/axon/jobs/7978840003',
+      providerIdentity: { provider: 'greenhouse', postingId: '7978840003' }, reason: 'first-sight' }]);
+  });
+
+  it('keeps an existing exact-URL community role visible while its posting attribution is queued', async () => {
+    const store = new MemoryInternshipStore();
+    const applyUrl = 'https://job-boards.greenhouse.io/axon/jobs/7978840003';
+    const reference = { ...listing(applyUrl, 'community-list'), externalId: 'row-1', provenance: 'reviewed-community' as const,
+      company: 'Axon', title: '2027 US Mechanical Engineering Internship', location: 'Arizona, USA' };
+    await store.putInternship({ jobId: 'legacy-axon', company: reference.company, title: reference.title,
+      location: reference.location, season: reference.season, applyUrl, normalizedUrl: applyUrl, fingerprint: 'legacy-axon',
+      compensation: reference.compensation, sourceReferences: [reference], open: true, firstSeenAt: reference.fetchedAt,
+      lastSeenAt: reference.fetchedAt, notification: { smsPending: false, digestPending: false } });
+    await store.claimPostingIdentity(buildPostingIdentity({ applicationUrl: applyUrl }), 'legacy-axon');
+    const queued: string[] = [];
+    const snapshot: SourceFetchResult & SourceSnapshot = {
+      sourceId: 'community-list', outcome: 'changed', complete: true, rawCount: 1, contentHash: 'community-axon-refresh',
+      listings: [], notModified: false, checkpoint: { sourceId: 'community-list', successfulFetches: 2 },
+      postings: [{ sourceId: 'community-list', provenance: 'reviewed-community', externalId: 'row-1',
+        sourceUrl: reference.sourceUrl, fetchedAt: '2026-08-28T00:00:00Z', employer: { name: 'Axon', authority: 'source-row' },
+        title: reference.title, content: [], locations: [reference.location], applyUrl, sourceState: 'open', lifecycleAuthority: 'source' }],
+    };
+    const resolver = {
+      async resolveCanonicalEmployer() { return { id: 'axon', displayName: 'Axon' }; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    await new Poller([{ id: snapshot.sourceId, async fetch() { return snapshot; } }], store,
+      undefined, undefined, undefined, undefined, async ({ candidateUrl }) => { queued.push(candidateUrl); }, resolver).poll();
+    const preserved = await store.getJob('legacy-axon');
+    expect(preserved?.admission).toBeUndefined();
+    expect(preserved).toMatchObject({ open: true, notification: { smsPending: false, digestPending: false } });
+    expect(queued).toEqual([applyUrl]);
+  });
+
   it('reprocesses an unchanged source after reviewed admission configuration changes', async () => {
     const store = new MemoryInternshipStore();
     await store.putCheckpoint({ sourceId: 'greenhouse-acme', successfulFetches: 1, contentHash: 'same', etag: 'old-etag',

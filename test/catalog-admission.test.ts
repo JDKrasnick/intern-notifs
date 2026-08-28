@@ -134,6 +134,15 @@ describe('record-level catalog admission', () => {
     expect(deriveCanonicalAdmission([
       occurrence('official-a', 'official-ats', valid), occurrence('official-b', 'official-structured', conflict),
     ], '2026-08-26T13:00:00Z')).toMatchObject({ employerResolution: 'conflict', catalogEligible: false, reasonCodes: ['employer-conflict'] });
+
+    const technology = { ...occurrence('community-a', 'reviewed-community', valid), title: '2027 Technology Internship (US)' };
+    const software = { ...occurrence('community-b', 'reviewed-community', valid), title: 'Software Engineer Intern' };
+    expect(deriveCanonicalAdmission([technology, software], '2026-08-26T13:00:00Z')).toMatchObject({
+      catalogEligible: false, alertEligible: false, reasonCodes: ['metadata-conflict'],
+    });
+    expect(deriveCanonicalAdmission([
+      technology, { ...occurrence('official-title', 'official-ats', valid), title: 'Software Engineering Intern' },
+    ], '2026-08-26T13:00:00Z')).toMatchObject({ catalogEligible: true, reasonCodes: [] });
   });
 
   it('derives an open role only from open occurrences while retaining a closed-history fallback', () => {
