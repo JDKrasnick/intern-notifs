@@ -142,6 +142,24 @@ describe('polling', () => {
     expect(new Set([...store.jobs.values()][0]!.sourceReferences.map(({ sourceId }) => sourceId)))
       .toEqual(new Set(['greenhouse-databricks', 'community']));
   });
+  it('converges a community-first tenant-less embed against the current provider snapshot', async () => {
+    const store = new MemoryInternshipStore();
+    const postingId = '6883068002';
+    const official = new Adapter('greenhouse-databricks', [reviewedListing({
+      provider: 'greenhouse', tenant: 'databricks', postingId, sourceId: 'greenhouse-databricks',
+      url: `https://job-boards.greenhouse.io/databricks/jobs/${postingId}`,
+    })]);
+    await new Poller([
+      new Adapter('community', [listing(`https://boards.greenhouse.io/embed/job_app?token=${postingId}`, 'community')]),
+      official,
+    ], store).poll();
+    expect(official.fetches).toBe(1);
+    expect(store.jobs.size).toBe(1);
+    expect([...store.jobs.values()][0]).toMatchObject({
+      postingIdentity: { provider: 'greenhouse', tenant: 'databricks', providerPostingId: postingId },
+      sourceReferences: [{ sourceId: 'community' }, { sourceId: 'greenhouse-databricks' }],
+    });
+  });
   it('does not scope a tenant-less Greenhouse embed when two active reviewed boards contain its ID', async () => {
     const store = new MemoryInternshipStore();
     const postingId = '6883068002';
