@@ -3675,6 +3675,10 @@ function Applications({
         const roleName = job
           ? `${job.title} at ${job.company}`
           : "Saved role";
+        const availability = job && "availability" in job && job.availability
+          ? job.availability
+          : job?.open ? "available" : "closed";
+        const unavailableReason = job && "unavailableReason" in job ? job.unavailableReason : undefined;
         return (
           <View style={styles.card}>
             <Text style={styles.company}>{job?.company ?? "Saved role"}</Text>
@@ -3686,12 +3690,20 @@ function Applications({
             {item.detection?.source === "gmail" ? (
               <Text style={styles.gmailDetected}>Detected from Gmail · {new Date(item.detection.detectedAt).toLocaleDateString()}</Text>
             ) : null}
-            {job?.open ? (
+            {availability === "catalog-review" ? (
+              <View accessibilityRole="alert" style={styles.catalogReviewNotice}>
+                <Ionicons name="shield-checkmark-outline" size={20} color={colors.muted} />
+                <Text style={styles.catalogReviewNoticeText}>
+                  {unavailableReason ?? "InternNotifs couldn’t verify the official role page and is reviewing it."}
+                </Text>
+              </View>
+            ) : null}
+            {availability === "available" && job?.applyUrl ? (
               <View style={styles.applicationActionGap}>
                 <ApplyNowButton
                   label="Open official application"
                   hint="Opens the employer's official application in your browser."
-                  onPress={() => onOpenOfficialApplication(job)}
+                  onPress={() => onOpenOfficialApplication({ jobId: job.jobId, applyUrl: job.applyUrl! })}
                 />
               </View>
             ) : null}
@@ -5871,6 +5883,17 @@ const styles = StyleSheet.create({
   hiddenRoleCopy: { flex: 1 },
   hiddenRoleTitle: { color: colors.ink, fontSize: 15, fontWeight: "700", lineHeight: 20, marginTop: 2 },
   applicationActionGap: { marginTop: 14 },
+  catalogReviewNotice: {
+    alignItems: "flex-start",
+    backgroundColor: colors.signalSoft,
+    borderRadius: 12,
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  catalogReviewNoticeText: { color: colors.muted, flex: 1, fontSize: 14, lineHeight: 20 },
   gmailDetected: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 8 },
   gmailReviewSection: { marginBottom: 18 },
   gmailWhy: { alignSelf: "flex-start", justifyContent: "center", minHeight: 44 },

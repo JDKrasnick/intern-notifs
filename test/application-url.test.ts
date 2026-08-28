@@ -64,6 +64,19 @@ describe('application URL validation', () => {
       new Response('<title>Software Engineer Intern</title><meta name="description" content="Build platform software.">7623166667125508357', { status: 200, headers: { 'content-type': 'text/html' } }),
     )).resolves.toMatchObject({ title: 'Software Engineer Intern', description: 'Build platform software.', expectedPostingId: '7623166667125508357', postingIdPresent: true, confidence: { level: 'high', score: 100, recommendation: 'alert-eligible' } });
   });
+  it('counts distinct role links on an aggregate page without treating a newsletter signup as an application form', async () => {
+    const html = `<title>Open roles at Acme</title><main>
+      <a href="/jobs/one">Software Engineering Intern</a>
+      <a href="/jobs/two">Data Science Intern</a>
+      <a href="/roles/three#details">Product Design Intern</a>
+      <form><input name="email"></form>
+    </main>`;
+    const evidence = await inspectApplicationPage('https://careers.example.com/open-roles', async () =>
+      new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+    );
+    expect(evidence).toMatchObject({ distinctJobLinkCount: 3 });
+    expect(evidence).not.toHaveProperty('applicationFormPresent');
+  });
   it('extracts bounded public job content from JSON-LD before generic page text', async () => {
     const description = `<p>${'Build reliable systems with our platform team. '.repeat(12)}Responsibilities include testing and deployment.</p>`;
     const html = `<script type="application/ld+json">${JSON.stringify({ '@type': 'JobPosting', description })}</script><main>Navigation text</main>`;

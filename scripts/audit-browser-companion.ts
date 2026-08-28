@@ -2,7 +2,8 @@ import { isGreenhouseApplicationUrl } from '../src/greenhouse-headed.js';
 import { isLeverApplicationUrl } from '../src/lever-headed.js';
 import { isAshbyApplicationUrl } from '../src/ashby-headed.js';
 
-const catalogUrl = 'https://5dx7gpfa7d.execute-api.us-east-1.amazonaws.com/jobs?status=open&limit=50';
+const catalogBaseUrl = (process.env.CATALOG_API_URL ?? 'https://intern-notifs.jdkrasnick.workers.dev').replace(/\/$/u, '');
+const catalogUrl = `${catalogBaseUrl}/jobs?status=open&limit=50`;
 
 type CatalogJob = { company: string; title: string; applyUrl: string };
 
@@ -46,9 +47,14 @@ const report = await Promise.all(samples.map(async (job) => {
     const page = await fetchPage(job.applyUrl);
     const quickApply = /quick apply with mygreenhouse|autofill with greenhouse/i.test(page.html);
     const contactSurface = hasContactSurface(page.html);
+    const leverApplicationShell = reviewed === 'lever'
+      && isLeverApplicationUrl(page.url)
+      && /\bapplication\b/iu.test(page.html)
+      && /\bposting\b/iu.test(page.html);
     const passed = reviewed === 'manual'
-      || (page.status >= 200 && page.status < 400 && (quickApply || contactSurface));
-    return { company: job.company, host: new URL(job.applyUrl).hostname, reviewed, status: page.status, quickApply, contactSurface, passed, url: page.url };
+      || (page.status >= 200 && page.status < 400 && (quickApply || contactSurface || leverApplicationShell));
+    return { company: job.company, host: new URL(job.applyUrl).hostname, reviewed, status: page.status,
+      quickApply, contactSurface, leverApplicationShell, passed, url: page.url };
   } catch (error) {
     return { company: job.company, host: new URL(job.applyUrl).hostname, reviewed, passed: reviewed === 'manual', error: error instanceof Error ? error.message : 'request failed', url: job.applyUrl };
   }

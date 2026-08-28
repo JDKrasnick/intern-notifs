@@ -1,13 +1,16 @@
 import { createHash } from 'node:crypto';
-import { assessApplicationPageForListing, canonicalApplicationUrl, type ApplicationUrlValidator } from './core/application-url.js';
+import { assessApplicationPageForListing, canonicalApplicationUrl, type ApplicationPageEvidence, type ApplicationUrlValidator } from './core/application-url.js';
 import { boardReference, reachabilityFromFailure, reachabilityFromSignals, verifyApplication, type AttributionBasis, type Reachability } from './core/application-verification.js';
 import { inferSeason, isPastSeason } from './core/early-career.js';
 import { normalizeUrl } from './core/normalize.js';
-import { buildPostingIdentity } from './identity/posting.js';
+import { buildPostingIdentity, type ProviderPostingReference } from './identity/posting.js';
+import { reviewedProviderEvidenceError, reviewedProviderUrlReference } from './identity/reviewed-provider.js';
 import { isTechnicalJob, type JobFilter } from './core/filters.js';
 import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
 import { evaluateSourceFreshness } from './ingestion/monitoring.js';
 import { processSnapshot } from './ingestion/processor.js';
+import { evaluateCatalogAdmission } from './catalog-admission.js';
+import { classifyDestination, requiresBrowserVerification, type CatalogAdmissionResolver, type DestinationVerificationRequest } from './destination-verification.js';
 import { reviewedBoardIndex } from './sources/index.js';
 import { sourceQualityFailures } from './sources/quality.js';
 import { SourceFetchError } from './sources/source-error.js';
@@ -26,6 +29,26 @@ import type { InternshipStore } from './store.js';
 
 const applicationPageMetadataVersion = 1;
 
+// Catalog rows written before posting identity v1 retained gh_src while
+// removing the older, general tracking parameters. Keep this lookup shape
+// only for adoption during the migration window; all new writes use the
+// canonical posting URL.
+function legacyNormalizedUrl(input: string): string {
+  const tracking = new Set([
+    'fbclid', 'gclid', 'mc_cid', 'mc_eid', 'ref', 'source',
+    'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+  ]);
+  const url = new URL(input.trim());
+  url.hostname = url.hostname.toLowerCase();
+  url.hash = '';
+  if (url.pathname !== '/') url.pathname = url.pathname.replace(/\/+$/, '');
+  for (const key of [...url.searchParams.keys()]) {
+    if (tracking.has(key.toLowerCase()) || key.toLowerCase().startsWith('utm_')) url.searchParams.delete(key);
+  }
+  url.searchParams.sort();
+  return url.toString().replace(/\/$/, '');
+}
+
 export interface PollReport {
   fetchedSources: number;
   unchangedSources: string[];
@@ -33,6 +56,7 @@ export interface PollReport {
   processedListings: number;
   newJobs: Internship[];
   filteredJobs: Internship[];
+  quarantinedListings: Array<{ sourceId: string; row: number; reason: string }>;
   failures: string[];
 }
 
@@ -202,6 +226,11 @@ function externalId(listing: ProcessedListing): string {
   catch { return `${listing.document}:invalid:${listing.applyUrl}`; }
 }
 
+function sameApplicationUrl(left: string, right: string): boolean {
+  try { return normalizeUrl(canonicalApplicationUrl(left)) === right; }
+  catch { return false; }
+}
+
 function legacyBatch(result: SourceFetchResult): TrustedBatch {
   const listings = result.listings.map((listing) => ({
     ...listing,
@@ -274,6 +303,8 @@ export class IngestionRunner {
     private readonly filter?: JobFilter,
     private readonly validateApplicationUrl?: ApplicationUrlValidator,
     private readonly validateCatalogApplicationUrl: ApplicationUrlValidator | false | undefined = validateApplicationUrl,
+    private readonly enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>,
+    private readonly catalogAdmissionResolver?: CatalogAdmissionResolver,
   ) {}
 
   private async quarantine(job: Internship) {
@@ -316,23 +347,48 @@ export class IngestionRunner {
   private readonly boardIndex = reviewedBoardIndex();
   private readonly boardActiveIds = new Map<string, Promise<Set<string>>>();
 
-  /**
-   * A posting served by a reviewed connector is attributed by its own URL
-   * contract. A posting merely referenced by a list is attributed when the board
-   * it points at is one this catalog polls and that board's checkpoint still
-   * lists it — evidence already held, so no employer request is made.
-   */
-  private async attribute(listing: ProcessedListing): Promise<AttributionBasis> {
-    if ([...this.boardIndex.values()].includes(listing.sourceId)) return 'provider-api';
-    const reference = boardReference(listing.applyUrl);
-    const sourceId = reference && this.boardIndex.get(`${reference.provider}:${reference.token}`);
-    if (!reference || !sourceId) return 'unattributed';
+  private activePostingIds(sourceId: string): Promise<Set<string>> {
     if (!this.boardActiveIds.has(sourceId)) {
       this.boardActiveIds.set(sourceId, this.store.getCheckpoint(sourceId)
         .then((checkpoint) => new Set(checkpoint?.activeExternalIds ?? []))
         .catch(() => new Set<string>()));
     }
-    return (await this.boardActiveIds.get(sourceId)!).has(reference.postingId) ? 'reviewed-board' : 'unattributed';
+    return this.boardActiveIds.get(sourceId)!;
+  }
+
+  private async reviewedReferences(listing: ProcessedListing): Promise<ProviderPostingReference[]> {
+    if (listing.providerEvidence) {
+      const error = reviewedProviderEvidenceError(listing.providerEvidence);
+      if (error) throw new Error(error);
+    }
+    const references: ProviderPostingReference[] = [];
+    const urls = [listing.applyUrl, ...(listing.providerEvidence?.urls ?? [])];
+    for (const url of urls) {
+      const result = reviewedProviderUrlReference(url);
+      if (result.outcome === 'conflict') throw new Error(result.reason);
+      if (result.outcome !== 'match') continue;
+      const direct = listing.providerEvidence?.sourceId === result.reference.sourceId;
+      if (direct || listing.providerEvidence || (await this.activePostingIds(result.reference.sourceId)).has(result.reference.postingId)) {
+        references.push(result.reference);
+      }
+    }
+    return references;
+  }
+
+  /** Provider existence and destination validity are separate facts. Attribution
+   * requires an exact hosted/apply route; a provider ID on a generic custom page
+   * is still inspected like any other destination. */
+  private async attribute(listing: ProcessedListing): Promise<AttributionBasis> {
+    const reference = boardReference(listing.applyUrl);
+    const sourceId = reference && this.boardIndex.get(`${reference.provider}:${reference.token}`);
+    if (!reference || !sourceId) return 'unattributed';
+    const evidence = listing.providerEvidence;
+    if (evidence
+      && evidence.provider === reference.provider
+      && evidence.tenant.toLowerCase() === reference.token
+      && evidence.postingId.toLowerCase() === reference.postingId.toLowerCase()
+      && evidence.sourceId === sourceId) return 'provider-api';
+    return (await this.activePostingIds(sourceId)).has(reference.postingId) ? 'reviewed-board' : 'unattributed';
   }
 
   private async resolveListings(listings: ProcessedListing[], report: PollReport) {
@@ -345,7 +401,20 @@ export class IngestionRunner {
     const accepted = new Array<ProcessedListing | undefined>(listings.length);
     const failures = new Array<string | undefined>(listings.length);
     await forEachBounded(listings, async (sourceListing, slot) => {
-      const canonicalUrl = canonicalApplicationUrl(sourceListing.applyUrl);
+      // Transitional RawListing adapters predate provider-neutral evidence.
+      // Real connectors now emit SourceSnapshot postings and are always managed
+      // by record-level admission; legacy rows retain their rollout behavior
+      // until the reviewed backfill classifies them.
+      const supportsAdmission = Boolean(sourceListing.employerEvidence || sourceListing.providerIdentity);
+      let legacyUrl: string;
+      let canonicalUrl: string;
+      try {
+        legacyUrl = legacyNormalizedUrl(sourceListing.applyUrl);
+        canonicalUrl = canonicalApplicationUrl(sourceListing.applyUrl);
+      } catch (error) {
+        failures[slot] = `${sourceListing.sourceId}: row ${sourceListing.row}: ${error instanceof Error ? error.message : String(error)}`;
+        return;
+      }
       let listing = {
         ...sourceListing,
         externalId: externalId(sourceListing),
@@ -354,17 +423,26 @@ export class IngestionRunner {
       };
       const id = listing.externalId;
       let existing: Internship | undefined;
-      let validatingLink = false;
       try {
         const normalizedUrl = normalizeUrl(listing.applyUrl);
-        const identity = buildPostingIdentity({ applicationUrl: listing.applyUrl });
+        const reviewedProviderReferences = await this.reviewedReferences(listing);
+        const identity = buildPostingIdentity({
+          applicationUrl: listing.applyUrl,
+          ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
+          reviewedProviderReferences,
+        });
         // A legacy row may be adopted only through its exact canonical URL.
         // Title/location fingerprints are search hints, not proof that two
         // employer requisitions are the same posting.
-        existing = await this.store.findByUrl(normalizedUrl);
+        existing = await this.store.findByUrl(normalizedUrl)
+          ?? (legacyUrl === normalizedUrl ? undefined : await this.store.findByUrl(legacyUrl));
         const identityResolution = await this.store.claimPostingIdentity(identity, existing?.jobId);
         if (identityResolution.outcome === 'quarantine') {
-          failures[slot] = `${listing.sourceId}: row ${listing.row}: posting identity conflict (${identityResolution.reason})`;
+          report.quarantinedListings.push({
+            sourceId: listing.sourceId,
+            row: listing.row,
+            reason: `posting identity conflict (${identityResolution.reason})`,
+          });
           return;
         }
         if (!existing || existing.jobId !== identityResolution.canonicalJobId) {
@@ -374,6 +452,25 @@ export class IngestionRunner {
           ...listing,
           postingIdentity: { ...identity, canonicalJobId: identityResolution.canonicalJobId },
         };
+        if (supportsAdmission && listing.providerIdentity && this.catalogAdmissionResolver) {
+          const canonicalEmployer = await this.catalogAdmissionResolver.resolveCanonicalEmployer(listing.providerIdentity);
+          if (canonicalEmployer) listing = {
+            ...listing,
+            employerEvidence: { authority: 'reviewed-registry', canonicalEmployer },
+          };
+        }
+        // Existing unclassified rows keep their rollout behavior until a
+        // reviewed mapping exists. A refreshed URL is also safe when an
+        // already-claimed immutable provider posting proves it is the same
+        // requisition. New rows and otherwise unproven destination changes
+        // fail closed, so activating admission cannot hide the legacy catalog.
+        const knownLegacyDestination = existing?.normalizedUrl === normalizedUrl
+          || existing?.sourceReferences.some((reference) => reference.sourceId === listing.sourceId
+            && sameApplicationUrl(reference.applyUrl, normalizedUrl));
+        const preserveLegacyAdmission = Boolean(existing && !existing.admission
+          && (knownLegacyDestination || identityResolution.outcome === 'merge')
+          && !listing.employerEvidence?.canonicalEmployer);
+        const admissionManaged = supportsAdmission && !preserveLegacyAdmission;
         const attribution = await this.attribute(listing);
         if (listing.seasonSource === 'source-default'
           && existing?.applicationPageMetadataVersion === applicationPageMetadataVersion
@@ -382,45 +479,94 @@ export class IngestionRunner {
         }
         let reachability: Reachability = 'implied';
         let described: boolean | undefined;
-        // Attribution already proves the destination, and shelved roles never
-        // surface, so neither is worth an employer request.
+        let pageEvidence: ApplicationPageEvidence | undefined;
         const needsMetadataValidation = listing.seasonSource === 'source-default'
           && existing?.applicationPageMetadataVersion !== applicationPageMetadataVersion;
+        const destinationRule = admissionManaged && listing.providerIdentity && this.catalogAdmissionResolver
+          ? await this.catalogAdmissionResolver.resolveDestinationRule(listing.providerIdentity, listing.applyUrl)
+          : undefined;
+        const initialDestination = classifyDestination({ listing, reachability, inspectedAt: this.now().toISOString(), ...(destinationRule ? { rule: destinationRule } : {}) });
+        const needsPostingAttribution = listing.provenance === 'reviewed-community' && attribution === 'unattributed';
+        // Standard provider routes are proven by immutable IDs. Custom routes
+        // need page evidence even when the provider API attributed the posting.
         const needsValidation = Boolean(this.validateApplicationUrl && listing.technical !== false
-          && attribution === 'unattributed'
+          && (admissionManaged ? initialDestination.classification === 'unresolved' || needsPostingAttribution : attribution === 'unattributed')
           && existing?.invalidApplicationUrl !== normalizedUrl
-          && (needsMetadataValidation || !existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
-        validatingLink = needsValidation;
+          && (needsMetadataValidation || needsPostingAttribution || !existing?.applicationUrlValidatedAt || existing.normalizedUrl !== normalizedUrl));
         if (needsValidation) {
-          const validation = await this.validateApplicationUrl!(listing.applyUrl);
-          if (typeof validation === 'string') reachability = 'live';
-          else {
-            const confidence = assessApplicationPageForListing(listing.title, validation.evidence);
-            reachability = reachabilityFromSignals(confidence.signals);
-            described = confidence.recommendation === 'alert-eligible';
-            const titleSeason = inferSeason(listing.title, '', this.now());
-            const pageSeason = inferSeason(
-              validation.evidence.title ?? '',
-              [validation.evidence.description, validation.evidence.contentExcerpt].filter(Boolean).join(' '),
-              this.now(),
-            );
-            const verifiedSeason = titleSeason !== 'ongoing' ? titleSeason : pageSeason;
-            if (verifiedSeason !== 'ongoing') listing = { ...listing, season: verifiedSeason, seasonSource: 'posting' };
-            metadataValidated.set(id, applicationPageMetadataVersion);
+          try {
+            const validation = await this.validateApplicationUrl!(listing.applyUrl);
+            if (typeof validation === 'string') reachability = 'live';
+            else {
+              pageEvidence = validation.evidence;
+              const confidence = assessApplicationPageForListing(listing.title, validation.evidence);
+              reachability = reachabilityFromSignals(confidence.signals);
+              described = confidence.recommendation === 'alert-eligible';
+              const titleSeason = inferSeason(listing.title, '', this.now());
+              const pageSeason = inferSeason(
+                validation.evidence.title ?? '',
+                [validation.evidence.description, validation.evidence.contentExcerpt].filter(Boolean).join(' '),
+                this.now(),
+              );
+              const verifiedSeason = titleSeason !== 'ongoing' ? titleSeason : pageSeason;
+              if (verifiedSeason !== 'ongoing') listing = { ...listing, season: verifiedSeason, seasonSource: 'posting' };
+              metadataValidated.set(id, applicationPageMetadataVersion);
+            }
+          } catch (error) {
+            reachability = reachabilityFromFailure(error);
+            failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
+            if (!admissionManaged) {
+              if (existing?.open && reachability === 'gone') await this.quarantine(existing);
+              return;
+            }
           }
         }
-        validatingLink = false;
         const verification = verifyApplication({ attribution, reachability, ...(described === undefined ? {} : { described }) });
-        if (attribution !== 'unattributed' || (needsValidation && verification.alertEligible)) {
+        if (!admissionManaged) {
+          if (attribution !== 'unattributed' || (needsValidation && verification.alertEligible)) validatedAt.set(id, this.now().toISOString());
+          if (verification.alertEligible) alertEligible.add(id);
+          resolved.set(id, existing);
+          accepted[slot] = listing;
+          return;
+        }
+        const inspectedAt = this.now().toISOString();
+        const destination = classifyDestination({ listing, reachability, ...(pageEvidence ? { evidence: pageEvidence } : {}), inspectedAt,
+          ...(destinationRule ? { rule: destinationRule } : {}) });
+        const admission = evaluateCatalogAdmission({
+          listing,
+          destination,
+          postingAttributed: listing.provenance !== 'reviewed-community' || attribution !== 'unattributed' || described === true,
+          evaluatedAt: inspectedAt,
+          previous: existing?.admission,
+        });
+        // Activating reviewed employer mappings must not hide a previously
+        // visible exact-URL role merely because its per-posting browser check
+        // has not run yet. It receives no new alert and remains legacy-managed
+        // until the queued verifier supplies attribution. New rows still fail
+        // closed through the normal admission decision above.
+        const preserveLegacyWhileAttributionPending = Boolean(existing && !existing.admission
+          && knownLegacyDestination && listing.provenance === 'reviewed-community'
+          && destination.classification === 'posting-detail'
+          && admission.reasonCodes.length === 1 && admission.reasonCodes[0] === 'posting-unattributed');
+        if (!preserveLegacyWhileAttributionPending) listing = { ...listing, admission };
+        if (this.enqueueDestinationVerification && listing.providerIdentity
+          && (requiresBrowserVerification(destination) || admission.reasonCodes.includes('posting-unattributed'))) {
+          await this.enqueueDestinationVerification({
+            jobId: listing.postingIdentity!.canonicalJobId,
+            sourceId: listing.sourceId,
+            externalId: id,
+            providerIdentity: listing.providerIdentity,
+            candidateUrl: listing.applyUrl,
+            reason: existing?.normalizedUrl && existing.normalizedUrl !== normalizedUrl ? 'url-change' : 'first-sight',
+          });
+        }
+        if (admission.catalogEligible && ['posting-detail', 'application-form'].includes(destination.classification)) {
           validatedAt.set(id, this.now().toISOString());
         }
-        if (verification.alertEligible) alertEligible.add(id);
+        if (admission.alertEligible) alertEligible.add(id);
         resolved.set(id, existing);
         accepted[slot] = listing;
       } catch (error) {
-        // Only a destination proven gone hides a live role; a timeout or a
-        // refused read leaves it exactly as it was.
-        if (validatingLink && existing?.open && reachabilityFromFailure(error) === 'gone') await this.quarantine(existing);
         failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
       }
     });
@@ -435,7 +581,16 @@ export class IngestionRunner {
   }
 
   async run(options: { seedOnly?: boolean; runId?: string; allowCompleteEmptySnapshot?: boolean } = {}): Promise<PollReport> {
-    const report: PollReport = { fetchedSources: 0, unchangedSources: [], baselineSources: [], processedListings: 0, newJobs: [], filteredJobs: [], failures: [] };
+    const report: PollReport = {
+      fetchedSources: 0,
+      unchangedSources: [],
+      baselineSources: [],
+      processedListings: 0,
+      newJobs: [],
+      filteredJobs: [],
+      quarantinedListings: [],
+      failures: [],
+    };
     const health: SourceHealth[] = [];
     for (const connector of this.connectors) {
       const attemptedAt = this.now().toISOString();
@@ -444,7 +599,17 @@ export class IngestionRunner {
       const previousHealth = await this.store.getSourceHealth(connector.id);
       let failureCategory: NonNullable<SourceHealth['diagnosticCategory']> = 'transport';
       try {
-        const result = await fetchWithRetry(connector, previous);
+        const admissionConfigurationVersion = await this.catalogAdmissionResolver?.configurationVersion?.();
+        const admissionConfigurationChanged = Boolean(admissionConfigurationVersion
+          && previous?.admissionConfigurationVersion
+          && admissionConfigurationVersion !== previous.admissionConfigurationVersion);
+        const fetchCheckpoint = admissionConfigurationChanged && previous ? {
+          ...previous,
+          etag: undefined,
+          documentEtags: undefined,
+          contentHash: undefined,
+        } : previous;
+        const result = await fetchWithRetry(connector, fetchCheckpoint);
         report.fetchedSources += 1;
         failureCategory = 'quality';
         const qualityFailures = sourceQualityFailures(result, previous, {
@@ -550,6 +715,7 @@ export class IngestionRunner {
           ...result.checkpoint,
           contentHash: batch.snapshotHash,
           activeExternalIds: [...batch.activeExternalIds],
+          ...(admissionConfigurationVersion ? { admissionConfigurationVersion } : {}),
         });
         for (const job of plan.newJobs) {
           if (!alertedJobIds.has(job.jobId)) {

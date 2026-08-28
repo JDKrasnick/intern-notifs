@@ -57,6 +57,8 @@ export function earlyCareerRequirements(content: string): JobRequirements {
  */
 export function inferSeason(title: string, description: string, now = new Date()): string {
   const text = `${title} ${description}`;
+  const multiSeason = text.match(/\b(?:winter|spring|summer|fall)\s*[/-]\s*(?:winter|spring|summer|fall)\s*(?:intern(?:ship)?\s*)?(20\d{2})\b/i);
+  if (multiSeason) return `offseason-${multiSeason[1]}`;
   const season = text.match(/\b(summer|fall|spring|winter)\s*(?:intern(?:ship)?\s*)?(20\d{2})\b/i);
   if (season) return `${season[1].toLowerCase()}-${season[2]}`;
   const currentYear = now.getUTCFullYear();

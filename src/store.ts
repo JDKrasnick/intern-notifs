@@ -12,6 +12,7 @@ import type { ReviewedLeverSource } from './sources/lever-config.js';
 import type { LeverOwnershipEvidence } from './sources/lever-evidence.js';
 import type { LeverCandidateProbeResult } from './sources/lever-probe.js';
 import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from './catalog-groups.js';
+import { alertEligible, catalogEligible } from './catalog-admission.js';
 
 export interface LeverAdmission {
   source: ReviewedLeverSource;
@@ -118,15 +119,15 @@ export class MemoryInternshipStore implements InternshipStore {
     this.notificationEvents.set(event.eventId, structuredClone(event));
     return true;
   }
-  async pendingSms() { return [...this.jobs.values()].filter((job) => job.notification.smsPending && job.open); }
-  async pendingDigest() { return [...this.jobs.values()].filter((job) => job.notification.digestPending && job.open); }
+  async pendingSms() { return [...this.jobs.values()].filter((job) => job.notification.smsPending && job.open && alertEligible(job)); }
+  async pendingDigest() { return [...this.jobs.values()].filter((job) => job.notification.digestPending && job.open && alertEligible(job)); }
   async markSmsSent(jobId: string, sentAt: string) { const job = this.jobs.get(jobId); if (job) { job.notification.smsPending = false; job.notification.smsSentAt = sentAt; } }
   async markDigested(jobIds: string[], sentAt: string) { for (const jobId of jobIds) { const job = this.jobs.get(jobId); if (job) { job.notification.digestPending = false; job.notification.digestedAt = sentAt; } } }
   async getJob(jobId: string) { const job = this.jobs.get(jobId); return job && withEmployerCategory(job); }
   async listOpen(cursor?: string, limit = 25, status: 'open' | 'closed' = 'open', query: CatalogQuery = {}) {
     const needle = query.query?.trim().toLowerCase();
     const jobs = [...this.jobs.values()]
-      .filter((job) => job.open === (status === 'open') && job.technical !== false && !isPastSeason(job.season))
+      .filter((job) => job.open === (status === 'open') && job.technical !== false && catalogEligible(job) && !isPastSeason(job.season))
       .filter((job) => !query.source || query.source === 'all' || catalogSourceClasses(job).includes(query.source))
       .filter((job) => !needle || catalogSearchText(job).includes(needle))
       .sort(status === 'open' ? compareCatalogRecency : (a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt));
@@ -136,13 +137,13 @@ export class MemoryInternshipStore implements InternshipStore {
   }
   async listOpenSince(after: string, before: string) {
     return [...this.jobs.values()]
-      .filter((job) => job.open && job.technical !== false && catalogRecency(job) === 'normal' && !isPastSeason(job.season) && catalogVisibleAt(job) > after && catalogVisibleAt(job) <= before)
+      .filter((job) => job.open && job.technical !== false && catalogEligible(job) && catalogRecency(job) === 'normal' && !isPastSeason(job.season) && catalogVisibleAt(job) > after && catalogVisibleAt(job) <= before)
       .sort(compareCatalogRecency)
       .map(withEmployerCategory);
   }
   async listCatalog() {
     return [...this.jobs.values()]
-      .filter((job) => job.technical !== false && !isPastSeason(job.season))
+      .filter((job) => job.technical !== false && catalogEligible(job) && !isPastSeason(job.season))
       .sort(compareCatalogRecency)
       .map(withEmployerCategory);
   }
@@ -178,9 +179,9 @@ type JobItem = { pk: string; sk: 'META'; urlPk: string; fingerprintPk: string; s
 function internshipItem(job: Internship): JobItem {
   const canonical = canonicalCatalogRecency(job);
   const item: JobItem = { pk: `JOB#${canonical.jobId}`, sk: 'META', urlPk: `URL#${canonical.normalizedUrl}`, fingerprintPk: `FP#${canonical.fingerprint}`, job: canonical };
-  if (canonical.notification.smsPending) item.smsPk = 'PENDING#SMS';
-  if (canonical.notification.digestPending) item.digestPk = 'PENDING#DIGEST';
-  if (canonical.technical !== false) {
+  if (canonical.notification.smsPending && alertEligible(canonical)) item.smsPk = 'PENDING#SMS';
+  if (canonical.notification.digestPending && alertEligible(canonical)) item.digestPk = 'PENDING#DIGEST';
+  if (canonical.technical !== false && catalogEligible(canonical)) {
     item.catalogSearchText = catalogSearchText(canonical); item.catalogSourceClasses = catalogSourceClasses(canonical);
     if (canonical.open) { item.openPk = 'OPEN'; item.openSk = openCatalogSortKey(canonical); }
     else { item.closedPk = 'CLOSED'; item.closedSk = `${canonical.lastSeenAt}#${canonical.jobId}`; }

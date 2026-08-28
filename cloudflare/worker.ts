@@ -17,11 +17,14 @@ import { defaultSources } from '../src/sources/index.js';
 import type { SourceCheckpoint, SourceHealth } from '../src/types.js';
 import { authenticatedInstallation, authenticatedUser, cleanupExpiredAuth, consumeAuthRateLimit, createInstallation, deleteAuthUser, handleAuthRequest, type AuthEnvironment } from './auth.js';
 import { runCatalogQualityBackfill } from '../src/catalog-quality-backfill.js';
+import { runPostingIdentityRepair } from '../src/posting-identity-repair.js';
 import { cleanupExpiredUserData, D1InternshipStore, D1ReleaseStore, D1UserStore } from './d1-store.js';
 import { queueHasBacklog } from './queue-backlog.js';
 import type { MessageBatch, Queue, R2Bucket, ScheduledController } from './types.js';
 import { disconnectGmail, gmailApi, gmailCallback, GmailStore, processGmailWork, recordGmailFailure, type GmailWorkMessage } from './gmail.js';
 import { D1EmployerStore } from './employer-store.js';
+import { D1CatalogAdmissionStore } from './catalog-admission-store.js';
+import { handleCatalogAdmissionOperations } from './catalog-admission-api.js';
 import { handleEmployerApi } from './employer-api.js';
 import { closeEmployerOccurrence, handleEmployerOperations, runEmployerMaintenance } from './employer-operations-api.js';
 import { assertPublicHttpsUrl, verifyDnsChallenge, verifyWellKnownChallenge } from '../src/employer/index.js';
@@ -29,6 +32,9 @@ import type { EmployerVerificationChallenge } from '../src/employer-types.js';
 import { reviewedProviderRegistry, reviewedStructuredRegistry } from './employer-registry.js';
 import { StructuredCareerSourceConnector } from '../src/sources/structured/index.js';
 import { failedSourceHealth, successfulSourceHealth } from '../src/source-health.js';
+import type { BrowserWorker } from '@cloudflare/puppeteer';
+import { destinationVerificationMessage, enqueueDueDestinationVerifications, processDestinationVerificationBatch } from './destination-verification.js';
+import type { CatalogAdmissionResolver } from '../src/destination-verification.js';
 
 export interface Environment extends AuthEnvironment {
   DOCUMENTS: R2Bucket;
@@ -37,12 +43,16 @@ export interface Environment extends AuthEnvironment {
   ASHBY_QUEUE: Queue;
   GITHUB_QUEUE: Queue;
   GMAIL_QUEUE: Queue;
+  DESTINATION_VERIFICATION_QUEUE: Queue;
+  DESTINATION_BROWSER: BrowserWorker;
   GREENHOUSE_DLQ: Queue;
   LEVER_DLQ: Queue;
   ASHBY_DLQ: Queue;
   GMAIL_DLQ: Queue;
+  DESTINATION_VERIFICATION_DLQ: Queue;
   PUBLIC_API_URL: string;
   RESEND_API_KEY?: string;
+  ADMISSION_SUPPORT_RECIPIENT?: string;
   AUTH_FROM_EMAIL?: string;
   DIGEST_TO_EMAIL?: string;
   NTFY_TOPIC?: string;
@@ -64,6 +74,33 @@ export interface Environment extends AuthEnvironment {
   GMAIL_TOKEN_ENCRYPTION_KEY?: string;
   GMAIL_MESSAGE_HMAC_KEY?: string;
   GMAIL_REDIRECT_URI?: string;
+}
+
+function catalogAdmissionResolver(env: Environment): CatalogAdmissionResolver {
+  const operations = new D1CatalogAdmissionStore(env.DB);
+  const employers = new Map<string, ReturnType<typeof operations.resolveCanonicalEmployer>>();
+  const rules = new Map<string, ReturnType<typeof operations.resolveReviewRule>>();
+  let version: ReturnType<typeof operations.configurationVersion> | undefined;
+  return {
+    resolveCanonicalEmployer(identity) {
+      const key = `${identity.provider}\0${identity.sourceId}\0${identity.tenant ?? ''}\0${identity.employerScope ?? ''}`;
+      const pending = employers.get(key) ?? operations.resolveCanonicalEmployer(identity);
+      employers.set(key, pending);
+      return pending;
+    },
+    resolveDestinationRule(identity, candidateUrl) {
+      let host: string;
+      try { host = new URL(candidateUrl).hostname.toLowerCase(); } catch { host = candidateUrl; }
+      const key = `${identity.provider}\0${identity.tenant ?? ''}\0${host}`;
+      const pending = rules.get(key) ?? operations.resolveReviewRule(identity, candidateUrl);
+      rules.set(key, pending);
+      return pending;
+    },
+    configurationVersion() {
+      version ??= operations.configurationVersion();
+      return version;
+    },
+  };
 }
 
 async function dnsJson(name: string, type: 'A' | 'AAAA' | 'TXT'): Promise<Array<{ data?: string }>> {
@@ -175,6 +212,8 @@ async function runStructuredSource(source: ReviewedStructuredSource, env: Enviro
   }
   const connector = new StructuredCareerSourceConnector({ source, resolver: publicHostResolver });
   const result = await runRuntimeCommand('poll', { store, userStore, sources: [connector], validateCatalogOnPoll: false,
+    enqueueDestinationVerification: (request) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(request)),
+    catalogAdmissionResolver: catalogAdmissionResolver(env),
     allowCompleteEmptySnapshot: true,
     config: { sesFrom: env.AUTH_FROM_EMAIL ?? '', sesTo: env.DIGEST_TO_EMAIL ?? '', ntfyTopic: env.NTFY_TOPIC, ntfyEndpoint: env.NTFY_ENDPOINT } });
   if ('poll' in result && result.poll?.failures.length) throw new Error(result.poll.failures.join('; '));
@@ -491,6 +530,32 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
       return withCors(Response.json(report, { status: report.conflicts.length ? 409 : 200 }));
     } catch (error) {
       return withCors(Response.json({ message: error instanceof Error ? error.message : 'Backfill failed' }, { status: 409 }));
+    }
+  }
+  if (url.pathname.startsWith('/internal/admission/')) {
+    if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
+    return withCors(await handleCatalogAdmissionOperations(
+      request,
+      new D1CatalogAdmissionStore(env.DB),
+      () => refreshCatalogProjection(new D1InternshipStore(env.DB)),
+    ));
+  }
+  if (request.method === 'POST' && url.pathname === '/internal/posting-identity-repair') {
+    if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
+    const input = await request.json().catch(() => ({})) as {
+      apply?: boolean; repairToken?: string; expectedChanges?: number; expectedDuplicateJobs?: number;
+      scope?: 'all' | 'identity' | 'occurrences';
+    };
+    try {
+      const report = await runPostingIdentityRepair(env.DB, input);
+      if (input.apply && report.projectionRefreshRequired) {
+        await refreshCatalogProjection(new D1InternshipStore(env.DB));
+        const verification = await runPostingIdentityRepair(env.DB, { scope: input.scope });
+        return withCors(Response.json({ ...report, verification }));
+      }
+      return withCors(Response.json(report, { status: report.conflicts.length ? 409 : 200 }));
+    } catch (error) {
+      return withCors(Response.json({ message: error instanceof Error ? error.message : 'Posting identity repair failed' }, { status: 409 }));
     }
   }
   if (request.method === 'POST' && url.pathname === '/internal/poll-source') {
@@ -823,13 +888,18 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
     await cleanupExpiredUserData(env.DB);
     await new GmailStore(env.DB).cleanup(new Date(event.scheduledTime));
     const employerMaintenance = await runEmployerMaintenance(new D1EmployerStore(env.DB), store, new Date(event.scheduledTime));
-    console.log(JSON.stringify({ event: 'employer_maintenance_complete', ...employerMaintenance }));
+    const admissionVerificationRetries = await enqueueDueDestinationVerifications(env, new Date(event.scheduledTime));
+    console.log(JSON.stringify({ event: 'employer_maintenance_complete', ...employerMaintenance, admissionVerificationRetries }));
   }
 }
 
 async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Promise<void> {
   if (await isShutdown(env)) {
     for (const message of batch.messages) message.ack();
+    return;
+  }
+  if (batch.queue.includes('destination-verification')) {
+    await processDestinationVerificationBatch(batch, env);
     return;
   }
   const records = batch.messages.map((message) => ({ messageId: message.id, body: typeof message.body === 'string' ? message.body : JSON.stringify(message.body) }));
@@ -861,6 +931,7 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
   if (batch.queue.includes('github')) {
     const failed = new Set<string>();
     const employerStore = new D1EmployerStore(env.DB);
+    const admissionResolver = catalogAdmissionResolver(env);
     const structured = await reviewedStructuredRegistry(employerStore);
     for (const record of records) {
       try {
@@ -878,6 +949,8 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
           userStore: new D1UserStore(env.DB),
           sources: [source],
           validateCatalogOnPoll: false,
+          enqueueDestinationVerification: (request) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(request)),
+          catalogAdmissionResolver: admissionResolver,
           config: { sesFrom: env.AUTH_FROM_EMAIL ?? '', sesTo: env.DIGEST_TO_EMAIL ?? '', ntfyTopic: env.NTFY_TOPIC, ntfyEndpoint: env.NTFY_ENDPOINT },
         });
       } catch (error) {
@@ -893,7 +966,11 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
   }
   const event = { Records: records };
   const registry = await reviewedProviderRegistry(new D1EmployerStore(env.DB));
-  const dependencies = { store: new D1InternshipStore(env.DB), userStore: new D1UserStore(env.DB) };
+  const dependencies = {
+    store: new D1InternshipStore(env.DB), userStore: new D1UserStore(env.DB),
+    enqueueDestinationVerification: (request: Parameters<typeof destinationVerificationMessage>[0]) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(request)),
+    catalogAdmissionResolver: catalogAdmissionResolver(env),
+  };
   const legacyLever = (await dependencies.store.listLeverAdmissions?.() ?? []).map(({ source }) => source);
   const leverRegistry = [...registry.lever, ...legacyLever.filter((source) => !registry.lever.some((candidate) => candidate.id === source.id))];
   const result = batch.queue.includes('greenhouse')

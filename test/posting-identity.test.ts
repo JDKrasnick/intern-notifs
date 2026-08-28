@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeUrl, postingIdentity, postingIdentityKey, roleFamilyFingerprint } from '../src/core/normalize.js';
 import { buildPostingIdentity, providerPostingReference, resolvePostingAliases } from '../src/identity/posting.js';
+import { providerEvidenceForOccurrence, reviewedProviderUrlReference } from '../src/identity/reviewed-provider.js';
 
 describe('posting identity', () => {
   it.each([
@@ -61,6 +62,7 @@ describe('posting identity', () => {
       employerId: 'acme',
       employerRequisitionId: ' SWE-42 ',
       employerRequisitionAuthoritative: true,
+      reviewedProviderReferences: [{ provider: 'greenhouse', tenant: 'acme', postingId: '123' }],
     });
     expect(identity).toMatchObject({
       provider: 'greenhouse',
@@ -68,9 +70,31 @@ describe('posting identity', () => {
       providerPostingId: '123',
       canonicalApplicationUrl: 'https://job-boards.greenhouse.io/acme/jobs/123',
     });
+    expect(identity).not.toHaveProperty('employerId');
     expect(identity.aliases.map((item) => item.value)).toContain('requisition:acme:swe-42');
-    expect(buildPostingIdentity({ applicationUrl: 'https://job-boards.greenhouse.io/acme/jobs/123' }).canonicalJobId)
+    expect(buildPostingIdentity({ applicationUrl: 'https://job-boards.greenhouse.io/acme/jobs/123', reviewedProviderReferences: [{ provider: 'greenhouse', tenant: 'acme', postingId: '123' }] }).canonicalJobId)
       .toBe(identity.canonicalJobId);
+  });
+
+  it('keeps a reviewed board token provider-scoped instead of treating it as an employer', () => {
+    const evidence = providerEvidenceForOccurrence(
+      'greenhouse-axontalentcommunity',
+      '8675309',
+      ['https://job-boards.greenhouse.io/axontalentcommunity/jobs/8675309'],
+    );
+    expect(evidence).toEqual({
+      provider: 'greenhouse',
+      tenant: 'axontalentcommunity',
+      postingId: '8675309',
+      sourceId: 'greenhouse-axontalentcommunity',
+      urls: ['https://job-boards.greenhouse.io/axontalentcommunity/jobs/8675309'],
+    });
+    const identity = buildPostingIdentity({
+      applicationUrl: 'https://job-boards.greenhouse.io/axontalentcommunity/jobs/8675309',
+      providerEvidence: evidence,
+    });
+    expect(identity).toMatchObject({ provider: 'greenhouse', tenant: 'axontalentcommunity', providerPostingId: '8675309' });
+    expect(identity).not.toHaveProperty('employerId');
   });
 
   it('deterministically creates, merges, or quarantines alias claims', () => {
@@ -93,7 +117,51 @@ describe('posting identity', () => {
     const identity = buildPostingIdentity({
       applicationUrl: 'https://jobs.lever.co/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
       observedUrls: ['https://jobs.lever.co/acme/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'],
+      reviewedProviderReferences: [
+        { provider: 'lever', tenant: 'acme', postingId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' },
+        { provider: 'lever', tenant: 'acme', postingId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' },
+      ],
     });
     expect(resolvePostingAliases(identity, new Map())).toMatchObject({ outcome: 'quarantine', reason: 'multiple-immutable-provider-postings' });
+  });
+
+  it('recognizes a reviewed DRW custom route but not an arbitrary lookalike host', () => {
+    expect(reviewedProviderUrlReference('https://www.drw.com/work-at-drw/listings/quantitative-research-intern-3413670?utm_source=list')).toMatchObject({
+      outcome: 'match', reference: { provider: 'greenhouse', tenant: 'drweng', postingId: '3413670', sourceId: 'greenhouse-drweng', customHost: true },
+    });
+    expect(reviewedProviderUrlReference('https://drw.example.test/work-at-drw/listings/quantitative-research-intern-3413670')).toEqual({ outcome: 'none' });
+  });
+
+  it('recognizes only the immutable public ID on a reviewed Roblox custom host', () => {
+    expect(reviewedProviderUrlReference('https://careers.roblox.com/jobs/7116940/software-engineering-intern?gh_jid=7116940')).toMatchObject({
+      outcome: 'match', reference: { provider: 'greenhouse', tenant: 'roblox', postingId: '7116940', sourceId: 'greenhouse-roblox', customHost: true },
+    });
+    expect(reviewedProviderUrlReference('https://careers.roblox.com/jobs/software-engineering-intern')).toEqual({ outcome: 'none' });
+    expect(reviewedProviderUrlReference('https://careers.roblox.com/jobs/7116940?gh_jid=7116999')).toMatchObject({ outcome: 'conflict' });
+  });
+
+  it('quarantines aliases that cross provider tenants or providers', () => {
+    const identity = buildPostingIdentity({
+      applicationUrl: 'https://job-boards.greenhouse.io/figma/jobs/123',
+      reviewedProviderReferences: [
+        { provider: 'greenhouse', tenant: 'figma', postingId: '123' },
+        { provider: 'greenhouse', tenant: 'spacex', postingId: '123' },
+      ],
+    });
+    expect(resolvePostingAliases(identity, new Map())).toMatchObject({ outcome: 'quarantine', reason: 'provider-scope-mismatch' });
+  });
+
+  it('quarantines conflicting authoritative requisition scopes', () => {
+    const identity = buildPostingIdentity({
+      applicationUrl: 'https://careers.acme.test/jobs/one',
+      employerId: 'acme',
+      employerRequisitionId: 'REQ-1',
+      employerRequisitionAuthoritative: true,
+    });
+    identity.aliases.push({ kind: 'employer-requisition', value: 'requisition:acme:req-2' });
+    expect(resolvePostingAliases(identity, new Map())).toMatchObject({
+      outcome: 'quarantine',
+      reason: 'multiple-authoritative-requisitions',
+    });
   });
 });

@@ -8,11 +8,13 @@ import { MemoryInternshipStore } from '../src/store.js';
 const scheduledAt = '2026-07-30T12:00:00.000Z';
 const shadowSource = reviewedLeverSources.find((source) => source.status === 'shadow')!;
 const message = (sourceId = shadowSource.id): LeverWorkMessage => ({ version: 1, sourceId, scheduledAt });
+const firstPostingId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const secondPostingId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const posting = {
-  id: 'job-1',
+  id: firstPostingId,
   text: 'Software Engineering Intern, Summer 2027',
-  applyUrl: `https://jobs.lever.co/${shadowSource.site}/job-1/apply`,
-  hostedUrl: `https://jobs.lever.co/${shadowSource.site}/job-1`,
+  applyUrl: `https://jobs.lever.co/${shadowSource.site}/${firstPostingId}/apply`,
+  hostedUrl: `https://jobs.lever.co/${shadowSource.site}/${firstPostingId}`,
   descriptionPlain: 'Build reliable software.',
   categories: { location: 'Remote', commitment: 'Internship' },
 };
@@ -20,6 +22,10 @@ const response = (postings = [posting]) => new Response(JSON.stringify(postings)
   status: 200,
   headers: { 'Content-Type': 'application/json', ETag: '"fixture"' },
 });
+const catalogAdmissionResolver = {
+  async resolveCanonicalEmployer() { return { id: 'acme', displayName: 'Acme' }; },
+  async resolveDestinationRule() { return undefined; },
+};
 
 describe('Lever queue dispatch', () => {
   it('creates one versioned work item per reviewed board', () => {
@@ -220,6 +226,7 @@ describe('Lever queue worker', () => {
       sources: [published],
       fetchImpl: async () => response(current),
       linkValidator: async (url: string) => url,
+      catalogAdmissionResolver,
     };
     await runLeverBoard(message(), dependencies);
     expect(await store.pendingSms()).toEqual([]);
@@ -228,10 +235,10 @@ describe('Lever queue worker', () => {
       posting,
       {
         ...posting,
-        id: 'job-2',
+        id: secondPostingId,
         text: 'Machine Learning Engineering Intern, Summer 2027',
-        hostedUrl: `https://jobs.lever.co/${shadowSource.site}/job-2`,
-        applyUrl: `https://jobs.lever.co/${shadowSource.site}/job-2/apply`,
+        hostedUrl: `https://jobs.lever.co/${shadowSource.site}/${secondPostingId}`,
+        applyUrl: `https://jobs.lever.co/${shadowSource.site}/${secondPostingId}/apply`,
       },
     ];
     const result = await runLeverBoard(message(), dependencies);

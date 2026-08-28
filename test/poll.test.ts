@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryInternshipStore } from '../src/store.js';
 import { Poller } from '../src/poll.js';
-import type { RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult } from '../src/types.js';
+import { buildPostingIdentity } from '../src/identity/posting.js';
+import type { RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult, SourceSnapshot } from '../src/types.js';
 
 const listing = (url: string, sourceId = 'one'): RawListing => ({ sourceId, document: 'README.md', sourceUrl: 'https://github.com/x', row: 5, company: 'Acme', title: 'Software Engineering Intern', location: 'NYC', season: 'summer-2027', applyUrl: url, compensation: { raw: '$40/hr', maxHourlyUSD: 40 }, state: 'open', fetchedAt: '2026-01-01T00:00:00Z' });
+const greenhouseListing = (postingId: string, url: string): RawListing => ({
+  ...listing(url, 'greenhouse-figma'), externalId: postingId, document: postingId,
+  providerEvidence: { provider: 'greenhouse', tenant: 'figma', postingId, sourceId: 'greenhouse-figma', urls: [url] },
+});
+const reviewedListing = (input: { provider: 'greenhouse' | 'lever'; tenant: string; postingId: string; sourceId: string; url: string }): RawListing => ({
+  ...listing(input.url, input.sourceId), externalId: input.postingId, document: input.postingId,
+  providerEvidence: { provider: input.provider, tenant: input.tenant, postingId: input.postingId, sourceId: input.sourceId, urls: [input.url] },
+});
 class Adapter implements SourceAdapter {
   constructor(readonly id: string, private readonly rows: RawListing[]) {}
   async fetch(previous?: SourceCheckpoint): Promise<SourceFetchResult> { return { sourceId: this.id, listings: this.rows, notModified: false, checkpoint: { sourceId: this.id, successfulFetches: (previous?.successfulFetches ?? 0) + 1, lastRowCount: this.rows.length } }; }
@@ -63,6 +72,31 @@ describe('polling', () => {
     await new Poller([new Adapter('two', [listing('https://jobs.example.com/a?utm_source=two', 'two')])], store).poll();
     expect(store.jobs.size).toBe(1); expect([...store.jobs.values()][0].sourceReferences).toHaveLength(2);
   });
+  it('does not let an unverified community occurrence revive a closed canonical posting', async () => {
+    const store = new MemoryInternshipStore();
+    const url = 'https://copart.wd12.myworkdayjobs.com/Copart/job/Dallas-TX/Software-Engineering-Intern_JR101510';
+    const variant = 'https://copart.wd12.myworkdayjobs.com/en-US/Copart/job/Dallas-TX/Software-Engineering-Intern_JR101510';
+    await new Poller([new Adapter('one', [{ ...listing(url), state: 'closed' as const }])], store).poll();
+    await new Poller([new Adapter('community', [listing(variant, 'community')])], store).poll();
+    expect([...store.jobs.values()][0]).toMatchObject({
+      open: false,
+      sourceReferences: [{ sourceId: 'one' }, { sourceId: 'community', state: 'open' }],
+    });
+  });
+  it('adopts a legacy tracked URL when canonical tracking cleanup changes its lookup key', async () => {
+    const store = new MemoryInternshipStore();
+    const tracked = 'https://jobs.example.com/a?gh_src=legacy&utm_source=list';
+    const reference = listing(tracked);
+    await store.putInternship({
+      jobId: 'legacy-tracked', company: reference.company, title: reference.title, location: reference.location,
+      season: reference.season, applyUrl: tracked, normalizedUrl: 'https://jobs.example.com/a?gh_src=legacy',
+      fingerprint: 'legacy-tracked', compensation: reference.compensation, sourceReferences: [reference], open: true,
+      firstSeenAt: reference.fetchedAt, lastSeenAt: reference.fetchedAt, notification: { smsPending: false, digestPending: false },
+    });
+    await new Poller([new Adapter('one', [listing(tracked)])], store).poll();
+    expect(store.jobs.size).toBe(1);
+    expect([...store.jobs.values()][0]?.jobId).toBe('legacy-tracked');
+  });
   it('keeps evidence-poor roles separate when their apply URLs differ', async () => {
     const store = new MemoryInternshipStore(); await new Poller([new Adapter('one', [listing('https://jobs.example.com/a')])], store).poll();
     await new Poller([new Adapter('two', [listing('https://careers.example.net/a', 'two')])], store).poll();
@@ -70,20 +104,91 @@ describe('polling', () => {
   });
   it('keeps distinct provider requisitions even when every display field matches', async () => {
     const store = new MemoryInternshipStore();
-    await new Poller([new Adapter('one', [listing('https://job-boards.greenhouse.io/acme/jobs/100')])], store).poll();
-    await new Poller([new Adapter('two', [listing('https://job-boards.greenhouse.io/acme/jobs/101', 'two')])], store).poll();
+    await new Poller([new Adapter('greenhouse-figma', [greenhouseListing('100', 'https://job-boards.greenhouse.io/figma/jobs/100')])], store).poll();
+    await new Poller([new Adapter('greenhouse-figma', [greenhouseListing('101', 'https://job-boards.greenhouse.io/figma/jobs/101')])], store).poll();
     expect(store.jobs.size).toBe(2);
     expect([...store.jobs.values()].map((job) => job.postingIdentity?.providerPostingId).sort()).toEqual(['100', '101']);
   });
   it('converges reviewed URL variants on one provider posting identity', async () => {
     const store = new MemoryInternshipStore();
-    await new Poller([new Adapter('one', [listing('https://boards.greenhouse.io/acme?gh_jid=100')])], store).poll();
-    await new Poller([new Adapter('two', [listing('https://job-boards.greenhouse.io/acme/jobs/100', 'two')])], store).poll();
+    await new Poller([new Adapter('greenhouse-figma', [greenhouseListing('100', 'https://boards.greenhouse.io/figma?gh_jid=100')])], store).poll();
+    await new Poller([new Adapter('community', [listing('https://job-boards.greenhouse.io/figma/jobs/100', 'community')])], store).poll();
     expect(store.jobs.size).toBe(1);
     expect([...store.jobs.values()][0]).toMatchObject({
-      postingIdentity: { provider: 'greenhouse', tenant: 'acme', providerPostingId: '100' },
-      sourceReferences: [{ sourceId: 'one' }, { sourceId: 'two' }],
+      postingIdentity: { provider: 'greenhouse', tenant: 'figma', providerPostingId: '100' },
+      sourceReferences: [{ sourceId: 'greenhouse-figma' }, { sourceId: 'community' }],
     });
+  });
+  it('converges historical DRW custom and standard routes only after the active public ID confirms them', async () => {
+    const store = new MemoryInternshipStore();
+    await new Poller([new Adapter('greenhouse-drweng', [reviewedListing({ provider: 'greenhouse', tenant: 'drweng', postingId: '3413670', sourceId: 'greenhouse-drweng', url: 'https://job-boards.greenhouse.io/drweng/jobs/3413670' })])], store).poll();
+    await new Poller([new Adapter('community', [listing('https://www.drw.com/work-at-drw/listings/quantitative-research-intern-3413670?utm_source=community', 'community')])], store).poll();
+    expect(store.jobs.size).toBe(1);
+    expect([...store.jobs.values()][0]).toMatchObject({ postingIdentity: { tenant: 'drweng', providerPostingId: '3413670' }, sourceReferences: [{ sourceId: 'greenhouse-drweng' }, { sourceId: 'community' }] });
+  });
+  it('converges the historical PlusAI Lever hosted/apply pair', async () => {
+    const store = new MemoryInternshipStore(); const id = 'b4f750e7-0148-41f0-b2b1-ff054450a320';
+    await new Poller([new Adapter('lever-plusai', [reviewedListing({ provider: 'lever', tenant: 'plus-2', postingId: id, sourceId: 'lever-plusai', url: `https://jobs.lever.co/plus-2/${id}/apply` })])], store).poll();
+    await new Poller([new Adapter('community', [listing(`https://jobs.lever.co/plus-2/${id}?ref=community`, 'community')])], store).poll();
+    expect(store.jobs.size).toBe(1);
+    expect([...store.jobs.values()][0]?.postingIdentity).toMatchObject({ provider: 'lever', tenant: 'plus-2', providerPostingId: id });
+  });
+  it('does not infer a provider identity for an inactive custom-host public ID', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putCheckpoint({ sourceId: 'greenhouse-drweng', successfulFetches: 1, activeExternalIds: ['3413670'] });
+    await new Poller([new Adapter('community', [listing('https://www.drw.com/work-at-drw/listings/software-developer-intern-9999999', 'community')])], store).poll();
+    expect([...store.jobs.values()][0]?.postingIdentity).toMatchObject({ provider: 'unknown' });
+  });
+  it('uses a reviewed custom-host ID for identity without treating a generic destination as alert eligible', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putCheckpoint({ sourceId: 'greenhouse-drweng', successfulFetches: 1, activeExternalIds: ['3413670'], lastRowCount: 1 });
+    const generic = reviewedListing({
+      provider: 'greenhouse',
+      tenant: 'drweng',
+      postingId: '3413670',
+      sourceId: 'greenhouse-drweng',
+      url: 'https://www.drw.com/open-roles?gh_jid=3413670',
+    });
+    const inspected: string[] = [];
+    const report = await new Poller(
+      [new Adapter('greenhouse-drweng', [generic])],
+      store,
+      undefined,
+      undefined,
+      async (url) => {
+        inspected.push(url);
+        return {
+          url,
+          evidence: {
+            url,
+            title: 'Open roles',
+            confidence: { score: 50, level: 'medium', recommendation: 'catalog-only', signals: ['destination reached'] },
+          },
+        };
+      },
+    ).poll();
+    expect(inspected).not.toHaveLength(0);
+    expect(new Set(inspected)).toEqual(new Set([generic.applyUrl]));
+    expect(report.newJobs).toEqual([]);
+    expect(report.filteredJobs).toHaveLength(1);
+    expect([...store.jobs.values()][0]).toMatchObject({
+      company: 'Acme',
+      postingIdentity: { provider: 'greenhouse', tenant: 'drweng', providerPostingId: '3413670' },
+      notification: { smsPending: false, digestPending: false },
+    });
+  });
+  it('quarantines direct provider evidence whose reviewed route points at another board', async () => {
+    const store = new MemoryInternshipStore();
+    const mismatched = reviewedListing({ provider: 'greenhouse', tenant: 'figma', postingId: '123', sourceId: 'greenhouse-figma', url: 'https://job-boards.greenhouse.io/spacex/jobs/123' });
+    const report = await new Poller([new Adapter('greenhouse-figma', [mismatched])], store).poll();
+    expect(store.jobs.size).toBe(0);
+    expect(report.failures).toEqual([]);
+    expect(report.quarantinedListings).toEqual([expect.objectContaining({
+      sourceId: 'greenhouse-figma',
+      row: 5,
+      reason: expect.stringContaining('provider-scope-mismatch'),
+    })]);
+    expect(await store.getCheckpoint('greenhouse-figma')).toMatchObject({ successfulFetches: 1 });
   });
   it('persists TikTok source aliases as their canonical job URL', async () => {
     const store = new MemoryInternshipStore();
@@ -91,6 +196,24 @@ describe('polling', () => {
     const job = [...store.jobs.values()][0];
     expect(job.applyUrl).toBe('https://lifeattiktok.com/search/7623166667125508357');
     expect(job.sourceReferences[0].applyUrl).toBe(job.applyUrl);
+  });
+  it.each([
+    [
+      'Workday',
+      'https://micron.wd1.myworkdayjobs.com/External/job/Boise/Intern_JR108448',
+      'https://micron.wd5.myworkdayjobs.com/en-US/External/job/Intern_JR108448',
+    ],
+    [
+      'ByteDance',
+      'https://lifeattiktok.com/search/7672883129493948677',
+      'https://jobs.bytedance.com/en/position/7672883129493948677/detail',
+    ],
+  ])('converges exact %s provider routes during ingestion', async (_provider, first, second) => {
+    const store = new MemoryInternshipStore();
+    await new Poller([new Adapter('one', [listing(first)])], store).poll();
+    await new Poller([new Adapter('two', [listing(second, 'two')])], store).poll();
+    expect(store.jobs.size).toBe(1);
+    expect([...store.jobs.values()][0]?.sourceReferences.map((reference) => reference.sourceId)).toEqual(['one', 'two']);
   });
   it('retains a checkpoint when an established adapter suddenly returns zero rows', async () => {
     const store = new MemoryInternshipStore(); const initial = new Adapter('one', [listing('https://jobs.example.com/a')]); await new Poller([initial], store).poll();
@@ -189,5 +312,156 @@ describe('polling', () => {
     expect(report.failures).toEqual([]);
     expect(validated).toEqual([incoming.applyUrl]);
     expect((await store.getJob('legacy-role'))?.open).toBe(true);
+  });
+
+  it('applies reviewed employer mappings and destination rules during neutral ingestion', async () => {
+    const store = new MemoryInternshipStore();
+    const snapshot: SourceFetchResult & SourceSnapshot = {
+      sourceId: 'greenhouse-board-label', outcome: 'changed', complete: true, rawCount: 1, contentHash: 'hash',
+      listings: [], notModified: false,
+      checkpoint: { sourceId: 'greenhouse-board-label', successfulFetches: 1 },
+      postings: [{
+        sourceId: 'greenhouse-board-label', provenance: 'official-ats', externalId: '123', sourceUrl: 'https://boards-api.greenhouse.io/board-label',
+        fetchedAt: '2026-08-27T12:00:00Z', employer: { id: 'board-label', name: 'Talent Community', authority: 'reviewed-registry' },
+        providerIdentity: { provider: 'greenhouse', tenant: 'board-label' }, title: 'Software Engineering Intern',
+        content: [], locations: ['Remote'], applyUrl: 'https://careers.example.test/roles/123', sourceState: 'open',
+      }],
+    };
+    const adapter: SourceAdapter = { id: snapshot.sourceId, async fetch() { return snapshot; } };
+    const resolver = {
+      async resolveCanonicalEmployer() { return { id: 'acme', displayName: 'Acme' }; },
+      async resolveDestinationRule() { return { id: 'reviewed-custom-route', host: 'careers.example.test', provider: 'greenhouse' as const,
+        tenant: 'board-label', decision: 'standard-provider-route' as const, reviewedAt: '2026-08-27T00:00:00Z', reviewedBy: 'reviewer' }; },
+    };
+    await new Poller([adapter], store, undefined, undefined, undefined, undefined, undefined, resolver).poll();
+    expect([...store.jobs.values()][0]).toMatchObject({ company: 'Acme', admission: {
+      canonicalEmployer: { id: 'acme', displayName: 'Acme' }, catalogEligible: true,
+    } });
+  });
+
+  it('preserves legacy community rows while withholding new unmapped employers', async () => {
+    const store = new MemoryInternshipStore();
+    const legacy = await legacyOpenRole(store);
+    const legacyJob = (await store.getJob('legacy-role'))!;
+    const priorUrl = 'https://ancestry.wd501.myworkdayjobs.com/Careers/job/Remote/Software-Engineer---Observability--Co-op_R003434';
+    const refreshedUrl = 'https://ancestry.wd501.myworkdayjobs.com/en-US/careers/job/Draper-Utah/Software-Engineer---Observability--Co-op_R003434';
+    await store.putInternship({ ...legacyJob, applyUrl: priorUrl, normalizedUrl: priorUrl,
+      sourceReferences: [{ ...legacyJob.sourceReferences[0]!, sourceId: 'community-list', externalId: 'acme-role', applyUrl: priorUrl }] });
+    await store.claimPostingIdentity(buildPostingIdentity({ applicationUrl: priorUrl }), 'legacy-role');
+    const snapshot: SourceFetchResult & SourceSnapshot = {
+      sourceId: 'community-list', outcome: 'changed', complete: true, rawCount: 2, contentHash: 'community-hash',
+      listings: [], notModified: false,
+      checkpoint: { sourceId: 'community-list', successfulFetches: 2 },
+      postings: [
+        { sourceId: 'community-list', provenance: 'reviewed-community', externalId: 'acme-role', sourceUrl: 'https://github.com/example/jobs',
+          fetchedAt: '2026-08-27T12:00:00Z', employer: { name: 'Acme', authority: 'source-row' }, title: legacy.title,
+          content: [], locations: [legacy.location], applyUrl: refreshedUrl, sourceState: 'open', lifecycleAuthority: 'source' },
+        { sourceId: 'community-list', provenance: 'reviewed-community', externalId: 'beta-role', sourceUrl: 'https://github.com/example/jobs',
+          fetchedAt: '2026-08-27T12:00:00Z', employer: { name: 'Beta', authority: 'source-row' }, title: 'Data Engineering Intern',
+          content: [], locations: ['Remote'], applyUrl: 'https://jobs.example.com/beta', sourceState: 'open', lifecycleAuthority: 'source' },
+      ],
+    };
+    const resolver = {
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    await new Poller([{ id: snapshot.sourceId, async fetch() { return snapshot; } }], store, undefined, undefined, undefined, undefined, undefined, resolver).poll();
+    const preserved = await store.getJob('legacy-role');
+    expect(preserved?.open).toBe(true);
+    expect(preserved?.admission).toBeUndefined();
+    expect(preserved?.sourceReferences).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceId: 'community-list', applyUrl: refreshedUrl }),
+    ]));
+    expect([...store.jobs.values()].find((job) => job.company === 'Beta')).toMatchObject({
+      admission: { catalogEligible: false, alertEligible: false, reasonCodes: expect.arrayContaining(['employer-unresolved']) },
+    });
+  });
+
+  it('queues an attributed-provider check when a reviewed community URL is specific but the posting is not yet corroborated', async () => {
+    const store = new MemoryInternshipStore();
+    const queued: Array<{ candidateUrl: string; providerIdentity: { provider: string; postingId?: string }; reason: string }> = [];
+    const snapshot: SourceFetchResult & SourceSnapshot = {
+      sourceId: 'community-list', outcome: 'changed', complete: true, rawCount: 1, contentHash: 'community-axon',
+      listings: [], notModified: false, checkpoint: { sourceId: 'community-list', successfulFetches: 1 },
+      postings: [{ sourceId: 'community-list', provenance: 'reviewed-community', externalId: 'row-1',
+        sourceUrl: 'https://github.com/example/jobs', fetchedAt: '2026-08-28T00:00:00Z',
+        employer: { name: 'Axon', authority: 'source-row' }, title: '2027 US Mechanical Engineering Internship',
+        content: [], locations: ['Arizona, USA'], applyUrl: 'https://job-boards.greenhouse.io/axon/jobs/7978840003',
+        sourceState: 'open', lifecycleAuthority: 'source' }],
+    };
+    const resolver = {
+      async resolveCanonicalEmployer() { return { id: 'axon', displayName: 'Axon' }; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    await new Poller([{ id: snapshot.sourceId, async fetch() { return snapshot; } }], store,
+      undefined, undefined, undefined, undefined, async (request) => { queued.push(request); }, resolver).poll();
+    expect([...store.jobs.values()][0]).toMatchObject({ admission: { catalogEligible: false,
+      reasonCodes: ['posting-unattributed'], destination: { classification: 'posting-detail' } } });
+    expect(queued).toMatchObject([{ candidateUrl: 'https://job-boards.greenhouse.io/axon/jobs/7978840003',
+      providerIdentity: { provider: 'greenhouse', postingId: '7978840003' }, reason: 'first-sight' }]);
+  });
+
+  it('keeps an existing exact-URL community role visible while its posting attribution is queued', async () => {
+    const store = new MemoryInternshipStore();
+    const applyUrl = 'https://job-boards.greenhouse.io/axon/jobs/7978840003';
+    const reference = { ...listing(applyUrl, 'community-list'), externalId: 'row-1', provenance: 'reviewed-community' as const,
+      company: 'Axon', title: '2027 US Mechanical Engineering Internship', location: 'Arizona, USA' };
+    await store.putInternship({ jobId: 'legacy-axon', company: reference.company, title: reference.title,
+      location: reference.location, season: reference.season, applyUrl, normalizedUrl: applyUrl, fingerprint: 'legacy-axon',
+      compensation: reference.compensation, sourceReferences: [reference], open: true, firstSeenAt: reference.fetchedAt,
+      lastSeenAt: reference.fetchedAt, notification: { smsPending: false, digestPending: false } });
+    await store.claimPostingIdentity(buildPostingIdentity({ applicationUrl: applyUrl }), 'legacy-axon');
+    const queued: string[] = [];
+    const snapshot: SourceFetchResult & SourceSnapshot = {
+      sourceId: 'community-list', outcome: 'changed', complete: true, rawCount: 1, contentHash: 'community-axon-refresh',
+      listings: [], notModified: false, checkpoint: { sourceId: 'community-list', successfulFetches: 2 },
+      postings: [{ sourceId: 'community-list', provenance: 'reviewed-community', externalId: 'row-1',
+        sourceUrl: reference.sourceUrl, fetchedAt: '2026-08-28T00:00:00Z', employer: { name: 'Axon', authority: 'source-row' },
+        title: reference.title, content: [], locations: [reference.location], applyUrl, sourceState: 'open', lifecycleAuthority: 'source' }],
+    };
+    const resolver = {
+      async resolveCanonicalEmployer() { return { id: 'axon', displayName: 'Axon' }; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    await new Poller([{ id: snapshot.sourceId, async fetch() { return snapshot; } }], store,
+      undefined, undefined, undefined, undefined, async ({ candidateUrl }) => { queued.push(candidateUrl); }, resolver).poll();
+    const preserved = await store.getJob('legacy-axon');
+    expect(preserved?.admission).toBeUndefined();
+    expect(preserved).toMatchObject({ open: true, notification: { smsPending: false, digestPending: false } });
+    expect(queued).toEqual([applyUrl]);
+  });
+
+  it('reprocesses an unchanged source after reviewed admission configuration changes', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putCheckpoint({ sourceId: 'greenhouse-acme', successfulFetches: 1, contentHash: 'same', etag: 'old-etag',
+      admissionConfigurationVersion: 'configuration-v1' });
+    let received: SourceCheckpoint | undefined;
+    const adapter: SourceAdapter = {
+      id: 'greenhouse-acme',
+      async fetch(previous) {
+        received = previous;
+        return {
+          sourceId: 'greenhouse-acme', outcome: previous?.contentHash === 'same' ? 'unchanged' : 'changed', complete: true,
+          rawCount: 1, contentHash: 'same', listings: [], notModified: previous?.contentHash === 'same',
+          checkpoint: { sourceId: 'greenhouse-acme', successfulFetches: 2, contentHash: 'same' },
+          postings: [{ sourceId: 'greenhouse-acme', provenance: 'official-ats', externalId: 'acme-role', sourceUrl: 'https://boards-api.greenhouse.io/acme',
+            fetchedAt: '2026-08-27T12:00:00Z', employer: { name: 'Acme', authority: 'reviewed-registry' }, title: 'Software Engineering Intern',
+            providerIdentity: { provider: 'greenhouse', tenant: 'acme' },
+            content: [], locations: ['Remote'], applyUrl: 'https://jobs.example.com/acme-role', sourceState: 'open', lifecycleAuthority: 'source' }],
+        };
+      },
+    };
+    const resolver = {
+      async configurationVersion() { return 'configuration-v2'; },
+      async resolveCanonicalEmployer(identity: { employerScope?: string }) {
+        return identity.employerScope === 'employer:acme' ? { id: 'acme', displayName: 'Acme' } : undefined;
+      },
+      async resolveDestinationRule() { return { id: 'custom-posting-route', host: 'jobs.example.com', provider: 'greenhouse' as const,
+        decision: 'standard-provider-route' as const, reviewedAt: '2026-08-27T00:00:00Z', reviewedBy: 'reviewer' }; },
+    };
+    await new Poller([adapter], store, undefined, undefined, undefined, undefined, undefined, resolver).poll();
+    expect(received).toMatchObject({ contentHash: undefined, etag: undefined });
+    expect(await store.getCheckpoint('greenhouse-acme')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+    expect([...store.jobs.values()][0]).toMatchObject({ company: 'Acme', admission: { catalogEligible: true } });
   });
 });

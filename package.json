@@ -39,7 +39,7 @@
     "notifications:log": "tsx scripts/notification-log.ts",
     "migrate:catalog-search": "tsx src/migrate-catalog-search.ts",
     "migrate:source-occurrences": "tsx src/migrate-source-occurrences.ts",
-    "migrate:posting-identity": "tsx src/migrate-posting-identity.ts",
+    "migrate:posting-identity": "tsx scripts/posting-identity-repair.ts",
     "migrate:catalog-quality": "tsx scripts/catalog-quality-backfill.ts",
     "build:browser-companion": "esbuild browser-companion/content.ts --bundle --format=iife --platform=browser --outfile=browser-companion/dist/content.js",
     "build:cloudflare": "wrangler deploy --dry-run --outdir cloudflare/dist",
@@ -65,6 +65,7 @@
     "@aws-sdk/s3-request-presigner": "^3.883.0"
   },
   "devDependencies": {
+    "@cloudflare/puppeteer": "^1.4.0",
     "@cloudflare/workers-types": "^5.20260823.1",
     "@eslint/js": "^9.35.0",
     "@types/node": "^22.18.0",

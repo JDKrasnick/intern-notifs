@@ -3,8 +3,11 @@ import { assessTechnicalRole } from '../core/filters.js';
 import { parseCompensation } from '../core/normalize.js';
 import { isTruncatedTitle, repairTitle } from '../core/role-title.js';
 import { buildInternshipIdentity } from '../identity/enrichment.js';
+import { canonicalCompanyKey } from '../core/normalize.js';
+import { metadataCompleteness } from '../catalog-admission.js';
 import { normalizeListing, normalizeLocations, locationSummary } from '../catalog-quality.js';
 import { applicationUrlRejection } from '../sources/quality.js';
+import { providerPostingReference } from '../identity/posting.js';
 import type {
   JobRequirements,
   PostingDecision,
@@ -43,6 +46,17 @@ function withheldReason(url: string): PostingDecision['reason'] | undefined {
   return rejection.includes('aggregator') ? 'aggregator-destination' : 'invalid-application-url';
 }
 
+function destinationProviderReference(applyUrl: string) {
+  const reviewed = providerPostingReference(applyUrl);
+  if (reviewed.provider !== 'unknown') return reviewed;
+  try {
+    const url = new URL(applyUrl);
+    const greenhouseId = url.searchParams.get('gh_jid');
+    if (greenhouseId && /^\d+$/u.test(greenhouseId)) return { provider: 'greenhouse' as const, postingId: greenhouseId };
+  } catch { /* Invalid URLs are rejected before this evidence is used. */ }
+  return reviewed;
+}
+
 export function processPosting(
   posting: SourcedPosting,
   employerTitles: readonly string[] = [],
@@ -57,7 +71,8 @@ export function processPosting(
     return { decision: { externalId: posting.externalId, outcome: 'filtered', reason: 'not-early-career' } };
   }
   const company = htmlToText(posting.employer.name);
-  const locations = normalizeLocations(posting.locations.map(htmlToText).filter(Boolean));
+  const sourceLocations = posting.locations.map(htmlToText).filter(Boolean);
+  const locations = normalizeLocations(sourceLocations);
   const location = locationSummary(locations);
   const titleSeason = inferSeason(title, '');
   const season = titleSeason !== 'ongoing' ? titleSeason : posting.seasonHint ?? inferSeason('', content);
@@ -70,6 +85,7 @@ export function processPosting(
   // A structured provider field is authoritative; prose only fills the gap when
   // the source declares nothing usable.
   const workMode = inferWorkMode(posting.declaredWorkMode) ?? inferWorkMode(`${location} ${content}`);
+  const destinationReference = destinationProviderReference(posting.applyUrl);
   const listing: ProcessedListing = normalizeListing({
     sourceId: posting.sourceId,
     ...(posting.provenance ? { provenance: posting.provenance } : {}),
@@ -86,6 +102,7 @@ export function processPosting(
       ? { seasonSource: 'source-default' as const }
       : {}),
     applyUrl: posting.applyUrl,
+    ...(posting.providerEvidence ? { providerEvidence: posting.providerEvidence } : {}),
     compensation: parseCompensation(posting.compensationText ?? content),
     requirements: requirements(posting, content),
     state: posting.sourceState,
@@ -110,6 +127,29 @@ export function processPosting(
     fetchedAt: posting.fetchedAt,
     technical: assessment.technical,
     ...(title === sourceTitle ? {} : { titleRepaired: true }),
+    providerIdentity: {
+      provider: posting.providerIdentity?.provider
+        ?? (destinationReference.provider !== 'unknown' ? destinationReference.provider
+          : posting.sourceId.startsWith('greenhouse-') ? 'greenhouse'
+          : posting.sourceId.startsWith('lever-') ? 'lever'
+            : posting.sourceId.startsWith('ashby-') ? 'ashby'
+              : posting.provenance === 'official-structured' ? 'structured'
+                : posting.provenance === 'employer-submitted' ? 'employer-submission' : 'github'),
+      sourceId: posting.sourceId,
+      sourceUrl: posting.sourceUrl,
+      employerScope: `employer:${canonicalCompanyKey(company)}`,
+      ...(posting.providerIdentity?.tenant ? { tenant: posting.providerIdentity.tenant }
+        : destinationReference.tenant ? { tenant: destinationReference.tenant } : {}),
+      postingId: destinationReference.postingId ?? posting.externalId,
+    },
+    employerEvidence: {
+      authority: posting.employer.authority,
+    },
+    metadataCompleteness: metadataCompleteness({
+      title: sourceTitle,
+      locations: sourceLocations,
+      titleRepaired: title !== sourceTitle,
+    }),
   });
   // A non-technical early-career role is still worth keeping: it is persisted,
   // stays out of every catalog index and alert, and remains available if the

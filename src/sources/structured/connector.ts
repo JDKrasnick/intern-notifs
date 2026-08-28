@@ -269,6 +269,7 @@ function posting(job: NormalizedJob, config: StructuredSourceConfig, fetchedAt: 
     row,
     fetchedAt,
     employer: { ...config.employer, authority: 'reviewed-registry' },
+    providerIdentity: { provider: 'structured', tenant: new URL(config.url).hostname.toLowerCase() },
     title: job.title,
     content: job.description ? [{ kind: 'description', format: HTML_FORMAT.test(job.description) ? 'html' : 'plain', value: job.description }] : [],
     locations: job.locations,

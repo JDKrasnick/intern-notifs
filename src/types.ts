@@ -125,6 +125,8 @@ export interface SourceCheckpoint {
   etag?: string;
   documentEtags?: Record<string, string>;
   contentHash?: string;
+  /** Version of the reviewed admission configuration applied to this snapshot. */
+  admissionConfigurationVersion?: string;
   lastSuccessAt?: string;
   successfulFetches: number;
   lastRowCount?: number;
@@ -269,6 +271,131 @@ export type OccurrenceProvenance =
   | 'employer-submitted'
   | 'reviewed-community';
 
+export interface CanonicalEmployer {
+  id: string;
+  displayName: string;
+  reviewedAt: string;
+  reviewedBy: string;
+  parentEmployerId?: string;
+  brandOfEmployerId?: string;
+}
+
+export interface ProviderIdentity {
+  provider: PostingProvider | 'github' | 'structured' | 'employer-submission';
+  sourceId: string;
+  /** Per-employer reviewed-mapping scope for multi-employer sources. */
+  employerScope?: string;
+  tenant?: string;
+  postingId?: string;
+  sourceUrl: string;
+}
+
+export interface EmployerMapping {
+  id: string;
+  provider: ProviderIdentity['provider'];
+  scope: string;
+  canonicalEmployerId: string;
+  reviewedAt: string;
+  reviewedBy: string;
+  supersedesMappingId?: string;
+  supersededAt?: string;
+}
+
+export type DestinationClassification =
+  | 'posting-detail'
+  | 'application-form'
+  | 'aggregate-board'
+  | 'blocked-uninspectable'
+  | 'gone'
+  | 'unresolved';
+
+export interface DestinationEvidence {
+  classification: DestinationClassification;
+  candidateUrl: string;
+  finalUrl?: string;
+  provider: ProviderIdentity['provider'];
+  tenant?: string;
+  expectedPostingId?: string;
+  inspectedAt: string;
+  evidenceHash?: string;
+  postingIdPresent?: boolean;
+  jobPostingCount?: number;
+  distinctJobLinkCount?: number;
+  applicationFormPresent?: boolean;
+  browserVisible?: boolean;
+  evidenceFrameUrl?: string;
+  evidenceFrameKind?: 'main' | 'child';
+  renderedFrameCount?: number;
+  failedFrameCount?: number;
+  selfReferentialFrame?: boolean;
+  renderedEvidenceHash?: string;
+  identicalEvidenceForDifferentPosting?: boolean;
+  lastKnownGoodAt?: string;
+}
+
+export interface MetadataCompleteness {
+  complete: boolean;
+  title: 'complete' | 'missing' | 'truncated' | 'malformed' | 'approximate-repair';
+  location: 'complete' | 'not-specified' | 'truncated' | 'malformed';
+}
+
+export type CatalogAdmissionReason =
+  | 'employer-unresolved'
+  | 'employer-generic-label'
+  | 'employer-conflict'
+  | 'posting-unattributed'
+  | 'destination-aggregate-board'
+  | 'destination-blocked-uninspectable'
+  | 'destination-gone'
+  | 'destination-unresolved'
+  | 'destination-grace'
+  | 'metadata-title-missing'
+  | 'metadata-title-truncated'
+  | 'metadata-title-malformed'
+  | 'metadata-title-approximate-repair'
+  | 'metadata-conflict'
+  | 'metadata-location-truncated'
+  | 'metadata-location-malformed';
+
+export interface CatalogAdmission {
+  canonicalEmployer?: Pick<CanonicalEmployer, 'id' | 'displayName'>;
+  employerResolution: 'resolved' | 'unresolved' | 'conflict';
+  postingAttribution: 'attributed' | 'unattributed';
+  destination: DestinationEvidence;
+  metadata: MetadataCompleteness;
+  catalogEligible: boolean;
+  alertEligible: boolean;
+  reasonCodes: CatalogAdmissionReason[];
+  evaluatedAt: string;
+  evidenceObservedAt: string;
+  graceDeadline?: string;
+}
+
+export interface AdmissionIncident {
+  id: string;
+  jobId: string;
+  sourceId: string;
+  host: string;
+  reasonCode: CatalogAdmissionReason;
+  state: 'open' | 'resolved' | 'quarantined';
+  openedAt: string;
+  updatedAt: string;
+  graceDeadline?: string;
+  warningSentAt?: string;
+  quarantineSentAt?: string;
+}
+
+export interface DestinationReviewRule {
+  id: string;
+  host: string;
+  provider: ProviderIdentity['provider'];
+  tenant?: string;
+  decision: 'standard-provider-route' | 'browser-required' | 'aggregate-board' | 'blocked-accepted';
+  reviewedAt: string;
+  reviewedBy: string;
+  sampleDueAt?: string;
+}
+
 export type WorkAuthorizationStatus =
   | 'sponsorship-available'
   | 'no-sponsorship'
@@ -383,6 +510,16 @@ export interface PostingAlias {
   sourceUrl?: string;
 }
 
+/** Immutable provider facts carried from a reviewed connector or checkpoint. */
+export interface ProviderPostingEvidence {
+  provider: Extract<PostingProvider, 'greenhouse' | 'lever'>;
+  tenant: string;
+  postingId: string;
+  sourceId: string;
+  /** Every provider-issued presentation URL observed in the same API row. */
+  urls: string[];
+}
+
 /** Exact requisition identity. It is intentionally independent from `InternshipIdentity`. */
 export interface PostingIdentity {
   provider: PostingProvider;
@@ -411,6 +548,8 @@ export interface JobRequirements {
 
 export interface SourceOccurrence extends SourceReference {
   externalId?: string;
+  /** Reviewed provider facts retained for identity repair and audit. */
+  providerEvidence?: ProviderPostingEvidence;
   /** Source-local classification retained so job eligibility is independent of poll order. */
   technical?: boolean;
   company: string;
@@ -422,6 +561,8 @@ export interface SourceOccurrence extends SourceReference {
   compensation: Compensation;
   requirements?: JobRequirements;
   state: 'open' | 'closed';
+  /** Record-level evidence; missing values identify legacy rows awaiting backfill. */
+  admission?: CatalogAdmission;
   /** Exact time this source was first linked to this catalog job, when known. */
   firstAttachedAt?: string;
   /** Legacy references predate attribution tracking and must not imply precision. */
@@ -477,8 +618,16 @@ export interface ProcessedListing extends SourceOccurrence {
   seasonSource?: 'posting' | 'source-default';
   /** Exact provider-aware identity resolved before reconciliation. */
   postingIdentity?: PostingIdentity;
+  /** Reviewed evidence used to build `postingIdentity`; never inferred from display fields. */
+  providerEvidence?: ProviderPostingEvidence;
   /** Descriptive identity used for program grouping and audience filtering. */
   internshipIdentity?: InternshipIdentity;
+  providerIdentity?: ProviderIdentity;
+  employerEvidence?: {
+    authority: SourcedPosting['employer']['authority'];
+    canonicalEmployer?: Pick<CanonicalEmployer, 'id' | 'displayName'>;
+  };
+  metadataCompleteness?: MetadataCompleteness;
 }
 
 /** @deprecated Use `ProcessedListing`; retained only while callers migrate. */
@@ -497,6 +646,7 @@ export interface SourcedPosting {
     name: string;
     authority: 'reviewed-registry' | 'source-row';
   };
+  providerIdentity?: Omit<ProviderIdentity, 'sourceId' | 'sourceUrl' | 'postingId'>;
   title: string;
   content: Array<{
     kind: 'description' | 'requirements' | 'additional';
@@ -506,6 +656,7 @@ export interface SourcedPosting {
   locations: string[];
   applyUrl: string;
   hostedUrl?: string;
+  providerEvidence?: ProviderPostingEvidence;
   sourceState: 'open' | 'closed' | 'prospect';
   /**
    * `title` requires an explicit early-career signal in the posting title.
@@ -602,6 +753,8 @@ export interface Internship {
   /** Persisted preprocessing result used by indexes and queries. */
   technical?: boolean;
   open: boolean;
+  /** Admission is independent from source lifecycle. Missing means legacy/unclassified. */
+  admission?: CatalogAdmission;
   /** Immutable time InternNotifs first observed this canonical catalog role. */
   firstSeenAt: string;
   /** Immutable time this canonical role first became visible; absent only on legacy rows. */

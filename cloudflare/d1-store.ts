@@ -8,7 +8,8 @@ import { resolvePostingAliases, type AliasResolution } from '../src/identity/pos
 import { deletedUserTombstoneKey, type InternshipStore, type LeverAdmission, type ReleaseStore, type UserStore, type CatalogQuery } from '../src/store.js';
 import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from '../src/catalog-groups.js';
 import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from '../src/types.js';
-import type { D1Database } from './types.js';
+import type { D1Database, D1PreparedStatement } from './types.js';
+import { alertEligible, catalogEligible } from '../src/catalog-admission.js';
 
 type JsonRow = { value: string };
 const deliveryReceiptLifetimeSeconds = 90 * 24 * 60 * 60;
@@ -102,13 +103,21 @@ export class D1InternshipStore implements InternshipStore {
       JSON.stringify(canonical),
       canonical.normalizedUrl,
       canonical.fingerprint,
-      canonical.notification.smsPending ? 1 : 0,
-      canonical.notification.digestPending ? 1 : 0,
-      canonical.technical === false ? null : canonical.open ? 'OPEN' : 'CLOSED',
-      canonical.technical === false ? null : canonical.open ? openCatalogSortKey(canonical) : `${canonical.lastSeenAt}#${canonical.jobId}`,
-      canonical.technical === false ? null : catalogSearchText(canonical),
-      canonical.technical === false ? null : JSON.stringify(catalogSourceClasses(canonical)),
+      canonical.notification.smsPending && alertEligible(canonical) ? 1 : 0,
+      canonical.notification.digestPending && alertEligible(canonical) ? 1 : 0,
+      canonical.technical === false || !catalogEligible(canonical) ? null : canonical.open ? 'OPEN' : 'CLOSED',
+      canonical.technical === false || !catalogEligible(canonical) ? null : canonical.open ? openCatalogSortKey(canonical) : `${canonical.lastSeenAt}#${canonical.jobId}`,
+      canonical.technical === false || !catalogEligible(canonical) ? null : catalogSearchText(canonical),
+      canonical.technical === false || !catalogEligible(canonical) ? null : JSON.stringify(catalogSourceClasses(canonical)),
     );
+  }
+
+  private sourceOccurrenceStatement(occurrence: SourceOccurrenceState) {
+    return this.db.prepare(`INSERT INTO catalog_items (pk, sk, kind, value, source_id, external_id)
+      VALUES (?, ?, 'source-occurrence', ?, ?, ?)
+      ON CONFLICT(pk, sk) DO UPDATE SET kind = excluded.kind, value = excluded.value,
+        source_id = excluded.source_id, external_id = excluded.external_id`)
+      .bind(`SOURCE#${occurrence.sourceId}`, `OCCURRENCE#${occurrence.externalId}`, JSON.stringify(occurrence), occurrence.sourceId, occurrence.externalId);
   }
 
   getCheckpoint(sourceId: string) { return this.get<SourceCheckpoint>(`SOURCE#${sourceId}`, 'CHECKPOINT'); }
@@ -189,13 +198,23 @@ export class D1InternshipStore implements InternshipStore {
   async putInternship(job: Internship): Promise<void> {
     await this.internshipStatement(job).run();
   }
-  getJob(jobId: string) { return this.get<Internship>(`JOB#${jobId}`, 'META').then((job) => job && withEmployerCategory(job)); }
+  async getJob(jobId: string) {
+    const direct = await this.get<Internship>(`JOB#${jobId}`, 'META');
+    if (direct) return withEmployerCategory(direct);
+    const alias = await this.get<{ canonicalJobId: string }>(`JOB_ID_ALIAS#${jobId}`, 'TARGET');
+    if (!alias?.canonicalJobId || alias.canonicalJobId === jobId) return undefined;
+    const canonical = await this.get<Internship>(`JOB#${alias.canonicalJobId}`, 'META');
+    return canonical && withEmployerCategory(canonical);
+  }
   async getSourceOccurrences(sourceId: string): Promise<SourceOccurrenceState[]> {
     const result = await this.db.prepare("SELECT value FROM catalog_items WHERE pk = ? AND sk LIKE 'OCCURRENCE#%'").bind(`SOURCE#${sourceId}`).all<JsonRow>();
     return result.results.map((row) => JSON.parse(row.value) as SourceOccurrenceState);
   }
   putSourceOccurrence(occurrence: SourceOccurrenceState) {
-    return this.put(`SOURCE#${occurrence.sourceId}`, `OCCURRENCE#${occurrence.externalId}`, 'source-occurrence', occurrence, { source_id: occurrence.sourceId, external_id: occurrence.externalId });
+    return this.sourceOccurrenceStatement(occurrence).run().then(() => undefined);
+  }
+  async putAdmissionState(job: Internship, occurrence?: SourceOccurrenceState): Promise<void> {
+    await this.db.batch([this.internshipStatement(job), ...(occurrence ? [this.sourceOccurrenceStatement(occurrence)] : [])]);
   }
   async putInternshipWithNotificationEvent(job: Internship, event: NotificationEvent): Promise<boolean> {
     const eventStatement = this.db.prepare("INSERT INTO catalog_items (pk, sk, kind, value) VALUES (?, 'EVENT', 'notification-event', ?) ON CONFLICT(pk, sk) DO NOTHING")
@@ -224,10 +243,21 @@ export class D1InternshipStore implements InternshipStore {
     expectedCandidateJobIds?: string[];
   }): Promise<{ candidates: number; candidateJobIds: string[]; requeued: number }> {
     const result = await this.db.prepare(`
-      SELECT json_extract(event.value, '$.jobId') AS jobId
+      SELECT COALESCE(
+        json_extract(alias.value, '$.canonicalJobId'),
+        json_extract(event.value, '$.jobId')
+      ) AS jobId
       FROM catalog_items AS event
+      LEFT JOIN catalog_items AS alias
+        ON alias.pk = 'JOB_ID_ALIAS#' || json_extract(event.value, '$.jobId')
+        AND alias.sk = 'TARGET'
+        AND alias.kind = 'job-id-alias'
       JOIN catalog_items AS job
-        ON job.pk = 'JOB#' || json_extract(event.value, '$.jobId') AND job.sk = 'META'
+        ON job.pk = 'JOB#' || COALESCE(
+          json_extract(alias.value, '$.canonicalJobId'),
+          json_extract(event.value, '$.jobId')
+        )
+        AND job.sk = 'META'
       WHERE event.kind = 'notification-event'
         AND json_extract(event.value, '$.createdAt') >= ?
         AND job.kind = 'internship'
@@ -236,7 +266,10 @@ export class D1InternshipStore implements InternshipStore {
         AND NOT EXISTS (
           SELECT 1 FROM user_items AS receipt
           WHERE receipt.kind = 'receipt'
-            AND json_extract(receipt.value, '$.jobId') = json_extract(event.value, '$.jobId')
+            AND json_extract(receipt.value, '$.jobId') = COALESCE(
+              json_extract(alias.value, '$.canonicalJobId'),
+              json_extract(event.value, '$.jobId')
+            )
         )
       GROUP BY job.pk
       ORDER BY MAX(json_extract(event.value, '$.createdAt')) DESC, job.pk ASC
@@ -301,16 +334,26 @@ export class D1InternshipStore implements InternshipStore {
   async listCatalog(): Promise<Internship[]> {
     const result = await this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'internship'").all<JsonRow>();
     return result.results.map((row) => JSON.parse(row.value) as Internship)
-      .filter((job) => job.technical !== false && !isPastSeason(job.season))
+      .filter((job) => job.technical !== false && catalogEligible(job) && !isPastSeason(job.season))
       .sort(compareCatalogRecency).map(withEmployerCategory);
   }
   async putCatalogProjection(groups: CatalogGroupDetails[], generatedAt: string): Promise<void> {
     const previous = await this.get<{ version: string }>('CATALOG_PROJECTION', 'CURRENT');
     const version = createHash('sha256').update(`${generatedAt}\0${groups.map((group) => group.group.groupId).join('\0')}`).digest('hex').slice(0, 20);
-    const statements = groups.map((details, index) => this.db.prepare(`
-      INSERT INTO catalog_items (pk, sk, kind, value, catalog_sort_key) VALUES (?, ?, 'catalog-projection', ?, ?)
-      ON CONFLICT(pk, sk) DO UPDATE SET value = excluded.value, catalog_sort_key = excluded.catalog_sort_key
-    `).bind(`CATALOG_PROJECTION#${version}`, `GROUP#${details.group.groupId}`, JSON.stringify(details), String(index).padStart(8, '0')));
+    const statements: D1PreparedStatement[] = [];
+    for (let offset = 0; offset < groups.length; offset += 25) {
+      const chunk = groups.slice(offset, offset + 25);
+      const placeholders = chunk.map(() => `(?, ?, 'catalog-projection', ?, ?)`).join(', ');
+      statements.push(this.db.prepare(`
+        INSERT INTO catalog_items (pk, sk, kind, value, catalog_sort_key) VALUES ${placeholders}
+        ON CONFLICT(pk, sk) DO UPDATE SET value = excluded.value, catalog_sort_key = excluded.catalog_sort_key
+      `).bind(...chunk.flatMap((details, index) => [
+        `CATALOG_PROJECTION#${version}`,
+        `GROUP#${details.group.groupId}`,
+        JSON.stringify(details),
+        String(offset + index).padStart(8, '0'),
+      ])));
+    }
     for (let offset = 0; offset < statements.length; offset += 50) await this.db.batch(statements.slice(offset, offset + 50));
     await this.put('CATALOG_PROJECTION', 'CURRENT', 'catalog-projection-pointer', { version, generatedAt, schemaVersion: 3 });
     // Projection versions are rebuildable caches. Deleting only the version

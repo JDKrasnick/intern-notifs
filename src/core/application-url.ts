@@ -49,6 +49,19 @@ export interface ApplicationPageEvidence {
   description?: string;
   expectedPostingId?: string;
   postingIdPresent?: boolean;
+  jobPostingCount?: number;
+  distinctJobLinkCount?: number;
+  applicationFormPresent?: boolean;
+  /** Browser frame that supplied the selected rendered posting proof. */
+  evidenceFrameUrl?: string;
+  evidenceFrameKind?: 'main' | 'child';
+  renderedFrameCount?: number;
+  failedFrameCount?: number;
+  selfReferentialFrame?: boolean;
+  /** Hash of bounded rendered frame evidence, excluding applicant-entered values. */
+  renderedEvidenceHash?: string;
+  /** Another expected posting ID produced the same normalized rendered artifact. */
+  identicalEvidenceForDifferentPosting?: boolean;
   /** Bounded public job text, never applicant-entered data. */
   contentExcerpt?: string;
   contentHash?: string;
@@ -154,12 +167,55 @@ function structuredJobText(html: string): { text?: string; source?: 'json-ld' } 
   return {};
 }
 
+async function boundedResponseText(response: Response, maximumBytes = 512 * 1024): Promise<string> {
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maximumBytes) {
+    throw new ApplicationUrlValidationError('Application page exceeds the inspection size limit');
+  }
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maximumBytes) throw new ApplicationUrlValidationError('Application page exceeds the inspection size limit');
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder().decode(bytes);
+}
+
 function applicationContent(html: string): { excerpt?: string; hash?: string; source?: 'json-ld' | 'main' | 'body' } {
   const structured = structuredJobText(html);
   const main = /<main\b[^>]*>([\s\S]*?)<\/main>/i.exec(html)?.[1];
   const text = structured.text ?? (main ? textFromHtml(main) : textFromHtml(/<body\b[^>]*>([\s\S]*?)<\/body>/i.exec(html)?.[1] ?? html));
   if (!text) return {};
   return { excerpt: text.slice(0, 12_000), hash: createHash('sha256').update(text).digest('hex'), source: structured.source ?? (main ? 'main' : 'body') };
+}
+
+const JOB_ROUTE = /(?:^|\/)(?:careers?|jobs?|openings?|positions?|roles?|vacancies?)(?:\/|$)/iu;
+
+function distinctJobLinkCount(html: string, pageUrl: URL): number {
+  const page = new URL(pageUrl);
+  page.hash = '';
+  const links = new Set<string>();
+  for (const match of html.matchAll(/<a\b[^>]*href=["']([^"']+)["']/giu)) {
+    try {
+      const candidate = new URL(decodeHtml(match[1]!), page);
+      candidate.hash = '';
+      if (!['http:', 'https:'].includes(candidate.protocol) || candidate.toString() === page.toString()) continue;
+      if (JOB_ROUTE.test(candidate.pathname)) links.add(candidate.toString());
+    } catch { /* Malformed link evidence is ignored. */ }
+  }
+  return links.size;
 }
 
 function postingId(url: URL): string | undefined {
@@ -248,11 +304,14 @@ export async function inspectApplicationPage(
     ...(expectedPostingId ? { expectedPostingId } : {}),
     confidence: confidenceFor({ html: false, ...(expectedPostingId ? { expectedPostingId } : {}) }),
   };
-  const html = await response.text();
+  const html = await boundedResponseText(response);
   const content = applicationContent(html);
   const title = /<title[^>]*>\s*([^<]+?)\s*<\/title>/i.exec(html)?.[1]?.replace(/\s+/g, ' ').trim();
   const description = /<meta[^>]+(?:name|property)=["'](?:description|og:description)["'][^>]+content=["']([^"']+)["']/i.exec(html)?.[1]?.replace(/\s+/g, ' ').trim();
   const postingIdPresent = expectedPostingId ? html.includes(expectedPostingId) : undefined;
+  const jobPostingCount = [...html.matchAll(/["']@type["']\s*:\s*["']JobPosting["']/gi)].length;
+  const jobLinkCount = distinctJobLinkCount(html, destination);
+  const applicationFormPresent = /<form\b[^>]*(?:action=["'][^"']*(?:apply|application)|id=["'][^"']*(?:apply|application))|<input\b[^>]*(?:type=["']file["']|name=["'](?:resume|cv)["'])/i.test(html);
   if (title && /^(?:404 |page )?not found$|^(?:access denied|application error|error)$/i.test(title)) {
     throw new ApplicationUrlValidationError(`Application page reports ${title}`);
   }
@@ -262,6 +321,9 @@ export async function inspectApplicationPage(
     ...(description ? { description } : {}),
     ...(expectedPostingId ? { expectedPostingId } : {}),
     ...(postingIdPresent !== undefined ? { postingIdPresent } : {}),
+    ...(jobPostingCount ? { jobPostingCount } : {}),
+    ...(jobLinkCount ? { distinctJobLinkCount: jobLinkCount } : {}),
+    ...(applicationFormPresent ? { applicationFormPresent: true } : {}),
     ...(content.excerpt ? { contentExcerpt: content.excerpt, contentHash: content.hash, contentSource: content.source } : {}),
     confidence: confidenceFor({ html: true, ...(title ? { title } : {}), ...(description ? { description } : {}), ...(content.excerpt ? { contentExcerpt: content.excerpt } : {}), ...(expectedPostingId ? { expectedPostingId } : {}), ...(postingIdPresent !== undefined ? { postingIdPresent } : {}) }),
   };

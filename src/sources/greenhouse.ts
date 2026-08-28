@@ -270,10 +270,15 @@ export function mapGreenhouseSourcedPosting(
     row,
     fetchedAt,
     employer: { id: source.employerId, name: source.displayName, authority: 'reviewed-registry' },
+    providerIdentity: { provider: 'greenhouse', tenant: source.boardToken },
     title,
     content: [{ kind: 'description', format: 'html', value: description }],
     locations: [htmlToText(job.location?.name ?? undefined)].filter(Boolean),
     applyUrl: job.absolute_url,
+    providerEvidence: {
+      provider: 'greenhouse', tenant: source.boardToken.toLowerCase(), postingId: externalId,
+      sourceId: source.id, urls: [job.absolute_url],
+    },
     sourceState: job.internal_job_id === null || job.internal_job_id === undefined ? 'prospect' : 'open',
     ...(job.updated_at && !Number.isNaN(Date.parse(job.updated_at)) ? {
       publishedAt: new Date(job.updated_at).toISOString(),

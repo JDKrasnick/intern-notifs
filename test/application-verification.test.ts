@@ -34,8 +34,8 @@ describe('application URL attribution', () => {
   it('reads the board and posting an ATS application URL points at', () => {
     expect(boardReference('https://job-boards.greenhouse.io/stripe/jobs/8657500002'))
       .toEqual({ provider: 'greenhouse', token: 'stripe', postingId: '8657500002' });
-    expect(boardReference('https://jobs.lever.co/palantir/9e40d77f/apply'))
-      .toEqual({ provider: 'lever', token: 'palantir', postingId: '9e40d77f' });
+    expect(boardReference('https://jobs.lever.co/palantir/9e40d77f-0148-41f0-b2b1-ff054450a320/apply'))
+      .toEqual({ provider: 'lever', token: 'palantir', postingId: '9e40d77f-0148-41f0-b2b1-ff054450a320' });
     expect(boardReference('https://www.tesla.com/careers/search/job/12345')).toBeUndefined();
     expect(boardReference('not a url')).toBeUndefined();
   });

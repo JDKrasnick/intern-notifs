@@ -11,6 +11,7 @@ import type { SourceCheckpoint, SourceFetchResult } from './types.js';
 import type { LeverWorkMessage } from './lever-dispatch.js';
 import { processFifoBatch } from './sqs-fifo-batch.js';
 import { legacyDeliveryExclusions, loadGroupedNotificationCohort, type GroupedNotificationCohort } from './grouped-notification-cohort.js';
+import type { CatalogAdmissionResolver, DestinationVerificationRequest } from './destination-verification.js';
 
 const SHADOW_CHECKPOINT_PREFIX = 'shadow-';
 const SHADOW_LINK_CONCURRENCY = 4;
@@ -34,6 +35,8 @@ export interface LeverBoardDependencies {
   fetchImpl?: typeof fetch;
   linkValidator?: ApplicationUrlValidator;
   groupedNotificationCohort?: GroupedNotificationCohort;
+  enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>;
+  catalogAdmissionResolver?: CatalogAdmissionResolver;
   sleep?: (milliseconds: number) => Promise<void>;
 }
 
@@ -273,7 +276,8 @@ export async function runLeverBoard(
     }
   }
 
-  const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate, false).poll({ runId: message.runId });
+  const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate, false,
+    dependencies.enqueueDestinationVerification, dependencies.catalogAdmissionResolver).poll({ runId: message.runId });
   if (poll.failures.length) throw new Error(poll.failures.join('; '));
   const publishedHealth = await dependencies.store.getSourceHealth(source.id);
   if (publishedHealth) {

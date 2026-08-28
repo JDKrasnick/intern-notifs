@@ -1,5 +1,7 @@
 import { fingerprint, jobId, normalizeUrl } from './core/normalize.js';
 import type { EmployerSubmission } from './employer-types.js';
+import { evidenceHash, metadataCompleteness } from './catalog-admission.js';
+import type { CatalogAdmission } from './types.js';
 import type { Internship, InternshipProgramType, WorkMode } from './types.js';
 
 const programTypes: InternshipProgramType[] = ['internship', 'co-op', 'apprenticeship', 'new-grad', 'entry-level'];
@@ -87,10 +89,28 @@ export function publishedInternshipFromSubmission(submission: EmployerSubmission
   const applicationDeadline = submission.deadline === 'rolling'
     ? { kind: 'rolling' as const }
     : { kind: 'date' as const, date: submission.deadline, timezone: submission.deadlineTimezone! };
+  const metadata = metadataCompleteness({ title: submission.title, locations: [submission.location] });
+  if (!metadata.complete) throw new Error('Submission display metadata is incomplete');
+  const destination = {
+    classification: 'application-form' as const,
+    candidateUrl: submission.applicationUrl,
+    finalUrl: submission.applicationUrl,
+    provider: 'employer-submission' as const,
+    expectedPostingId: submission.id,
+    inspectedAt: submission.publishedAt ?? now,
+    applicationFormPresent: true,
+    evidenceHash: evidenceHash({ organizationId: submission.organizationId, submissionId: submission.id, applicationUrl: submission.applicationUrl }),
+  };
+  const admission: CatalogAdmission = {
+    canonicalEmployer: { id: submission.organizationId, displayName: submission.company },
+    employerResolution: 'resolved', postingAttribution: 'attributed', destination, metadata,
+    catalogEligible: true, alertEligible: true, reasonCodes: [], evaluatedAt: now,
+    evidenceObservedAt: destination.inspectedAt,
+  };
   return {
     jobId: jobId(normalizedUrl, key), company: submission.company, title: submission.title,
     location: submission.location, locations: [submission.location], season: submission.season,
-    applyUrl: submission.applicationUrl, normalizedUrl, fingerprint: key,
+    applyUrl: submission.applicationUrl, normalizedUrl, applicationUrlValidatedAt: destination.inspectedAt, fingerprint: key,
     compensation: { raw: submission.compensation ?? '' }, workAuthorizationStatus: submission.workAuthorization,
     applicationDeadline, programType: submission.programType as InternshipProgramType,
     workMode: submission.workMode as WorkMode,
@@ -101,7 +121,9 @@ export function publishedInternshipFromSubmission(submission: EmployerSubmission
       location: submission.location, locations: [submission.location], season: submission.season,
       applyUrl: submission.applicationUrl, compensation: { raw: submission.compensation ?? '' }, state: 'open', technical: true,
       firstAttachedAt: submission.publishedAt ?? now, firstAttachedAtPrecision: 'exact', workMode: submission.workMode as Exclude<WorkMode, 'unspecified'>,
+      admission,
     }], technical: true, open: true, firstSeenAt: submission.publishedAt ?? now,
+    admission,
     catalogVisibleAt: submission.publishedAt ?? now, catalogRecency: 'normal', lastSeenAt: now,
     notification: { smsPending: true, digestPending: true },
   };

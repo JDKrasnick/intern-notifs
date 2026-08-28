@@ -29,7 +29,10 @@ describe('shared posting processor', () => {
       compensation: { maxHourlyUSD: 50 },
       requirements: { requiresUsCitizenship: true, advancedDegreeRequired: false },
       technical: true,
+      providerIdentity: { employerScope: 'employer:acme' },
+      employerEvidence: { authority: 'reviewed-registry' },
     });
+    expect(result.listings[0]?.employerEvidence?.canonicalEmployer).toBeUndefined();
   });
 
   it('prefers a declared work mode and infers one only when the source declares nothing usable', () => {

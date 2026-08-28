@@ -63,6 +63,7 @@ describe('season inference', () => {
   it('reads a named hiring season from the title or description', () => {
     expect(inferSeason('Software Engineering Intern, Summer 2027', '', now)).toBe('summer-2027');
     expect(inferSeason('Data Intern', 'Starts in the fall 2026 cohort.', now)).toBe('fall-2026');
+    expect(inferSeason('Software Engineering Intern [Fall/Winter 2026]', '', now)).toBe('offseason-2026');
   });
 
   it('accepts a bare year only inside the plausible hiring window', () => {

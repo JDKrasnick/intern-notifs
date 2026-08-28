@@ -45,8 +45,24 @@ quiet baseline instead of alerting every role already open.
 Greenhouse ETags make unchanged checks cheap; Lever always retrieves the full
 paginated board and uses a stable content hash because its public endpoint does
 not honor conditional requests. A changed published snapshot passes through
-canonicalization, deduplication, official-link validation, DynamoDB storage,
-and notification matching. Every published provider worker reads the shared
+canonicalization and the shared catalog-admission evaluator before storage or
+notification matching. Each source occurrence retains its reviewed canonical-
+employer evidence, provider and posting identity, destination classification
+and evidence, metadata-completeness result, eligibility flags, and reason codes.
+The canonical job is derived from all open occurrences: a valid official
+occurrence can repair a bad community occurrence, while conflicting official
+employer evidence blocks publication.
+
+Reviewed standard Greenhouse, Lever, and Ashby routes may be admitted when the
+tenant and posting ID match even if an automated fetch is blocked. Custom routes
+need visible single-role browser evidence; aggregate boards and confirmed-gone
+pages quarantine immediately. A previously good custom route gets a seven-day
+catalog grace period when it becomes inconclusive, but alerts pause immediately.
+Browser Rendering work runs through the destination-verification queue and DLQ,
+retains bounded evidence and attempts in D1, retries incidents daily, and samples
+reviewed host rules weekly.
+
+Every published provider worker reads the shared
 grouped-notification cohort from SSM and excludes those users from its legacy
 direct sender; the grouped pipeline is their sole delivery path. The existing
 general notifier continues to reconcile push receipts and the optional ntfy

@@ -10,6 +10,7 @@ import type { SourceCheckpoint, SourceFetchResult } from './types.js';
 import type { AshbyWorkMessage } from './ashby-dispatch.js';
 import { processFifoBatch } from './sqs-fifo-batch.js';
 import { legacyDeliveryExclusions, loadGroupedNotificationCohort, type GroupedNotificationCohort } from './grouped-notification-cohort.js';
+import type { CatalogAdmissionResolver, DestinationVerificationRequest } from './destination-verification.js';
 
 const SHADOW_CHECKPOINT_PREFIX = 'shadow-';
 const SHADOW_LINK_CONCURRENCY = 4;
@@ -45,6 +46,8 @@ export interface AshbyBoardDependencies {
   fetchImpl?: typeof fetch;
   linkValidator?: ApplicationUrlValidator;
   groupedNotificationCohort?: GroupedNotificationCohort;
+  enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>;
+  catalogAdmissionResolver?: CatalogAdmissionResolver;
   sleep?: (milliseconds: number) => Promise<void>;
 }
 
@@ -307,7 +310,8 @@ export async function runAshbyBoard(
     }
   }
 
-  const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate, false).poll({
+  const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate, false,
+    dependencies.enqueueDestinationVerification, dependencies.catalogAdmissionResolver).poll({
     runId: message.runId,
     allowCompleteEmptySnapshot: true,
   });

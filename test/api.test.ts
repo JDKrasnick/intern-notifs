@@ -11,6 +11,28 @@ const hasUndefined = (value: unknown): boolean =>
   (value !== null && typeof value === 'object' && Object.values(value).some(hasUndefined));
 
 describe('public API ownership boundary', () => {
+  it('retains quarantined roles in Saved without an unsafe handoff or assistance controls', async () => {
+    const jobs = new MemoryInternshipStore(); const users = new MemoryUserStore();
+    const review = { ...job, admission: {
+      canonicalEmployer: { id: 'acme', displayName: 'Acme' }, employerResolution: 'resolved' as const,
+      postingAttribution: 'attributed' as const,
+      destination: { classification: 'aggregate-board' as const, candidateUrl: job.applyUrl, provider: 'structured' as const, inspectedAt: '2026-08-26T00:00:00Z' },
+      metadata: { complete: true, title: 'complete' as const, location: 'complete' as const },
+      catalogEligible: false, alertEligible: false, reasonCodes: ['destination-aggregate-board' as const],
+      evaluatedAt: '2026-08-26T00:00:00Z', evidenceObservedAt: '2026-08-26T00:00:00Z',
+    } };
+    await jobs.putInternship(review);
+    await users.putApplication('student', { applicationId: 'saved-1', jobId: job.jobId, status: 'saved', createdAt: '2026-08-20T00:00:00Z', updatedAt: '2026-08-20T00:00:00Z' });
+    const handler = createApiHandler({ jobs, users });
+    expect((await handler(event(undefined, 'GET', `/jobs/${job.jobId}`))).statusCode).toBe(404);
+    const summary = JSON.parse((await handler(event('student', 'GET', '/me/applications'))).body).applications[0];
+    expect(summary.job).toMatchObject({ company: 'Acme', title: 'Software Intern', availability: 'catalog-review',
+      unavailableReason: 'InternNotifs couldn’t verify the official role page and is reviewing it.' });
+    expect(summary.job).not.toHaveProperty('applyUrl');
+    expect(summary.job).not.toHaveProperty('assistance');
+    expect((await handler(event('student', 'PATCH', '/me/applications/saved-1', { status: 'applied' }))).statusCode).toBe(200);
+    expect((await handler(event('student', 'POST', '/me/applications/saved-1/assistance-sessions', { mode: 'headed' }))).statusCode).toBe(409);
+  });
   it('publishes provider-neutral company coverage without requiring an account', async () => {
     const handler = createApiHandler({ jobs: new MemoryInternshipStore(), users: new MemoryUserStore() });
     const response = await handler(event(undefined, 'GET', '/coverage', undefined, { q: 'figma', limit: '10' }));

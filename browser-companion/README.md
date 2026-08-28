@@ -20,4 +20,4 @@ This is a local-only, headed browser extension pilot for reviewed Greenhouse, Le
 
 The extension intentionally rejects any other site and ambiguous or duplicate Quick Apply controls. A challenge on a supported route is a visible handoff, never an automation target. Adding another ATS means adding a reviewed adapter and tests first.
 
-Run `npm run audit:browser-companion` to pull a bounded live sample from the public catalog, fetch one page per host, and verify that the reviewed Greenhouse/Lever/published-Ashby pages still expose a Quick Apply or contact-form surface. It does not submit, fill, sign in, or retain any employer-page data.
+Run `npm run audit:browser-companion` to pull a bounded live sample from the public catalog, fetch one page per host, and verify that reviewed Greenhouse/published-Ashby pages expose a Quick Apply or contact-form surface and Lever still serves its JavaScript application shell on the exact application route. It does not submit, fill, sign in, or retain any employer-page data.

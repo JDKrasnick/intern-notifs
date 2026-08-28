@@ -4,6 +4,7 @@ import type { InternshipStore } from '../src/store.js';
 import type { EmployerAuditEvent, EmployerSubmission, EmployerVerificationState } from '../src/employer-types.js';
 import { automaticPublishingEligibility, verificationExpiresAt, verificationIsActive } from '../src/employer-types.js';
 import { deadlineHasPassed, publishedInternshipFromSubmission } from '../src/employer-submission.js';
+import { deriveCanonicalAdmission } from '../src/catalog-admission.js';
 import type { Internship } from '../src/types.js';
 import { parseEmployerBoardUrl } from '../src/employer/index.js';
 import { normalizeUrl } from '../src/core/normalize.js';
@@ -141,9 +142,11 @@ export async function publishEmployerSubmission(jobs: InternshipStore, submissio
   const existing = await jobs.getJob(resolution.canonicalJobId);
   if (existing) {
     const duplicate = existing.sourceReferences.some((reference) => reference.sourceId === incoming.sourceReferences[0]!.sourceId);
+    const sourceReferences = duplicate ? existing.sourceReferences : [...existing.sourceReferences, incoming.sourceReferences[0]!];
     const merged: Internship = {
       ...existing,
-      sourceReferences: duplicate ? existing.sourceReferences : [...existing.sourceReferences, incoming.sourceReferences[0]!],
+      sourceReferences,
+      admission: deriveCanonicalAdmission(sourceReferences, timestamp),
       workAuthorizationStatus: existing.workAuthorizationStatus && existing.workAuthorizationStatus !== 'unknown' ? existing.workAuthorizationStatus : incoming.workAuthorizationStatus,
       applicationDeadline: existing.applicationDeadline ?? incoming.applicationDeadline,
       graduationWindow: existing.graduationWindow ?? incoming.graduationWindow,
