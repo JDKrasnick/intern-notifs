@@ -87,8 +87,8 @@ describe('Gmail application matcher', () => {
     expect(result).toMatchObject({ outcome: 'applied', candidate: { jobId: 'job-1' } });
   });
 
-  it.each(['Interview invitation — Northstar Labs', 'Complete your coding assessment', 'New job alert from Northstar Labs', 'Your application was rejected'])(
-    'excludes stage and alert mail: %s', (subject) => expect(matchGmailApplication(metadata(subject), [role()]).outcome).toBe('ignore'),
+  it.each(['New job alert from Northstar Labs', 'Your Northstar Labs application is incomplete', 'Your application was saved as a draft'])(
+    'excludes alerts and unfinished applications: %s', (subject) => expect(matchGmailApplication(metadata(subject), [role()]).outcome).toBe('ignore'),
   );
 
   it('ignores malformed and unrelated headers', () => {
@@ -171,6 +171,25 @@ describe('Gmail application matcher', () => {
     });
   });
 
+  it.each([
+    'Application confirmation — Northstar Labs',
+    'We got your application — Northstar Labs',
+    'Your application is in — Northstar Labs',
+    'Receipt of application — Northstar Labs',
+    'Confirmation of your application — Northstar Labs',
+    'Submission confirmed — Northstar Labs',
+    'Your candidate application has been successfully submitted to Northstar Labs',
+  ])('accepts a common receipt construction inside the Apply window: %s', (subject) => {
+    expect(matchRecentClickedGmailApplication(metadata(subject), [recent(role())]).outcome).toBe('applied');
+  });
+
+  it('holds a receipt explicitly naming another candidate for review', () => {
+    expect(matchRecentClickedGmailApplication(metadata(
+      'Application received for Jordan Lee — Northstar Labs',
+      'jobs@northstarlabs.com',
+    ), [recent(role())])).toMatchObject({ outcome: 'review' });
+  });
+
   it('does not auto-apply a matching title sent through a shared ATS for another employer', () => {
     const result = matchRecentClickedGmailApplication({
       ...metadata('Application confirmation', 'Other Company <notifications@greenhouse-mail.io>'),
@@ -186,7 +205,19 @@ describe('Gmail application matcher', () => {
     'An update from Northstar Labs on your application to Software Engineering Intern',
     'Interview invitation — your application to Northstar Labs',
     'Your application to Northstar Labs was rejected',
-  ])('keeps later application-stage messages out of applied: %s', (subject) => {
+    'Complete your coding assessment for Software Engineering Intern at Northstar Labs',
+    'Offer for Software Engineering Intern at Northstar Labs',
+  ])('uses an authoritative downstream stage as evidence of application: %s', (subject) => {
+    expect(matchRecentClickedGmailApplication(metadata(subject), [recent(role())]).outcome).toBe('applied');
+  });
+
+  it.each([
+    'Your Northstar Labs application is incomplete',
+    'Your Northstar Labs application was saved as a draft',
+    'Your application for Northstar Labs: action required',
+    'Please verify your identity for your Northstar Labs application',
+    'Application received — please finish your Northstar Labs profile',
+  ])('does not infer submission from unfinished or verification mail: %s', (subject) => {
     expect(matchRecentClickedGmailApplication(metadata(subject), [recent(role())]).outcome).toBe('ignore');
   });
 

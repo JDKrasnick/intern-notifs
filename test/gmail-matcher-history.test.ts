@@ -81,21 +81,24 @@ const confirmations: HistoricalCase[] = [
   { company: 'IBM', subject: 'You have successfully submitted your IBM job application - 2027 Software Engineering Intern – Agentic AI & Workflow Automation', sender: 'IBM Talent Acquisition <talent@ibm.com>', title: '2027 Software Engineering Intern – Agentic AI & Workflow Automation' },
 ];
 
-const nonConfirmations: HistoricalCase[] = [
+const downstreamApplicationEvidence: HistoricalCase[] = [
   { company: 'TikTok', subject: "You're invited! Assessment for Software Engineer Intern", sender: 'TikTok <job@careers.tiktok.com>' },
   { company: 'Roblox', subject: '[Update] Your Roblox Job Application', sender: 'Roblox <no-reply@roblox.com>' },
-  { company: 'American Express', subject: 'Please verify your identity for Software Engineer Internship position', sender: 'Amex Careers <careers@recruitment.americanexpress.com>' },
   { company: 'Roblox', subject: 'You’ve completed the Roblox Assessments!', sender: 'Roblox Assessment <noreply@email.roblox.com>' },
   { company: 'TikTok', subject: 'Update on your TikTok application', sender: 'TikTok <noreply@careers.tiktok.com>' },
-  { company: 'Microsoft', subject: 'You have incomplete applications', sender: 'Microsoft Careers <donotreply@email.careers.microsoft.com>' },
   { company: 'Intrinsic', subject: 'An update from Intrinsic on your application to Software Engineering Intern', sender: 'Intrinsic Careers <jobs@intrinsic.ai>' },
   { company: 'Delinea', subject: 'Update on your application to Delinea', sender: 'Delinea Recruiting <jobs@delinea.com>' },
   { company: 'Perchwell', subject: 'An update regarding your application to Perchwell', sender: 'Perchwell <jobs@perchwell.com>' },
-  { company: 'WayUp', subject: 'Your application is almost complete', sender: 'WayUp <jobs@wayup.com>' },
   { company: 'Vetty', subject: 'Background screening for your application', sender: 'Vetty <support@vetty.co>' },
-  { company: 'Battle.net', subject: 'The Witcher 3: Wild Hunt — Remastered is coming to Battle.net!', sender: 'Battle.net <noreply@e.battle.net>' },
   { company: 'IBM', subject: 'Your IBM Application: Next Steps', sender: 'IBM Talent Acquisition <talent@ibm.com>', title: 'Data and AI Intern 2027' },
   { company: 'IBM', subject: 'Your IBM Application: Next Steps', sender: 'IBM Talent Acquisition <talent@ibm.com>', title: '2027 Software Engineering Intern – Agentic AI & Workflow Automation' },
+];
+
+const nonConfirmations: HistoricalCase[] = [
+  { company: 'American Express', subject: 'Please verify your identity for Software Engineer Internship position', sender: 'Amex Careers <careers@recruitment.americanexpress.com>' },
+  { company: 'Microsoft', subject: 'You have incomplete applications', sender: 'Microsoft Careers <donotreply@email.careers.microsoft.com>' },
+  { company: 'WayUp', subject: 'Your application is almost complete', sender: 'WayUp <jobs@wayup.com>' },
+  { company: 'Battle.net', subject: 'The Witcher 3: Wild Hunt — Remastered is coming to Battle.net!', sender: 'Battle.net <noreply@e.battle.net>' },
 ];
 
 describe('historical Gmail header replay', () => {
@@ -108,6 +111,12 @@ describe('historical Gmail header replay', () => {
   it.each(nonConfirmations.map((example, index) => [example.company, example, index] as const))(
     'does not mark a recent %s non-receipt as applied', (_company, example, index) => {
       expect(matchRecentClickedGmailApplication(message(example), [clicked(example, index)])).not.toMatchObject({ outcome: 'applied' });
+    },
+  );
+
+  it.each(downstreamApplicationEvidence.map((example, index) => [example.company, example, index] as const))(
+    'marks a recent %s downstream stage as proof of application', (_company, example, index) => {
+      expect(matchRecentClickedGmailApplication(message(example), [clicked(example, index)])).toMatchObject({ outcome: 'applied' });
     },
   );
 

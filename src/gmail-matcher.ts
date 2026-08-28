@@ -30,12 +30,14 @@ export type GmailMatch =
   | { outcome: 'applied'; candidate: GmailDetectionCandidate; reasons: string[] };
 
 const confirmationPhrases = [
-  /application (?:has been |was )?(?:received|submitted)/iu,
+  /application (?:has been |was )?(?:successfully )?(?:received|submitted)/iu,
   /received your (?:job )?application/iu,
   /\bsuccessfully submitted your\b.{0,160}\b(?:job )?application\b/iu,
   /thanks? for applying/iu,
   /thank you for (?:applying|your application)/iu,
   /we(?:'|’)ve received your application/iu,
+  /\bwe (?:got|have got) your application\b|\byour application is in\b/iu,
+  /\b(?:application confirmation|confirmation of (?:your )?application|receipt of (?:your )?application|submission confirmed)\b/iu,
   /your application to .+ is complete/iu,
   /solicitud (?:ha sido )?(?:recibida|enviada)/iu,
   /merci (?:d['’]avoir postulé|pour votre candidature)/iu,
@@ -49,14 +51,21 @@ const recentConfirmationPhrases = [
   /\bapplication for .+ (?:is underway|is complete)\b/iu,
   /\bregarding .+\b(?:role|position)\b.+\bat\b/iu,
   /\bthanks? for wanting to (?:join|become)\b/iu,
+  /\b(?:assessments?|coding challenge|technical challenge|take[- ]home|interview|phone screen|screening call)\b/iu,
+  /\b(?:offer|rejection|rejected|not moving forward|withdraw(?:al|n)?|background screening)\b/iu,
+  /\bupdate\b.{0,160}\bapplication\b/iu,
+  /\b(?:an )?update (?:from|on|regarding)\b.{0,160}\bapplication\b/iu,
+  /\bapplication\b.{0,160}\b(?:next steps?|status changed|moved to review)\b/iu,
+  /\bapplication experience\b/iu,
 ];
 
 const excludedPhrases = [
-  /assessment|coding challenge|technical challenge|take[- ]home/iu,
-  /interview|phone screen|screening call/iu,
-  /offer|rejection|rejected|not moving forward|withdraw(?:al|n)?/iu,
-  /\b(?:an )?update (?:from|on|regarding)\b/iu,
   /job alert|new jobs?|recommended jobs?|role alert/iu,
+  /application (?:is )?(?:incomplete|unfinished|almost complete)|incomplete applications?/iu,
+  /application (?:was )?saved as (?:a )?draft|draft application/iu,
+  /(?:finish|complete|continue) (?:your|the) .{0,80}(?:application|profile)/iu,
+  /verify your (?:identity|email)|identity verification/iu,
+  /application.{0,80}action required|action required.{0,80}application/iu,
 ];
 
 const providerDomains = /(?:greenhouse\.io|greenhouse-mail\.io|lever\.co|ashbyhq\.com)/iu;
@@ -73,6 +82,7 @@ const signalWeights: Record<GmailDetectionCandidate['signals'][number], number> 
   provider: 1,
 };
 const autoApplyThreshold = 7;
+const possibleOtherCandidate = /\b[Aa]pplication (?:has been |was )?(?:successfully )?(?:received|submitted) for [A-Z][\p{L}'’-]+ [A-Z][\p{L}'’-]+\s*(?:[—–-]|$)/u;
 
 function normalized(value: string): string {
   return value.normalize('NFKD').replace(/\p{Diacritic}/gu, '').toLowerCase().replace(/[^a-z0-9]+/gu, ' ').trim();
@@ -163,7 +173,7 @@ function candidate(metadata: GmailMetadata, job: Internship, receiptScore = 0, i
 }
 
 function isExcluded(metadata: GmailMetadata): boolean {
-  return excludedPhrases.some((phrase) => phrase.test(`${metadata.sender} ${metadata.subject}`));
+  return excludedPhrases.some((phrase) => phrase.test(`${metadata.sender} ${metadata.subject} ${metadata.content ?? ''}`));
 }
 
 function confirmationScore(metadata: GmailMetadata, recent: boolean): number {
@@ -236,6 +246,9 @@ export function matchRecentClickedGmailApplication(metadata: GmailMetadata, clic
     reasons: ['More than one recent Apply click matches this confirmation.'],
   };
   const only = candidates[0]!;
+  if (possibleOtherCandidate.test(`${metadata.subject} ${metadata.content ?? ''}`)) {
+    return { outcome: 'review', candidates, reasons: ['The receipt may be addressed to another candidate, so email alone cannot confirm who applied.'] };
+  }
   const authoritativeIdentity = only.signals.some((signal) => signal === 'employer' || signal === 'provider-tenant' || signal === 'requisition-id');
   if (only.confidenceScore < autoApplyThreshold || !authoritativeIdentity) {
     return { outcome: 'review', candidates, reasons: [`The evidence score is ${only.confidenceScore}/${autoApplyThreshold}, but automatic confirmation also requires employer, requisition, or provider-tenant identity.`] };
