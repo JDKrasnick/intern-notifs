@@ -174,7 +174,8 @@ export async function runGreenhouseLiveContract(
     try {
       await validateApplicationUrl(listing.applyUrl, fetchImpl, policy);
     } catch (error) {
-      if (error instanceof ApplicationUrlValidationError && /could not be reached|timed out/.test(error.message)) {
+      if (error instanceof ApplicationUrlValidationError
+        && /could not be reached|timed out|exceeds the inspection size limit/.test(error.message)) {
         linkOutages += 1;
         return;
       }

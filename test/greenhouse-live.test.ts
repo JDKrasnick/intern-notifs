@@ -22,6 +22,7 @@ interface RouterOptions {
   identityTransportError?: boolean;
   jobsTransportError?: boolean;
   etagTransportError?: boolean;
+  oversizedApplicationPage?: boolean;
 }
 
 function router(options: RouterOptions = {}): typeof fetch {
@@ -39,6 +40,11 @@ function router(options: RouterOptions = {}): typeof fetch {
       if (headers['If-None-Match'] && options.etagTransportError) throw new TypeError('fetch failed');
       if (headers['If-None-Match']) return new Response(null, { status: 304 });
       return json(jobsBody, { etag: 'W/"acme-1"', url: jobsUrl });
+    }
+    if (options.oversizedApplicationPage) {
+      const response = new Response('', { status: 200, headers: { 'content-type': 'text/html', 'content-length': '600000' } });
+      Object.defineProperty(response, 'url', { value: resolvedApplyUrl });
+      return response;
     }
     return json(null, { status: 200, url: resolvedApplyUrl });
   }) as typeof fetch;
@@ -63,6 +69,11 @@ describe('runGreenhouseLiveContract', () => {
   it('treats an ETag conditional transport outage as inconclusive', async () => {
     const result = await runGreenhouseLiveContract(acmeSource, router({ etagTransportError: true }));
     expect(result).toMatchObject({ status: 'inconclusive', checks: { identity: 'ok', schema: 'ok', etagNotModified: 'inconclusive', linkHealth: 'ok' } });
+  });
+  it('defers oversized dynamic application pages to headed verification', async () => {
+    const result = await runGreenhouseLiveContract(acmeSource, router({ oversizedApplicationPage: true }));
+    expect(result).toMatchObject({ status: 'inconclusive', checks: { identity: 'ok', schema: 'ok',
+      etagNotModified: 'ok', linkHealth: 'skipped' } });
   });
   it('treats an identity transport outage as inconclusive without probing jobs', async () => {
     const result = await runGreenhouseLiveContract(acmeSource, router({ identityTransportError: true }));

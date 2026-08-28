@@ -963,6 +963,10 @@ function snapshot([runId, completedAt, outcome, rawRows, eligibleRows, withheldR
 /** Normal promotion evidence captured during the completed 24-hour follow-up. */
 export const ashbyFollowUpPromotionEvidence: Readonly<Record<string, SourcePromotionEvidence>> = Object.fromEntries(
   Object.entries(ashbyEmergencyPromotionEvidence)
+    // Current first-party re-verification no longer proves these owners. Keep
+    // their historical observations, but fail closed by withholding active
+    // promotion evidence until ownership is reviewed again.
+    .filter(([id]) => !['ashby-heliux', 'ashby-rho'].includes(id))
     .map(([id, evidence]) => [id, {
       ...evidence,
       approvedAt: '2026-08-14T04:07:30Z',
@@ -974,28 +978,4 @@ export const ashbyFollowUpPromotionEvidence: Readonly<Record<string, SourcePromo
 /** Current promotion records, including owner-approved sources still in their follow-up window. */
 export const ashbyPromotionEvidence: Readonly<Record<string, SourcePromotionEvidence>> = {
   ...ashbyFollowUpPromotionEvidence,
-  'ashby-sentry': {
-    approvedAt: '2026-08-18T01:18:19Z',
-    approvedBy: 'JDKrasnick',
-    quietBaselineApproved: true,
-    stableIdentity: true,
-    stableApplicationHosts: true,
-    snapshots: [{
-      runId: 'sentry-admission-2026-08-18',
-      completedAt: '2026-08-18T01:17:50.761Z',
-      outcome: 'success_changed',
-      rawRows: 42,
-      eligibleRows: 0,
-      withheldRows: 0,
-      applicationLinksChecked: 0,
-      applicationLinkFailures: 0,
-      complete: true,
-      identityVerified: true,
-      schemaValid: true,
-    }],
-    observationWindowOverride: {
-      reason: 'Owner directed immediate publication after reviewing the first-party board and known unlisted internship.',
-      followUpAfter: '2026-08-19T01:18:19Z',
-    },
-  },
 };
