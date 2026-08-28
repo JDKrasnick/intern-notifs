@@ -4,7 +4,14 @@ import { boardReference, reachabilityFromFailure, reachabilityFromSignals, verif
 import { inferSeason, isPastSeason } from './core/early-career.js';
 import { normalizeUrl } from './core/normalize.js';
 import { buildPostingIdentity, type ProviderPostingReference } from './identity/posting.js';
-import { reviewedProviderEvidenceError, reviewedProviderUrlReference } from './identity/reviewed-provider.js';
+import {
+  providerEvidenceForOccurrence,
+  reviewedProviderEvidenceError,
+  reviewedProviderUrlReference,
+  uniqueGreenhouseEvidenceForSources,
+  unscopedGreenhouseEmbedPostingId,
+  unscopedGreenhouseEmbedUrls,
+} from './identity/reviewed-provider.js';
 import { isTechnicalJob, type JobFilter } from './core/filters.js';
 import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
 import { evaluateSourceFreshness } from './ingestion/monitoring.js';
@@ -66,6 +73,15 @@ interface TrustedBatch {
   snapshotHash: string;
   activeExternalIds: Set<string>;
   unchanged: boolean;
+}
+
+interface PrefetchedBoardFetch {
+  attemptedAt: string;
+  started: number;
+  previous?: SourceCheckpoint;
+  admissionConfigurationVersion?: string;
+  result?: SourceFetchResult;
+  error?: unknown;
 }
 
 const SOURCE_WORK_CONCURRENCY = 24;
@@ -346,14 +362,32 @@ export class IngestionRunner {
 
   private readonly boardIndex = reviewedBoardIndex();
   private readonly boardActiveIds = new Map<string, Promise<Set<string>>>();
+  private readonly currentRunGreenhouseActiveIds = new Map<string, Set<string>>();
+  private boardCheckpoints?: Promise<Map<string, SourceCheckpoint>>;
 
   private activePostingIds(sourceId: string): Promise<Set<string>> {
+    const current = this.currentRunGreenhouseActiveIds.get(sourceId);
+    if (current) return Promise.resolve(current);
     if (!this.boardActiveIds.has(sourceId)) {
       this.boardActiveIds.set(sourceId, this.store.getCheckpoint(sourceId)
         .then((checkpoint) => new Set(checkpoint?.activeExternalIds ?? []))
         .catch(() => new Set<string>()));
     }
     return this.boardActiveIds.get(sourceId)!;
+  }
+
+  private async uniqueActiveGreenhouseEvidence(postingId: string, urls: string[]) {
+    const sourceIds = [...new Set(this.boardIndex.values())];
+    this.boardCheckpoints ??= this.store.getCheckpointsMany(sourceIds)
+      .then((checkpoints) => new Map(checkpoints.map((checkpoint) => [checkpoint.sourceId, checkpoint])));
+    const checkpoints = await this.boardCheckpoints;
+    const activeSources = sourceIds.flatMap((sourceId) => {
+      const evidence = providerEvidenceForOccurrence(sourceId, postingId, urls);
+      if (evidence?.provider !== 'greenhouse') return [];
+      const current = this.currentRunGreenhouseActiveIds.get(sourceId);
+      return (current ? current.has(postingId) : checkpoints.get(sourceId)?.activeExternalIds?.includes(postingId)) ? [sourceId] : [];
+    });
+    return uniqueGreenhouseEvidenceForSources(postingId, activeSources, urls);
   }
 
   private async reviewedReferences(listing: ProcessedListing): Promise<ProviderPostingReference[]> {
@@ -366,13 +400,26 @@ export class IngestionRunner {
     for (const url of urls) {
       const result = reviewedProviderUrlReference(url);
       if (result.outcome === 'conflict') throw new Error(result.reason);
-      if (result.outcome !== 'match') continue;
+      if (result.outcome !== 'match') {
+        const postingId = unscopedGreenhouseEmbedPostingId(url);
+        const evidence = postingId ? await this.uniqueActiveGreenhouseEvidence(postingId, [url]) : undefined;
+        if (evidence) references.push({ provider: evidence.provider, tenant: evidence.tenant, postingId: evidence.postingId });
+        continue;
+      }
       const direct = listing.providerEvidence?.sourceId === result.reference.sourceId;
       if (direct || listing.providerEvidence || (await this.activePostingIds(result.reference.sourceId)).has(result.reference.postingId)) {
         references.push(result.reference);
       }
     }
     return references;
+  }
+
+  private async inferredEmbedAliases(listing: ProcessedListing): Promise<string[]> {
+    const evidence = listing.providerEvidence;
+    if (evidence?.provider !== 'greenhouse') return [];
+    const unique = await this.uniqueActiveGreenhouseEvidence(evidence.postingId, evidence.urls ?? []);
+    if (!unique || unique.sourceId !== evidence.sourceId || unique.tenant.toLowerCase() !== evidence.tenant.toLowerCase()) return [];
+    return unscopedGreenhouseEmbedUrls(evidence.postingId);
   }
 
   /** Provider existence and destination validity are separate facts. Attribution
@@ -426,10 +473,12 @@ export class IngestionRunner {
       try {
         const normalizedUrl = normalizeUrl(listing.applyUrl);
         const reviewedProviderReferences = await this.reviewedReferences(listing);
+        const observedUrls = await this.inferredEmbedAliases(listing);
         const identity = buildPostingIdentity({
           applicationUrl: listing.applyUrl,
           ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
           reviewedProviderReferences,
+          observedUrls,
         });
         // A legacy row may be adopted only through its exact canonical URL.
         // Title/location fingerprints are search hints, not proof that two
@@ -592,14 +641,60 @@ export class IngestionRunner {
       failures: [],
     };
     const health: SourceHealth[] = [];
+    this.boardActiveIds.clear();
+    this.boardCheckpoints = undefined;
+    this.currentRunGreenhouseActiveIds.clear();
+    const reviewedGreenhouseSourceIds = new Set([...new Set(this.boardIndex.values())]
+      .filter((sourceId) => providerEvidenceForOccurrence(sourceId, '1')?.provider === 'greenhouse'));
+    const prefetchedBoards = new Map<string, PrefetchedBoardFetch>();
+    // Fetch every reviewed Greenhouse connector before resolving any listing.
+    // Tenant-less embed aliases are safe only when uniqueness includes all
+    // current snapshots, including boards processed later in this run.
     for (const connector of this.connectors) {
-      const attemptedAt = this.now().toISOString();
-      const started = Date.now();
-      const previous = await this.store.getCheckpoint(connector.id);
+      if (!reviewedGreenhouseSourceIds.has(connector.id)) continue;
+      const prefetched: PrefetchedBoardFetch = {
+        attemptedAt: this.now().toISOString(),
+        started: Date.now(),
+      };
+      prefetchedBoards.set(connector.id, prefetched);
+      try {
+        prefetched.previous = await this.store.getCheckpoint(connector.id);
+        prefetched.admissionConfigurationVersion = await this.catalogAdmissionResolver?.configurationVersion?.();
+        const configurationChanged = Boolean(prefetched.admissionConfigurationVersion
+          && prefetched.previous?.admissionConfigurationVersion
+          && prefetched.admissionConfigurationVersion !== prefetched.previous.admissionConfigurationVersion);
+        const fetchCheckpoint = configurationChanged && prefetched.previous ? {
+          ...prefetched.previous,
+          etag: undefined,
+          documentEtags: undefined,
+          contentHash: undefined,
+        } : prefetched.previous;
+        prefetched.result = await fetchWithRetry(connector, fetchCheckpoint);
+        const qualityFailures = sourceQualityFailures(prefetched.result, prefetched.previous, {
+          allowCompleteEmptySnapshot: options.allowCompleteEmptySnapshot && isSourceSnapshot(prefetched.result),
+        });
+        if (!qualityFailures.length) {
+          const activeExternalIds = isSourceSnapshot(prefetched.result)
+            ? prefetched.result.checkpoint.activeExternalIds ?? prefetched.result.postings.map((posting) => posting.externalId)
+            : prefetched.result.checkpoint.activeExternalIds ?? prefetched.result.listings.map(externalId);
+          this.currentRunGreenhouseActiveIds.set(connector.id, new Set(activeExternalIds));
+        }
+      } catch (error) {
+        prefetched.error = error;
+      }
+    }
+    for (const connector of this.connectors) {
+      const prefetched = prefetchedBoards.get(connector.id);
+      const attemptedAt = prefetched?.attemptedAt ?? this.now().toISOString();
+      const started = prefetched?.started ?? Date.now();
+      const previous = prefetched ? prefetched.previous : await this.store.getCheckpoint(connector.id);
       const previousHealth = await this.store.getSourceHealth(connector.id);
       let failureCategory: NonNullable<SourceHealth['diagnosticCategory']> = 'transport';
       try {
-        const admissionConfigurationVersion = await this.catalogAdmissionResolver?.configurationVersion?.();
+        if (prefetched?.error) throw prefetched.error;
+        const admissionConfigurationVersion = prefetched
+          ? prefetched.admissionConfigurationVersion
+          : await this.catalogAdmissionResolver?.configurationVersion?.();
         const admissionConfigurationChanged = Boolean(admissionConfigurationVersion
           && previous?.admissionConfigurationVersion
           && admissionConfigurationVersion !== previous.admissionConfigurationVersion);
@@ -609,7 +704,7 @@ export class IngestionRunner {
           documentEtags: undefined,
           contentHash: undefined,
         } : previous;
-        const result = await fetchWithRetry(connector, fetchCheckpoint);
+        const result = prefetched?.result ?? await fetchWithRetry(connector, fetchCheckpoint);
         report.fetchedSources += 1;
         failureCategory = 'quality';
         const qualityFailures = sourceQualityFailures(result, previous, {

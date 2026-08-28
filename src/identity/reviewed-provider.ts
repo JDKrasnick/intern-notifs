@@ -105,3 +105,37 @@ export function providerEvidenceForOccurrence(sourceId: string, externalId: stri
   };
   return undefined;
 }
+
+/** Extracts an immutable public ID from Greenhouse's tenant-less embed route. */
+export function unscopedGreenhouseEmbedPostingId(input: string): string | undefined {
+  let url: URL;
+  try { url = new URL(input); } catch { return undefined; }
+  const host = url.hostname.toLowerCase().replace(/^www\./, '');
+  if ((host !== 'boards.greenhouse.io' && host !== 'job-boards.greenhouse.io')
+      || !/^\/embed\/job_app\/?$/i.test(url.pathname)) return undefined;
+  const postingId = url.searchParams.get('token');
+  return postingId && /^\d+$/.test(postingId) ? postingId : undefined;
+}
+
+/** Returns evidence only when an active public ID belongs to one reviewed board. */
+export function uniqueGreenhouseEvidenceForSources(
+  postingId: string,
+  sourceIds: Iterable<string>,
+  urls: string[] = [],
+): ProviderPostingEvidence | undefined {
+  const matches = [...sourceIds].flatMap((sourceId) => {
+    const evidence = providerEvidenceForOccurrence(sourceId, postingId, urls);
+    return evidence?.provider === 'greenhouse' ? [evidence] : [];
+  });
+  const unique = [...new Map(matches.map((item) => [`${item.provider}:${item.tenant.toLowerCase()}:${item.postingId}`, item])).values()];
+  return unique.length === 1 ? unique[0] : undefined;
+}
+
+/** Exact aliases emitted by Greenhouse for an otherwise tenant-less embed. */
+export function unscopedGreenhouseEmbedUrls(postingId: string): string[] {
+  if (!/^\d+$/.test(postingId)) return [];
+  return [
+    `https://boards.greenhouse.io/embed/job_app?token=${postingId}`,
+    `https://job-boards.greenhouse.io/embed/job_app?token=${postingId}`,
+  ];
+}

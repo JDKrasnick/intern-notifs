@@ -14,8 +14,9 @@ const reviewedListing = (input: { provider: 'greenhouse' | 'lever'; tenant: stri
   providerEvidence: { provider: input.provider, tenant: input.tenant, postingId: input.postingId, sourceId: input.sourceId, urls: [input.url] },
 });
 class Adapter implements SourceAdapter {
+  fetches = 0;
   constructor(readonly id: string, private readonly rows: RawListing[]) {}
-  async fetch(previous?: SourceCheckpoint): Promise<SourceFetchResult> { return { sourceId: this.id, listings: this.rows, notModified: false, checkpoint: { sourceId: this.id, successfulFetches: (previous?.successfulFetches ?? 0) + 1, lastRowCount: this.rows.length } }; }
+  async fetch(previous?: SourceCheckpoint): Promise<SourceFetchResult> { this.fetches += 1; return { sourceId: this.id, listings: this.rows, notModified: false, checkpoint: { sourceId: this.id, successfulFetches: (previous?.successfulFetches ?? 0) + 1, lastRowCount: this.rows.length } }; }
 }
 describe('polling', () => {
   it('persists successful not-modified checkpoints for source-health visibility', async () => {
@@ -118,6 +119,83 @@ describe('polling', () => {
       postingIdentity: { provider: 'greenhouse', tenant: 'figma', providerPostingId: '100' },
       sourceReferences: [{ sourceId: 'greenhouse-figma' }, { sourceId: 'community' }],
     });
+  });
+  it.each([
+    ['official first', true],
+    ['community first', false],
+  ])('converges a tenant-less Greenhouse embed when the %s occurrence arrives', async (_label, officialFirst) => {
+    const store = new MemoryInternshipStore();
+    const postingId = '6883068002';
+    const official = reviewedListing({
+      provider: 'greenhouse', tenant: 'databricks', postingId, sourceId: 'greenhouse-databricks',
+      url: `https://job-boards.greenhouse.io/databricks/jobs/${postingId}`,
+    });
+    const community = listing(`https://boards.greenhouse.io/embed/job_app?token=${postingId}`, 'community');
+    const polls = officialFirst
+      ? [new Adapter('greenhouse-databricks', [official]), new Adapter('community', [community])]
+      : [new Adapter('community', [community]), new Adapter('greenhouse-databricks', [official])];
+    for (const adapter of polls) await new Poller([adapter], store).poll();
+    expect(store.jobs.size).toBe(1);
+    expect([...store.jobs.values()][0]).toMatchObject({
+      postingIdentity: { provider: 'greenhouse', tenant: 'databricks', providerPostingId: postingId },
+    });
+    expect(new Set([...store.jobs.values()][0]!.sourceReferences.map(({ sourceId }) => sourceId)))
+      .toEqual(new Set(['greenhouse-databricks', 'community']));
+  });
+  it('converges a community-first tenant-less embed against the current provider snapshot', async () => {
+    const store = new MemoryInternshipStore();
+    const postingId = '6883068002';
+    const official = new Adapter('greenhouse-databricks', [reviewedListing({
+      provider: 'greenhouse', tenant: 'databricks', postingId, sourceId: 'greenhouse-databricks',
+      url: `https://job-boards.greenhouse.io/databricks/jobs/${postingId}`,
+    })]);
+    await new Poller([
+      new Adapter('community', [listing(`https://boards.greenhouse.io/embed/job_app?token=${postingId}`, 'community')]),
+      official,
+    ], store).poll();
+    expect(official.fetches).toBe(1);
+    expect(store.jobs.size).toBe(1);
+    expect([...store.jobs.values()][0]).toMatchObject({
+      postingIdentity: { provider: 'greenhouse', tenant: 'databricks', providerPostingId: postingId },
+      sourceReferences: [{ sourceId: 'community' }, { sourceId: 'greenhouse-databricks' }],
+    });
+  });
+  it('does not scope a tenant-less Greenhouse embed when two active reviewed boards contain its ID', async () => {
+    const store = new MemoryInternshipStore();
+    const postingId = '6883068002';
+    await store.putCheckpoint({ sourceId: 'greenhouse-databricks', successfulFetches: 1, activeExternalIds: [postingId] });
+    await store.putCheckpoint({ sourceId: 'greenhouse-figma', successfulFetches: 1, activeExternalIds: [postingId] });
+    await new Poller([new Adapter('community', [listing(`https://boards.greenhouse.io/embed/job_app?token=${postingId}`, 'community')])], store).poll();
+    await new Poller([new Adapter('greenhouse-databricks', [reviewedListing({
+      provider: 'greenhouse', tenant: 'databricks', postingId, sourceId: 'greenhouse-databricks',
+      url: `https://job-boards.greenhouse.io/databricks/jobs/${postingId}`,
+    })])], store).poll();
+    expect(store.jobs.size).toBe(2);
+    expect([...store.jobs.values()].map((job) => job.postingIdentity?.provider).sort()).toEqual(['greenhouse', 'unknown']);
+  });
+  it('keeps a fresh tenant-less embed separate when two current reviewed snapshots share its ID', async () => {
+    const store = new MemoryInternshipStore();
+    const postingId = '6883068002';
+    const embedUrl = `https://boards.greenhouse.io/embed/job_app?token=${postingId}`;
+    const databricks = new Adapter('greenhouse-databricks', [reviewedListing({
+      provider: 'greenhouse', tenant: 'databricks', postingId, sourceId: 'greenhouse-databricks',
+      url: `https://job-boards.greenhouse.io/databricks/jobs/${postingId}`,
+    })]);
+    const figma = new Adapter('greenhouse-figma', [reviewedListing({
+      provider: 'greenhouse', tenant: 'figma', postingId, sourceId: 'greenhouse-figma',
+      url: `https://job-boards.greenhouse.io/figma/jobs/${postingId}`,
+    })]);
+    await new Poller([
+      new Adapter('community', [listing(embedUrl, 'community')]),
+      databricks,
+      figma,
+    ], store).poll();
+    expect([databricks.fetches, figma.fetches]).toEqual([1, 1]);
+    expect(store.jobs.size).toBe(3);
+    expect([...store.jobs.values()].map((job) => job.postingIdentity?.tenant ?? 'unscoped').sort())
+      .toEqual(['databricks', 'figma', 'unscoped']);
+    expect([...store.jobs.values()].map((job) => job.sourceReferences.map(({ sourceId }) => sourceId)))
+      .toEqual([['community'], ['greenhouse-databricks'], ['greenhouse-figma']]);
   });
   it('converges historical DRW custom and standard routes only after the active public ID confirms them', async () => {
     const store = new MemoryInternshipStore();

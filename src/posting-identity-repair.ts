@@ -5,7 +5,13 @@ import { openCatalogSortKey } from './catalog-recency.js';
 import { inferSeason } from './core/early-career.js';
 import { fingerprint, normalizeUrl } from './core/normalize.js';
 import { buildPostingIdentity, canonicalizePostingUrl } from './identity/posting.js';
-import { providerEvidenceForOccurrence, reviewedProviderEvidenceError, reviewedProviderUrlReference } from './identity/reviewed-provider.js';
+import {
+  providerEvidenceForOccurrence,
+  reviewedProviderEvidenceError,
+  reviewedProviderUrlReference,
+  uniqueGreenhouseEvidenceForSources,
+  unscopedGreenhouseEmbedPostingId,
+} from './identity/reviewed-provider.js';
 import { notificationDedupeKey } from './notifications.js';
 import type { CatalogRelease } from './catalog-groups.js';
 import { isOfficialOccurrence } from './sources/provenance.js';
@@ -227,12 +233,26 @@ function providerKey(evidence: ProviderPostingEvidence) {
   return `${evidence.provider}:${evidence.tenant.toLowerCase()}:${evidence.postingId.toLowerCase()}`;
 }
 
+function checkpointEvidenceForUnscopedGreenhouseEmbed(
+  input: string,
+  checkpoints: Map<string, SourceCheckpoint>,
+): ProviderPostingEvidence | undefined {
+  const postingId = unscopedGreenhouseEmbedPostingId(input);
+  if (!postingId) return undefined;
+  const activeSources = [...checkpoints.entries()]
+    .filter(([, checkpoint]) => checkpoint.activeExternalIds?.includes(postingId))
+    .map(([sourceId]) => sourceId);
+  return uniqueGreenhouseEvidenceForSources(postingId, activeSources, [input]);
+}
+
 function evidenceForJob(job: Internship, checkpoints: Map<string, SourceCheckpoint>): ProviderPostingEvidence[] {
   const result: ProviderPostingEvidence[] = [];
   for (const occurrence of job.sourceReferences) {
     const direct = occurrence.providerEvidence
       ?? (occurrence.externalId ? providerEvidenceForOccurrence(occurrence.sourceId, occurrence.externalId, [occurrence.applyUrl]) : undefined);
     if (direct) result.push(direct);
+    const embedded = checkpointEvidenceForUnscopedGreenhouseEmbed(occurrence.applyUrl, checkpoints);
+    if (embedded) result.push(embedded);
     const parsed = reviewedProviderUrlReference(occurrence.applyUrl);
     if (parsed.outcome !== 'match') continue;
     if (checkpoints.get(parsed.reference.sourceId)?.activeExternalIds?.includes(parsed.reference.postingId)) {
