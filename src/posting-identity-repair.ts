@@ -227,12 +227,34 @@ function providerKey(evidence: ProviderPostingEvidence) {
   return `${evidence.provider}:${evidence.tenant.toLowerCase()}:${evidence.postingId.toLowerCase()}`;
 }
 
+function checkpointEvidenceForUnscopedGreenhouseEmbed(
+  input: string,
+  checkpoints: Map<string, SourceCheckpoint>,
+): ProviderPostingEvidence | undefined {
+  let url: URL;
+  try { url = new URL(input); } catch { return undefined; }
+  const host = url.hostname.toLowerCase().replace(/^www\./, '');
+  if ((host !== 'boards.greenhouse.io' && host !== 'job-boards.greenhouse.io')
+      || !/^\/embed\/job_app\/?$/i.test(url.pathname)) return undefined;
+  const postingId = url.searchParams.get('token');
+  if (!postingId || !/^\d+$/.test(postingId)) return undefined;
+  const matches = [...checkpoints.entries()].flatMap(([sourceId, checkpoint]) => {
+    if (!checkpoint.activeExternalIds?.includes(postingId)) return [];
+    const evidence = providerEvidenceForOccurrence(sourceId, postingId, [input]);
+    return evidence?.provider === 'greenhouse' ? [evidence] : [];
+  });
+  const unique = [...new Map(matches.map((item) => [providerKey(item), item])).values()];
+  return unique.length === 1 ? unique[0] : undefined;
+}
+
 function evidenceForJob(job: Internship, checkpoints: Map<string, SourceCheckpoint>): ProviderPostingEvidence[] {
   const result: ProviderPostingEvidence[] = [];
   for (const occurrence of job.sourceReferences) {
     const direct = occurrence.providerEvidence
       ?? (occurrence.externalId ? providerEvidenceForOccurrence(occurrence.sourceId, occurrence.externalId, [occurrence.applyUrl]) : undefined);
     if (direct) result.push(direct);
+    const embedded = checkpointEvidenceForUnscopedGreenhouseEmbed(occurrence.applyUrl, checkpoints);
+    if (embedded) result.push(embedded);
     const parsed = reviewedProviderUrlReference(occurrence.applyUrl);
     if (parsed.outcome !== 'match') continue;
     if (checkpoints.get(parsed.reference.sourceId)?.activeExternalIds?.includes(parsed.reference.postingId)) {
