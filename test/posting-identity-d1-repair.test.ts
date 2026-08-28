@@ -163,6 +163,29 @@ describe('D1 posting identity repair', () => {
     sqlite.close();
   });
 
+  it('does not scope a Greenhouse embed token shared by multiple reviewed checkpoints', async () => {
+    const sqlite = database(); const db = sqliteD1(sqlite); const store = new D1InternshipStore(db);
+    const postingId = '8732364002';
+    const officialUrl = `https://databricks.com/company/careers/open-positions/job?gh_jid=${postingId}`;
+    const embedUrl = `https://boards.greenhouse.io/embed/job_app?token=${postingId}`;
+    const evidence: ProviderPostingEvidence = {
+      provider: 'greenhouse', tenant: 'databricks', postingId, sourceId: 'greenhouse-databricks', urls: [officialUrl],
+    };
+    await store.putCheckpoint({ sourceId: 'greenhouse-databricks', successfulFetches: 10, activeExternalIds: [postingId] });
+    await store.putCheckpoint({ sourceId: 'greenhouse-figma', successfulFetches: 10, activeExternalIds: [postingId] });
+    await store.putInternship(job('community-databricks', embedUrl, '2026-08-01T00:00:00.000Z', [
+      occurrence('community-list', 'community-databricks', embedUrl),
+    ]));
+    await store.putInternship(job('official-databricks', officialUrl, '2026-08-02T00:00:00.000Z', [
+      { ...occurrence('greenhouse-databricks', postingId, officialUrl, evidence), provenance: 'official-ats' },
+    ]));
+
+    expect(await runPostingIdentityRepair(db, { scope: 'identity' })).toMatchObject({
+      duplicateGroups: 0, duplicateJobs: 0, conflicts: [],
+    });
+    sqlite.close();
+  });
+
   it('finds historical provider duplicates while keeping bad duplicate signals and regular postings separate', async () => {
     const { db } = await historicalDatabase();
     const first = await runPostingIdentityRepair(db); const second = await runPostingIdentityRepair(db);
