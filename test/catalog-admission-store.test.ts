@@ -69,6 +69,27 @@ describe('D1 catalog admission operations', () => {
       .resolves.toEqual({ id: 'new-acme', displayName: 'New Acme' });
   });
 
+  it('maps community rows by employer scope instead of the multi-employer source', async () => {
+    const { admission: store } = subject();
+    await store.putCanonicalEmployer({ id: 'acme', displayName: 'Acme', reviewedAt: '2026-08-26T00:00:00Z', reviewedBy: 'reviewer' }, '2026-08-26T00:00:00Z');
+    await store.supersedeEmployerMapping({ id: 'unsafe-source', provider: 'github', scope: 'community-list', canonicalEmployerId: 'acme', reviewedAt: '2026-08-26T00:00:00Z', reviewedBy: 'reviewer' });
+    await expect(store.resolveCanonicalEmployer({ provider: 'github', sourceId: 'community-list', employerScope: 'employer:other', sourceUrl: 'https://github.com/example/jobs' }))
+      .resolves.toBeUndefined();
+    await store.supersedeEmployerMapping({ id: 'acme-row', provider: 'github', scope: 'employer:acme', canonicalEmployerId: 'acme', reviewedAt: '2026-08-26T01:00:00Z', reviewedBy: 'reviewer' });
+    await expect(store.resolveCanonicalEmployer({ provider: 'github', sourceId: 'community-list', employerScope: 'employer:acme', sourceUrl: 'https://github.com/example/jobs' }))
+      .resolves.toEqual({ id: 'acme', displayName: 'Acme' });
+  });
+
+  it('versions reviewed admission configuration deterministically', async () => {
+    const { admission: store } = subject();
+    const empty = await store.configurationVersion();
+    expect(await store.configurationVersion()).toBe(empty);
+    await store.putCanonicalEmployer({ id: 'acme', displayName: 'Acme', reviewedAt: '2026-08-26T00:00:00Z', reviewedBy: 'reviewer' }, '2026-08-26T00:00:00Z');
+    const populated = await store.configurationVersion();
+    expect(populated).not.toBe(empty);
+    expect(await store.configurationVersion()).toBe(populated);
+  });
+
   it('resolves tenant-specific review rules ahead of host-wide rules', async () => {
     const { admission: store } = subject();
     await store.putReviewRule({ id: 'host', host: 'careers.acme.test', provider: 'greenhouse', decision: 'browser-required',

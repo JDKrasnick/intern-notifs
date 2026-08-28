@@ -204,6 +204,11 @@ function externalId(listing: ProcessedListing): string {
   catch { return `${listing.document}:invalid:${listing.applyUrl}`; }
 }
 
+function sameApplicationUrl(left: string, right: string): boolean {
+  try { return normalizeUrl(canonicalApplicationUrl(left)) === right; }
+  catch { return false; }
+}
+
 function legacyBatch(result: SourceFetchResult): TrustedBatch {
   const listings = result.listings.map((listing) => ({
     ...listing,
@@ -353,7 +358,7 @@ export class IngestionRunner {
       // Real connectors now emit SourceSnapshot postings and are always managed
       // by record-level admission; legacy rows retain their rollout behavior
       // until the reviewed backfill classifies them.
-      const admissionManaged = Boolean(sourceListing.employerEvidence || sourceListing.providerIdentity);
+      const supportsAdmission = Boolean(sourceListing.employerEvidence || sourceListing.providerIdentity);
       const canonicalUrl = canonicalApplicationUrl(sourceListing.applyUrl);
       let listing = {
         ...sourceListing,
@@ -382,13 +387,23 @@ export class IngestionRunner {
           ...listing,
           postingIdentity: { ...identity, canonicalJobId: identityResolution.canonicalJobId },
         };
-        if (admissionManaged && listing.providerIdentity && this.catalogAdmissionResolver) {
+        if (supportsAdmission && listing.providerIdentity && this.catalogAdmissionResolver) {
           const canonicalEmployer = await this.catalogAdmissionResolver.resolveCanonicalEmployer(listing.providerIdentity);
           if (canonicalEmployer) listing = {
             ...listing,
             employerEvidence: { authority: 'reviewed-registry', canonicalEmployer },
           };
         }
+        // Existing unclassified rows keep their rollout behavior until a
+        // reviewed mapping exists. New rows (and changed destinations) fail
+        // closed, so activating admission cannot hide the legacy catalog.
+        const knownLegacyDestination = existing?.normalizedUrl === normalizedUrl
+          || existing?.sourceReferences.some((reference) => reference.sourceId === listing.sourceId
+            && sameApplicationUrl(reference.applyUrl, normalizedUrl));
+        const preserveLegacyAdmission = Boolean(existing && !existing.admission
+          && knownLegacyDestination
+          && !listing.employerEvidence?.canonicalEmployer);
+        const admissionManaged = supportsAdmission && !preserveLegacyAdmission;
         const attribution = await this.attribute(listing);
         if (listing.seasonSource === 'source-default'
           && existing?.applicationPageMetadataVersion === applicationPageMetadataVersion
@@ -497,7 +512,17 @@ export class IngestionRunner {
       const previousHealth = await this.store.getSourceHealth(connector.id);
       let failureCategory: NonNullable<SourceHealth['diagnosticCategory']> = 'transport';
       try {
-        const result = await fetchWithRetry(connector, previous);
+        const admissionConfigurationVersion = await this.catalogAdmissionResolver?.configurationVersion?.();
+        const admissionConfigurationChanged = Boolean(admissionConfigurationVersion
+          && previous?.admissionConfigurationVersion
+          && admissionConfigurationVersion !== previous.admissionConfigurationVersion);
+        const fetchCheckpoint = admissionConfigurationChanged && previous ? {
+          ...previous,
+          etag: undefined,
+          documentEtags: undefined,
+          contentHash: undefined,
+        } : previous;
+        const result = await fetchWithRetry(connector, fetchCheckpoint);
         report.fetchedSources += 1;
         failureCategory = 'quality';
         const qualityFailures = sourceQualityFailures(result, previous, {
@@ -603,6 +628,7 @@ export class IngestionRunner {
           ...result.checkpoint,
           contentHash: batch.snapshotHash,
           activeExternalIds: [...batch.activeExternalIds],
+          ...(admissionConfigurationVersion ? { admissionConfigurationVersion } : {}),
         });
         for (const job of plan.newJobs) {
           if (!alertedJobIds.has(job.jobId)) {

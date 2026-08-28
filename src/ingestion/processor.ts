@@ -122,14 +122,12 @@ export function processPosting(
                 : posting.provenance === 'employer-submitted' ? 'employer-submission' : 'github'),
       sourceId: posting.sourceId,
       sourceUrl: posting.sourceUrl,
+      employerScope: `employer:${canonicalCompanyKey(company)}`,
       ...(posting.providerIdentity?.tenant ? { tenant: posting.providerIdentity.tenant } : {}),
       postingId: posting.externalId,
     },
     employerEvidence: {
       authority: posting.employer.authority,
-      ...(posting.employer.authority === 'reviewed-registry' && company ? {
-        canonicalEmployer: { id: posting.employer.id ?? canonicalCompanyKey(company), displayName: company },
-      } : {}),
     },
     metadataCompleteness: metadataCompleteness({
       title: sourceTitle,

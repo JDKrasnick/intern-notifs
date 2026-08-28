@@ -125,6 +125,8 @@ export interface SourceCheckpoint {
   etag?: string;
   documentEtags?: Record<string, string>;
   contentHash?: string;
+  /** Version of the reviewed admission configuration applied to this snapshot. */
+  admissionConfigurationVersion?: string;
   lastSuccessAt?: string;
   successfulFetches: number;
   lastRowCount?: number;
@@ -281,6 +283,8 @@ export interface CanonicalEmployer {
 export interface ProviderIdentity {
   provider: PostingProvider | 'github' | 'structured' | 'employer-submission';
   sourceId: string;
+  /** Per-employer reviewed-mapping scope for multi-employer sources. */
+  employerScope?: string;
   tenant?: string;
   postingId?: string;
   sourceUrl: string;

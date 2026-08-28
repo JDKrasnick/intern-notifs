@@ -12,6 +12,10 @@ const response = (jobs = acmeJobsResponse) => new Response(JSON.stringify(jobs),
   status: 200,
   headers: { 'Content-Type': 'application/json', ETag: '"fixture"' },
 });
+const catalogAdmissionResolver = {
+  async resolveCanonicalEmployer() { return { id: 'acme', displayName: 'Acme' }; },
+  async resolveDestinationRule() { return undefined; },
+};
 
 describe('Greenhouse queue dispatch', () => {
   it('creates one versioned work item per reviewed board', () => {
@@ -124,6 +128,7 @@ describe('Greenhouse queue worker', () => {
       sources: [published],
       fetchImpl: async () => response(current),
       linkValidator: async (url: string) => url,
+      catalogAdmissionResolver,
     };
     await runGreenhouseBoard(message(), dependencies);
     expect(await store.pendingSms()).toEqual([]);

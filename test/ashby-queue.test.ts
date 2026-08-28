@@ -18,6 +18,10 @@ const posting = {
 const response = (jobs = [posting]) => new Response(JSON.stringify({ apiVersion: '1', jobs }), {
   status: 200, headers: { 'Content-Type': 'application/json' },
 });
+const catalogAdmissionResolver = {
+  async resolveCanonicalEmployer() { return { id: 'acme', displayName: 'Acme' }; },
+  async resolveDestinationRule() { return undefined; },
+};
 
 describe('Ashby queue dispatch', () => {
   it('creates versioned FIFO work and batches boards', async () => {
@@ -141,7 +145,8 @@ describe('Ashby queue worker', () => {
     const published: ReviewedAshbySource = { ...shadowSource, status: 'published' };
     const store = new MemoryInternshipStore();
     let jobs = [posting];
-    const dependencies = { store, sources: [published], fetchImpl: async () => response(jobs), linkValidator: async (url: string) => url };
+    const dependencies = { store, sources: [published], fetchImpl: async () => response(jobs), linkValidator: async (url: string) => url,
+      catalogAdmissionResolver };
     await runAshbyBoard(message(published.id), dependencies);
     expect(await store.pendingSms()).toEqual([]);
     jobs = [...jobs, {

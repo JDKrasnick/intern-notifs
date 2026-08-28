@@ -116,7 +116,13 @@ export class D1CatalogAdmissionStore {
   }
 
   async resolveCanonicalEmployer(identity: ProviderIdentity): Promise<Pick<CanonicalEmployer, 'id' | 'displayName'> | undefined> {
-    const scopes = [...new Set([identity.sourceId, identity.tenant].filter((value): value is string => Boolean(value)))];
+    // A GitHub document contains many employers, so its source ID can never be
+    // an employer identity. Official single-employer feeds retain their broad
+    // source/tenant mappings and can fall back to the row's employer scope.
+    const scopes = [...new Set((identity.provider === 'github'
+      ? [identity.employerScope]
+      : [identity.sourceId, identity.tenant, identity.employerScope])
+      .filter((value): value is string => Boolean(value)))];
     for (const scope of scopes) {
       const row = await this.db.prepare(`SELECT employer.id, employer.display_name
         FROM employer_mappings AS mapping
@@ -126,6 +132,17 @@ export class D1CatalogAdmissionStore {
       if (row) return { id: row.id, displayName: row.display_name };
     }
     return undefined;
+  }
+
+  async configurationVersion(): Promise<string> {
+    const [employers, mappings, rules] = await Promise.all([
+      this.listCanonicalEmployers(), this.listEmployerMappings(), this.listReviewRules(),
+    ]);
+    const stable = <T>(values: T[]) => values
+      .map((value) => JSON.stringify(value))
+      .sort()
+      .map((value) => JSON.parse(value) as T);
+    return hash(JSON.stringify({ employers: stable(employers), mappings: stable(mappings), rules: stable(rules) }));
   }
 
   async supersedeEmployerMapping(value: EmployerMapping): Promise<void> {

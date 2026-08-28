@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryInternshipStore } from '../src/store.js';
 import { Poller } from '../src/poll.js';
+import { buildPostingIdentity } from '../src/identity/posting.js';
 import type { RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult, SourceSnapshot } from '../src/types.js';
 
 const listing = (url: string, sourceId = 'one'): RawListing => ({ sourceId, document: 'README.md', sourceUrl: 'https://github.com/x', row: 5, company: 'Acme', title: 'Software Engineering Intern', location: 'NYC', season: 'summer-2027', applyUrl: url, compensation: { raw: '$40/hr', maxHourlyUSD: 40 }, state: 'open', fetchedAt: '2026-01-01T00:00:00Z' });
@@ -214,5 +215,72 @@ describe('polling', () => {
     expect([...store.jobs.values()][0]).toMatchObject({ company: 'Acme', admission: {
       canonicalEmployer: { id: 'acme', displayName: 'Acme' }, catalogEligible: true,
     } });
+  });
+
+  it('preserves legacy community rows while withholding new unmapped employers', async () => {
+    const store = new MemoryInternshipStore();
+    const legacy = await legacyOpenRole(store);
+    const legacyJob = (await store.getJob('legacy-role'))!;
+    await store.putInternship({ ...legacyJob, applyUrl: 'https://jobs.example.com/canonical', normalizedUrl: 'https://jobs.example.com/canonical',
+      sourceReferences: [{ ...legacyJob.sourceReferences[0]!, sourceId: 'community-list', externalId: 'acme-role' }] });
+    await store.claimPostingIdentity(buildPostingIdentity({ applicationUrl: legacy.applyUrl }), 'legacy-role');
+    const snapshot: SourceFetchResult & SourceSnapshot = {
+      sourceId: 'community-list', outcome: 'changed', complete: true, rawCount: 2, contentHash: 'community-hash',
+      listings: [], notModified: false,
+      checkpoint: { sourceId: 'community-list', successfulFetches: 2 },
+      postings: [
+        { sourceId: 'community-list', provenance: 'reviewed-community', externalId: 'acme-role', sourceUrl: 'https://github.com/example/jobs',
+          fetchedAt: '2026-08-27T12:00:00Z', employer: { name: 'Acme', authority: 'source-row' }, title: legacy.title,
+          content: [], locations: [legacy.location], applyUrl: legacy.applyUrl, sourceState: 'open', lifecycleAuthority: 'source' },
+        { sourceId: 'community-list', provenance: 'reviewed-community', externalId: 'beta-role', sourceUrl: 'https://github.com/example/jobs',
+          fetchedAt: '2026-08-27T12:00:00Z', employer: { name: 'Beta', authority: 'source-row' }, title: 'Data Engineering Intern',
+          content: [], locations: ['Remote'], applyUrl: 'https://jobs.example.com/beta', sourceState: 'open', lifecycleAuthority: 'source' },
+      ],
+    };
+    const resolver = {
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    await new Poller([{ id: snapshot.sourceId, async fetch() { return snapshot; } }], store, undefined, undefined, undefined, undefined, undefined, resolver).poll();
+    const preserved = await store.getJob('legacy-role');
+    expect(preserved?.open).toBe(true);
+    expect(preserved?.admission).toBeUndefined();
+    expect([...store.jobs.values()].find((job) => job.company === 'Beta')).toMatchObject({
+      admission: { catalogEligible: false, alertEligible: false, reasonCodes: expect.arrayContaining(['employer-unresolved']) },
+    });
+  });
+
+  it('reprocesses an unchanged source after reviewed admission configuration changes', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putCheckpoint({ sourceId: 'greenhouse-acme', successfulFetches: 1, contentHash: 'same', etag: 'old-etag',
+      admissionConfigurationVersion: 'configuration-v1' });
+    let received: SourceCheckpoint | undefined;
+    const adapter: SourceAdapter = {
+      id: 'greenhouse-acme',
+      async fetch(previous) {
+        received = previous;
+        return {
+          sourceId: 'greenhouse-acme', outcome: previous?.contentHash === 'same' ? 'unchanged' : 'changed', complete: true,
+          rawCount: 1, contentHash: 'same', listings: [], notModified: previous?.contentHash === 'same',
+          checkpoint: { sourceId: 'greenhouse-acme', successfulFetches: 2, contentHash: 'same' },
+          postings: [{ sourceId: 'greenhouse-acme', provenance: 'official-ats', externalId: 'acme-role', sourceUrl: 'https://boards-api.greenhouse.io/acme',
+            fetchedAt: '2026-08-27T12:00:00Z', employer: { name: 'Acme', authority: 'reviewed-registry' }, title: 'Software Engineering Intern',
+            providerIdentity: { provider: 'greenhouse', tenant: 'acme' },
+            content: [], locations: ['Remote'], applyUrl: 'https://jobs.example.com/acme-role', sourceState: 'open', lifecycleAuthority: 'source' }],
+        };
+      },
+    };
+    const resolver = {
+      async configurationVersion() { return 'configuration-v2'; },
+      async resolveCanonicalEmployer(identity: { employerScope?: string }) {
+        return identity.employerScope === 'employer:acme' ? { id: 'acme', displayName: 'Acme' } : undefined;
+      },
+      async resolveDestinationRule() { return { id: 'custom-posting-route', host: 'jobs.example.com', provider: 'greenhouse' as const,
+        decision: 'standard-provider-route' as const, reviewedAt: '2026-08-27T00:00:00Z', reviewedBy: 'reviewer' }; },
+    };
+    await new Poller([adapter], store, undefined, undefined, undefined, undefined, undefined, resolver).poll();
+    expect(received).toMatchObject({ contentHash: undefined, etag: undefined });
+    expect(await store.getCheckpoint('greenhouse-acme')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+    expect([...store.jobs.values()][0]).toMatchObject({ company: 'Acme', admission: { catalogEligible: true } });
   });
 });

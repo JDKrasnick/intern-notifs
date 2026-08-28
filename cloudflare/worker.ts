@@ -79,9 +79,10 @@ function catalogAdmissionResolver(env: Environment): CatalogAdmissionResolver {
   const operations = new D1CatalogAdmissionStore(env.DB);
   const employers = new Map<string, ReturnType<typeof operations.resolveCanonicalEmployer>>();
   const rules = new Map<string, ReturnType<typeof operations.resolveReviewRule>>();
+  let version: ReturnType<typeof operations.configurationVersion> | undefined;
   return {
     resolveCanonicalEmployer(identity) {
-      const key = `${identity.provider}\0${identity.sourceId}\0${identity.tenant ?? ''}`;
+      const key = `${identity.provider}\0${identity.sourceId}\0${identity.tenant ?? ''}\0${identity.employerScope ?? ''}`;
       const pending = employers.get(key) ?? operations.resolveCanonicalEmployer(identity);
       employers.set(key, pending);
       return pending;
@@ -93,6 +94,10 @@ function catalogAdmissionResolver(env: Environment): CatalogAdmissionResolver {
       const pending = rules.get(key) ?? operations.resolveReviewRule(identity, candidateUrl);
       rules.set(key, pending);
       return pending;
+    },
+    configurationVersion() {
+      version ??= operations.configurationVersion();
+      return version;
     },
   };
 }

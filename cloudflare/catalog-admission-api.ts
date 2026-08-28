@@ -56,7 +56,7 @@ export async function handleCatalogAdmissionOperations(
       };
       await store.supersedeEmployerMapping(mapping);
       await store.recordReviewerDecision({ id: crypto.randomUUID(), subjectType: 'employer-mapping', subjectId: mapping.id,
-        decision: mapping.supersedesMappingId ? 'superseded' : 'approved', reason: reviewReason(input, 'Source-scoped employer mapping reviewed'),
+        decision: mapping.supersedesMappingId ? 'superseded' : 'approved', reason: reviewReason(input, 'Employer mapping reviewed'),
         reviewedAt: timestamp, reviewedBy: actor });
       return json(201, { mapping });
     }

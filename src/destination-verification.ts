@@ -16,6 +16,7 @@ export interface DestinationVerificationRequest {
 export interface CatalogAdmissionResolver {
   resolveCanonicalEmployer(identity: ProviderIdentity): Promise<Pick<CanonicalEmployer, 'id' | 'displayName'> | undefined>;
   resolveDestinationRule(identity: ProviderIdentity, candidateUrl: string): Promise<DestinationReviewRule | undefined>;
+  configurationVersion?(): Promise<string>;
 }
 
 function standardRouteMatches(identity: ProviderIdentity, url: string): boolean {
@@ -117,8 +118,11 @@ export function classifyDestination(input: {
   if (standard) {
     return { ...common, classification: looksLikeForm(finalUrl ?? candidateUrl, input.evidence) ? 'application-form' : 'posting-detail' };
   }
+  const exactPostingEvidence = input.evidence?.postingIdPresent === true
+    || input.evidence?.jobPostingCount === 1
+    || input.evidence?.applicationFormPresent === true;
   if (input.evidence?.redirectedToGenericDestination || (input.evidence?.jobPostingCount ?? 0) > 1
-    || (input.evidence?.distinctJobLinkCount ?? 0) > 1) {
+    || ((input.evidence?.distinctJobLinkCount ?? 0) > 1 && !exactPostingEvidence)) {
     return { ...common, classification: 'aggregate-board' };
   }
   if (input.rule?.decision === 'browser-required' && input.browserVisible !== true) {

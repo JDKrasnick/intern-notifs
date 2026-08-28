@@ -95,6 +95,18 @@ describe('record-level catalog admission', () => {
       .toMatchObject({ catalogEligible: false, reasonCodes: ['destination-aggregate-board'] });
   });
 
+  it('keeps exact posting evidence authoritative when the page links related roles', () => {
+    const role = listing({ applyUrl: 'https://careers.acme.test/jobs/1234567' });
+    const destination = classifyDestination({
+      listing: role,
+      reachability: 'live',
+      inspectedAt: '2026-08-26T12:00:00Z',
+      browserVisible: true,
+      evidence: page({ postingIdPresent: true, distinctJobLinkCount: 4 }),
+    });
+    expect(destination.classification).toBe('posting-detail');
+  });
+
   it('retains last-known-good handoff for seven days while pausing alerts', () => {
     const role = listing({ applyUrl: 'https://careers.acme.test/roles/1234567' });
     const goodDestination = classifyDestination({ listing: role, reachability: 'live', evidence: page({ postingIdPresent: true }), inspectedAt: '2026-08-20T12:00:00Z' });

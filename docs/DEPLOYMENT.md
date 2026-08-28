@@ -154,7 +154,14 @@ secret under `/internal/admission/`. Begin with read-only `GET` requests to
 `audit`, `employers`, `mappings`, `host-rules`, and `incidents`. Use `PUT
 /internal/admission/employers`, `POST /internal/admission/mappings`, and `PUT
 /internal/admission/host-rules` only for reviewed decisions; replacing a
-source-scoped employer mapping requires its explicit `supersedesMappingId`.
+mapping requires its explicit `supersedesMappingId`. Official single-employer
+feeds can use their source ID or tenant as the mapping scope. GitHub community
+lists contain many employers and must use the row scope
+`employer:<canonical-company-key>` (for example, `employer:acme`); a mapping for
+the GitHub source ID is intentionally ignored. Successful polls stamp the
+reviewed admission-configuration version into their checkpoint. A later
+employer, mapping, or host-rule change clears conditional fetch validators once
+and reprocesses the complete source even when its upstream content is unchanged.
 
 Stage legacy changes with `POST /internal/admission/repair` and a `changes`
 array. Save the returned `repairToken`, `changed` count, and candidate IDs for

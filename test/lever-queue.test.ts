@@ -20,6 +20,10 @@ const response = (postings = [posting]) => new Response(JSON.stringify(postings)
   status: 200,
   headers: { 'Content-Type': 'application/json', ETag: '"fixture"' },
 });
+const catalogAdmissionResolver = {
+  async resolveCanonicalEmployer() { return { id: 'acme', displayName: 'Acme' }; },
+  async resolveDestinationRule() { return undefined; },
+};
 
 describe('Lever queue dispatch', () => {
   it('creates one versioned work item per reviewed board', () => {
@@ -220,6 +224,7 @@ describe('Lever queue worker', () => {
       sources: [published],
       fetchImpl: async () => response(current),
       linkValidator: async (url: string) => url,
+      catalogAdmissionResolver,
     };
     await runLeverBoard(message(), dependencies);
     expect(await store.pendingSms()).toEqual([]);
