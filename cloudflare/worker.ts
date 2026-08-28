@@ -828,11 +828,17 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
     console.log(JSON.stringify({ event: 'cloudflare_maintenance_complete', projection, notifications }));
     return;
   }
-  if (event.cron === '5-55/10 * * * *') {
+  if (event.cron === '*/5 * * * *') {
     if (env.GMAIL_ENABLED !== 'true') return;
     const gmail = new GmailStore(env.DB);
     const userIds = await gmail.due(new Date(event.scheduledTime));
-    await sendQueueMessages(env.GMAIL_QUEUE, userIds.map((userId) => ({ version: 1, userId, mode: 'history', requestedAt: new Date(event.scheduledTime).toISOString() } satisfies GmailWorkMessage)));
+    await sendQueueMessages(env.GMAIL_QUEUE, userIds.map((userId) => ({
+      version: 1,
+      userId,
+      mode: 'history',
+      requestedAt: new Date(event.scheduledTime).toISOString(),
+      advanceChecks: true,
+    } satisfies GmailWorkMessage)));
     return;
   }
   if (event.cron === '12,42 * * * *') {
@@ -886,6 +892,17 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
         message.ack();
       } catch (error) {
         const failure = await recordGmailFailure(body.userId, error, env);
+        console.error(JSON.stringify({
+          event: 'gmail_work_failed',
+          messageId: message.id,
+          mode: body.mode,
+          advanceChecks: body.advanceChecks === true,
+          retry: failure.retry,
+          retryDelaySeconds: failure.delaySeconds,
+          error: error instanceof Error ? error.message : String(error),
+          status: (error as { status?: unknown }).status ?? null,
+          googleStatus: (error as { googleStatus?: unknown }).googleStatus ?? null,
+        }));
         if (failure.retry) message.retry({ delaySeconds: failure.delaySeconds });
         else message.ack();
       }

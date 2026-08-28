@@ -37,12 +37,22 @@
     ]
   },
   "triggers": {
-    "crons": ["5-55/10 * * * *", "7-57/10 * * * *", "9-59/10 * * * *", "12,42 * * * *", "22,52 * * * *", "2,32 * * * *", "0 * * * *", "42 8 * * *"]
+    "crons": ["*/5 * * * *", "7-57/10 * * * *", "9-59/10 * * * *", "12,42 * * * *", "22,52 * * * *", "2,32 * * * *", "0 * * * *", "42 8 * * *"]
   },
   "vars": {
     "PUBLIC_API_URL": "https://intern-notifs.jdkrasnick.workers.dev",
+    "AUTH_FROM_EMAIL": "InternNotifs <notifications@send.internnotifs.app>",
     "AUTH_DEV_MODE": "false",
     "EMPLOYER_PORTAL_ENABLED": "true",
-    "GMAIL_ENABLED": "true"
+    "GMAIL_ENABLED": "true",
+    "GMAIL_CLIENT_ID": "17433524169-4753680goh32205can9g00ijqan3hic5.apps.googleusercontent.com",
+    "GMAIL_REDIRECT_URI": "https://intern-notifs.jdkrasnick.workers.dev/oauth/gmail/callback",
+    "CLOUDFLARE_ACCOUNT_ID": "4d67a0f1b73641df84af0a283dd5b3d8",
+    "WORKER_NAME": "intern-notifs",
+    "GREENHOUSE_QUEUE_ID": "559dc736d508485eb6590f356c12e949",
+    "LEVER_QUEUE_ID": "3d3a29e9d4174887b70661e90142d1df",
+    "ASHBY_QUEUE_ID": "f6b174b8a87b42408a75a2513326e265",
+    "GITHUB_QUEUE_ID": "d40e2b26bf2140368fe88b10f1ef1575",
+    "GMAIL_QUEUE_ID": "4fb23438b39d42faa6ca0cdc867373cc"
   }
 }
