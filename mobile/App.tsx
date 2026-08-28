@@ -3703,7 +3703,7 @@ function Applications({
                 <ApplyNowButton
                   label="Open official application"
                   hint="Opens the employer's official application in your browser."
-                  onPress={() => onOpenOfficialApplication(job)}
+                  onPress={() => onOpenOfficialApplication({ jobId: job.jobId, applyUrl: job.applyUrl! })}
                 />
               </View>
             ) : null}
