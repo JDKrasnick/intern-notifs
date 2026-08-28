@@ -23,6 +23,7 @@ function database() {
   const value = new DatabaseSync(':memory:');
   value.exec(readFileSync(new URL('../cloudflare/migrations/0001_initial.sql', import.meta.url), 'utf8'));
   value.exec(readFileSync(new URL('../cloudflare/migrations/0006_gmail_detection.sql', import.meta.url), 'utf8'));
+  value.exec(readFileSync(new URL('../cloudflare/migrations/0007_gmail_application_checks.sql', import.meta.url), 'utf8'));
   return value;
 }
 
@@ -54,11 +55,61 @@ describe('Gmail credential and state storage', () => {
     db.close();
   });
 
+  it('schedules exactly four checks at 5 minutes, 10 minutes, 30 minutes, and 24 hours', async () => {
+    const db = database(); const store = new GmailStore(sqliteD1(db)); const clickedAt = new Date('2026-08-26T12:00:00.000Z');
+    await store.connect('user-1', 'student@example.com', 'encrypted', clickedAt);
+    await store.scheduleCheck('user-1', 'job-1', clickedAt);
+
+    const expected = ['2026-08-26T12:05:00.000Z', '2026-08-26T12:10:00.000Z', '2026-08-26T12:30:00.000Z'];
+    for (let attempt = 0; attempt < expected.length; attempt += 1) {
+      const check = await store.check('user-1', 'job-1');
+      expect(check).toMatchObject({ attempt_index: attempt, next_check_at: expected[attempt], status: 'pending' });
+      await expect(store.due(new Date(expected[attempt]!))).resolves.toEqual(['user-1']);
+      await store.advanceDueChecks('user-1', new Date(expected[attempt]!), new Date(expected[attempt]!));
+    }
+    await expect(store.check('user-1', 'job-1')).resolves.toMatchObject({
+      attempt_index: 3, next_check_at: '2026-08-27T12:00:00.000Z', status: 'pending',
+    });
+    await store.advanceDueChecks('user-1', new Date('2026-08-27T12:00:00.000Z'), new Date('2026-08-27T12:00:00.000Z'));
+    await expect(store.check('user-1', 'job-1')).resolves.toMatchObject({ attempt_index: 4, next_check_at: null, status: 'expired' });
+    db.close();
+  });
+
+  it('accepts an Apply-click check before Gmail is connected', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-26T12:00:00.000Z'));
+    const db = database();
+    db.prepare("INSERT INTO catalog_items (pk, sk, kind, value) VALUES (?, 'META', 'internship', ?)")
+      .run('JOB#job-1', JSON.stringify(role()));
+    const send = vi.fn<(message: unknown, options?: { delaySeconds?: number }) => Promise<void>>(async () => undefined);
+    const env = {
+      DB: sqliteD1(db), GMAIL_QUEUE: { send, async sendBatch() {} }, PUBLIC_API_URL: 'https://api.example.test', GMAIL_ENABLED: 'true',
+      GMAIL_CLIENT_ID: 'client-id', GMAIL_CLIENT_SECRET: 'client-secret',
+      GMAIL_TOKEN_ENCRYPTION_KEY: 'encryption-key-with-at-least-32-characters',
+      GMAIL_MESSAGE_HMAC_KEY: 'message-hmac-key-with-at-least-32-characters',
+    } satisfies GmailEnvironment;
+
+    const response = await gmailApi(new Request('https://api.example.test/me/gmail/checks', {
+      method: 'POST', body: JSON.stringify({ jobId: 'job-1' }),
+    }), env, 'user-1');
+    expect(response?.status).toBe(202);
+    await expect(response?.json()).resolves.toMatchObject({
+      scheduled: true, gmailConnected: false,
+      checksAt: ['2026-08-26T12:05:00.000Z', '2026-08-26T12:10:00.000Z', '2026-08-26T12:30:00.000Z', '2026-08-27T12:00:00.000Z'],
+    });
+    expect(send.mock.calls.map((call) => call[1])).toEqual([
+      { delaySeconds: 300 }, { delaySeconds: 600 }, { delaySeconds: 1800 }, { delaySeconds: 86400 },
+    ]);
+    vi.useRealTimers(); db.close();
+  });
+
   it('disconnects all Gmail data while preserving status and applied timestamp', async () => {
     const db = database(); const store = new GmailStore(sqliteD1(db)); const now = new Date('2026-08-26T12:00:00.000Z');
     await store.connect('user-1', 'student@example.com', 'encrypted', now);
+    await store.scheduleCheck('user-1', 'job-1', now);
     await store.markProcessed('user-1', 'message-hmac', now);
-    await store.addDetection('user-1', 'message-hmac', { sender: 'jobs@example.com', subject: 'Application received', receivedAt: now.toISOString(), labels: ['INBOX'] }, [{ jobId: 'job-1', company: 'Example', title: 'SWE Intern', signals: ['employer'] }], ['review'], now);
+    await store.addDetection('user-1', 'message-hmac', { sender: 'jobs@example.com', subject: 'Application received', content: 'transient-body-marker', receivedAt: now.toISOString(), labels: ['INBOX'] }, [{ jobId: 'job-1', company: 'Example', title: 'SWE Intern', signals: ['employer'], confidenceScore: 8 }], ['review'], now);
+    expect(JSON.stringify(db.prepare('SELECT * FROM gmail_detections').get())).not.toContain('transient-body-marker');
     db.prepare("INSERT INTO user_items (user_id, item_key, kind, value) VALUES (?, ?, 'application', ?)")
       .run('user-1', 'APPLICATION#one', JSON.stringify({ applicationId: 'one', jobId: 'job-1', status: 'applied', appliedAt: now.toISOString(), detection: { source: 'gmail', detectedAt: now.toISOString() } }));
 
@@ -66,6 +117,7 @@ describe('Gmail credential and state storage', () => {
 
     await expect(store.status('user-1')).resolves.toEqual({ connected: false });
     await expect(store.detections('user-1')).resolves.toEqual([]);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM gmail_application_checks').get()).toMatchObject({ count: 0 });
     const application = JSON.parse((db.prepare('SELECT value FROM user_items WHERE user_id = ?').get('user-1') as { value: string }).value) as Record<string, unknown>;
     expect(application).toMatchObject({ status: 'applied', appliedAt: now.toISOString() });
     expect(application).not.toHaveProperty('detection');
@@ -84,7 +136,7 @@ describe('Gmail credential and state storage', () => {
     expect(started?.status).toBe(200);
     const { authorizationUrl } = await started!.json() as { authorizationUrl: string };
     const authorization = new URL(authorizationUrl); const state = authorization.searchParams.get('state');
-    expect(authorization.searchParams.get('scope')).toBe('https://www.googleapis.com/auth/gmail.metadata');
+    expect(authorization.searchParams.get('scope')).toBe('https://www.googleapis.com/auth/gmail.readonly');
     expect(authorization.searchParams.get('code_challenge_method')).toBe('S256');
     expect(state).toBeTruthy();
     expect(db.prepare('SELECT state_hash FROM gmail_oauth_states').get()).not.toMatchObject({ state_hash: state });
@@ -122,6 +174,7 @@ describe('Gmail credential and state storage', () => {
     await store.connect('user-1', 'student@example.com', await encryptGmailToken('refresh-token', env.GMAIL_TOKEN_ENCRYPTION_KEY!), now);
     db.prepare("INSERT INTO catalog_items (pk, sk, kind, value) VALUES (?, 'META', 'internship', ?)")
       .run('JOB#job-1', JSON.stringify(role()));
+    await store.scheduleCheck('user-1', 'job-1', new Date(now.getTime() - 5 * 60_000));
     const requests: string[] = [];
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input); requests.push(url);
@@ -129,14 +182,19 @@ describe('Gmail credential and state storage', () => {
       if (url.endsWith('/gmail/v1/users/me/profile')) return Response.json({ emailAddress: 'student@example.com', historyId: 'history-before-scan' });
       if (url.includes('/gmail/v1/users/me/messages?')) return Response.json({ messages: [] });
       if (url.includes('/gmail/v1/users/me/history?')) return Response.json({
-        history: [{ messagesAdded: [{ message: { id: 'arrived-during-scan' } }] }], historyId: 'history-after-scan',
+        history: [{ messagesAdded: [{ message: { id: 'vanished-message' } }, { message: { id: 'arrived-during-scan' } }] }], historyId: 'history-after-scan',
       });
+      if (url.includes('/gmail/v1/users/me/messages/vanished-message?')) return Response.json(
+        { error: { status: 'NOT_FOUND' } }, { status: 404 },
+      );
       if (url.includes('/gmail/v1/users/me/messages/arrived-during-scan?')) return Response.json({
         id: 'arrived-during-scan', internalDate: String(now.getTime()), labelIds: ['INBOX'],
-        payload: { headers: [
+        payload: { mimeType: 'multipart/alternative', headers: [
           { name: 'From', value: 'Northstar Recruiting <notifications@greenhouse-mail.io>' },
-          { name: 'Subject', value: 'Thank you for applying to Software Engineering Intern at Northstar Labs' },
-        ] },
+          { name: 'Subject', value: 'Application confirmation' },
+        ], parts: [{ mimeType: 'text/plain', body: {
+          data: 'V2UgcmVjZWl2ZWQgeW91ciBhcHBsaWNhdGlvbiBmb3IgU29mdHdhcmUgRW5naW5lZXJpbmcgSW50ZXJuIGF0IE5vcnRoc3RhciBMYWJzLg',
+        } }] },
       });
       throw new Error(`Unexpected request ${url}`);
     });
@@ -147,9 +205,36 @@ describe('Gmail credential and state storage', () => {
     expect(catchup).toMatchObject({ mode: 'history', startHistoryId: 'history-before-scan' });
     await processGmailWork(catchup, env, new Date(now.getTime() + 1));
 
+    expect(requests.some((url) => url.includes('format=full'))).toBe(true);
+
     const application = db.prepare("SELECT value FROM user_items WHERE user_id = ? AND kind = 'application'").get('user-1') as { value: string };
     expect(JSON.parse(application.value)).toMatchObject({ jobId: 'job-1', status: 'applied', detection: { source: 'gmail' } });
+    await expect(store.check('user-1', 'job-1')).resolves.toMatchObject({ status: 'detected', next_check_at: null });
     await expect(store.status('user-1')).resolves.toMatchObject({ connected: true, state: 'connected' });
+    fetchMock.mockRestore(); db.close();
+  });
+
+  it('establishes a history cursor without reading inbox messages before the first Apply check is due', async () => {
+    const db = database(); const now = new Date('2026-08-26T12:00:00.000Z');
+    const env: GmailEnvironment = {
+      DB: sqliteD1(db), GMAIL_QUEUE: { async send() {}, async sendBatch() {} }, PUBLIC_API_URL: 'https://api.example.test', GMAIL_ENABLED: 'true',
+      GMAIL_CLIENT_ID: 'client-id', GMAIL_CLIENT_SECRET: 'client-secret',
+      GMAIL_TOKEN_ENCRYPTION_KEY: 'encryption-key-with-at-least-32-characters',
+      GMAIL_MESSAGE_HMAC_KEY: 'message-hmac-key-with-at-least-32-characters',
+    };
+    const store = new GmailStore(env.DB);
+    await store.connect('user-1', 'student@example.com', await encryptGmailToken('refresh-token', env.GMAIL_TOKEN_ENCRYPTION_KEY!), now);
+    await store.scheduleCheck('user-1', 'job-1', now);
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'access-token' });
+      if (url.endsWith('/gmail/v1/users/me/profile')) return Response.json({ emailAddress: 'student@example.com', historyId: 'cursor-1' });
+      throw new Error(`Inbox should not be read without an Apply check: ${url}`);
+    });
+
+    await processGmailWork({ version: 1, userId: 'user-1', mode: 'initial', requestedAt: now.toISOString() }, env, now);
+    await expect(store.status('user-1')).resolves.toMatchObject({ connected: true, state: 'connected' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     fetchMock.mockRestore(); db.close();
   });
 
@@ -157,10 +242,28 @@ describe('Gmail credential and state storage', () => {
     const db = database(); const now = new Date('2026-08-26T12:00:00.000Z');
     const env = { DB: sqliteD1(db) } as GmailEnvironment; const store = new GmailStore(env.DB);
     await store.connect('user-1', 'student@example.com', 'encrypted', now);
+    await store.scheduleCheck('user-1', 'job-1', now);
     const error = Object.assign(new Error('revoked'), { status: 401 });
 
     await expect(recordGmailFailure('user-1', error, env, now)).resolves.toMatchObject({ retry: false });
     await expect(store.status('user-1')).resolves.toMatchObject({ connected: true, state: 'error', error: { retryable: false } });
+    await expect(store.due(new Date(now.getTime() + 24 * 60 * 60_000))).resolves.toEqual([]);
+    db.close();
+  });
+
+  it('requires reconnection when an existing grant lacks the read-only scope', async () => {
+    const db = database(); const now = new Date('2026-08-26T12:00:00.000Z');
+    const env = { DB: sqliteD1(db) } as GmailEnvironment; const store = new GmailStore(env.DB);
+    await store.connect('user-1', 'student@example.com', 'encrypted', now);
+    await store.scheduleCheck('user-1', 'job-1', now);
+    const error = Object.assign(new Error('insufficient scope'), { status: 403, googleStatus: 'PERMISSION_DENIED' });
+
+    await expect(recordGmailFailure('user-1', error, env, now)).resolves.toMatchObject({ retry: false });
+    await expect(store.status('user-1')).resolves.toMatchObject({
+      connected: true,
+      state: 'error',
+      error: { retryable: false, message: expect.stringContaining('Disconnect and connect Gmail again') },
+    });
     await expect(store.due(new Date(now.getTime() + 24 * 60 * 60_000))).resolves.toEqual([]);
     db.close();
   });

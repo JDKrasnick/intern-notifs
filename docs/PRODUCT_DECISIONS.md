@@ -21,7 +21,7 @@ This is intentionally not an anonymous shared account. Private data is scoped to
 
 Google sign-in should not be enabled by itself on iOS; when it is offered, Sign in with Apple must also be offered to satisfy Apple's equivalent-login policy. Apple and Google keys stay server-side and are never included in the Expo app.
 
-Optional Gmail application detection is not Google sign-in. It is available only after an InternNotifs account is authenticated, requests the metadata-only Gmail scope for one mailbox, and does not change the Apple/Google login sequencing above.
+Optional Gmail application detection is not Google sign-in. It is available only after an InternNotifs account is authenticated, requests Gmail read-only access for one mailbox, and does not change the Apple/Google login sequencing above. Message text is examined only during a short-lived Apply-triggered check, is bounded and processed deterministically, and is not retained.
 
 ## Trust and policy decisions
 

@@ -24,7 +24,7 @@ export interface R2Bucket {
 }
 
 export interface Queue {
-  send(message: unknown): Promise<void>;
+  send(message: unknown, options?: { delaySeconds?: number }): Promise<void>;
   sendBatch(messages: Array<{ body: unknown }>): Promise<void>;
   metrics?(): Promise<{ backlogCount: number; backlogBytes: number; oldestMessageTimestamp?: Date }>;
 }

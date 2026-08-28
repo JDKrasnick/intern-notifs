@@ -2734,6 +2734,17 @@ function AppContent() {
   if (!preferences) return <AppLoadingSkeleton />;
   if (!preferences.onboardingComplete)
     return <Onboarding onDone={setPreferences} />;
+  const openApplicationAndScheduleCheck = (job: Pick<Job, "jobId" | "applyUrl">) => {
+    void api("/me/gmail/checks", token, {
+      method: "POST",
+      body: JSON.stringify({ jobId: job.jobId }),
+    }).catch((error) => {
+      console.warn("Could not schedule Gmail application check", error);
+    });
+    // Start the request before handing off to the system browser, which can
+    // immediately background the native app and suspend later JavaScript work.
+    void openOfficialApplication(job.applyUrl);
+  };
   const saveForWeb = (job: Job) => {
     if (applicationStatuses.has(job.jobId) || savingJobIds.has(job.jobId)) return;
     setSavingJobIds((current) => new Set(current).add(job.jobId));
@@ -2826,7 +2837,7 @@ function AppContent() {
               alertSettings={preferences.alertSettings ?? defaultAlertSettings}
               alertsEnabled={preferences.alertsEnabled}
               onChanged={() => void load()}
-              onOpenOfficialApplication={(applyUrl) => void openOfficialApplication(applyUrl)}
+              onOpenOfficialApplication={openApplicationAndScheduleCheck}
             />
           ) : (
             <Profile
@@ -2854,7 +2865,7 @@ function AppContent() {
         onModalDismissed={finishDetailDismissal}
         onRetry={retryRoutedJob}
         onApply={(job) => {
-          void openOfficialApplication(job.applyUrl);
+          openApplicationAndScheduleCheck(job);
         }}
         onOpenListing={(job) => {
           void openOfficialApplication(job.applyUrl);
@@ -3564,7 +3575,7 @@ function Applications({
   alertSettings: AlertSettings;
   alertsEnabled: boolean;
   onChanged: () => void;
-  onOpenOfficialApplication: (applyUrl: string) => void;
+  onOpenOfficialApplication: (job: Pick<Job, "jobId" | "applyUrl">) => void;
 }) {
   const [detections, setDetections] = useState<GmailDetection[]>([]);
   const [detectionError, setDetectionError] = useState<string>();
@@ -3606,8 +3617,19 @@ function Applications({
         />
         {detections.length ? (
           <View style={styles.gmailReviewSection}>
-            <Text style={styles.sectionTitle}>Needs review</Text>
-            <Text style={styles.muted}>Choose the catalog role that matches each confirmation, or dismiss it.</Text>
+            <Text style={styles.sectionTitle}>Possibly applied</Text>
+            <Text style={styles.muted}>Gmail found an application confirmation, but could not tell which recently opened role it belongs to.</Text>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Why this application cannot be confirmed"
+              onPress={() => Alert.alert(
+                "Why we can’t confirm it",
+                "The email confirms that you applied, but it does not include enough role details to distinguish between the applications you recently opened. Choose the matching role if you recognize it.",
+              )}
+              style={styles.gmailWhy}
+            >
+              <Text style={styles.gmailWhyText}>Why can’t this be confirmed?</Text>
+            </TouchableOpacity>
             {detections.map((detection) => (
               <View key={detection.detectionId} style={styles.gmailReviewRow}>
                 <Text style={styles.gmailSubject} numberOfLines={2}>{detection.subject || "Application confirmation"}</Text>
@@ -3616,7 +3638,7 @@ function Applications({
                   <TouchableOpacity
                     key={candidate.jobId}
                     accessibilityRole="button"
-                    accessibilityLabel={`Mark ${candidate.title} at ${candidate.company} as applied`}
+                    accessibilityLabel={`Confirm ${candidate.title} at ${candidate.company} was applied`}
                     disabled={reviewingDetectionId === detection.detectionId}
                     onPress={() => void resolveDetection(detection, "accept", candidate.jobId)}
                     style={styles.gmailCandidate}
@@ -3634,7 +3656,7 @@ function Applications({
                   onPress={() => void resolveDetection(detection, "dismiss")}
                   style={styles.gmailDismiss}
                 >
-                  <Text style={styles.gmailDismissText}>Dismiss detection</Text>
+                  <Text style={styles.gmailDismissText}>None of these roles</Text>
                 </TouchableOpacity>
               </View>
             ))}
@@ -3669,7 +3691,7 @@ function Applications({
                 <ApplyNowButton
                   label="Open official application"
                   hint="Opens the employer's official application in your browser."
-                  onPress={() => onOpenOfficialApplication(job.applyUrl)}
+                  onPress={() => onOpenOfficialApplication(job)}
                 />
               </View>
             ) : null}
@@ -4226,19 +4248,25 @@ function Profile({
       Alert.alert("Could not retry Gmail sync", error instanceof Error ? error.message : "Please try again.");
     } finally { setGmailLoading(false); }
   };
-  const confirmDisconnectGmail = () => token && Alert.alert(
-    "Disconnect Gmail?",
-    "This removes Gmail credentials, sync history, and pending detections. Existing application statuses stay in your list without Gmail evidence.",
-    [
+  const disconnectGmail = async () => {
+    if (!token || gmailLoading) return;
+    setGmailLoading(true);
+    try { await api("/me/gmail", token, { method: "DELETE" }); setGmailStatus({ connected: false }); }
+    catch (error) { Alert.alert("Could not disconnect Gmail", error instanceof Error ? error.message : "Please try again."); }
+    finally { setGmailLoading(false); }
+  };
+  const confirmDisconnectGmail = () => {
+    if (!token || gmailLoading) return;
+    const message = "This removes Gmail credentials, sync history, and pending detections. Existing application statuses stay in your list without Gmail evidence.";
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      if (window.confirm(`Disconnect Gmail?\n\n${message}`)) void disconnectGmail();
+      return;
+    }
+    Alert.alert("Disconnect Gmail?", message, [
       { text: "Cancel", style: "cancel" },
-      { text: "Disconnect Gmail", style: "destructive", onPress: () => void (async () => {
-        setGmailLoading(true);
-        try { await api("/me/gmail", token, { method: "DELETE" }); setGmailStatus({ connected: false }); }
-        catch (error) { Alert.alert("Could not disconnect Gmail", error instanceof Error ? error.message : "Please try again."); }
-        finally { setGmailLoading(false); }
-      })() },
-    ],
-  );
+      { text: "Disconnect Gmail", style: "destructive", onPress: () => void disconnectGmail() },
+    ]);
+  };
   const openLink = (label: string, value: string | undefined) => {
     if (!value || !/^https:\/\//.test(value)) {
       Alert.alert(
@@ -4652,7 +4680,7 @@ function Profile({
         <>
       <Text style={styles.sectionTitle}>Gmail application detection</Text>
       <Text style={styles.muted}>
-        Optional. InternNotifs reads only sender, subject, date, and labels from Gmail. The first sync checks 30 days of Inbox metadata; later checks run within 15 minutes. Email bodies and attachments are never read, and Gmail data is never used for AI or model training.
+        Optional. After you tap Apply, InternNotifs checks Gmail for that role after 5 minutes, 10 minutes, 30 minutes, and 24 hours. It reads the sender, subject, date, labels, and a limited portion of the message text to confirm the employer and role. Message text is not stored, attachments are not processed, and Gmail data is never used for AI or model training.
       </Text>
       {token ? gmailStatus.connected ? (
         <View style={styles.gmailConnection}>
@@ -4661,7 +4689,7 @@ function Profile({
             <View style={styles.gmailConnectionCopy}>
               <Text style={styles.preferenceTitle}>{gmailStatus.email}</Text>
               <Text style={styles.muted}>
-                {gmailStatus.state === "syncing" ? "Syncing Gmail metadata…" : gmailStatus.lastSuccessfulSync ? `Last synced ${new Date(gmailStatus.lastSuccessfulSync).toLocaleString()}` : "Connected"}
+                {gmailStatus.state === "syncing" ? "Checking Gmail…" : gmailStatus.lastSuccessfulSync ? `Last checked ${new Date(gmailStatus.lastSuccessfulSync).toLocaleString()}` : "Connected"}
               </Text>
             </View>
           </View>
@@ -5845,6 +5873,8 @@ const styles = StyleSheet.create({
   applicationActionGap: { marginTop: 14 },
   gmailDetected: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 8 },
   gmailReviewSection: { marginBottom: 18 },
+  gmailWhy: { alignSelf: "flex-start", justifyContent: "center", minHeight: 44 },
+  gmailWhyText: { color: colors.signal, fontSize: 14, fontWeight: "700" },
   gmailReviewRow: { borderTopColor: colors.separator, borderTopWidth: 1, marginTop: 14, paddingTop: 14 },
   gmailSubject: { color: colors.ink, fontSize: 16, fontWeight: "700", lineHeight: 22 },
   gmailMetadata: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 3 },

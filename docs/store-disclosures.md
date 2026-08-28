@@ -15,7 +15,7 @@ published in App Store Connect or Play Console.
 - Data is used for cross-company tracking or advertising: **No**.
 - Data is shared with third parties for their own purposes: **No**. Cloudflare,
   Google, Resend, Expo, APNs, and FCM act as service providers for hosting,
-  optional Gmail metadata access, email, and requested push delivery.
+  optional Gmail read-only access, email, and requested push delivery.
 - Data is encrypted in transit: **Yes**.
 - Account creation is optional; public browsing and installation-scoped alerts
   work without an account.
@@ -42,7 +42,7 @@ data sent by libraries and SDKs. Sources:
 | Email, password-derived hash/salt, consent versions | Account creation, verification, security | Account-linked | Optional to use app; required for account | Until deletion; abandoned unverified signup 7 days |
 | Name, profile email, phone, location, education, work authorization, links, reusable answers | Optional application profile and form assistance | Account-linked | Optional | Until deletion |
 | Résumé/documents, application status, notes, masked assistance field plan | Optional application tracking and assistance | Account-linked | Optional | Documents/records until deletion; assistance metadata 30 days |
-| Connected Gmail address, encrypted OAuth credential, sender, subject, date, labels, keyed message identifier, and derived match evidence | Optional Gmail application detection | Account-linked | Optional | Credential/sync state while connected; pending metadata 30 days; keyed deduplication value 180 days; all deleted on disconnect/account deletion |
+| Connected Gmail address, encrypted OAuth credential, sender, subject, date, labels, keyed message identifier, transient bounded message text, and derived match evidence | Optional Gmail application detection | Account-linked | Optional | Credential/sync state while connected; message text is not retained; pending evidence 30 days; keyed deduplication value 180 days; all deleted on disconnect/account deletion |
 | Random account/user ID | Authentication and private-data isolation | Account-linked | Optional | Until deletion |
 | Random installation ID, Expo push token, platform | Account-free settings and requested alert delivery | Deliberately not connected to account identity | Installation ID required; push token optional | 12 months inactive; invalid tokens disabled earlier |
 | Alert filters, quiet hours, wording, last catalog open, delivery receipts | Personalization, new-role inbox, reliable delivery | Installation-linked | Optional except the empty default settings record | Installation 12 months inactive; receipts 90 days |
@@ -53,9 +53,10 @@ data sent by libraries and SDKs. Sources:
 The app does **not** request contacts, precise device location, photos, camera,
 microphone, health data, payment information, or the advertising identifier. It
 does not collect an employer site's browsing history after handoff.
-Gmail bodies, attachments, raw headers, and raw Gmail message IDs are not
-collected. Gmail metadata is matched deterministically and is not used for AI,
-model training, advertising, or unrelated analytics.
+Gmail message text is processed transiently during an Apply-triggered check and
+is not retained. Attachments are not processed, and raw headers and raw Gmail
+message IDs are not retained. Gmail evidence is matched deterministically and
+is not used for AI, model training, advertising, or unrelated analytics.
 
 ## Apple App Privacy answers
 
@@ -71,7 +72,7 @@ tracking** and **not used for third-party or developer advertising**.
 | Location → Coarse Location | Yes | App Functionality |
 | Sensitive Info | Yes | App Functionality |
 | User Content → Other User Content | Yes | App Functionality |
-| User Content → Emails or Text Messages | Yes | App Functionality; optional Gmail sender/subject/date/labels only |
+| User Content → Emails or Text Messages | Yes | App Functionality; optional Gmail sender/subject/date/labels and bounded message text for confirmation detection; message text is not retained |
 | Identifiers → User ID | Yes | App Functionality |
 | Identifiers → Device ID | No | App Functionality |
 | Usage Data → Product Interaction | Yes | App Functionality; Product Personalization |
@@ -115,7 +116,7 @@ it with this table before publishing the App Privacy answers.
 | App activity → App interactions | Optional | App functionality; personalization |
 | App activity → In-app search history | Optional | App functionality |
 | App activity → Other user-generated content | Optional | App functionality; application statuses, notes, and answers |
-| Messages → Emails | Optional | App functionality; Gmail sender/subject/date/labels for confirmation detection |
+| Messages → Emails | Optional | App functionality; Gmail sender/subject/date/labels and bounded message text for confirmation detection; message text is not retained |
 | Files and docs → Files and docs | Optional | App functionality; résumé/document storage |
 | Device or other IDs → Device or other IDs | Installation ID required; push token optional | App functionality; security; requested notifications |
 | App info and performance → Other app performance data | Required | App functionality; diagnostics; security |
@@ -128,10 +129,12 @@ required data paths.
 
 ## Google API Limited Use and restricted-scope gate
 
-- Request only `https://www.googleapis.com/auth/gmail.metadata`; do not request
-  `gmail.readonly` to gain search support.
-- The initial scan paginates Inbox metadata without a Gmail search query, and
-  incremental sync uses Gmail history.
+- Request only `https://www.googleapis.com/auth/gmail.readonly`.
+- During an active Apply window, the initial scan paginates Inbox messages back
+  to the click boundary and incremental sync uses Gmail history. The matcher
+  extracts bounded text transiently and does not store or log it.
+- Require existing metadata-scope users to disconnect and reconnect before
+  running content-aware checks so Google presents the expanded consent grant.
 - Use and transfer of Google user data must comply with the Google API Services
   User Data Policy, including Limited Use.
 - Keep `GMAIL_ENABLED=false` for general users until Google restricted-scope

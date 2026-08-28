@@ -18,7 +18,7 @@ InternNotifs is an Expo mobile app with a serverless AWS backend.
 | Job catalog | D1 indexed canonical records and grouped projections |
 | Personal data | D1 user records and releases |
 | Résumés | Private R2 objects behind authenticated Worker routes |
-| Ingestion, delivery, and Gmail sync | Cron Triggers, five Queues with DLQs, Worker consumers, Gmail metadata API, Expo Push Service |
+| Ingestion, delivery, and Gmail sync | Cron Triggers, five Queues with DLQs, Worker consumers, Gmail read-only API, Expo Push Service |
 | Infrastructure | OpenTofu with Cloudflare provider v5 in `infra/cloudflare/` |
 | CI | GitHub Actions in `.github/workflows/ci.yml` |
 
@@ -26,13 +26,19 @@ The catalog is public. Accounts, preferences, device tokens, profiles, documents
 
 ## Gmail application detection rollout
 
-Gmail detection is optional, account-gated, and disabled by default. It requests
-only `https://www.googleapis.com/auth/gmail.metadata`. The OAuth project must
+Gmail detection is optional, account-gated, Apply-triggered, and disabled by default. It requests
+only `https://www.googleapis.com/auth/gmail.readonly`. A signed-in Apply click records a
+short-lived check for that exact catalog role and publishes delayed queue work for
+5 minutes, 10 minutes, 30 minutes, and 24 hours after the click. The periodic cron
+is a fallback for due checks; there is no continuous full-catalog inbox polling. During an active
+check, the Worker retrieves Inbox messages received after the Apply click and extracts at most
+16,384 characters of plain text (or stripped HTML/snippet fallback) for deterministic employer,
+role, and confirmation matching. Message text is transient and is never stored or logged;
+attachments are ignored. The OAuth project must
 remain in testing mode with explicit test users until Google restricted-scope
 verification and the required annual third-party security assessment are
-complete. Do not substitute `gmail.readonly`; Gmail metadata scope deliberately
-does not support search queries, so the initial sync paginates Inbox metadata to
-the 30-day boundary.
+complete. Existing metadata-scope grants must disconnect and reconnect so Google can obtain
+explicit consent for the read-only scope.
 
 In Google Cloud, configure a Web application OAuth client with the exact callback
 `https://API_HOST/oauth/gmail/callback`, add only approved test users, and keep
@@ -55,12 +61,12 @@ npx wrangler secret put GMAIL_MESSAGE_HMAC_KEY
 ```
 
 The encryption key and message-HMAC key must be independently generated and
-managed. Apply migration `0006_gmail_detection.sql`, provision the dedicated
+managed. Apply migrations `0006_gmail_detection.sql` and `0007_gmail_application_checks.sql`, provision the dedicated
 `intern-notifs-gmail` queue and DLQ through OpenTofu, deploy the Worker, and then
-exercise connect/cancel/replay, 30-day backfill, history continuation, expired
-history recovery, ambiguous review, disconnect, revocation failure, and account
+exercise connect/cancel/replay, all four Apply-triggered delays, history continuation, expired
+history recovery, exact-role matching, ambiguous review, disconnect, revocation failure, and account
 deletion using test users. Inspect structured logs only for operation/error codes;
-sender, subject, Gmail IDs, OAuth tokens, bodies, attachments, and raw headers
+sender, subject, Gmail IDs, OAuth tokens, message text, attachments, and raw headers
 must never appear in logs.
 
 For general availability, keep `GMAIL_ENABLED=false` until the verification and

@@ -128,7 +128,7 @@ resource "cloudflare_workers_cron_trigger" "application" {
   account_id  = var.cloudflare_account_id
   script_name = cloudflare_workers_script.application.script_name
   schedules = [
-    { cron = "5-55/10 * * * *" },
+    { cron = "*/5 * * * *" },
     { cron = "7-57/10 * * * *" },
     { cron = "9-59/10 * * * *" },
     { cron = "12,42 * * * *" },
