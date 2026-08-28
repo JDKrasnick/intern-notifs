@@ -50,6 +50,7 @@ export interface ApplicationPageEvidence {
   expectedPostingId?: string;
   postingIdPresent?: boolean;
   jobPostingCount?: number;
+  distinctJobLinkCount?: number;
   applicationFormPresent?: boolean;
   /** Bounded public job text, never applicant-entered data. */
   contentExcerpt?: string;
@@ -190,6 +191,23 @@ function applicationContent(html: string): { excerpt?: string; hash?: string; so
   return { excerpt: text.slice(0, 12_000), hash: createHash('sha256').update(text).digest('hex'), source: structured.source ?? (main ? 'main' : 'body') };
 }
 
+const JOB_ROUTE = /(?:^|\/)(?:careers?|jobs?|openings?|positions?|roles?|vacancies?)(?:\/|$)/iu;
+
+function distinctJobLinkCount(html: string, pageUrl: URL): number {
+  const page = new URL(pageUrl);
+  page.hash = '';
+  const links = new Set<string>();
+  for (const match of html.matchAll(/<a\b[^>]*href=["']([^"']+)["']/giu)) {
+    try {
+      const candidate = new URL(decodeHtml(match[1]!), page);
+      candidate.hash = '';
+      if (!['http:', 'https:'].includes(candidate.protocol) || candidate.toString() === page.toString()) continue;
+      if (JOB_ROUTE.test(candidate.pathname)) links.add(candidate.toString());
+    } catch { /* Malformed link evidence is ignored. */ }
+  }
+  return links.size;
+}
+
 function postingId(url: URL): string | undefined {
   // Long numeric IDs are common across ATSes. This remains optional evidence:
   // a valid posting may use a slug or load its structured data client-side.
@@ -282,7 +300,8 @@ export async function inspectApplicationPage(
   const description = /<meta[^>]+(?:name|property)=["'](?:description|og:description)["'][^>]+content=["']([^"']+)["']/i.exec(html)?.[1]?.replace(/\s+/g, ' ').trim();
   const postingIdPresent = expectedPostingId ? html.includes(expectedPostingId) : undefined;
   const jobPostingCount = [...html.matchAll(/["']@type["']\s*:\s*["']JobPosting["']/gi)].length;
-  const applicationFormPresent = /<form\b[^>]*(?:action=["'][^"']*(?:apply|application)|id=["'][^"']*(?:apply|application))|<input\b[^>]*(?:type=["']file["']|name=["'](?:resume|cv|email)["'])/i.test(html);
+  const jobLinkCount = distinctJobLinkCount(html, destination);
+  const applicationFormPresent = /<form\b[^>]*(?:action=["'][^"']*(?:apply|application)|id=["'][^"']*(?:apply|application))|<input\b[^>]*(?:type=["']file["']|name=["'](?:resume|cv)["'])/i.test(html);
   if (title && /^(?:404 |page )?not found$|^(?:access denied|application error|error)$/i.test(title)) {
     throw new ApplicationUrlValidationError(`Application page reports ${title}`);
   }
@@ -293,6 +312,7 @@ export async function inspectApplicationPage(
     ...(expectedPostingId ? { expectedPostingId } : {}),
     ...(postingIdPresent !== undefined ? { postingIdPresent } : {}),
     ...(jobPostingCount ? { jobPostingCount } : {}),
+    ...(jobLinkCount ? { distinctJobLinkCount: jobLinkCount } : {}),
     ...(applicationFormPresent ? { applicationFormPresent: true } : {}),
     ...(content.excerpt ? { contentExcerpt: content.excerpt, contentHash: content.hash, contentSource: content.source } : {}),
     confidence: confidenceFor({ html: true, ...(title ? { title } : {}), ...(description ? { description } : {}), ...(content.excerpt ? { contentExcerpt: content.excerpt } : {}), ...(expectedPostingId ? { expectedPostingId } : {}), ...(postingIdPresent !== undefined ? { postingIdPresent } : {}) }),

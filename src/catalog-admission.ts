@@ -10,7 +10,7 @@ import type {
 
 const GENERIC_EMPLOYER = /\b(?:talent community|job board|open roles?|careers?|external|private|job wrapping|university jobs?|early career)\b/iu;
 const ELLIPSIS = /(?:\.{2,}|…)/u;
-const TRAILING_FRAGMENT = /(?:\b[A-Za-z]{1,2}|[,/(&[{-])\s*$/u;
+const TRAILING_FRAGMENT = /[,/(&[{-]\s*$/u;
 
 export function isGenericEmployerLabel(value: string): boolean {
   const normalized = value.replace(/\s+/gu, ' ').trim();
@@ -31,16 +31,13 @@ export function metadataCompleteness(input: {
 }): MetadataCompleteness {
   const title = input.title.replace(/\s+/gu, ' ').trim();
   const sourceLocation = input.locations.join(' · ').replace(/\s+/gu, ' ').trim();
-  let titleState: MetadataCompleteness['title'] = !title
+  const titleState: MetadataCompleteness['title'] = !title
     ? 'missing'
     : ELLIPSIS.test(title)
       ? 'truncated'
       : delimiterState(title) === 'malformed' || TRAILING_FRAGMENT.test(title)
         ? 'malformed'
         : input.titleRepaired ? 'approximate-repair' : 'complete';
-  // Words of two characters are legitimate titles (AI, ML), so only treat a
-  // trailing fragment as malformed when it follows an otherwise long value.
-  if (title.length < 12 && titleState === 'malformed') titleState = 'complete';
   const locationState: MetadataCompleteness['location'] = !sourceLocation
     ? 'not-specified'
     : ELLIPSIS.test(sourceLocation)

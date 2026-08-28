@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deriveCanonicalAdmission, evaluateCatalogAdmission, metadataCompleteness } from '../src/catalog-admission.js';
 import { classifyDestination } from '../src/destination-verification.js';
-import type { ApplicationPageEvidence } from '../src/core/application-url.js';
+import { inspectApplicationPage, type ApplicationPageEvidence } from '../src/core/application-url.js';
 import type { CatalogAdmission, ProcessedListing, SourceOccurrence } from '../src/types.js';
 
 function listing(overrides: Partial<ProcessedListing> = {}): ProcessedListing {
@@ -70,6 +70,29 @@ describe('record-level catalog admission', () => {
       .toEqual({ complete: false, title: 'malformed', location: 'truncated' });
     expect(metadataCompleteness({ title: 'Software Engineering Intern…', locations: ['Remote'], titleRepaired: true }).title)
       .toBe('truncated');
+    for (const title of ['Software Engineer II', 'Machine Learning Intern AI', 'Research Intern - Cedar Park, TX', 'Intern/ Graduate Software Engineer, NZ']) {
+      expect(metadataCompleteness({ title, locations: ['Remote'] }), title)
+        .toEqual({ complete: true, title: 'complete', location: 'complete' });
+    }
+  });
+
+  it('does not accept an aggregate page from a matching role title alone', async () => {
+    const role = listing({ applyUrl: 'https://careers.acme.test/open-roles' });
+    const evidence = await inspectApplicationPage(role.applyUrl, async () => new Response(`<title>Open roles at Acme</title><main>
+      <a href="/jobs/software-intern">Software Engineering Intern</a>
+      <a href="/jobs/data-intern">Data Science Intern</a>
+      <a href="/roles/design-intern">Product Design Intern</a>
+    </main>`, { status: 200, headers: { 'content-type': 'text/html' } }));
+    const destination = classifyDestination({
+      listing: role,
+      reachability: 'live',
+      inspectedAt: '2026-08-26T12:00:00Z',
+      browserVisible: true,
+      evidence,
+    });
+    expect(destination.classification).toBe('aggregate-board');
+    expect(evaluateCatalogAdmission({ listing: role, destination, postingAttributed: true, evaluatedAt: '2026-08-26T12:00:00Z' }))
+      .toMatchObject({ catalogEligible: false, reasonCodes: ['destination-aggregate-board'] });
   });
 
   it('retains last-known-good handoff for seven days while pausing alerts', () => {

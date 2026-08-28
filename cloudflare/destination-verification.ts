@@ -176,12 +176,21 @@ export async function processDestinationVerificationBatch(
             const browserEvidence = await page.evaluate((expectedPostingId) => {
               const html = document.documentElement.outerHTML;
               const jobPostingCount = [...document.querySelectorAll('script[type="application/ld+json"]')].reduce((total, node) => total + ((node.textContent?.match(/["']@type["']\s*:\s*["']JobPosting["']/gi) ?? []).length), 0);
+              const pageUrl = new URL(location.href); pageUrl.hash = '';
+              const jobRoute = /(?:^|\/)(?:careers?|jobs?|openings?|positions?|roles?|vacancies?)(?:\/|$)/i;
+              const distinctJobLinks = new Set([...document.querySelectorAll<HTMLAnchorElement>('a[href]')]
+                .filter((link) => link.getClientRects().length > 0)
+                .map((link) => { try { const value = new URL(link.href, location.href); value.hash = ''; return value; } catch { return undefined; } })
+                .filter((value): value is URL => Boolean(value && ['http:', 'https:'].includes(value.protocol)
+                  && value.toString() !== pageUrl.toString() && jobRoute.test(value.pathname)))
+                .map((value) => value.toString()));
               const description = document.querySelector('meta[name="description"],meta[property="og:description"]')?.getAttribute('content') ?? undefined;
               const main = (document.querySelector('main')?.textContent ?? document.body?.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 12_000);
               return {
                 url: location.href, title: document.title || undefined, description,
                 postingIdPresent: expectedPostingId ? html.includes(expectedPostingId) : undefined,
                 jobPostingCount,
+                distinctJobLinkCount: distinctJobLinks.size,
                 applicationFormPresent: Boolean(document.querySelector('form[action*="apply" i],form[id*="apply" i],input[type="file"],input[name="resume" i],input[name="cv" i]')),
                 contentExcerpt: main || undefined,
               };

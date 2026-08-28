@@ -131,13 +131,15 @@ documentation.
 
 ## Catalog admission rollout (#120)
 
-Deploy the Worker before applying `0007_catalog_admission.sql`; the code treats
-legacy rows without an admission record as eligible until the guarded repair is
-approved. Create the `intern-notifs-destination-verification` queue and its
+Create the `intern-notifs-destination-verification` queue and its
 `-dlq`, enable the `DESTINATION_BROWSER` Browser Rendering binding, and set
 `RESEND_API_KEY` plus `ADMISSION_SUPPORT_RECIPIENT` as Worker secrets. The
 checked-in consumer processes at most 20 URLs per batch, retries twice before
 the DLQ, rechecks open incidents daily, and samples reviewed host rules weekly.
+Apply `0007_catalog_admission.sql` before deploying the Worker because managed
+ingestion immediately queries the new review tables. The additive migration is
+safe for the currently deployed Worker; after deployment, legacy rows without
+an admission record remain eligible until the guarded repair is approved.
 
 Apply the migration and deploy only after reviewing the generated resource diff:
 

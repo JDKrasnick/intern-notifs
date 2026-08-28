@@ -97,10 +97,12 @@ export function classifyDestination(input: {
       contentHash: input.evidence.contentHash,
       postingIdPresent: input.evidence.postingIdPresent,
       jobPostingCount: input.evidence.jobPostingCount,
+      distinctJobLinkCount: input.evidence.distinctJobLinkCount,
       applicationFormPresent: input.evidence.applicationFormPresent,
     }) } : {}),
     ...(input.evidence?.postingIdPresent !== undefined ? { postingIdPresent: input.evidence.postingIdPresent } : {}),
     ...(input.evidence?.jobPostingCount !== undefined ? { jobPostingCount: input.evidence.jobPostingCount } : {}),
+    ...(input.evidence?.distinctJobLinkCount !== undefined ? { distinctJobLinkCount: input.evidence.distinctJobLinkCount } : {}),
     ...(input.evidence?.applicationFormPresent !== undefined ? { applicationFormPresent: input.evidence.applicationFormPresent } : {}),
     ...(input.browserVisible !== undefined ? { browserVisible: input.browserVisible } : {}),
   } satisfies Omit<DestinationEvidence, 'classification'>;
@@ -115,7 +117,8 @@ export function classifyDestination(input: {
   if (standard) {
     return { ...common, classification: looksLikeForm(finalUrl ?? candidateUrl, input.evidence) ? 'application-form' : 'posting-detail' };
   }
-  if (input.evidence?.redirectedToGenericDestination || (input.evidence?.jobPostingCount ?? 0) > 1) {
+  if (input.evidence?.redirectedToGenericDestination || (input.evidence?.jobPostingCount ?? 0) > 1
+    || (input.evidence?.distinctJobLinkCount ?? 0) > 1) {
     return { ...common, classification: 'aggregate-board' };
   }
   if (input.rule?.decision === 'browser-required' && input.browserVisible !== true) {

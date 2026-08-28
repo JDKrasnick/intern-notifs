@@ -316,6 +316,7 @@ export interface DestinationEvidence {
   evidenceHash?: string;
   postingIdPresent?: boolean;
   jobPostingCount?: number;
+  distinctJobLinkCount?: number;
   applicationFormPresent?: boolean;
   browserVisible?: boolean;
   lastKnownGoodAt?: string;
