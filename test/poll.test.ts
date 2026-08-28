@@ -221,9 +221,11 @@ describe('polling', () => {
     const store = new MemoryInternshipStore();
     const legacy = await legacyOpenRole(store);
     const legacyJob = (await store.getJob('legacy-role'))!;
-    await store.putInternship({ ...legacyJob, applyUrl: 'https://jobs.example.com/canonical', normalizedUrl: 'https://jobs.example.com/canonical',
-      sourceReferences: [{ ...legacyJob.sourceReferences[0]!, sourceId: 'community-list', externalId: 'acme-role' }] });
-    await store.claimPostingIdentity(buildPostingIdentity({ applicationUrl: legacy.applyUrl }), 'legacy-role');
+    const priorUrl = 'https://ancestry.wd501.myworkdayjobs.com/Careers/job/Remote/Software-Engineer---Observability--Co-op_R003434';
+    const refreshedUrl = 'https://ancestry.wd501.myworkdayjobs.com/en-US/careers/job/Draper-Utah/Software-Engineer---Observability--Co-op_R003434';
+    await store.putInternship({ ...legacyJob, applyUrl: priorUrl, normalizedUrl: priorUrl,
+      sourceReferences: [{ ...legacyJob.sourceReferences[0]!, sourceId: 'community-list', externalId: 'acme-role', applyUrl: priorUrl }] });
+    await store.claimPostingIdentity(buildPostingIdentity({ applicationUrl: priorUrl }), 'legacy-role');
     const snapshot: SourceFetchResult & SourceSnapshot = {
       sourceId: 'community-list', outcome: 'changed', complete: true, rawCount: 2, contentHash: 'community-hash',
       listings: [], notModified: false,
@@ -231,7 +233,7 @@ describe('polling', () => {
       postings: [
         { sourceId: 'community-list', provenance: 'reviewed-community', externalId: 'acme-role', sourceUrl: 'https://github.com/example/jobs',
           fetchedAt: '2026-08-27T12:00:00Z', employer: { name: 'Acme', authority: 'source-row' }, title: legacy.title,
-          content: [], locations: [legacy.location], applyUrl: legacy.applyUrl, sourceState: 'open', lifecycleAuthority: 'source' },
+          content: [], locations: [legacy.location], applyUrl: refreshedUrl, sourceState: 'open', lifecycleAuthority: 'source' },
         { sourceId: 'community-list', provenance: 'reviewed-community', externalId: 'beta-role', sourceUrl: 'https://github.com/example/jobs',
           fetchedAt: '2026-08-27T12:00:00Z', employer: { name: 'Beta', authority: 'source-row' }, title: 'Data Engineering Intern',
           content: [], locations: ['Remote'], applyUrl: 'https://jobs.example.com/beta', sourceState: 'open', lifecycleAuthority: 'source' },
@@ -245,6 +247,9 @@ describe('polling', () => {
     const preserved = await store.getJob('legacy-role');
     expect(preserved?.open).toBe(true);
     expect(preserved?.admission).toBeUndefined();
+    expect(preserved?.sourceReferences).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceId: 'community-list', applyUrl: refreshedUrl }),
+    ]));
     expect([...store.jobs.values()].find((job) => job.company === 'Beta')).toMatchObject({
       admission: { catalogEligible: false, alertEligible: false, reasonCodes: expect.arrayContaining(['employer-unresolved']) },
     });

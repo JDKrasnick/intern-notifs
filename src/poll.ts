@@ -395,13 +395,15 @@ export class IngestionRunner {
           };
         }
         // Existing unclassified rows keep their rollout behavior until a
-        // reviewed mapping exists. New rows (and changed destinations) fail
-        // closed, so activating admission cannot hide the legacy catalog.
+        // reviewed mapping exists. A refreshed URL is also safe when an
+        // already-claimed immutable provider posting proves it is the same
+        // requisition. New rows and otherwise unproven destination changes
+        // fail closed, so activating admission cannot hide the legacy catalog.
         const knownLegacyDestination = existing?.normalizedUrl === normalizedUrl
           || existing?.sourceReferences.some((reference) => reference.sourceId === listing.sourceId
             && sameApplicationUrl(reference.applyUrl, normalizedUrl));
         const preserveLegacyAdmission = Boolean(existing && !existing.admission
-          && knownLegacyDestination
+          && (knownLegacyDestination || identityResolution.outcome === 'merge')
           && !listing.employerEvidence?.canonicalEmployer);
         const admissionManaged = supportsAdmission && !preserveLegacyAdmission;
         const attribution = await this.attribute(listing);
