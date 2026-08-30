@@ -251,7 +251,10 @@ describe('D1 posting identity repair', () => {
   });
 
   it('applies exact guarded remaps for presentation-agreeing groups, preserves workflow/notifications, resolves legacy IDs, and is idempotent', async () => {
-    const { sqlite, db, store } = await historicalDatabase({ presentationAgrees: true }); const dry = await runPostingIdentityRepair(db);
+    const { sqlite, db, store } = await historicalDatabase({ presentationAgrees: true });
+    sqlite.prepare("INSERT INTO catalog_items (pk, sk, kind, value) VALUES ('TOMBSTONE#student', 'ROLE#plus-duplicate', 'notification-tombstone', ?)")
+      .run(JSON.stringify({ jobId: 'plus-duplicate', deletedAt: '2026-08-03T00:00:00Z' }));
+    const dry = await runPostingIdentityRepair(db);
     expect(dry).toMatchObject({ eligibleDuplicateGroups: 2, eligibleDuplicateJobs: 2, unresolvedDuplicateGroups: 0 });
     const applied = await runPostingIdentityRepair(db, { apply: true, repairToken: dry.repairToken, expectedChanges: dry.expectedChanges, expectedDuplicateJobs: dry.duplicateJobs });
     expect(applied).toMatchObject({ applied: true, projectionRefreshRequired: true });
@@ -266,6 +269,9 @@ describe('D1 posting identity repair', () => {
     expect(await store.pendingSms()).not.toEqual(expect.arrayContaining([expect.objectContaining({ jobId: 'plus-old' })]));
     expect(await store.pendingDigest()).not.toEqual(expect.arrayContaining([expect.objectContaining({ jobId: 'plus-old' })]));
     expect(sqlite.prepare("SELECT COUNT(*) AS count FROM catalog_items WHERE kind = 'notification-event'").get()).toEqual({ count: 1 });
+    expect(sqlite.prepare("SELECT sk, value FROM catalog_items WHERE kind = 'notification-tombstone'").get()).toEqual({
+      sk: 'ROLE#plus-old', value: JSON.stringify({ jobId: 'plus-old', deletedAt: '2026-08-03T00:00:00Z' }),
+    });
     expect(sqlite.prepare("SELECT job_id FROM employer_field_proposals WHERE id = 'proposal'").get()).toEqual({ job_id: 'plus-old' });
     const applications = sqlite.prepare("SELECT value FROM user_items WHERE kind = 'application'").all().map((row) => JSON.parse((row as { value: string }).value));
     expect(applications).toEqual([expect.objectContaining({
@@ -331,14 +337,8 @@ describe('D1 posting identity repair', () => {
     expect(metrics.statements).toBeLessThanOrEqual(900);
     expect(metrics.maxBoundParameters).toBeLessThanOrEqual(100);
     const occurrences = await runPostingIdentityRepair(db, { scope: 'occurrences' });
-    expect(occurrences).toMatchObject({ expectedChanges: 390, conflicts: [] });
-    metrics.statements = 0; metrics.calls = 0; metrics.maxBoundParameters = 0;
-    await runPostingIdentityRepair(db, {
-      apply: true, repairToken: occurrences.repairToken, scope: 'occurrences',
-      expectedChanges: occurrences.expectedChanges, expectedDuplicateJobs: occurrences.duplicateJobs,
-    });
-    expect(metrics.statements).toBe(416);
-    expect(metrics.statements).toBeLessThanOrEqual(900);
+    // URL syntax alone no longer mints aliases during occurrence repair.
+    expect(occurrences).toMatchObject({ expectedChanges: 0, aliasWrites: 0, conflicts: [] });
     expect(await runPostingIdentityRepair(db)).toMatchObject({ expectedChanges: 0, conflicts: [] });
     sqlite.close();
   });

@@ -29,33 +29,28 @@ type ProposalRow = { id: string; job_id: string };
 type CatalogWrite = { before?: CatalogRow; pk: string; sk: string; kind: string; value: string; columns?: Partial<CatalogRow> };
 type UserWrite = { before?: UserRow; userId: string; itemKey: string; kind: string; value: string; columns?: Partial<UserRow> };
 
-// Reviewed 2026-08-28 against the employer's live pages. These custom
-// Greenhouse handoffs expose gh_jid on /careers/job and redirect to the exact
-// first-party posting; stripping gh_src revealed the historical URL pairs.
-const reviewedUrlConsolidations = [
-  {
-    matchUrl: 'https://www.hudsonrivertrading.com/careers/job?gh_jid=8059837',
-    officialUrl: 'https://www.hudsonrivertrading.com/hrt-job/algorithm-development-quant-research-phd-internship-summer-2027',
-    title: 'Algorithm Development (Quant Research & Trading) PhD Internship – Summer 2027',
-    locations: ['London', 'New York', 'Singapore'],
-  },
-  {
-    matchUrl: 'https://www.hudsonrivertrading.com/careers/job?gh_jid=8052083',
-    officialUrl: 'https://www.hudsonrivertrading.com/hrt-job/software-engineering-internship-c-or-python-summer-2027',
-    title: 'Software Engineering Internship (C++ or Python) – Summer 2027',
-    locations: ['Austin', 'Chicago', 'London', 'New York'],
-  },
-  {
-    matchUrl: 'https://www.hudsonrivertrading.com/careers/job?gh_jid=7964062',
-    officialUrl: 'https://www.hudsonrivertrading.com/hrt-job/algorithm-development-quant-research-internship-summer-2027',
-    title: 'Algorithm Development (Quant Research & Trading) Internship – Summer 2027',
-    locations: ['London', 'New York', 'Singapore'],
-  },
-] as const;
-
 export interface PostingIdentityRepairPlan {
+  schemaVersion: 2;
   scope: PostingIdentityRepairScope;
+  snapshotDigest: string;
   repairToken: string;
+  occurrenceCounts: {
+    confirmed: number;
+    unconfirmed: number;
+    legacy: number;
+    quarantined: number;
+    /** Legacy-unclassified rows are excluded from this denominator. */
+    confirmedCoverage: number | null;
+  };
+  duplicateAlertGroups: number;
+  unknownUrlFamilyCandidates: Array<{ reviewFamilyKey: string; occurrences: number }>;
+  gate: {
+    passed: boolean;
+    exactDuplicateGroups: number;
+    aliasConflicts: number;
+    untrackedQuarantines: number;
+    presentationBlockers: number;
+  };
   providerGroups: number;
   duplicateGroups: number;
   duplicateJobs: number;
@@ -66,6 +61,7 @@ export interface PostingIdentityRepairPlan {
   jobDeletes: number;
   aliasWrites: number;
   occurrenceRemaps: number;
+  notificationTombstoneRemaps: number;
   applicationRemaps: number;
   applicationMerges: number;
   sessionRemaps: number;
@@ -165,8 +161,25 @@ function jobColumns(job: Internship): Partial<CatalogRow> {
   };
 }
 
+function confirmedOccurrence(reference: SourceOccurrence, identity: PostingIdentity, fallbackObservedAt: string): SourceOccurrence {
+  const exactKey = `provider:${identity.provider}:${identity.tenant ?? '-'}:${identity.providerPostingId}`;
+  return {
+    ...reference,
+    postingIdentityDecision: {
+      status: 'confirmed', exactKey, evidenceKind: 'immutable-provider-id',
+      provider: identity.provider as Exclude<typeof identity.provider, 'unknown'>,
+      ...(identity.tenant ? { tenant: identity.tenant } : {}),
+      contractId: `posting-provider-${identity.provider}`, contractVersion: 1,
+      approvalReference: `registry:${identity.provider}:v1`,
+      evidenceHash: createHash('sha256').update(JSON.stringify({ exactKey, aliases: identity.aliases.map((alias) => alias.value).sort() })).digest('hex'),
+      observedAt: reference.firstAttachedAt ?? fallbackObservedAt,
+    },
+  };
+}
+
 function mergeJob(canonical: Internship, members: Internship[], identity: PostingIdentity, official?: SourceOccurrence): Internship {
-  const sourceReferences = [...new Map(members.flatMap((job) => job.sourceReferences).map((item) => [occurrenceKey(item), item])).values()];
+  const sourceReferences = [...new Map(members.flatMap((job) => job.sourceReferences).map((item) => [occurrenceKey(item), item])).values()]
+    .map((reference) => confirmedOccurrence(reference, identity, canonical.firstSeenAt));
   const smsSentAt = members.map((job) => job.notification.smsSentAt).filter((value): value is string => Boolean(value)).sort().at(-1);
   const digestedAt = members.map((job) => job.notification.digestedAt).filter((value): value is string => Boolean(value)).sort().at(-1);
   const company = official?.company ?? canonical.company;
@@ -198,6 +211,7 @@ function mergeJob(canonical: Internship, members: Internship[], identity: Postin
       advancedDegreeRequired: members.some((job) => job.requirements?.advancedDegreeRequired),
     },
     postingIdentity: identity,
+    postingIdentityStatus: 'confirmed',
     sourceReferences,
     open: members.some((job) => job.open),
     technical: members.some((job) => job.technical !== false),
@@ -350,14 +364,53 @@ export function postingIdentityRepairPlan(
   scope: PostingIdentityRepairScope = 'all',
 ): InternalPlan {
   const conflicts: string[] = [];
+  const snapshotDigest = createHash('sha256').update(JSON.stringify(stable({
+    catalog: catalogRows.map((row) => [row.pk, row.sk, row.kind, row.value])
+      .sort((left, right) => String(left[0]).localeCompare(String(right[0])) || String(left[1]).localeCompare(String(right[1]))),
+    users: userRows.map((row) => [row.user_id, row.item_key, row.kind, row.value])
+      .sort((left, right) => String(left[0]).localeCompare(String(right[0])) || String(left[1]).localeCompare(String(right[1]))),
+    proposals: proposalRows.map((row) => [row.id, row.job_id])
+      .sort((left, right) => left[0].localeCompare(right[0])),
+  }))).digest('hex');
+  const occurrenceDecisions = new Map<string, SourceOccurrence['postingIdentityDecision']>();
+  let untrackedQuarantines = 0;
+  for (const row of catalogRows.filter((item) => item.kind === 'source-occurrence')) {
+    try {
+      const state = parse<{ sourceId: string; externalId: string; occurrence: SourceOccurrence }>(row.value);
+      occurrenceDecisions.set(occurrenceKey(state.occurrence), state.occurrence.postingIdentityDecision);
+      if (state.occurrence.postingIdentityDecision?.status === 'quarantined') untrackedQuarantines += 1;
+    } catch { /* The existing occurrence parser reports malformed rows below. */ }
+  }
+  for (const row of catalogRows.filter((item) => item.kind === 'internship')) {
+    try {
+      const job = parse<Internship>(row.value);
+      for (const occurrence of job.sourceReferences) {
+        occurrenceDecisions.set(occurrenceKey(occurrence), occurrenceDecisions.get(occurrenceKey(occurrence)) ?? occurrence.postingIdentityDecision);
+      }
+    } catch { /* The primary job scan reports malformed rows below. */ }
+  }
+  const decisionValues = [...occurrenceDecisions.values()];
+  const confirmedOccurrences = decisionValues.filter((decision) => decision?.status === 'confirmed').length;
+  const unconfirmedOccurrences = decisionValues.filter((decision) => decision?.status === 'unconfirmed').length;
+  const incidentCount = catalogRows.filter((row) => row.kind === 'posting-identity-incident').length;
+  const legacyOccurrences = decisionValues.filter((decision) => !decision).length;
+  const classifiedOccurrences = confirmedOccurrences + unconfirmedOccurrences;
+  const familyCounts = new Map<string, number>();
+  for (const decision of decisionValues) if (decision?.status === 'unconfirmed') {
+    familyCounts.set(decision.reviewFamilyKey, (familyCounts.get(decision.reviewFamilyKey) ?? 0) + 1);
+  }
   const checkpoints = new Map(catalogRows.filter((row) => row.kind === 'checkpoint').flatMap((row) => {
     try { const value = parse<SourceCheckpoint>(row.value); return [[value.sourceId, value] as const]; } catch { return []; }
   }));
   const occurrencesByJob = new Map<string, SourceOccurrence[]>();
   for (const row of catalogRows.filter((item) => item.kind === 'source-occurrence')) {
     try {
-      const state = parse<{ jobId: string; occurrence: SourceOccurrence }>(row.value);
-      occurrencesByJob.set(state.jobId, [...(occurrencesByJob.get(state.jobId) ?? []), state.occurrence]);
+      const state = parse<{ jobId: string; occurrence: SourceOccurrence; firstObservedAt?: string; firstObservedAtPrecision?: 'exact' | 'unknown'; changedAt?: string }>(row.value);
+      const attachedAt = state.firstObservedAt ?? state.changedAt;
+      const occurrence = attachedAt && !state.occurrence.firstAttachedAt
+        ? { ...state.occurrence, firstAttachedAt: attachedAt, firstAttachedAtPrecision: state.firstObservedAt ? state.firstObservedAtPrecision ?? 'exact' as const : 'unknown' as const }
+        : state.occurrence;
+      occurrencesByJob.set(state.jobId, [...(occurrencesByJob.get(state.jobId) ?? []), occurrence]);
     } catch { conflicts.push(`${row.pk}:${row.sk}: malformed source occurrence JSON`); }
   }
   const jobRows = catalogRows.filter((row) => row.kind === 'internship');
@@ -433,7 +486,8 @@ export function postingIdentityRepairPlan(
       : buildPostingIdentity({ applicationUrl: canonical.job.applyUrl, providerEvidence: { ...canonical.evidence, urls } });
     identity.canonicalJobId = canonical.job.jobId;
     const merged = retainedIdentity
-      ? canonical.job
+      ? { ...canonical.job, postingIdentityStatus: 'confirmed' as const,
+          sourceReferences: canonical.job.sourceReferences.map((reference) => confirmedOccurrence(reference, identity, canonical.job.firstSeenAt)) }
       : mergeJob(canonical.job, ordered.map((item) => item.job), identity, official);
     canonicalJobs.set(canonical.job.jobId, merged);
     for (const item of ordered) canonicalByJobId.set(item.job.jobId, canonical.job.jobId);
@@ -472,89 +526,6 @@ export function postingIdentityRepairPlan(
         continue;
       }
       catalogWrites.push({ pk, sk: 'TARGET', kind: 'job-id-alias', value: JSON.stringify({ oldJobId: duplicate.job.jobId, canonicalJobId: canonical.job.jobId, createdBy: 'posting-identity-repair' }) });
-    }
-  }
-
-  for (const decision of reviewedUrlConsolidations) {
-    const values = jobRows.flatMap((row) => {
-      try {
-        const job = parse<Internship>(row.value);
-        const normalizedUrl = normalizeUrl(job.applyUrl);
-        return normalizedUrl === decision.matchUrl || normalizedUrl === decision.officialUrl ? [{ row, job }] : [];
-      } catch { return []; }
-    });
-    if (values.length < 2) continue;
-    const ordered = [...values].sort((a, b) => firstSeen(a.job).localeCompare(firstSeen(b.job)) || a.job.jobId.localeCompare(b.job.jobId));
-    const canonical = ordered[0]!;
-    const duplicateIds = new Set(ordered.slice(1).map((item) => item.job.jobId));
-    duplicateGroups += 1;
-    duplicateJobs += ordered.length - 1;
-    eligibleDuplicateGroups += 1;
-    eligibleDuplicateJobs += ordered.length - 1;
-    samples.push({
-      canonicalJobId: canonical.job.jobId,
-      duplicateJobIds: [...duplicateIds],
-      providerIdentity: `url:${decision.matchUrl}`,
-      applyEligible: true,
-      disagreementFields: [],
-    });
-    const observedUrls = ordered.flatMap(({ job }) => [job.applyUrl, ...job.sourceReferences.map((reference) => reference.applyUrl)]);
-    const identity = buildPostingIdentity({
-      applicationUrl: decision.matchUrl,
-      finalOfficialUrl: decision.officialUrl,
-      observedUrls,
-    });
-    identity.canonicalJobId = canonical.job.jobId;
-    const mergedBase = mergeJob(canonical.job, ordered.map((item) => item.job), identity);
-    const evidenceDate = new Date(Number.isNaN(Date.parse(mergedBase.lastSeenAt)) ? 0 : Date.parse(mergedBase.lastSeenAt));
-    const season = inferSeason(decision.title, '', evidenceDate);
-    const location = decision.locations.join('; ');
-    const merged: Internship = {
-      ...mergedBase,
-      company: 'Hudson River Trading',
-      title: decision.title,
-      location,
-      locations: [...decision.locations],
-      season,
-      applyUrl: decision.officialUrl,
-      normalizedUrl: normalizeUrl(decision.officialUrl),
-      fingerprint: fingerprint('Hudson River Trading', decision.title, location, season),
-    };
-    canonicalJobs.set(canonical.job.jobId, merged);
-    for (const item of ordered) canonicalByJobId.set(item.job.jobId, canonical.job.jobId);
-    catalogWrites.push({ before: canonical.row, pk: canonical.row.pk, sk: canonical.row.sk, kind: 'internship', value: JSON.stringify(merged), columns: jobColumns(merged) });
-    catalogDeletes.push(...ordered.slice(1).map((item) => item.row));
-
-    const remappedAliasKeys = new Set<string>();
-    for (const row of catalogRows.filter((item) => item.kind === 'posting-alias')) {
-      try {
-        const claim = parse<{ alias: string; canonicalJobId: string }>(row.value);
-        if (!duplicateIds.has(claim.canonicalJobId)) continue;
-        remappedAliasKeys.add(`${row.pk}\0${row.sk}`);
-        catalogWrites.push({ before: row, pk: row.pk, sk: row.sk, kind: row.kind,
-          value: JSON.stringify({ ...claim, canonicalJobId: canonical.job.jobId }) });
-      } catch { conflicts.push(`${row.pk}:${row.sk}: malformed posting alias JSON`); }
-    }
-    for (const alias of identity.aliases.map((item) => item.value)) {
-      const pk = `POSTING_ALIAS#${alias}`;
-      const existing = catalogByKey.get(`${pk}\0CLAIM`);
-      if (existing) {
-        const claim = parse<{ canonicalJobId?: string }>(existing.value);
-        if (remappedAliasKeys.has(`${pk}\0CLAIM`) || claim.canonicalJobId === canonical.job.jobId) continue;
-        conflicts.push(`${alias}: already claimed by ${claim.canonicalJobId ?? 'an invalid row'}`);
-        continue;
-      }
-      catalogWrites.push({ pk, sk: 'CLAIM', kind: 'posting-alias', value: JSON.stringify({ alias, canonicalJobId: canonical.job.jobId, claimedAt: 'identity-repair' }) });
-    }
-    for (const duplicateId of duplicateIds) {
-      const pk = `JOB_ID_ALIAS#${duplicateId}`;
-      const existing = catalogByKey.get(`${pk}\0TARGET`);
-      if (existing) {
-        const claim = parse<{ canonicalJobId?: string }>(existing.value);
-        if (claim.canonicalJobId !== canonical.job.jobId) conflicts.push(`${duplicateId}: legacy alias already targets ${claim.canonicalJobId ?? 'an invalid row'}`);
-        continue;
-      }
-      catalogWrites.push({ pk, sk: 'TARGET', kind: 'job-id-alias', value: JSON.stringify({ oldJobId: duplicateId, canonicalJobId: canonical.job.jobId, createdBy: 'posting-identity-repair' }) });
     }
   }
 
@@ -599,35 +570,19 @@ export function postingIdentityRepairPlan(
       else catalogWrites.push(write);
     }
 
-    const urlAliases = buildPostingIdentity({
-      applicationUrl: synchronized.applyUrl,
-      observedUrls: synchronized.sourceReferences.map((reference) => reference.applyUrl),
-    }).aliases.filter((alias) => alias.value.startsWith('url:'));
-    for (const alias of urlAliases) {
-      const pk = `POSTING_ALIAS#${alias.value}`;
-      const existing = catalogByKey.get(`${pk}\0CLAIM`);
-      const planned = catalogWrites.find((item) => item.pk === pk && item.sk === 'CLAIM');
-      const owner = planned
-        ? parse<{ canonicalJobId?: string }>(planned.value).canonicalJobId
-        : existing ? parse<{ canonicalJobId?: string }>(existing.value).canonicalJobId : undefined;
-      if (owner && owner !== canonicalId) {
-        conflicts.push(`${alias.value}: already claimed by ${owner}`);
-        continue;
-      }
-      if (owner) continue;
-      catalogWrites.push({ pk, sk: 'CLAIM', kind: 'posting-alias', value: JSON.stringify({
-        alias: alias.value, canonicalJobId: canonicalId, claimedAt: 'identity-repair',
-      }) });
-    }
   }
 
   let occurrenceRemaps = 0;
   for (const row of catalogRows.filter((item) => item.kind === 'source-occurrence')) {
     try {
-      const value = parse<{ jobId: string; occurrence: SourceOccurrence }>(row.value);
+      const value = parse<{ jobId: string; occurrence: SourceOccurrence; firstObservedAt?: string; changedAt?: string }>(row.value);
       const canonical = canonicalByJobId.get(value.jobId) ?? value.jobId;
       const remapped = canonical !== value.jobId;
-      const occurrence = remapped ? withProviderEvidence(value.occurrence) : normalizedOccurrenceSeason(value.occurrence);
+      const normalizedOccurrence = remapped ? withProviderEvidence(value.occurrence) : normalizedOccurrenceSeason(value.occurrence);
+      const identity = canonicalJobs.get(canonical)?.postingIdentity;
+      const occurrence = identity?.provider !== 'unknown' && identity?.providerPostingId
+        ? confirmedOccurrence(normalizedOccurrence, identity, value.firstObservedAt ?? value.changedAt ?? canonicalJobs.get(canonical)!.firstSeenAt)
+        : normalizedOccurrence;
       const normalized = JSON.stringify(stable(occurrence)) !== JSON.stringify(stable(value.occurrence));
       if (!remapped && !normalized) continue;
       if (remapped) occurrenceRemaps += 1;
@@ -635,6 +590,34 @@ export function postingIdentityRepairPlan(
         ...value, jobId: canonical, occurrence,
       }) });
     } catch { /* Malformed occurrence JSON was reported while building reviewed evidence. */ }
+  }
+
+  let notificationTombstoneRemaps = 0;
+  const notificationTombstoneGroups = new Map<string, CatalogRow[]>();
+  for (const row of catalogRows.filter((item) => item.kind === 'notification-tombstone')) {
+    try {
+      const value = parse<{ jobId?: string }>(row.value);
+      if (!value.jobId) continue;
+      const canonical = canonicalByJobId.get(value.jobId);
+      if (!canonical || canonical === value.jobId) continue;
+      const target = `${row.pk}\0ROLE#${canonical}`;
+      notificationTombstoneGroups.set(target, [...(notificationTombstoneGroups.get(target) ?? []), row]);
+    } catch { conflicts.push(`${row.pk}:${row.sk}: malformed notification tombstone JSON`); }
+  }
+  for (const [target, rows] of notificationTombstoneGroups) {
+    const [pk, sk] = target.split('\0');
+    const canonicalJobId = sk!.slice('ROLE#'.length);
+    const existing = catalogByKey.get(target);
+    const candidates = [...rows, ...(existing && !rows.includes(existing) ? [existing] : [])];
+    const retained = [...candidates].sort((left, right) => {
+      const leftAt = (() => { try { return parse<{ deletedAt?: string }>(left.value).deletedAt ?? ''; } catch { return ''; } })();
+      const rightAt = (() => { try { return parse<{ deletedAt?: string }>(right.value).deletedAt ?? ''; } catch { return ''; } })();
+      return leftAt.localeCompare(rightAt) || left.sk.localeCompare(right.sk);
+    })[0]!;
+    const value = JSON.stringify({ ...parse<Record<string, unknown>>(retained.value), jobId: canonicalJobId });
+    if (!existing || existing.value !== value) catalogWrites.push({ before: existing, pk: pk!, sk: sk!, kind: 'notification-tombstone', value });
+    for (const row of rows) if (row.pk !== pk || row.sk !== sk) catalogDeletes.push(row);
+    notificationTombstoneRemaps += rows.filter((row) => row.pk !== pk || row.sk !== sk).length;
   }
 
   const userWrites: UserWrite[] = [];
@@ -744,16 +727,45 @@ export function postingIdentityRepairPlan(
     conflicts: [...conflicts].sort(),
   });
   const repairToken = createHash('sha256').update(JSON.stringify(facts)).digest('hex');
+  const notificationGroups = new Map<string, number>();
+  for (const row of catalogRows.filter((item) => item.kind === 'notification-event')) {
+    try {
+      const event = parse<{ jobId: string }>(row.value);
+      const canonicalId = canonicalByJobId.get(event.jobId) ?? event.jobId;
+      notificationGroups.set(canonicalId, (notificationGroups.get(canonicalId) ?? 0) + 1);
+    } catch { conflicts.push(`${row.pk}:${row.sk}: malformed notification event JSON`); }
+  }
+  const duplicateAlertGroups = [...notificationGroups.values()].filter((count) => count > 1).length;
+  const sortedConflicts = [...conflicts].sort();
+  const gate = {
+    passed: eligibleDuplicateGroups === 0 && sortedConflicts.length === 0 && untrackedQuarantines === 0
+      && presentationDisagreements.length === 0 && duplicateAlertGroups === 0,
+    exactDuplicateGroups: eligibleDuplicateGroups,
+    aliasConflicts: sortedConflicts.length,
+    untrackedQuarantines,
+    presentationBlockers: presentationDisagreements.length,
+  };
   return {
-    scope, repairToken, providerGroups: groups.size, duplicateGroups, duplicateJobs,
+    schemaVersion: 2, scope, snapshotDigest, repairToken,
+    occurrenceCounts: {
+      confirmed: confirmedOccurrences, unconfirmed: unconfirmedOccurrences, legacy: legacyOccurrences,
+      quarantined: incidentCount,
+      confirmedCoverage: classifiedOccurrences ? confirmedOccurrences / classifiedOccurrences : null,
+    },
+    duplicateAlertGroups,
+    unknownUrlFamilyCandidates: [...familyCounts.entries()].filter(([, count]) => count > 1)
+      .map(([reviewFamilyKey, occurrences]) => ({ reviewFamilyKey, occurrences }))
+      .sort((left, right) => right.occurrences - left.occurrences || left.reviewFamilyKey.localeCompare(right.reviewFamilyKey)),
+    gate,
+    providerGroups: groups.size, duplicateGroups, duplicateJobs,
     eligibleDuplicateGroups, eligibleDuplicateJobs,
     unresolvedDuplicateGroups: presentationDisagreements.length,
     jobUpdates: catalogWrites.filter((item) => item.kind === 'internship').length, jobDeletes: catalogDeletes.length,
     aliasWrites: catalogWrites.filter((item) => item.kind === 'posting-alias' || item.kind === 'job-id-alias').length,
-    occurrenceRemaps, applicationRemaps, applicationMerges, sessionRemaps, receiptRemaps, receiptMerges,
+    occurrenceRemaps, notificationTombstoneRemaps, applicationRemaps, applicationMerges, sessionRemaps, receiptRemaps, receiptMerges,
     releaseRemaps, proposalRemaps: proposalUpdates.length,
     outboxRows: catalogRows.filter((row) => row.kind === 'notification-event').length,
-    conflicts: [...conflicts].sort(), presentationDisagreements, samples: samples.slice(0, 20), expectedChanges,
+    conflicts: sortedConflicts, presentationDisagreements, samples: samples.slice(0, 20), expectedChanges,
     applied: false, projectionRefreshRequired: false,
     catalogWrites, catalogDeletes, userWrites, userDeletes, proposalUpdates,
   };
@@ -801,11 +813,15 @@ function guardClause() { return "EXISTS (SELECT 1 FROM catalog_items WHERE pk = 
 
 function repairReport(plan: InternalPlan): PostingIdentityRepairPlan {
   return {
-    scope: plan.scope, repairToken: plan.repairToken, providerGroups: plan.providerGroups, duplicateGroups: plan.duplicateGroups,
+    schemaVersion: plan.schemaVersion, scope: plan.scope, snapshotDigest: plan.snapshotDigest,
+    repairToken: plan.repairToken, occurrenceCounts: plan.occurrenceCounts,
+    duplicateAlertGroups: plan.duplicateAlertGroups, unknownUrlFamilyCandidates: plan.unknownUrlFamilyCandidates, gate: plan.gate,
+    providerGroups: plan.providerGroups, duplicateGroups: plan.duplicateGroups,
     duplicateJobs: plan.duplicateJobs, eligibleDuplicateGroups: plan.eligibleDuplicateGroups,
     eligibleDuplicateJobs: plan.eligibleDuplicateJobs, unresolvedDuplicateGroups: plan.unresolvedDuplicateGroups,
     jobUpdates: plan.jobUpdates, jobDeletes: plan.jobDeletes,
-    aliasWrites: plan.aliasWrites, occurrenceRemaps: plan.occurrenceRemaps, applicationRemaps: plan.applicationRemaps,
+    aliasWrites: plan.aliasWrites, occurrenceRemaps: plan.occurrenceRemaps,
+    notificationTombstoneRemaps: plan.notificationTombstoneRemaps, applicationRemaps: plan.applicationRemaps,
     applicationMerges: plan.applicationMerges, sessionRemaps: plan.sessionRemaps, receiptRemaps: plan.receiptRemaps,
     receiptMerges: plan.receiptMerges, releaseRemaps: plan.releaseRemaps, proposalRemaps: plan.proposalRemaps,
     outboxRows: plan.outboxRows, conflicts: plan.conflicts, presentationDisagreements: plan.presentationDisagreements,
