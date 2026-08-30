@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveCanonicalAdmission, evaluateCatalogAdmission, metadataCompleteness } from '../src/catalog-admission.js';
+import { alertEligible, catalogEligible, deriveCanonicalAdmission, evaluateCatalogAdmission, metadataCompleteness } from '../src/catalog-admission.js';
 import { classifyDestination } from '../src/destination-verification.js';
 import { inspectApplicationPage, type ApplicationPageEvidence } from '../src/core/application-url.js';
 import type { CatalogAdmission, ProcessedListing, SourceOccurrence } from '../src/types.js';
@@ -107,15 +107,67 @@ describe('record-level catalog admission', () => {
     expect(destination.classification).toBe('posting-detail');
   });
 
-  it('retains last-known-good handoff for seven days while pausing alerts', () => {
+  it('rechecks before evidence expiry, then retains the handoff for seven catalog-only grace days', () => {
     const role = listing({ applyUrl: 'https://careers.acme.test/roles/1234567' });
     const goodDestination = classifyDestination({ listing: role, reachability: 'live', evidence: page({ postingIdPresent: true }), inspectedAt: '2026-08-20T12:00:00Z' });
     const previous = evaluateCatalogAdmission({ listing: role, destination: goodDestination, postingAttributed: true, evaluatedAt: '2026-08-20T12:00:00Z' });
     const unresolved = classifyDestination({ listing: role, reachability: 'unreachable', inspectedAt: '2026-08-26T12:00:00Z' });
-    const grace = evaluateCatalogAdmission({ listing: role, destination: unresolved, postingAttributed: true, evaluatedAt: '2026-08-26T12:00:00Z', previous });
-    expect(grace).toMatchObject({ catalogEligible: true, alertEligible: false, reasonCodes: ['destination-grace'], graceDeadline: '2026-09-02T12:00:00.000Z' });
-    const expired = evaluateCatalogAdmission({ listing: role, destination: unresolved, postingAttributed: true, evaluatedAt: '2026-09-03T12:00:00Z', previous: grace });
+    const retrying = evaluateCatalogAdmission({ listing: role, destination: unresolved, postingAttributed: true, evaluatedAt: '2026-08-26T12:00:00Z', previous });
+    expect(retrying).toMatchObject({ catalogEligible: true, alertEligible: true, reasonCodes: [] });
+    const grace = evaluateCatalogAdmission({ listing: role, destination: unresolved, postingAttributed: true,
+      evaluatedAt: '2026-08-28T12:00:00Z', previous: retrying });
+    expect(grace).toMatchObject({ catalogEligible: true, alertEligible: false, reasonCodes: ['destination-grace'],
+      graceDeadline: '2026-09-03T12:00:00.000Z' });
+    const expired = evaluateCatalogAdmission({ listing: role, destination: unresolved, postingAttributed: true,
+      evaluatedAt: '2026-09-04T12:00:00Z', previous: grace });
     expect(expired).toMatchObject({ catalogEligible: false, alertEligible: false, reasonCodes: ['destination-unresolved'] });
+  });
+
+  it('fails closed from wall-clock freshness even when a scheduled verifier is unavailable', () => {
+    const role = listing();
+    const destination = classifyDestination({ listing: role, reachability: 'live', evidence: page({ postingIdPresent: true }),
+      inspectedAt: '2026-08-20T12:00:00Z' });
+    const admission = evaluateCatalogAdmission({ listing: role, destination, postingAttributed: true,
+      evaluatedAt: '2026-08-20T12:00:00Z' });
+    expect(alertEligible({ admission }, new Date('2026-08-27T11:59:59Z'))).toBe(true);
+    expect(alertEligible({ admission }, new Date('2026-08-27T12:00:00Z'))).toBe(false);
+    expect(catalogEligible({ admission }, new Date('2026-09-03T11:59:59Z'))).toBe(true);
+    expect(catalogEligible({ admission }, new Date('2026-09-03T12:00:00Z'))).toBe(false);
+  });
+
+  it('treats validThrough as conclusive closure without catalog grace', () => {
+    const role = listing();
+    const destination = classifyDestination({ listing: role, reachability: 'live', browserVisible: true,
+      evidence: page({ postingIdPresent: true, validThrough: '2026-09-01T12:00:00Z' }),
+      inspectedAt: '2026-08-26T12:00:00Z' });
+    const admission = evaluateCatalogAdmission({ listing: role, destination, postingAttributed: true,
+      evaluatedAt: '2026-08-26T12:00:00Z' });
+    expect(catalogEligible({ admission }, new Date('2026-09-01T11:59:59Z'))).toBe(true);
+    expect(catalogEligible({ admission }, new Date('2026-09-01T12:00:00Z'))).toBe(false);
+    const transient = classifyDestination({ listing: role, reachability: 'unreachable', inspectedAt: '2026-08-31T12:00:00Z' });
+    const retained = evaluateCatalogAdmission({ listing: role, destination: transient, postingAttributed: true,
+      evaluatedAt: '2026-08-31T12:00:00Z', previous: admission });
+    expect(retained.destination.validThrough).toBe('2026-09-01T12:00:00Z');
+    expect(catalogEligible({ admission: retained }, new Date('2026-09-01T12:00:00Z'))).toBe(false);
+  });
+
+  it('classifies explicit closure and expired validThrough before role-specific 200 evidence', () => {
+    const role = listing({ applyUrl: 'https://careers.acme.test/roles/1234567' });
+    for (const evidence of [
+      page({ postingIdPresent: true, closureState: 'gone', closureSignal: 'explicit-language' }),
+      page({ postingIdPresent: true, validThrough: '2026-08-25T00:00:00Z' }),
+    ]) {
+      const destination = classifyDestination({ listing: role, reachability: 'live', evidence,
+        inspectedAt: '2026-08-26T12:00:00Z', browserVisible: true });
+      expect(destination.classification).toBe('gone');
+      expect(evaluateCatalogAdmission({ listing: role, destination, postingAttributed: true,
+        evaluatedAt: '2026-08-26T12:00:00Z' })).toMatchObject({ catalogEligible: false, alertEligible: false,
+        reasonCodes: ['destination-gone'] });
+    }
+    const future = classifyDestination({ listing: role, reachability: 'live', browserVisible: true,
+      evidence: page({ postingIdPresent: true, validThrough: '2026-09-01T12:00:00Z' }), inspectedAt: '2026-08-26T12:00:00Z' });
+    expect(future).toMatchObject({ classification: 'posting-detail', closureState: 'open',
+      validThrough: '2026-09-01T12:00:00Z', freshUntil: '2026-09-01T12:00:00.000Z', nextCheckAt: '2026-08-31T12:00:00.000Z' });
   });
 
   it('lets valid official evidence repair a community row and blocks reviewed employer conflicts', () => {

@@ -1,7 +1,7 @@
 locals {
   worker_bundle       = "${path.module}/../../cloudflare/dist/worker.js"
   catalog_providers   = toset(["greenhouse", "lever", "ashby", "github"])
-  asynchronous_queues = setunion(local.catalog_providers, toset(["gmail"]))
+  asynchronous_queues = setunion(local.catalog_providers, toset(["gmail", "destination-verification"]))
   plain_bindings = concat(
     [
       { name = "PUBLIC_API_URL", type = "plain_text", text = var.public_api_url },
@@ -9,6 +9,8 @@ locals {
       { name = "GMAIL_ENABLED", type = "plain_text", text = tostring(var.gmail_enabled) },
       { name = "IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED", type = "plain_text", text = tostring(var.identity_unconfirmed_publication_enabled) },
       { name = "IDENTITY_CONFIRMED_COVERAGE_FLOOR", type = "plain_text", text = tostring(var.identity_confirmed_coverage_floor) },
+      { name = "ADMISSION_QUEUE_AGE_ALERT_HOURS", type = "plain_text", text = tostring(var.admission_queue_age_alert_hours) },
+      { name = "ADMISSION_STALE_ALERT_THRESHOLD", type = "plain_text", text = tostring(var.admission_stale_alert_threshold) },
     ],
     var.auth_from_email == null ? [] : [{ name = "AUTH_FROM_EMAIL", type = "plain_text", text = var.auth_from_email }],
     var.digest_to_email == null ? [] : [{ name = "DIGEST_TO_EMAIL", type = "plain_text", text = var.digest_to_email }],
@@ -40,7 +42,7 @@ resource "cloudflare_queue" "work" {
   account_id = var.cloudflare_account_id
   queue_name = "${var.worker_name}-${each.key}"
   settings = {
-    message_retention_period = 86400
+    message_retention_period = each.key == "destination-verification" ? 604800 : 86400
     delivery_paused          = false
   }
 }
@@ -70,9 +72,13 @@ resource "cloudflare_workers_script" "application" {
       { name = "DOCUMENTS", type = "r2_bucket", bucket_name = cloudflare_r2_bucket.documents.name },
       { name = "GMAIL_QUEUE", type = "queue", queue_name = cloudflare_queue.work["gmail"].queue_name },
       { name = "GMAIL_DLQ", type = "queue", queue_name = cloudflare_queue.dead_letter["gmail"].queue_name },
+      { name = "DESTINATION_VERIFICATION_QUEUE", type = "queue", queue_name = cloudflare_queue.work["destination-verification"].queue_name },
+      { name = "DESTINATION_VERIFICATION_DLQ", type = "queue", queue_name = cloudflare_queue.dead_letter["destination-verification"].queue_name },
+      { name = "DESTINATION_BROWSER", type = "browser" },
       { name = "CLOUDFLARE_ACCOUNT_ID", type = "plain_text", text = var.cloudflare_account_id },
       { name = "WORKER_NAME", type = "plain_text", text = var.worker_name },
       { name = "GMAIL_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["gmail"].queue_id },
+      { name = "DESTINATION_VERIFICATION_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["destination-verification"].queue_id },
     ],
     [for provider in local.catalog_providers : {
       name       = "${upper(provider)}_QUEUE"
@@ -123,12 +129,12 @@ resource "cloudflare_queue_consumer" "application" {
   script_name       = cloudflare_workers_script.application.script_name
   dead_letter_queue = cloudflare_queue.dead_letter[each.key].queue_name
   settings = {
-    batch_size = 1
+    batch_size = each.key == "destination-verification" ? 20 : 1
     # The high-volume ingestion fleets get two consumers. Gmail stays at one
     # because per-account leases serialize sync work.
-    max_concurrency  = contains(["greenhouse", "github"], each.key) ? 2 : 1
+    max_concurrency  = each.key == "greenhouse" ? 2 : 1
     max_retries      = each.key == "gmail" ? 5 : 2
-    max_wait_time_ms = 5000
+    max_wait_time_ms = each.key == "destination-verification" ? 60000 : 5000
   }
 }
 

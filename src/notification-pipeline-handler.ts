@@ -7,8 +7,9 @@ import { createCandidateRelease, createNotificationIntents, deliveryClaimId, log
 import { canonicalCompanyKey } from './core/normalize.js';
 import { classifyAwsServiceFailure, classifyExpoPushFailure, ExpoPushPublisher, SesEmailSender } from './notifications.js';
 import { createDynamoDocumentClient, deletedUserTombstoneKey, DynamoInternshipStore, DynamoReleaseStore, DynamoUserStore } from './store.js';
-import type { NotificationEvent } from './types.js';
+import type { Internship, NotificationEvent } from './types.js';
 import { loadGroupedNotificationCohort } from './grouped-notification-cohort.js';
+import { alertEligible } from './catalog-admission.js';
 
 type SqsRecord = { messageId: string; body: string };
 type SqsEvent = { Records?: SqsRecord[] };
@@ -58,6 +59,10 @@ export function candidateFitsActiveBucket(
 
 export const EXPO_RECEIPT_DELAY_SECONDS = 15 * 60;
 export const MAX_EXPO_RECEIPT_CHECKS = 8;
+
+export function notificationCandidateEligible(job: Internship | undefined, at = new Date()): job is Internship {
+  return Boolean(job?.open && job.technical !== false && alertEligible(job, at));
+}
 
 export interface ReceiptMessage {
   claim: DeliveryClaim;
@@ -124,7 +129,7 @@ async function streamPublisher(event: StreamEvent) {
 
 async function aggregateCandidate(event: NotificationEvent) {
   const job = await jobs.getJob(event.jobId);
-  if (!job?.open || job.technical === false) return;
+  if (!notificationCandidateEligible(job)) return;
   const employerId = normalizedEmployer(job.company);
   const pointerKey = { pk: `RELEASE_AGGREGATION#${employerId}`, sk: 'ACTIVE' };
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -201,7 +206,7 @@ async function flushBucket(message: { bucketId: string }) {
   const bucket = final.Item as { openedAt?: string; jobIds?: Set<string> } | undefined;
   if (!bucket?.openedAt) return;
   const releaseJobs = (await Promise.all([...(bucket.jobIds ?? [])].map((jobId) => jobs.getJob(jobId))))
-    .filter((job): job is NonNullable<typeof job> => Boolean(job?.open && job.technical !== false));
+    .filter((job) => notificationCandidateEligible(job, new Date(closedAt)));
   if (releaseJobs.length) {
     const candidate = createCandidateRelease(releaseJobs, new Date(bucket.openedAt));
     const cohortParameterName = process.env.GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME;

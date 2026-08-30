@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { sourceRoleAgreement, type ApplicationPageEvidence } from './core/application-url.js';
+import { explicitDestinationClosure, sourceRoleAgreement, type ApplicationPageEvidence } from './core/application-url.js';
 
 export interface RenderedFrameSnapshot {
   url: string;
@@ -8,6 +8,7 @@ export interface RenderedFrameSnapshot {
   description?: string;
   visibleText?: string;
   structuredJobText?: string;
+  validThrough?: string;
   jobPostingCount: number;
   distinctJobLinkCount: number;
   applicationFormPresent: boolean;
@@ -50,6 +51,8 @@ function frameEvidence(frame: RenderedFrameSnapshot, expectedPostingId?: string)
   const contentExcerpt = frame.visibleText?.replace(/\s+/gu, ' ').trim().slice(0, 12_000);
   const renderedPostingText = [contentExcerpt, frame.structuredJobText].filter(Boolean).join(' ');
   const postingIdPresent = includesPostingId(renderedPostingText, expectedPostingId);
+  const validThroughExpired = Boolean(frame.validThrough && Date.parse(frame.validThrough) <= Date.now());
+  const explicitlyGone = [frame.title, frame.description, contentExcerpt].some((value) => explicitDestinationClosure(value ?? ''));
   return {
     url: frame.url,
     ...(frame.title ? { title: frame.title } : {}),
@@ -59,6 +62,11 @@ function frameEvidence(frame: RenderedFrameSnapshot, expectedPostingId?: string)
     jobPostingCount: frame.jobPostingCount,
     distinctJobLinkCount: frame.distinctJobLinkCount,
     applicationFormPresent: frame.applicationFormPresent,
+    ...(frame.validThrough ? { validThrough: frame.validThrough } : {}),
+    ...(validThroughExpired
+      ? { closureState: 'gone' as const, closureSignal: 'valid-through-expired' as const }
+      : explicitlyGone ? { closureState: 'gone' as const, closureSignal: 'explicit-language' as const }
+        : { closureState: 'open' as const }),
     ...(contentExcerpt ? { contentExcerpt, contentHash: hash(withoutExpectedPostingId(renderedPostingText, expectedPostingId)), contentSource: 'body' as const } : {}),
     confidence: { score: 100, level: 'high', recommendation: 'alert-eligible', signals: ['browser-visible evidence'] },
   };
@@ -89,6 +97,9 @@ export function combineRenderedFrameEvidence(input: {
   evaluated.sort((left, right) => proofScore(input.role, right.evidence) - proofScore(input.role, left.evidence)
     || (right.evidence.contentExcerpt?.length ?? 0) - (left.evidence.contentExcerpt?.length ?? 0));
   const selected = evaluated[0]!;
+  // Closure is authoritative only on the frame selected as the requested
+  // posting artifact. Related/recommended role frames cannot close it.
+  const closure = selected.evidence.closureState === 'gone' ? selected.evidence : undefined;
   const selfReferentialFrame = input.frames.some((frame) => frame.parentUrl
     && normalizedFrameUrl(frame.url, input.expectedPostingId) === normalizedFrameUrl(frame.parentUrl, input.expectedPostingId));
   const renderedEvidenceHash = hash(input.frames.map((frame) => {
@@ -101,10 +112,15 @@ export function combineRenderedFrameEvidence(input: {
       jobPostingCount: evidence.jobPostingCount,
       distinctJobLinkCount: evidence.distinctJobLinkCount,
       applicationFormPresent: evidence.applicationFormPresent,
+      closureState: evidence.closureState,
+      closureSignal: evidence.closureSignal,
+      validThrough: evidence.validThrough,
     };
   }).sort((left, right) => left.url.localeCompare(right.url)));
   return {
     ...selected.evidence,
+    ...(closure ? { closureState: closure.closureState, closureSignal: closure.closureSignal,
+      ...(closure.validThrough ? { validThrough: closure.validThrough } : {}) } : {}),
     evidenceFrameUrl: selected.frame.url,
     evidenceFrameKind: selected.index === 0 ? 'main' : 'child',
     renderedFrameCount: input.frames.length,

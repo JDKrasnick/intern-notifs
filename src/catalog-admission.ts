@@ -95,32 +95,56 @@ export function evaluateCatalogAdmission(input: {
   if (destinationFailure) reasons.push(destinationFailure);
 
   const previouslyGood = previous?.catalogEligible
-    && ['posting-detail', 'application-form'].includes(previous.destination.classification);
+    && (['posting-detail', 'application-form'].includes(previous.destination.classification)
+      || Boolean(previous.destination.lastKnownGoodAt));
   const newlyInconclusive = destination.classification === 'unresolved' || destination.classification === 'blocked-uninspectable';
-  const graceDeadline = previouslyGood && newlyInconclusive
-    ? previous.graceDeadline ?? new Date(Date.parse(evaluatedAt) + 7 * 86_400_000).toISOString()
+  const previousFreshUntil = previous?.destination.freshUntil
+    ?? (previous?.graceDeadline && previous.destination.lastKnownGoodAt
+      ? new Date(Date.parse(previous.graceDeadline) - 7 * 86_400_000).toISOString()
+      : previouslyGood ? new Date(Date.parse(previous.destination.inspectedAt) + 7 * 86_400_000).toISOString() : undefined);
+  const currentEvidenceStale = ['posting-detail', 'application-form'].includes(destination.classification)
+    && Boolean(destination.freshUntil && Date.parse(evaluatedAt) >= Date.parse(destination.freshUntil));
+  if (currentEvidenceStale) reasons.push('destination-stale');
+  const graceStart = previousFreshUntil && newlyInconclusive ? previousFreshUntil
+    : currentEvidenceStale ? destination.freshUntil : undefined;
+  const graceDeadline = graceStart
+    ? previous?.graceDeadline ?? new Date(Date.parse(graceStart) + 7 * 86_400_000).toISOString()
     : undefined;
-  const inGrace = Boolean(graceDeadline && Date.parse(evaluatedAt) < Date.parse(graceDeadline));
+  const inGrace = Boolean(graceStart && graceDeadline
+    && Date.parse(evaluatedAt) >= Date.parse(graceStart)
+    && Date.parse(evaluatedAt) < Date.parse(graceDeadline));
+  const beforePriorExpiry = Boolean(previouslyGood && newlyInconclusive && previousFreshUntil
+    && Date.parse(evaluatedAt) < Date.parse(previousFreshUntil));
+  if (beforePriorExpiry) {
+    const transient = reasons.findIndex((reason) => reason === 'destination-unresolved' || reason === 'destination-blocked-uninspectable');
+    if (transient >= 0) reasons.splice(transient, 1);
+  }
   if (inGrace) {
-    const index = reasons.findIndex((reason) => reason === 'destination-unresolved' || reason === 'destination-blocked-uninspectable');
+    const index = reasons.findIndex((reason) => reason === 'destination-unresolved'
+      || reason === 'destination-blocked-uninspectable' || reason === 'destination-stale');
     if (index >= 0) reasons.splice(index, 1, 'destination-grace');
   }
   const blocking = reasons.filter((reason) => reason !== 'destination-grace');
   const catalogEligible = blocking.length === 0 && (destination.classification === 'posting-detail'
     || destination.classification === 'application-form'
-    || inGrace);
+    || inGrace || beforePriorExpiry);
+  const retainedDestination = (inGrace || beforePriorExpiry) && previous ? {
+    ...destination,
+    finalUrl: previous.destination.finalUrl ?? previous.destination.candidateUrl,
+    lastKnownGoodAt: previous.destination.inspectedAt,
+    ...(previousFreshUntil ? { freshUntil: previousFreshUntil } : {}),
+    ...(previous.destination.validThrough ? { validThrough: previous.destination.validThrough } : {}),
+    nextCheckAt: beforePriorExpiry && previousFreshUntil ? previousFreshUntil
+      : new Date(Math.min(Date.parse(evaluatedAt) + 86_400_000, Date.parse(graceDeadline!))).toISOString(),
+  } : destination;
   return {
     ...(employer && !genericEmployer ? { canonicalEmployer: employer } : {}),
     employerResolution: employer && !genericEmployer ? 'resolved' : 'unresolved',
     postingAttribution: postingAttributed ? 'attributed' : 'unattributed',
-    destination: inGrace && previous ? {
-      ...destination,
-      finalUrl: previous.destination.finalUrl ?? previous.destination.candidateUrl,
-      lastKnownGoodAt: previous.destination.inspectedAt,
-    } : destination,
+    destination: retainedDestination,
     metadata,
     catalogEligible,
-    alertEligible: catalogEligible && !inGrace,
+    alertEligible: catalogEligible && !inGrace && !currentEvidenceStale,
     reasonCodes: [...new Set(reasons)].sort(),
     evaluatedAt,
     evidenceObservedAt: destination.inspectedAt,
@@ -181,12 +205,31 @@ export function deriveCanonicalAdmission(references: readonly SourceOccurrence[]
   return { ...latest, catalogEligible: false, alertEligible: false, evaluatedAt };
 }
 
-export function catalogEligible(job: { admission?: CatalogAdmission }): boolean {
-  return job.admission?.catalogEligible ?? true;
+function freshnessDeadlines(admission: CatalogAdmission): { freshUntil?: number; graceDeadline?: number } {
+  const freshUntil = admission.destination.freshUntil ? Date.parse(admission.destination.freshUntil) : Number.NaN;
+  if (!Number.isFinite(freshUntil)) return {};
+  const storedGrace = admission.graceDeadline ? Date.parse(admission.graceDeadline) : Number.NaN;
+  return { freshUntil, graceDeadline: Number.isFinite(storedGrace) ? storedGrace : freshUntil + 7 * 86_400_000 };
 }
 
-export function alertEligible(job: { admission?: CatalogAdmission }): boolean {
-  return job.admission?.alertEligible ?? true;
+/** Stored decisions are bounded by evidence time even if the verifier or queue is unavailable. */
+export function catalogEligible(job: { admission?: CatalogAdmission }, at = new Date()): boolean {
+  const admission = job.admission;
+  if (!admission) return true;
+  if (!admission.catalogEligible) return false;
+  const validThrough = admission.destination.validThrough ? Date.parse(admission.destination.validThrough) : Number.NaN;
+  if (Number.isFinite(validThrough) && at.getTime() >= validThrough) return false;
+  const { graceDeadline } = freshnessDeadlines(admission);
+  return graceDeadline === undefined || at.getTime() < graceDeadline;
+}
+
+/** Alerts fail closed at freshUntil; the following seven days are catalog-only grace. */
+export function alertEligible(job: { admission?: CatalogAdmission }, at = new Date()): boolean {
+  const admission = job.admission;
+  if (!admission) return true;
+  if (!admission.alertEligible) return false;
+  const { freshUntil } = freshnessDeadlines(admission);
+  return freshUntil === undefined || at.getTime() < freshUntil;
 }
 
 export function evidenceHash(value: unknown): string {

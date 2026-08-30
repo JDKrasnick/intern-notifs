@@ -141,8 +141,10 @@ Create the `intern-notifs-destination-verification` queue and its
 `-dlq`, enable the `DESTINATION_BROWSER` Browser Rendering binding, and set
 `RESEND_API_KEY` plus `ADMISSION_SUPPORT_RECIPIENT` as Worker secrets. The
 checked-in consumer processes at most 20 URLs per batch, retries twice before
-the DLQ, rechecks open incidents daily, and samples reviewed host rules weekly.
-Apply `0007_catalog_admission.sql` before deploying the Worker because managed
+the DLQ, leases due rechecks every ten minutes, synchronizes the schedule daily,
+and samples reviewed host rules weekly.
+Apply `0007_catalog_admission.sql` through
+`0011_destination_verification_schedule.sql` before deploying the Worker because managed
 ingestion immediately queries the new review tables. The additive migration is
 safe for the currently deployed Worker; after deployment, legacy rows without
 an admission record remain eligible until the guarded repair is approved.
@@ -185,7 +187,47 @@ Operational alerts should cover destination-verification queue age and depth,
 any DLQ message, active/quarantined incident counts by reason, grace deadlines,
 and Resend failures. Immediate aggregate/gone quarantines, incident openings,
 and grace-deadline warnings are grouped by source, host, and reason and deduped
-through the D1 delivery ledger.
+through the D1 delivery ledger. The Worker also sends daily-deduplicated health
+alerts for a non-empty DLQ, a work item older than
+`ADMISSION_QUEUE_AGE_ALERT_HOURS`, stale evidence at or above
+`ADMISSION_STALE_ALERT_THRESHOLD`, and active admission incidents. These
+threshold bindings are managed consistently in Wrangler and OpenTofu.
+
+Open `GET /internal/admission/health` after deployment to verify the live work
+queue and DLQ backlog, stale-evidence coverage, active incidents, scheduled
+leases, and backfill/repair state in one response. Wrangler and OpenTofu both
+manage the destination queue, DLQ, 20-message/60-second consumer, two retries,
+and `DESTINATION_BROWSER` binding. OpenTofu retains destination work for seven
+days so a one-day delayed transient retry cannot expire before delivery, and supplies
+`DESTINATION_VERIFICATION_QUEUE_ID` to the billing-shutdown path. A non-empty
+DLQ, an oldest work item approaching the evidence deadline, any unexpectedly
+stale eligible record, or an active quarantine is an admission incident.
+
+Destination evidence expires after seven days and is scheduled for recheck one
+day before expiry. A transient early recheck retains the current alert standing
+until expiry; after expiry alerts pause and the existing seven-day catalog grace
+begins. HTTP 404/410, explicit posting closure language, past structured
+`JobPosting.validThrough`, and reviewed aggregate-board decisions bypass grace.
+Authoritative closure clears URL validation and closes only the canonical role;
+source occurrences and user history remain intact for a later verified reopen.
+
+Historical backfill is resumable and candidate-only:
+
+1. `POST /internal/admission/backfill` with `{"action":"preview"}` freezes an
+   exact generation and count.
+2. Repeatedly call the same endpoint with `action: "enqueue"`, the generation
+   ID, cursor, and a page size no larger than 500. Check progress with
+   `GET /internal/admission/backfill?generationId=...`.
+   If a bounded page reaches the DLQ, repeat that exact cursor with
+   `retryQueued: true`; message idempotency prevents a completed candidate from
+   being evaluated twice.
+3. Review completed candidate evidence, then call `action: "stage"` with the
+   generation ID, one `sourceId`, cursor, and a record limit below 900. Save the
+   returned repair token and exact job/occurrence counts.
+4. Apply through `/internal/admission/repair` only after owner approval. The
+   transaction rejects concurrent JSON changes and verifies every written job
+   and occurrence at zero mismatches before refreshing projections. Re-run the
+   source-scoped stage; it must report zero changes.
 
 Greenhouse, Lever, and Ashby use dedicated half-hour EventBridge schedules,
 dispatcher Lambdas, FIFO work queues, two-minute workers, and dead-letter

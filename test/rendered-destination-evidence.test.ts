@@ -34,6 +34,19 @@ describe('rendered destination frame evidence', () => {
       inspectedAt: '2026-08-28T00:00:00Z' }).classification).toBe('application-form');
   });
 
+  it('does not close the selected posting from an expired related-role frame', () => {
+    const role = listing();
+    const evidence = combineRenderedFrameEvidence({ role: role.title, expectedPostingId: '1234567', frames: [
+      frame({ title: role.title, visibleText: `${role.title} Job ID 1234567 Responsibilities Apply`,
+        structuredJobText: '{"@type":"JobPosting","identifier":"1234567"}', jobPostingCount: 1,
+        applicationFormPresent: true }),
+      frame({ url: 'https://careers.acme.test/jobs/9999999', title: 'Related role',
+        visibleText: 'This job has expired.', validThrough: '2020-01-01T00:00:00Z', jobPostingCount: 1 }),
+    ] })!;
+    expect(evidence.closureState).toBe('open');
+    expect(evidence).not.toHaveProperty('validThrough');
+  });
+
   it('does not treat a posting ID in an iframe URL as rendered posting proof', () => {
     const role = listing();
     const evidence = combineRenderedFrameEvidence({ role: role.title, expectedPostingId: '1234567', frames: [

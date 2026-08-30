@@ -32,4 +32,18 @@ describe('GFM internship parser', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ company: 'Acme', title: 'Software Intern', applyUrl: 'https://careers.example.test/acme' });
   });
+  it('marks continuation labels and never inherits an employer across a Workday tenant boundary', () => {
+    const markdown = `| Company | Role | Apply |
+| --- | --- | --- |
+| Acme | Software Intern | [Apply](https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/Software_R-100) |
+| ↳ | Data Intern | [Apply](https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/Data_R-101) |
+| ↳ | Security Intern | [Apply](https://other.wd1.myworkdayjobs.com/en-US/jobs/job/Security_R-102) |`;
+    const rows = parseInternshipMarkdown(markdown, { sourceId: 'fixture', document: 'README.md',
+      sourceUrl: 'https://example.com', season: 'summer-2027' });
+    expect(rows).toMatchObject([
+      { employerLabelOrigin: 'explicit' },
+      { company: 'Acme', employerLabelOrigin: 'inherited', employerInheritance: 'same-tenant' },
+      { company: 'Acme', employerLabelOrigin: 'inherited', employerInheritance: 'conflict' },
+    ]);
+  });
 });

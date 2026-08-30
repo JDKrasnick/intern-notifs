@@ -98,3 +98,15 @@ variable "gmail_redirect_uri" {
   default     = null
   nullable    = true
 }
+
+variable "admission_queue_age_alert_hours" {
+  description = "Maximum destination-verification queue age before the Worker emits a deduplicated operational alert."
+  type        = number
+  default     = 120
+}
+
+variable "admission_stale_alert_threshold" {
+  description = "Number of stale destination evidence records that triggers a deduplicated operational alert."
+  type        = number
+  default     = 1
+}

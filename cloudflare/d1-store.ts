@@ -439,7 +439,7 @@ export class D1InternshipStore implements InternshipStore {
   }
   private async pending(column: 'sms_pending' | 'digest_pending'): Promise<Internship[]> {
     const result = await this.db.prepare(`SELECT value FROM catalog_items WHERE ${column} = 1 AND catalog_state = 'OPEN'`).all<JsonRow>();
-    return result.results.map((row) => JSON.parse(row.value) as Internship);
+    return result.results.map((row) => JSON.parse(row.value) as Internship).filter((job) => alertEligible(job));
   }
   pendingSms() { return this.pending('sms_pending'); }
   pendingDigest() { return this.pending('digest_pending'); }
@@ -532,7 +532,7 @@ export class D1InternshipStore implements InternshipStore {
         const rowOffset = scanned;
         scanned += 1;
         const job = withEmployerCategory(JSON.parse(row.value) as Internship);
-        if (isPastSeason(job.season)) continue;
+        if (!catalogEligible(job) || isPastSeason(job.season)) continue;
         if (jobs.length === limit) return { jobs, cursor: String(rowOffset) };
         jobs.push(job);
       }
@@ -543,7 +543,8 @@ export class D1InternshipStore implements InternshipStore {
     const result = await this.db.prepare("SELECT value FROM catalog_items WHERE catalog_state = 'OPEN' AND catalog_sort_key > ? AND catalog_sort_key <= ? ORDER BY catalog_sort_key DESC")
       .bind(`3#${after}`, `3#${before}\uffff`).all<JsonRow>();
     return result.results.map((row) => JSON.parse(row.value) as Internship)
-      .filter((job) => catalogRecency(job) === 'normal' && catalogVisibleAt(job) > after && catalogVisibleAt(job) <= before && !isPastSeason(job.season))
+      .filter((job) => catalogEligible(job) && catalogRecency(job) === 'normal'
+        && catalogVisibleAt(job) > after && catalogVisibleAt(job) <= before && !isPastSeason(job.season))
       .sort(compareCatalogRecency).map(withEmployerCategory);
   }
   async listCatalog(): Promise<Internship[]> {

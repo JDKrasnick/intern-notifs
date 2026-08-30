@@ -5,8 +5,10 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as ses from 'aws-cdk-lib/aws-ses';
 import { describe, expect, it, vi } from 'vitest';
 import { NotificationPipeline } from '../infra/notification-pipeline.js';
-import { candidateFitsActiveBucket, EXPO_RECEIPT_DELAY_SECONDS, expoReceiptRetryDelaySeconds, MAX_EXPO_RECEIPT_CHECKS, nextReceiptCheck, notificationStreamTarget, transitionClaim } from '../src/notification-pipeline-handler.js';
+import { candidateFitsActiveBucket, EXPO_RECEIPT_DELAY_SECONDS, expoReceiptRetryDelaySeconds, MAX_EXPO_RECEIPT_CHECKS,
+  nextReceiptCheck, notificationCandidateEligible, notificationStreamTarget, transitionClaim } from '../src/notification-pipeline-handler.js';
 import type { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import type { Internship } from '../src/types.js';
 
 function pipelineStack(releaseWindow = cdk.Duration.seconds(8)) {
   const app = new cdk.App();
@@ -82,6 +84,13 @@ describe('NotificationPipeline', () => {
   });
   it('waits fifteen minutes before checking Expo receipts', () => {
     expect(EXPO_RECEIPT_DELAY_SECONDS).toBe(900);
+  });
+  it('drops delayed candidates when destination evidence expires before aggregation or flush', () => {
+    const job = { open: true, technical: true, admission: {
+      destination: { freshUntil: '2026-08-30T00:00:00Z' }, alertEligible: true,
+    } } as Internship;
+    expect(notificationCandidateEligible(job, new Date('2026-08-29T23:59:59Z'))).toBe(true);
+    expect(notificationCandidateEligible(job, new Date('2026-08-30T00:00:00Z'))).toBe(false);
   });
   it('bounds receipt retries and backs them off instead of sending a receipt to the DLQ while pending', () => {
     const message = {

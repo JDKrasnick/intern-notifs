@@ -80,6 +80,7 @@ describe('legacy ingestion characterization', () => {
       sourceUrl: 'https://github.test/list',
       row: 3,
       company: 'Acme &amp; Co',
+      employerLabelOrigin: 'explicit',
       title: 'AI Intern 🇺🇸',
       location: 'Remote',
       season: 'summer-2027',

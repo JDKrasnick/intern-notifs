@@ -33,7 +33,8 @@ import { reviewedProviderRegistry, reviewedStructuredRegistry } from './employer
 import { StructuredCareerSourceConnector } from '../src/sources/structured/index.js';
 import { failedSourceHealth, successfulSourceHealth } from '../src/source-health.js';
 import type { BrowserWorker } from '@cloudflare/puppeteer';
-import { destinationVerificationMessage, enqueueDueDestinationVerifications, processDestinationVerificationBatch } from './destination-verification.js';
+import { destinationVerificationMessage, enqueueDueDestinationVerifications, processDestinationVerificationBatch,
+  sendAdmissionOperationalAlert } from './destination-verification.js';
 import type { CatalogAdmissionResolver } from '../src/destination-verification.js';
 import {
   catalogProviderDefinitions,
@@ -81,6 +82,9 @@ export interface Environment extends AuthEnvironment {
   ASHBY_QUEUE_ID: string;
   GITHUB_QUEUE_ID: string;
   GMAIL_QUEUE_ID: string;
+  DESTINATION_VERIFICATION_QUEUE_ID?: string;
+  ADMISSION_QUEUE_AGE_ALERT_HOURS?: string;
+  ADMISSION_STALE_ALERT_THRESHOLD?: string;
   GMAIL_ENABLED?: string;
   GMAIL_CLIENT_ID?: string;
   GMAIL_CLIENT_SECRET?: string;
@@ -384,7 +388,8 @@ async function billingShutdown(request: Request, env: Environment): Promise<Resp
   const queueIds = [
     ...catalogProviderDefinitions.map((provider) => env[provider.runtime.cloudflareQueueIdBinding]),
     env.GMAIL_QUEUE_ID,
-  ];
+    env.DESTINATION_VERIFICATION_QUEUE_ID,
+  ].filter((queueId): queueId is string => Boolean(queueId));
   const scriptPath = `/workers/scripts/${encodeURIComponent(env.WORKER_NAME)}`;
   if (new URL(request.url).searchParams.get('dry-run') === 'true') {
     await Promise.all([
@@ -564,6 +569,13 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
       request,
       new D1CatalogAdmissionStore(env.DB),
       () => refreshCatalogProjection(new D1InternshipStore(env.DB)),
+      'operations-reviewer',
+      () => new Date(),
+      (operation) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(operation)),
+      async () => ({
+        work: env.DESTINATION_VERIFICATION_QUEUE.metrics ? await env.DESTINATION_VERIFICATION_QUEUE.metrics() : { status: 'unavailable' },
+        deadLetter: env.DESTINATION_VERIFICATION_DLQ.metrics ? await env.DESTINATION_VERIFICATION_DLQ.metrics() : { status: 'unavailable' },
+      }),
     ));
   }
   if (request.method === 'POST' && url.pathname === '/internal/posting-identity-repair') {
@@ -970,9 +982,24 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
     return;
   }
   if (event.cron === '9-59/10 * * * *') {
+    const observedAt = new Date(event.scheduledTime);
+    const admissionVerificationRetries = await enqueueDueDestinationVerifications(env, observedAt, { syncSchedule: false });
+    const queueMetrics = env.DESTINATION_VERIFICATION_QUEUE.metrics ? await env.DESTINATION_VERIFICATION_QUEUE.metrics() : undefined;
+    const deadLetterMetrics = env.DESTINATION_VERIFICATION_DLQ.metrics ? await env.DESTINATION_VERIFICATION_DLQ.metrics() : undefined;
+    const maximumQueueAgeMs = Number(env.ADMISSION_QUEUE_AGE_ALERT_HOURS ?? 120) * 60 * 60_000;
+    const queueAgeMs = queueMetrics?.oldestMessageTimestamp
+      ? observedAt.getTime() - queueMetrics.oldestMessageTimestamp.getTime() : 0;
+    const operationalSignals = [
+      ...(deadLetterMetrics?.backlogCount ? ['destination-verification-dlq'] : []),
+      ...(queueAgeMs >= maximumQueueAgeMs ? ['destination-verification-age'] : []),
+    ];
+    await sendAdmissionOperationalAlert(new D1CatalogAdmissionStore(env.DB), env, {
+      signals: operationalSignals, observedAt: observedAt.toISOString(),
+      details: `Destination queue depth: ${queueMetrics?.backlogCount ?? 'unavailable'}; oldest age ms: ${queueAgeMs}; DLQ depth: ${deadLetterMetrics?.backlogCount ?? 'unavailable'}.`,
+    });
     const projection = await refreshCatalogProjection(store);
     const notifications = await drainPendingExpoNotifications(store, new D1UserStore(env.DB), new ExpoPushPublisher());
-    console.log(JSON.stringify({ event: 'cloudflare_maintenance_complete', projection, notifications }));
+    console.log(JSON.stringify({ event: 'cloudflare_maintenance_complete', projection, notifications, admissionVerificationRetries }));
     return;
   }
   if (event.cron === '*/5 * * * *') {
@@ -1011,7 +1038,21 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
     await new GmailStore(env.DB).cleanup(new Date(event.scheduledTime));
     const employerMaintenance = await runEmployerMaintenance(new D1EmployerStore(env.DB), store, new Date(event.scheduledTime));
     const admissionVerificationRetries = await enqueueDueDestinationVerifications(env, new Date(event.scheduledTime));
-    console.log(JSON.stringify({ event: 'employer_maintenance_complete', ...employerMaintenance, admissionVerificationRetries }));
+    const admissionAudit = await new D1CatalogAdmissionStore(env.DB).audit();
+    const activeAdmissionIncidents = (await new D1CatalogAdmissionStore(env.DB).listActiveIncidents()).length;
+    const staleThreshold = Number(env.ADMISSION_STALE_ALERT_THRESHOLD ?? 1);
+    await sendAdmissionOperationalAlert(new D1CatalogAdmissionStore(env.DB), env, {
+      signals: [
+        ...(admissionAudit.freshness.staleEligible >= staleThreshold ? ['stale-destination-evidence'] : []),
+        ...(activeAdmissionIncidents ? ['active-admission-incidents'] : []),
+      ],
+      observedAt: new Date(event.scheduledTime).toISOString(),
+      details: `Stale eligible destination evidence: ${admissionAudit.freshness.staleEligible}; total stale evidence: ${admissionAudit.freshness.stale}; active admission incidents: ${activeAdmissionIncidents}.`,
+    });
+    console.log(JSON.stringify({ event: 'employer_maintenance_complete', ...employerMaintenance, admissionVerificationRetries,
+      admissionFreshness: admissionAudit.freshness, admissionValidationCoverage: admissionAudit.validationCoverage,
+      activeAdmissionIncidents,
+      admissionOperations: admissionAudit.operations }));
   }
 }
 

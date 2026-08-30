@@ -582,7 +582,8 @@ export class DynamoInternshipStore implements InternshipStore {
     }
   }
   private async pending(index: 'pendingSmsIndex' | 'pendingDigestIndex', attribute: 'smsPk' | 'digestPk', value: string): Promise<Internship[]> {
-    return (await this.queryAll({ TableName: this.tableName, IndexName: index, KeyConditionExpression: '#key = :value', ExpressionAttributeNames: { '#key': attribute }, ExpressionAttributeValues: { ':value': value } })).map((item) => item.job as Internship);
+    return (await this.queryAll({ TableName: this.tableName, IndexName: index, KeyConditionExpression: '#key = :value', ExpressionAttributeNames: { '#key': attribute }, ExpressionAttributeValues: { ':value': value } }))
+      .map((item) => item.job as Internship).filter((job) => alertEligible(job));
   }
   pendingSms() { return this.pending('pendingSmsIndex', 'smsPk', 'PENDING#SMS'); }
   pendingDigest() { return this.pending('pendingDigestIndex', 'digestPk', 'PENDING#DIGEST'); }
@@ -596,6 +597,7 @@ export class DynamoInternshipStore implements InternshipStore {
     // This stays on the chronological GSI and only advances until it can fill
     // the requested page or reaches the end. It never falls back to Scan.
     const jobs: Internship[] = [];
+    let eligibilityFiltered = false;
     let startKey: Record<string, unknown> | undefined = cursor ? JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) : undefined;
     do {
       const filters = [needle ? 'contains(catalogSearchText, :query)' : undefined, source ? 'contains(catalogSourceClasses, :source)' : undefined].filter(Boolean);
@@ -608,10 +610,11 @@ export class DynamoInternshipStore implements InternshipStore {
       }));
       for (const item of result.Items ?? []) {
         const job = item.job as Internship;
-        if (!isPastSeason(job.season)) jobs.push(withEmployerCategory(job));
+        if (catalogEligible(job) && !isPastSeason(job.season)) jobs.push(withEmployerCategory(job));
+        else eligibilityFiltered = true;
       }
       startKey = result.LastEvaluatedKey;
-    } while (startKey && (jobs.length === 0 || (jobs.length < limit && Boolean(needle || source))));
+    } while (startKey && (jobs.length === 0 || (jobs.length < limit && Boolean(needle || source || eligibilityFiltered))));
     return { jobs, ...(startKey ? { cursor: Buffer.from(JSON.stringify(startKey)).toString('base64url') } : {}) };
   }
   async listOpenSince(after: string, before: string): Promise<Internship[]> {
@@ -637,7 +640,8 @@ export class DynamoInternshipStore implements InternshipStore {
     });
     return [...normal, ...legacy]
       .map((item) => item.job as Internship)
-      .filter((job) => catalogRecency(job) === 'normal' && catalogVisibleAt(job) > after && catalogVisibleAt(job) <= before && !isPastSeason(job.season))
+      .filter((job) => catalogEligible(job) && catalogRecency(job) === 'normal'
+        && catalogVisibleAt(job) > after && catalogVisibleAt(job) <= before && !isPastSeason(job.season))
       .sort(compareCatalogRecency)
       .map(withEmployerCategory);
   }
@@ -657,7 +661,7 @@ export class DynamoInternshipStore implements InternshipStore {
     })]);
     return [...open, ...closed]
       .map((item) => item.job as Internship)
-      .filter((job) => job.technical !== false && !isPastSeason(job.season))
+      .filter((job) => job.technical !== false && catalogEligible(job) && !isPastSeason(job.season))
       .sort(compareCatalogRecency)
       .map(withEmployerCategory);
   }

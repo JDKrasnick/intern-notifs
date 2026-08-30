@@ -52,6 +52,7 @@
 - [ ] Complete issue #120's catalog-admission rollout.
   - [x] Add the provider-neutral employer, posting-attribution, destination, and metadata admission record; derive canonical eligibility from source occurrences; and gate catalog indexes and alert outbox writes.
   - [x] Add reviewed D1 employer mappings and destination rules, browser-verification queue/DLQ processing, evidence and incident history, grouped support email states, guarded silent repair, and the Saved unavailable state.
+  - [x] Add authoritative closure/`validThrough` detection, seven-day evidence scheduling and grace, tenant-safe Markdown continuations, frozen candidate-only backfills, source-scoped guarded staging, and unified admission health/audit reporting.
   - [ ] Deploy migration `0007_catalog_admission.sql`, configure the Browser Rendering and Resend bindings, and verify queue/DLQ health plus the admission audit in production.
   - [ ] Review the production candidate set, approve the exact guarded repair token/count, apply it, and verify unchanged job IDs, first-seen timestamps, recency, source references, and notification state.
   - [ ] Verify representative iOS/Android Saved rendering and the seven-day custom-route grace transition on physical devices.

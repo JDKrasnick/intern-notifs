@@ -5,6 +5,7 @@ import { classifyDestination, matchingBrowserDestination } from '../src/destinat
 import type { DestinationVerificationRequest } from '../src/destination-verification.js';
 import type { ApplicationPageEvidence } from '../src/core/application-url.js';
 import { reachabilityFromFailure, type Reachability } from '../src/core/application-verification.js';
+import { normalizeUrl } from '../src/core/normalize.js';
 import { combineRenderedFrameEvidence, type RenderedFrameSnapshot } from '../src/rendered-destination-evidence.js';
 import type { CatalogAdmissionReason, Internship, ProcessedListing, ProviderIdentity, SourceOccurrence } from '../src/types.js';
 import { D1CatalogAdmissionStore } from './catalog-admission-store.js';
@@ -20,6 +21,10 @@ export interface DestinationVerificationMessage {
   candidateUrl: string;
   reason: 'first-sight' | 'url-change' | 'content-change' | 'daily-retry' | 'weekly-sample' | 'historical-backfill';
   queuedAt: string;
+  occurrenceKey?: string;
+  leaseToken?: string;
+  idempotencyKey?: string;
+  generationId?: string;
 }
 
 export interface DestinationVerificationEnvironment {
@@ -59,6 +64,38 @@ function incidentState(reason: CatalogAdmissionReason): 'open' | 'quarantined' {
     : 'quarantined';
 }
 
+async function classifyReferenceDestination(input: {
+  operations: D1CatalogAdmissionStore;
+  message: DestinationVerificationMessage;
+  job: Internship;
+  reference: SourceOccurrence;
+  reachability: Reachability;
+  inspectedAt: string;
+  evidence?: ApplicationPageEvidence;
+  browserVisible?: boolean;
+}): Promise<{ listing: ProcessedListing; destination: ReturnType<typeof classifyDestination> }> {
+  const { operations, message, job, reference, reachability, inspectedAt, evidence, browserVisible } = input;
+  const mappedEmployer = await operations.resolveCanonicalEmployer(message.providerIdentity);
+  const mayReuseEmployer = reference.employerLabelOrigin !== 'inherited' || reference.employerInheritance === 'same-tenant';
+  const listing: ProcessedListing = {
+    ...reference,
+    externalId: message.externalId,
+    fetchedAt: inspectedAt,
+    providerIdentity: message.providerIdentity,
+    postingIdentity: job.postingIdentity,
+    employerEvidence: {
+      authority: reference.provenance === 'reviewed-community' ? 'source-row' : 'reviewed-registry',
+      ...(mappedEmployer ? { canonicalEmployer: mappedEmployer }
+        : mayReuseEmployer && reference.admission?.canonicalEmployer ? { canonicalEmployer: reference.admission.canonicalEmployer }
+          : mayReuseEmployer && job.admission?.canonicalEmployer ? { canonicalEmployer: job.admission.canonicalEmployer } : {}),
+    },
+    metadataCompleteness: reference.admission?.metadata ?? metadataCompleteness({ title: reference.title, locations: reference.locations ?? [reference.location] }),
+  };
+  const rule = await operations.resolveReviewRule(message.providerIdentity, message.candidateUrl);
+  return { listing, destination: classifyDestination({ listing, reachability, ...(evidence ? { evidence } : {}), inspectedAt,
+    ...(browserVisible !== undefined ? { browserVisible } : {}), ...(rule ? { rule } : {}) }) };
+}
+
 export async function persistDestinationAdmission(input: {
   jobs: D1InternshipStore;
   operations: D1CatalogAdmissionStore;
@@ -74,24 +111,8 @@ export async function persistDestinationAdmission(input: {
   incident?: { sourceId: string; host: string; reason: string; incidentId: string; messageType: 'incident-opened' | 'quarantine' };
 }> {
   const { jobs, operations, message, job, reference, reachability, inspectedAt, evidence, browserVisible } = input;
-  const mappedEmployer = await operations.resolveCanonicalEmployer(message.providerIdentity);
-  const listing: ProcessedListing = {
-    ...reference,
-    externalId: message.externalId,
-    fetchedAt: inspectedAt,
-    providerIdentity: message.providerIdentity,
-    postingIdentity: job.postingIdentity,
-    employerEvidence: {
-      authority: reference.provenance === 'reviewed-community' ? 'source-row' : 'reviewed-registry',
-      ...(mappedEmployer ? { canonicalEmployer: mappedEmployer }
-        : reference.admission?.canonicalEmployer ? { canonicalEmployer: reference.admission.canonicalEmployer }
-          : job.admission?.canonicalEmployer ? { canonicalEmployer: job.admission.canonicalEmployer } : {}),
-    },
-    metadataCompleteness: reference.admission?.metadata ?? metadataCompleteness({ title: reference.title, locations: reference.locations ?? [reference.location] }),
-  };
-  const rule = await operations.resolveReviewRule(message.providerIdentity, message.candidateUrl);
-  const destination = classifyDestination({ listing, reachability, ...(evidence ? { evidence } : {}), inspectedAt,
-    ...(browserVisible !== undefined ? { browserVisible } : {}), ...(rule ? { rule } : {}) });
+  const { listing, destination } = await classifyReferenceDestination({ operations, message, job, reference, reachability,
+    inspectedAt, ...(evidence ? { evidence } : {}), ...(browserVisible !== undefined ? { browserVisible } : {}) });
   const admission = evaluateCatalogAdmission({
     listing, destination,
     postingAttributed: reference.provenance !== 'reviewed-community'
@@ -101,8 +122,27 @@ export async function persistDestinationAdmission(input: {
   });
   const sourceReferences = job.sourceReferences.map((item) => item === reference ? { ...item, admission } : item);
   const occurrence = (await jobs.getSourceOccurrences(message.sourceId)).find((item) => item.externalId === message.externalId);
+  const canonicalAdmission = deriveCanonicalAdmission(sourceReferences, inspectedAt);
+  const authoritativeClosure = destination.classification === 'gone';
+  const verifiedOpen = ['posting-detail', 'application-form'].includes(destination.classification)
+    && canonicalAdmission?.catalogEligible && sourceReferences.some((item) => item.state === 'open');
+  let normalizedCandidate = message.candidateUrl;
+  try { normalizedCandidate = normalizeUrl(message.candidateUrl); } catch { /* Preserve the reviewed candidate verbatim if normalization fails. */ }
+  const reopeningFromClosure = verifiedOpen && Boolean(job.invalidApplicationUrl);
   await jobs.putAdmissionState(
-    { ...job, sourceReferences, admission: deriveCanonicalAdmission(sourceReferences, inspectedAt) },
+    { ...job, sourceReferences, admission: canonicalAdmission,
+      ...(authoritativeClosure ? {
+        open: false,
+        applicationUrlValidatedAt: undefined,
+        invalidApplicationUrl: normalizedCandidate,
+        notification: { ...job.notification, smsPending: false, digestPending: false },
+      } : reopeningFromClosure ? {
+        open: true,
+        applicationUrlValidatedAt: inspectedAt,
+        invalidApplicationUrl: undefined,
+      } : verifiedOpen ? { applicationUrlValidatedAt: inspectedAt }
+        : canonicalAdmission?.alertEligible ? { applicationUrlValidatedAt: job.applicationUrlValidatedAt }
+          : { applicationUrlValidatedAt: undefined }) },
     occurrence ? { ...occurrence, occurrence: { ...occurrence.occurrence, admission }, changedAt: inspectedAt } : undefined,
   );
 
@@ -148,6 +188,31 @@ async function sendIncidentEmail(
   return true;
 }
 
+export async function sendAdmissionOperationalAlert(
+  store: D1CatalogAdmissionStore,
+  env: Pick<DestinationVerificationEnvironment, 'RESEND_API_KEY' | 'ADMISSION_SUPPORT_RECIPIENT'>,
+  input: { signals: string[]; details: string; observedAt: string },
+): Promise<boolean> {
+  if (!input.signals.length || !env.RESEND_API_KEY || !env.ADMISSION_SUPPORT_RECIPIENT) return false;
+  const signals = [...new Set(input.signals)].sort();
+  const day = input.observedAt.slice(0, 10);
+  const dedupeKey = createHash('sha256').update(`operational-health\0${day}\0${signals.join(',')}`).digest('hex');
+  if (await store.emailDeliveryExists(dedupeKey)) return true;
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json', 'Idempotency-Key': dedupeKey },
+    body: JSON.stringify({
+      from: 'InternNotifs Operations <operations@internnotifs.dev>',
+      to: [env.ADMISSION_SUPPORT_RECIPIENT],
+      subject: `[InternNotifs] catalog admission health: ${signals.join(', ')}`,
+      text: input.details,
+    }),
+  });
+  if (!response.ok) throw new Error(`Resend returned HTTP ${response.status}`);
+  await store.recordEmailDelivery(dedupeKey, `operational:${day}`, 'operational-health', input.observedAt);
+  return true;
+}
+
 export async function processDestinationVerificationBatch(
   batch: MessageBatch<unknown>,
   env: DestinationVerificationEnvironment,
@@ -184,6 +249,10 @@ export async function processDestinationVerificationBatch(
     for (const { queued, message } of pending) {
       const attemptedAt = now().toISOString();
       try {
+        if (message.idempotencyKey && await operations.verificationCompleted(message.idempotencyKey)) {
+          queued.ack();
+          continue;
+        }
         const job = await jobs.getJob(message.jobId);
         if (!job) { queued.ack(); continue; }
         const reference = job.sourceReferences.find((item) => item.sourceId === message.sourceId && item.externalId === message.externalId);
@@ -193,6 +262,7 @@ export async function processDestinationVerificationBatch(
         let evidence: ApplicationPageEvidence | undefined;
         let collisionJobIds: string[] = [];
         let browserError: unknown;
+        const candidateOnly = message.reason === 'historical-backfill';
         try {
           const response = await page.goto(message.candidateUrl, { waitUntil: 'networkidle0', timeout: 20_000 });
           reachability = reachabilityFromHttpStatus(response?.status());
@@ -201,15 +271,28 @@ export async function processDestinationVerificationBatch(
             let failedFrameCount = 0;
             for (const frame of page.frames()) {
               try {
-                const snapshot = await frame.evaluate(() => {
+                const snapshot = await frame.evaluate((requestedPostingId) => {
                   const visible = (element: Element) => element.getClientRects().length > 0;
-                  const structuredJobText: string[] = [];
+                  const structuredPostings: Record<string, unknown>[] = [];
                   let jobPostingCount = 0;
                   for (const node of document.querySelectorAll('script[type="application/ld+json"]')) {
                     const text = node.textContent ?? '';
                     const matches = text.match(/["']@type["']\s*:\s*["']JobPosting["']/gi) ?? [];
                     jobPostingCount += matches.length;
-                    if (matches.length) structuredJobText.push(text.slice(0, 20_000));
+                    if (matches.length) {
+                      try {
+                        const queue: unknown[] = [JSON.parse(text)];
+                        while (queue.length) {
+                          const value = queue.shift();
+                          if (Array.isArray(value)) { queue.push(...value); continue; }
+                          if (!value || typeof value !== 'object') continue;
+                          const record = value as Record<string, unknown>;
+                          if (record['@graph']) queue.push(record['@graph']);
+                          const types = Array.isArray(record['@type']) ? record['@type'] : [record['@type']];
+                          if (types.includes('JobPosting')) structuredPostings.push(record);
+                        }
+                      } catch { /* Malformed structured data remains ordinary visible evidence. */ }
+                    }
                   }
                   const pageUrl = new URL(location.href); pageUrl.hash = '';
                   const jobRoute = /(?:^|\/)(?:careers?|jobs?|openings?|positions?|roles?|vacancies?)(?:\/|$)/i;
@@ -229,15 +312,26 @@ export async function processDestinationVerificationBatch(
                   });
                   const description = document.querySelector('meta[name="description"],meta[property="og:description"]')?.getAttribute('content') ?? undefined;
                   const main = (document.querySelector('main')?.innerText ?? document.body?.innerText ?? '').replace(/\s+/g, ' ').trim().slice(0, 12_000);
+                  const escapedPostingId = requestedPostingId?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  const matching = escapedPostingId ? structuredPostings.filter((record) => new RegExp(
+                    `(?:^|[^a-z0-9])${escapedPostingId}(?:$|[^a-z0-9])`, 'i',
+                  ).test(JSON.stringify(record))) : [];
+                  const selectedPosting = matching.length === 1 ? matching[0]
+                    : structuredPostings.length === 1 ? structuredPostings[0] : undefined;
+                  const selectedValidThrough = typeof selectedPosting?.validThrough === 'string'
+                    && !Number.isNaN(Date.parse(selectedPosting.validThrough))
+                    ? new Date(selectedPosting.validThrough).toISOString() : undefined;
                   return {
                     url: location.href, title: document.title || undefined, description,
-                    visibleText: main || undefined, structuredJobText: structuredJobText.join(' ').slice(0, 40_000) || undefined,
+                    visibleText: main || undefined,
+                    structuredJobText: selectedPosting ? JSON.stringify(selectedPosting).slice(0, 40_000) : undefined,
+                    validThrough: selectedValidThrough,
                     jobPostingCount, distinctJobLinkCount: distinctJobLinks.size,
                     applicationFormPresent: actionableApply || [...document.querySelectorAll<Element>(
                       'form[action*="apply" i],form[id*="apply" i],input[type="file"],input[name="resume" i],input[name="cv" i]',
                     )].some(visible),
                   };
-                });
+                }, message.providerIdentity.postingId);
                 renderedFrames.push({ ...snapshot, ...(frame.parentFrame() ? { parentUrl: frame.parentFrame()!.url() } : {}) });
               } catch {
                 failedFrameCount += 1;
@@ -245,7 +339,7 @@ export async function processDestinationVerificationBatch(
             }
             evidence = combineRenderedFrameEvidence({ role: reference.title, expectedPostingId: message.providerIdentity.postingId,
               frames: renderedFrames, failedFrameCount });
-            if (evidence?.renderedEvidenceHash && message.providerIdentity.postingId) {
+            if (!candidateOnly && evidence?.renderedEvidenceHash && message.providerIdentity.postingId) {
               collisionJobIds = await operations.renderedEvidenceCollisionJobIds(
                 message.jobId, evidence.renderedEvidenceHash, message.providerIdentity.postingId,
               );
@@ -259,7 +353,7 @@ export async function processDestinationVerificationBatch(
           await page.close();
         }
         const inspectedAt = now().toISOString();
-        for (const collisionJobId of collisionJobIds) {
+        for (const collisionJobId of message.reason === 'historical-backfill' ? [] : collisionJobIds) {
           const collisionJob = await jobs.getJob(collisionJobId);
           const collisionReference = collisionJob?.sourceReferences.find((item) => item.externalId
             && item.admission?.destination.renderedEvidenceHash === evidence?.renderedEvidenceHash);
@@ -278,16 +372,32 @@ export async function processDestinationVerificationBatch(
               confidence: { score: 0, level: 'low', recommendation: 'review', signals: ['identical rendered evidence for different posting IDs'] } } });
           if (collisionResult.incident) opened.push(collisionResult.incident);
         }
-        const result = await persistDestinationAdmission({ jobs, operations, message, job, reference, reachability, inspectedAt,
-          ...(evidence ? { evidence, browserVisible: true } : {}) });
-        if (result.incident) opened.push(result.incident);
+        const result = candidateOnly
+          ? await classifyReferenceDestination({ operations, message, job, reference, reachability, inspectedAt,
+            ...(evidence ? { evidence, browserVisible: true } : {}) })
+          : await persistDestinationAdmission({ jobs, operations, message, job, reference, reachability, inspectedAt,
+            ...(evidence ? { evidence, browserVisible: true } : {}) });
+        if ('incident' in result && result.incident) opened.push(result.incident);
         await operations.recordVerificationAttempt({ id: crypto.randomUUID(), jobId: message.jobId, sourceId: message.sourceId,
           candidateUrl: message.candidateUrl, state: browserError ? 'failed' : 'succeeded', classification: result.destination.classification,
           ...(browserError ? { error: browserError instanceof Error ? browserError.message.slice(0, 500) : String(browserError).slice(0, 500) } : {}),
-          attemptedAt, completedAt: inspectedAt }, result.destination.evidenceHash ? { hash: result.destination.evidenceHash,
+          attemptedAt, completedAt: inspectedAt }, !candidateOnly && result.destination.evidenceHash ? { hash: result.destination.evidenceHash,
           classification: result.destination.classification, value: result.destination, observedAt: inspectedAt } : undefined);
+        if (candidateOnly && message.generationId && message.occurrenceKey && !browserError) {
+          await operations.recordBackfillEvidence({ generationId: message.generationId, occurrenceKey: message.occurrenceKey,
+            evidenceHash: result.destination.evidenceHash ?? createHash('sha256').update(JSON.stringify(result.destination)).digest('hex'),
+            classification: result.destination.classification, value: result.destination, observedAt: inspectedAt });
+        }
+        if (!candidateOnly && message.occurrenceKey) {
+          await operations.completeScheduledVerification({ occurrenceKey: message.occurrenceKey, leaseToken: message.leaseToken,
+            completedAt: inspectedAt, classification: result.destination.classification,
+            nextCheckAt: result.destination.nextCheckAt ?? new Date(Date.parse(inspectedAt) + 6 * 86_400_000).toISOString() });
+        }
         if (browserError && reachability !== 'gone') queued.retry({ delaySeconds: 86_400 });
-        else queued.ack();
+        else {
+          if (message.idempotencyKey) await operations.recordVerificationCompletion(message.idempotencyKey, inspectedAt);
+          queued.ack();
+        }
       } catch {
         queued.retry({ delaySeconds: 300 });
       }
@@ -314,9 +424,9 @@ export async function processDestinationVerificationBatch(
 export async function enqueueDueDestinationVerifications(
   env: Pick<DestinationVerificationEnvironment, 'DB' | 'DESTINATION_VERIFICATION_QUEUE' | 'RESEND_API_KEY' | 'ADMISSION_SUPPORT_RECIPIENT'>,
   now = new Date(),
+  options: { syncSchedule?: boolean } = { syncSchedule: true },
 ): Promise<number> {
   const operations = new D1CatalogAdmissionStore(env.DB);
-  const jobs = new D1InternshipStore(env.DB);
   const incidents = await operations.listActiveIncidents();
   let queued = 0;
   const warnings = new Map<string, { sourceId: string; host: string; reason: string; incidents: string[] }>();
@@ -334,25 +444,6 @@ export async function enqueueDueDestinationVerifications(
       for (const id of group.incidents) await operations.markIncidentNotification(id, 'grace-warning', sentAt);
     }
   }
-  for (const incident of incidents) {
-    if (Date.parse(incident.updatedAt) > now.getTime() - 23 * 60 * 60_000) continue;
-    const job = await jobs.getJob(incident.jobId);
-    const reference = job?.sourceReferences.find((item) => item.sourceId === incident.sourceId && item.externalId);
-    const destination = reference?.admission?.destination ?? job?.admission?.destination;
-    if (!job || !reference?.externalId || !destination) continue;
-    const providerIdentity: ProviderIdentity = {
-      provider: destination.provider,
-      sourceId: incident.sourceId,
-      sourceUrl: reference.sourceUrl,
-      ...(destination.tenant ? { tenant: destination.tenant } : {}),
-      ...(destination.expectedPostingId ? { postingId: destination.expectedPostingId } : {}),
-    };
-    await env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage({
-      jobId: incident.jobId, sourceId: incident.sourceId, externalId: reference.externalId,
-      providerIdentity, candidateUrl: destination.candidateUrl, reason: 'daily-retry',
-    }, now.toISOString()));
-    queued += 1;
-  }
   const rules = await operations.listReviewRules();
   for (const rule of rules.filter((candidate) => !candidate.sampleDueAt || Date.parse(candidate.sampleDueAt) <= now.getTime())) {
     for (const candidate of await operations.reviewSampleCandidates(rule)) {
@@ -366,11 +457,16 @@ export async function enqueueDueDestinationVerifications(
     }
     await operations.markReviewRuleSampled(rule.id, new Date(now.getTime() + 7 * 86_400_000).toISOString());
   }
-  for (const candidate of await operations.legacyVerificationCandidates(100)) {
+  const scheduledAt = now.toISOString();
+  if (options.syncSchedule !== false) await operations.syncVerificationSchedule(scheduledAt);
+  for (const candidate of await operations.leaseDueVerifications(scheduledAt)) {
+    const idempotencyKey = createHash('sha256').update(`${candidate.occurrenceKey}\0${candidate.nextCheckAt}`).digest('hex');
     await env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage({
       jobId: candidate.jobId, sourceId: candidate.sourceId, externalId: candidate.externalId,
-      providerIdentity: candidate.providerIdentity, candidateUrl: candidate.candidateUrl, reason: 'historical-backfill',
-    }, now.toISOString()));
+      providerIdentity: candidate.providerIdentity, candidateUrl: candidate.candidateUrl, reason: 'daily-retry',
+      occurrenceKey: candidate.occurrenceKey, leaseToken: candidate.leaseToken, idempotencyKey,
+    }, scheduledAt));
+    await operations.markVerificationEnqueued(candidate.occurrenceKey, candidate.leaseToken, scheduledAt);
     queued += 1;
   }
   return queued;

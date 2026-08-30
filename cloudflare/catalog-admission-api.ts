@@ -1,4 +1,5 @@
 import type { CanonicalEmployer, DestinationReviewRule, EmployerMapping } from '../src/types.js';
+import type { DestinationVerificationRequest } from '../src/destination-verification.js';
 import { ATOMIC_REPAIR_RECORD_LIMIT } from './catalog-admission-store.js';
 import type { D1CatalogAdmissionStore, RepairChange } from './catalog-admission-store.js';
 
@@ -25,11 +26,20 @@ export async function handleCatalogAdmissionOperations(
   refreshProjection: () => Promise<unknown>,
   actor = 'operations-reviewer',
   now = () => new Date(),
+  enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>,
+  destinationQueueHealth?: () => Promise<unknown>,
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
   const timestamp = now().toISOString();
   try {
     if (request.method === 'GET' && path === '/internal/admission/audit') return json(200, await store.audit());
+    if (request.method === 'GET' && path === '/internal/admission/health') {
+      const [audit, incidents, queues] = await Promise.all([
+        store.audit(), store.listActiveIncidents(), destinationQueueHealth?.() ?? Promise.resolve({ status: 'unavailable' }),
+      ]);
+      return json(200, { queues, freshness: audit.freshness, validationCoverage: audit.validationCoverage,
+        activeIncidents: incidents.length, operations: audit.operations });
+    }
     if (request.method === 'GET' && path === '/internal/admission/employers') return json(200, { employers: await store.listCanonicalEmployers() });
     if (request.method === 'PUT' && path === '/internal/admission/employers') {
       const input = await body(request);
@@ -79,6 +89,42 @@ export async function handleCatalogAdmissionOperations(
       return json(200, { rule });
     }
     if (request.method === 'GET' && path === '/internal/admission/incidents') return json(200, { incidents: await store.listActiveIncidents() });
+    if (path === '/internal/admission/backfill' && request.method === 'GET') {
+      const generationId = text(new URL(request.url).searchParams.get('generationId'), 'generationId', 128);
+      const progress = await store.backfillProgress(generationId);
+      return progress ? json(200, { generation: progress }) : json(404, { message: 'Backfill generation was not found' });
+    }
+    if (path === '/internal/admission/backfill' && request.method === 'POST') {
+      const input = await body(request);
+      const action = typeof input.action === 'string' ? input.action : 'preview';
+      if (action === 'preview') return json(200, { generation: await store.previewBackfill(timestamp) });
+      if (action === 'stage') {
+        const generationId = text(input.generationId, 'generationId', 128);
+        const sourceId = text(input.sourceId, 'sourceId', 300);
+        const cursor = typeof input.cursor === 'number' && Number.isInteger(input.cursor) && input.cursor >= 0 ? input.cursor : 0;
+        const recordLimit = typeof input.recordLimit === 'number' && Number.isInteger(input.recordLimit)
+          ? input.recordLimit : 850;
+        const derived = await store.deriveBackfillRepairBatch(generationId, sourceId, cursor, recordLimit);
+        const stage = await store.stageRepair(derived.changes, timestamp);
+        return json(200, { generationId, sourceId, cursor, nextCursor: derived.nextCursor,
+          derivedRecords: derived.records, ...stage, applied: false });
+      }
+      if (action !== 'enqueue') throw new Error('action must be preview, enqueue, or stage');
+      if (!enqueueDestinationVerification) throw new Error('Backfill queue is not configured');
+      const generationId = text(input.generationId, 'generationId', 128);
+      const cursor = typeof input.cursor === 'number' && Number.isInteger(input.cursor) && input.cursor >= 0 ? input.cursor : 0;
+      const limit = typeof input.limit === 'number' && Number.isInteger(input.limit) && input.limit > 0 && input.limit <= 500 ? input.limit : 100;
+      const page = await store.backfillPage(generationId, cursor, limit, input.retryQueued === true);
+      for (const candidate of page) await enqueueDestinationVerification({
+        jobId: candidate.jobId, sourceId: candidate.sourceId, externalId: candidate.externalId,
+        providerIdentity: candidate.providerIdentity, candidateUrl: candidate.candidateUrl,
+        reason: 'historical-backfill', occurrenceKey: candidate.occurrenceKey, generationId,
+        idempotencyKey: `${generationId}:${candidate.occurrenceKey}`,
+      });
+      await store.markBackfillQueued(generationId, page.map((candidate) => candidate.occurrenceKey), timestamp);
+      return json(202, { generation: await store.backfillProgress(generationId),
+        page: { cursor, enqueued: page.length, nextCursor: page.length ? page.at(-1)!.ordinal + 1 : null } });
+    }
     if (request.method === 'POST' && path === '/internal/admission/repair') {
       const input = await body(request);
       if (input.apply === true) {

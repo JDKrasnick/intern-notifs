@@ -62,6 +62,10 @@ export interface ApplicationPageEvidence {
   renderedEvidenceHash?: string;
   /** Another expected posting ID produced the same normalized rendered artifact. */
   identicalEvidenceForDifferentPosting?: boolean;
+  /** A conclusive publisher artifact wins over otherwise role-specific HTTP-200 content. */
+  closureState?: 'open' | 'gone' | 'unknown';
+  closureSignal?: 'explicit-language' | 'valid-through-expired';
+  validThrough?: string;
   /** Bounded public job text, never applicant-entered data. */
   contentExcerpt?: string;
   contentHash?: string;
@@ -146,10 +150,22 @@ function textFromHtml(value: string): string {
   return decodeHtml(value.replace(/<script\b[^>]*>[\s\S]*?<\/script>|<style\b[^>]*>[\s\S]*?<\/style>|<svg\b[^>]*>[\s\S]*?<\/svg>/gi, ' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim());
 }
 
-function structuredJobText(html: string): { text?: string; source?: 'json-ld' } {
+function normalizedStructuredDate(value: unknown): string | undefined {
+  if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) return undefined;
+  return new Date(value).toISOString();
+}
+
+function structuredPostingMatches(record: Record<string, unknown>, expectedPostingId: string): boolean {
+  const escaped = expectedPostingId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, 'iu').test(JSON.stringify(record));
+}
+
+function structuredJobText(html: string, expectedPostingId?: string): { text?: string; source?: 'json-ld'; validThrough?: string } {
+  const postings: Record<string, unknown>[] = [];
   for (const match of html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
     try {
-      const values = Array.isArray(JSON.parse(match[1])) ? JSON.parse(match[1]) : [JSON.parse(match[1])];
+      const parsed = JSON.parse(match[1]);
+      const values = Array.isArray(parsed) ? parsed : [parsed];
       const queue = [...values];
       while (queue.length) {
         const value = queue.shift();
@@ -158,13 +174,17 @@ function structuredJobText(html: string): { text?: string; source?: 'json-ld' } 
         const record = value as Record<string, unknown>;
         if (record['@graph']) queue.push(record['@graph']);
         const type = record['@type'];
-        if ((Array.isArray(type) ? type : [type]).includes('JobPosting') && typeof record.description === 'string') {
-          return { text: textFromHtml(record.description), source: 'json-ld' };
-        }
+        if ((Array.isArray(type) ? type : [type]).includes('JobPosting')) postings.push(record);
       }
     } catch { /* A malformed publisher JSON-LD block is non-fatal. */ }
   }
-  return {};
+  const matching = expectedPostingId ? postings.filter((record) => structuredPostingMatches(record, expectedPostingId)) : [];
+  const selected = matching.length === 1 ? matching[0] : postings.length === 1 ? postings[0] : undefined;
+  if (!selected) return {};
+  return {
+    ...(typeof selected.description === 'string' ? { text: textFromHtml(selected.description), source: 'json-ld' as const } : {}),
+    ...(normalizedStructuredDate(selected.validThrough) ? { validThrough: normalizedStructuredDate(selected.validThrough) } : {}),
+  };
 }
 
 async function discardResponseBody(response: Response): Promise<void> {
@@ -222,12 +242,24 @@ async function boundedResponseText(response: Response, maximumBytes = 512 * 1024
   return new TextDecoder().decode(bytes);
 }
 
-function applicationContent(html: string): { excerpt?: string; hash?: string; source?: 'json-ld' | 'main' | 'body' } {
-  const structured = structuredJobText(html);
+function applicationContent(html: string, expectedPostingId?: string): { excerpt?: string; hash?: string; source?: 'json-ld' | 'main' | 'body'; validThrough?: string } {
+  const structured = structuredJobText(html, expectedPostingId);
   const main = /<main\b[^>]*>([\s\S]*?)<\/main>/i.exec(html)?.[1];
   const text = structured.text ?? (main ? textFromHtml(main) : textFromHtml(/<body\b[^>]*>([\s\S]*?)<\/body>/i.exec(html)?.[1] ?? html));
-  if (!text) return {};
-  return { excerpt: text.slice(0, 12_000), hash: createHash('sha256').update(text).digest('hex'), source: structured.source ?? (main ? 'main' : 'body') };
+  if (!text) return structured.validThrough ? { validThrough: structured.validThrough } : {};
+  return { excerpt: text.slice(0, 12_000), hash: createHash('sha256').update(text).digest('hex'),
+    source: structured.source ?? (main ? 'main' : 'body'), ...(structured.validThrough ? { validThrough: structured.validThrough } : {}) };
+}
+
+/** Deliberately narrow: generic careers copy mentioning expiry must not close a specific role. */
+export function explicitDestinationClosure(value: string): boolean {
+  const text = value.replace(/\s+/gu, ' ').trim();
+  return /^(?:this\s+(?:job|role|position|opening)\s+is\s+)?no\s+longer\s+accepting\s+applications\b/iu.test(text)
+    || /^(?:(?:this|the)\s+)?(?:job|role|position|opening)\s+(?:filled|expired|closed)[.!]?$/iu.test(text)
+    || /^no\s+longer\s+available[.!]?$/iu.test(text)
+    || /\b(?:this|the)\s+(?:job|role|position|opening)\s+(?:has(?:\s+been)?|is|was)\s+(?:filled|expired|closed|no\s+longer\s+available)\b/iu.test(text)
+    || /\b(?:this|the)\s+(?:job|role|position|opening)\s+is\s+no\s+longer\s+accepting\s+applications\b/iu.test(text)
+    || /\bwe\s+(?:are|['’]?re)\s+no\s+longer\s+accepting\s+applications\s+for\s+(?:this|the)\s+(?:job|role|position|opening)\b/iu.test(text);
 }
 
 const JOB_ROUTE = /(?:^|\/)(?:careers?|jobs?|openings?|positions?|roles?|vacancies?)(?:\/|$)/iu;
@@ -343,13 +375,16 @@ export async function inspectApplicationPage(
     };
   }
   const html = await boundedResponseText(response);
-  const content = applicationContent(html);
+  const content = applicationContent(html, expectedPostingId);
   const title = /<title[^>]*>\s*([^<]+?)\s*<\/title>/i.exec(html)?.[1]?.replace(/\s+/g, ' ').trim();
   const description = /<meta[^>]+(?:name|property)=["'](?:description|og:description)["'][^>]+content=["']([^"']+)["']/i.exec(html)?.[1]?.replace(/\s+/g, ' ').trim();
   const postingIdPresent = expectedPostingId ? html.includes(expectedPostingId) : undefined;
   const jobPostingCount = [...html.matchAll(/["']@type["']\s*:\s*["']JobPosting["']/gi)].length;
   const jobLinkCount = distinctJobLinkCount(html, destination);
   const applicationFormPresent = /<form\b[^>]*(?:action=["'][^"']*(?:apply|application)|id=["'][^"']*(?:apply|application))|<input\b[^>]*(?:type=["']file["']|name=["'](?:resume|cv)["'])/i.test(html);
+  const explicitlyGone = [title, description, content.excerpt?.slice(0, 2_000)]
+    .some((value) => explicitDestinationClosure(value ?? ''));
+  const validThroughExpired = Boolean(content.validThrough && Date.parse(content.validThrough) < Date.now());
   if (title && /^(?:404 |page )?not found$|^(?:access denied|application error|error)$/i.test(title)) {
     throw new ApplicationUrlValidationError(`Application page reports ${title}`);
   }
@@ -362,6 +397,11 @@ export async function inspectApplicationPage(
     ...(jobPostingCount ? { jobPostingCount } : {}),
     ...(jobLinkCount ? { distinctJobLinkCount: jobLinkCount } : {}),
     ...(applicationFormPresent ? { applicationFormPresent: true } : {}),
+    ...(content.validThrough ? { validThrough: content.validThrough } : {}),
+    ...(validThroughExpired
+      ? { closureState: 'gone' as const, closureSignal: 'valid-through-expired' as const }
+      : explicitlyGone ? { closureState: 'gone' as const, closureSignal: 'explicit-language' as const }
+        : { closureState: 'open' as const }),
     ...(content.excerpt ? { contentExcerpt: content.excerpt, contentHash: content.hash, contentSource: content.source } : {}),
     confidence: confidenceFor({ html: true, ...(title ? { title } : {}), ...(description ? { description } : {}), ...(content.excerpt ? { contentExcerpt: content.excerpt } : {}), ...(expectedPostingId ? { expectedPostingId } : {}), ...(postingIdPresent !== undefined ? { postingIdPresent } : {}) }),
   };
