@@ -144,6 +144,7 @@ resource "cloudflare_workers_cron_trigger" "application" {
     { cron = "2,32 * * * *" },
     { cron = "0 * * * *" },
     { cron = "42 8 * * *" },
+    { cron = "17 9 * * *" },
   ]
 }
 
