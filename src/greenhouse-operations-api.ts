@@ -2,13 +2,18 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { CloudWatchClient, DescribeAlarmsCommand } from '@aws-sdk/client-cloudwatch';
 import { GetQueueAttributesCommand, SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { GetParametersByPathCommand, SSMClient } from '@aws-sdk/client-ssm';
-import { reviewedGreenhouseSources } from './sources/greenhouse-config.js';
-import { reviewedLeverSources, type ReviewedLeverSource } from './sources/lever-config.js';
-import { reviewedAshbySources, type ReviewedAshbySource } from './sources/ashby-config.js';
 import { DynamoInternshipStore, type InternshipStore } from './store.js';
 import { acceptLeverAdmission, listLeverCandidates, verifyLeverAdmission, type LeverAdmissionInput } from './lever-admission.js';
 import { monitoringChecklistItems, monitoringPeriod, publicMonitoringChecklist } from './monitoring-checklist.js';
 import { occurrenceStatus } from './ingestion/monitoring.js';
+import {
+  catalogProviderDefinitions,
+  integrationRegistry,
+  operationsSources,
+  type CatalogProviderId,
+  type RegisteredOperationsSource,
+  type SourceAction,
+} from './integration-registry.js';
 import type { MonitoringChecklist, MonitoringChecklistItemId, SourceCheckpoint, SourceHealth, SourceHealthState } from './types.js';
 
 type ApiEvent = {
@@ -29,18 +34,10 @@ const responseHeaders = {
   'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
 };
 const reply = (statusCode: number, body: unknown) => ({ statusCode, headers: responseHeaders, body: JSON.stringify(body) });
-const activeHealthWindowMs: Record<Provider, number> = {
-  greenhouse: 90 * 60_000,
-  lever: 90 * 60_000,
-  ashby: 90 * 60_000,
-};
 const inactiveHealthWindowMs = 7 * 60 * 60_000;
-type Provider = 'greenhouse' | 'lever' | 'ashby';
-type OperationsSource =
-  | (typeof reviewedGreenhouseSources[number] & { provider: 'greenhouse' })
-  | (ReviewedLeverSource & { provider: 'lever' })
-  | (ReviewedAshbySource & { provider: 'ashby' });
-type FleetConfiguration = Partial<Record<Provider, { queueUrl: string; deadLetterQueueUrl: string }>>;
+type Provider = CatalogProviderId;
+type OperationsSource = RegisteredOperationsSource;
+export type FleetConfiguration = Partial<Record<Provider, { queueUrl?: string; deadLetterQueueUrl?: string }>>;
 
 function header(event: ApiEvent, name: string): string | undefined {
   const match = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === name.toLowerCase());
@@ -59,9 +56,11 @@ function stateFor(source: OperationsSource, health: SourceHealth | undefined, ch
   if (health?.state === 'quarantined') return 'quarantined';
   const lastSuccessAt = health?.lastSuccessAt ?? checkpoint?.lastSuccessAt;
   if (!lastSuccessAt) return health?.state ?? 'never-succeeded';
-  const allowedAge = source.status === 'shadow' || health?.pollTier === 'quiet'
+  const allowedAge = source.mode === 'shadow' || health?.pollTier === 'quiet'
     ? inactiveHealthWindowMs
-    : (checkpoint?.lastRowCount ?? health?.eligibleRows ?? 0) > 0 ? activeHealthWindowMs[source.provider] : inactiveHealthWindowMs;
+    : (checkpoint?.lastRowCount ?? health?.eligibleRows ?? 0) > 0
+      ? integrationRegistry[source.provider].freshnessWindowMs
+      : inactiveHealthWindowMs;
   if (timestamp - Date.parse(lastSuccessAt) > allowedAge || health?.state === 'degraded') return 'degraded';
   return 'healthy';
 }
@@ -78,14 +77,14 @@ function publicSource(
   const state = stateFor(source, health, checkpoint, timestamp);
   return {
     source: {
-      sourceId: source.id,
+      sourceId: source.sourceId,
       provider: source.provider,
-      region: source.provider === 'lever' ? source.region : source.provider === 'ashby' ? source.identity.apiRegion : 'unknown',
-      displayName: source.provider === 'greenhouse' ? source.displayName : source.company,
+      region: source.region,
+      displayName: source.displayName,
       careersUrl: source.careersUrl,
-      mode: source.status,
-      boardToken: source.provider === 'lever' ? source.site : source.provider === 'ashby' ? source.identity.boardKey : source.boardToken,
-      evidenceStatus: source.provider === 'ashby' ? source.evidenceState : source.evidenceStatus,
+      mode: source.mode,
+      boardToken: source.boardToken,
+      evidenceStatus: source.evidenceStatus,
     },
     state,
     ...(lastSuccessAt ? { lastSuccessfulSnapshotAt: lastSuccessAt, ageSeconds: Math.max(0, Math.floor((timestamp - Date.parse(lastSuccessAt)) / 1000)) } : {}),
@@ -112,8 +111,8 @@ function publicSource(
 }
 
 async function fleetStatus(
-  provider: Provider,
-  configuration: NonNullable<FleetConfiguration[Provider]>,
+  provider: (typeof catalogProviderDefinitions)[number],
+  configuration: { queueUrl: string; deadLetterQueueUrl: string },
   sqs: SQSClient,
   cloudwatch: CloudWatchClient,
 ) {
@@ -127,12 +126,12 @@ async function fleetStatus(
       AttributeNames: ['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible'],
     })),
     cloudwatch.send(new DescribeAlarmsCommand({
-      AlarmNamePrefix: `InternNotifs${provider[0]!.toUpperCase()}${provider.slice(1)}-`,
+      AlarmNamePrefix: provider.alarmPrefix,
     })),
   ]);
   const number = (value: string | undefined) => Number(value ?? 0);
   return {
-    provider,
+    provider: provider.id,
     queue: {
       waiting: number(queue.Attributes?.ApproximateNumberOfMessages),
       processing: number(queue.Attributes?.ApproximateNumberOfMessagesNotVisible),
@@ -162,7 +161,8 @@ async function providerFleets(
   ssm: SSMClient,
   parameterPrefix?: string,
 ): Promise<FleetConfiguration> {
-  if (!parameterPrefix || (configured.greenhouse && configured.lever && configured.ashby)) return configured;
+  const complete = (fleet: FleetConfiguration[Provider]) => Boolean(fleet?.queueUrl && fleet.deadLetterQueueUrl);
+  if (!parameterPrefix || catalogProviderDefinitions.every((provider) => complete(configured[provider.id]))) return configured;
   const response = await ssm.send(new GetParametersByPathCommand({
     Path: parameterPrefix,
     Recursive: true,
@@ -171,16 +171,14 @@ async function providerFleets(
   const values = new Map((response.Parameters ?? []).flatMap((parameter) => (
     parameter.Name && parameter.Value ? [[parameter.Name, parameter.Value] as const] : []
   )));
-  const fromParameters = (provider: Provider) => {
-    const queueUrl = values.get(`${parameterPrefix}/${provider}/queue-url`);
-    const deadLetterQueueUrl = values.get(`${parameterPrefix}/${provider}/dead-letter-queue-url`);
-    return queueUrl && deadLetterQueueUrl ? { queueUrl, deadLetterQueueUrl } : undefined;
-  };
-  return {
-    greenhouse: configured.greenhouse ?? fromParameters('greenhouse'),
-    lever: configured.lever ?? fromParameters('lever'),
-    ashby: configured.ashby ?? fromParameters('ashby'),
-  };
+  return Object.fromEntries(catalogProviderDefinitions.map((provider) => {
+    const current = configured[provider.id];
+    const base = `${parameterPrefix}/${provider.runtime.awsParameterSegment}`;
+    return [provider.id, {
+      queueUrl: current?.queueUrl ?? values.get(`${base}/queue-url`),
+      deadLetterQueueUrl: current?.deadLetterQueueUrl ?? values.get(`${base}/dead-letter-queue-url`),
+    }];
+  })) as FleetConfiguration;
 }
 
 export interface SourceOperationsDependencies {
@@ -196,6 +194,16 @@ export interface SourceOperationsDependencies {
   now?: () => Date;
   alarmTelemetry?: { status: 'available' | 'unavailable'; reason?: string };
   queueTelemetry?: { status: 'available' | 'partial'; reason?: string };
+}
+
+function configuredFleetInput(dependencies: SourceOperationsDependencies): FleetConfiguration {
+  if (dependencies.fleets) return dependencies.fleets;
+  return {
+    greenhouse: {
+      queueUrl: dependencies.queueUrl,
+      deadLetterQueueUrl: dependencies.deadLetterQueueUrl,
+    },
+  };
 }
 
 function parseBody(event: ApiEvent): Record<string, unknown> {
@@ -239,25 +247,16 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         });
       }
     }
-    const leverById = new Map<string, ReviewedLeverSource>();
-    for (const source of reviewedLeverSources) leverById.set(source.id, source);
-    for (const admission of dynamicAdmissions) leverById.set(admission.source.id, admission.source);
-    const sources: OperationsSource[] = [
-      ...reviewedGreenhouseSources.map((source) => ({ ...source, provider: 'greenhouse' as const })),
-      ...[...leverById.values()].map((source) => ({ ...source, provider: 'lever' as const })),
-      ...reviewedAshbySources.map((source) => ({ ...source, provider: 'ashby' as const })),
-    ];
-    const ids = sources.map((source) => source.id);
+    const sources: OperationsSource[] = operationsSources({ leverAdmissions: dynamicAdmissions });
+    const ids = sources.map((source) => source.sourceId);
     const checklistPeriod = monitoringPeriod(new Date(timestamp));
     const [healthRecords, checkpoints, storedChecklist] = await Promise.all([
       dependencies.store.getSourceHealthMany(ids),
-      Promise.all(sources.map((source) => dependencies.store.getCheckpoint(
-        source.provider !== 'greenhouse' && source.status === 'shadow' ? `shadow-${source.id}` : source.id,
-      ))),
+      Promise.all(sources.map((source) => dependencies.store.getCheckpoint(source.checkpointId))),
       dependencies.store.getMonitoringChecklist(checklistPeriod),
     ]);
     const health = new Map(healthRecords.map((record) => [record.sourceId, record]));
-    const rows = sources.map((source, index) => publicSource(source, health.get(source.id), checkpoints[index], timestamp));
+    const rows = sources.map((source, index) => publicSource(source, health.get(source.sourceId), checkpoints[index], timestamp));
 
     const checklistMatch = path.match(/^\/operations\/checklist\/([^/]+)$/);
     if (checklistMatch && method === 'POST') {
@@ -306,7 +305,7 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
       const jobId = decodeURIComponent(attributionMatch[1]);
       const job = await dependencies.store.getJob(jobId);
       if (!job) return reply(404, { code: 'JOB_NOT_FOUND', message: 'Catalog job not found.' });
-      const sourceById = new Map(sources.map((source) => [source.id, source]));
+      const sourceById = new Map(sources.map((source) => [source.sourceId, source]));
       const referenceSourceIds = [...new Set(job.sourceReferences.map((reference) => reference.sourceId))];
       const [occurrenceEntries, attributionCheckpoints, attributionHealthRecords] = await Promise.all([
         Promise.all(referenceSourceIds.map(async (sourceId) => [sourceId, await dependencies.store.getSourceOccurrences(sourceId)] as const)),
@@ -356,15 +355,25 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
     const actionMatch = path.match(/^\/operations\/sources\/([^/]+)\/actions$/);
     if (actionMatch && method === 'POST') {
       const sourceId = decodeURIComponent(actionMatch[1]);
-      const source = sources.find((candidate) => candidate.id === sourceId);
-      if (!source) return reply(404, { code: 'SOURCE_NOT_FOUND', message: 'Source not found.' });
+      const source = sources.find((candidate) => candidate.sourceId === sourceId);
+      if (!source) {
+        const historical = await dependencies.store.getSourceHealth(sourceId);
+        return historical
+          ? reply(409, { code: 'SOURCE_NOT_ACTIVE', message: 'Historical source health is read-only because this source is not active in the registry.' })
+          : reply(404, { code: 'SOURCE_NOT_FOUND', message: 'Source not found.' });
+      }
       let input: Record<string, unknown>;
       try { input = parseBody(event); }
       catch { return reply(400, { code: 'INVALID_REQUEST', message: 'Request body must be valid JSON.' }); }
       const action = input.action;
-      const allowed = ['pause', 'resume', 'replay', 'quarantine', 'recover', 'acknowledge', 'resolve', 'set-tier'];
-      if (typeof action !== 'string' || !allowed.includes(action)) {
+      const knownActions: SourceAction[] = ['pause', 'resume', 'replay', 'quarantine', 'recover', 'acknowledge', 'resolve', 'set-tier'];
+      if (typeof action !== 'string' || !knownActions.includes(action as SourceAction)) {
         return reply(400, { code: 'INVALID_ACTION', message: 'Action must be pause, resume, replay, quarantine, recover, acknowledge, resolve, or set-tier.' });
+      }
+      const provider = integrationRegistry[source.provider];
+      const advertisedActions: readonly SourceAction[] = provider.sourceActions;
+      if (!advertisedActions.includes(action as SourceAction)) {
+        return reply(409, { code: 'ACTION_NOT_SUPPORTED', message: `${provider.displayName} does not advertise the ${action} source action.` });
       }
       const actor = header(event, 'x-operations-actor')?.trim() || 'operations-owner';
       const changedAt = new Date(timestamp).toISOString();
@@ -372,7 +381,7 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
       const base: SourceHealth = previous ?? {
         sourceId,
         provider: source.provider,
-        region: source.provider === 'lever' ? source.region : source.provider === 'ashby' ? source.identity.apiRegion : 'unknown',
+        region: source.region,
         state: 'never-succeeded',
         lastAttemptAt: changedAt,
         consecutiveFailures: 0,
@@ -428,19 +437,18 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         if (action === 'recover' && base.state !== 'quarantined') {
           return reply(409, { code: 'SOURCE_NOT_QUARANTINED', message: 'Recovery requires a quarantined source.' });
         }
-        const configuredFleets = await providerFleets(
-          dependencies.fleets ?? {
-            greenhouse: dependencies.queueUrl && dependencies.deadLetterQueueUrl
-              ? { queueUrl: dependencies.queueUrl, deadLetterQueueUrl: dependencies.deadLetterQueueUrl }
-              : undefined,
-            lever: undefined,
-            ashby: undefined,
-          },
-          dependencies.ssm ?? new SSMClient({}),
-          dependencies.parameterPrefix,
-        );
+        let configuredFleets: FleetConfiguration;
+        try {
+          configuredFleets = await providerFleets(
+            configuredFleetInput(dependencies),
+            dependencies.ssm ?? new SSMClient({}),
+            dependencies.parameterPrefix,
+          );
+        } catch {
+          return reply(503, { code: 'PROVIDER_CONFIGURATION_UNAVAILABLE', message: 'Provider queue configuration could not be resolved.' });
+        }
         const fleet = configuredFleets[source.provider];
-        if (!fleet) return reply(503, { code: 'PROVIDER_QUEUE_UNAVAILABLE', message: `${source.provider} replay is not configured.` });
+        if (!fleet?.queueUrl) return reply(503, { code: 'PROVIDER_QUEUE_UNAVAILABLE', message: `${source.provider} replay is not configured.` });
         if (action === 'recover') {
           updated = { ...updated, sourceStatus: 'paused', incidentState: 'acknowledged', incidentAcknowledgedAt: changedAt, incidentUpdatedAt: changedAt };
           await dependencies.store.putSourceHealth(updated);
@@ -449,7 +457,7 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         try {
           await (dependencies.sqs ?? new SQSClient({})).send(new SendMessageCommand({
             QueueUrl: fleet.queueUrl,
-            MessageBody: JSON.stringify({ version: 1, sourceId, scheduledAt: changedAt, force: true, ...(source.provider !== 'greenhouse' ? { runId } : {}) }),
+            MessageBody: JSON.stringify(provider.replayMessage(sourceId, changedAt, runId)),
             MessageGroupId: sourceId,
             MessageDeduplicationId: runId,
           }));
@@ -485,28 +493,47 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
     if (method !== 'GET') return reply(405, { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed.' });
 
     if (path === '/operations/sources') {
-      const configuredFleets = await providerFleets(
-        dependencies.fleets ?? {
-          greenhouse: dependencies.queueUrl && dependencies.deadLetterQueueUrl
-            ? { queueUrl: dependencies.queueUrl, deadLetterQueueUrl: dependencies.deadLetterQueueUrl }
-            : undefined,
-          lever: undefined,
-          ashby: undefined,
-        },
-        dependencies.ssm ?? new SSMClient({}),
-        dependencies.parameterPrefix,
-      );
+      let configuredFleets: FleetConfiguration;
+      let configurationDiscoveryUnavailable = false;
+      try {
+        configuredFleets = await providerFleets(
+          configuredFleetInput(dependencies),
+          dependencies.ssm ?? new SSMClient({}),
+          dependencies.parameterPrefix,
+        );
+      } catch {
+        configuredFleets = configuredFleetInput(dependencies);
+        configurationDiscoveryUnavailable = true;
+      }
       const cloudwatch = dependencies.cloudwatch ?? new CloudWatchClient({});
-      const [fleetRows, allApplicationAlarms, legacyPendingNotifications] = await Promise.all([
-        Promise.all(
-        (Object.entries(configuredFleets) as Array<[Provider, FleetConfiguration[Provider]]>)
-          .flatMap(([provider, configuration]) => configuration
-            ? [fleetStatus(provider, configuration, dependencies.sqs ?? new SQSClient({}), cloudwatch)]
-            : []),
-        ),
+      const [providerTelemetry, allApplicationAlarms, legacyPendingNotifications] = await Promise.all([
+        Promise.all(catalogProviderDefinitions.map(async (provider) => {
+          const configuration = configuredFleets[provider.id];
+          const unavailableReasons = [
+            ...(!configuration?.queueUrl ? ['Work queue is not configured.'] : []),
+            ...(!configuration?.deadLetterQueueUrl ? ['Dead-letter queue is not configured.'] : []),
+            ...(configurationDiscoveryUnavailable ? ['Runtime provider configuration could not be discovered.'] : []),
+          ];
+          if (unavailableReasons.length) return { provider, unavailableReasons };
+          const queueUrl = configuration?.queueUrl;
+          const deadLetterQueueUrl = configuration?.deadLetterQueueUrl;
+          if (!queueUrl || !deadLetterQueueUrl) return { provider, unavailableReasons: ['Fleet queues are not configured.'] };
+          try {
+            const fleet = await fleetStatus(
+              provider,
+              { queueUrl, deadLetterQueueUrl },
+              dependencies.sqs ?? new SQSClient({}),
+              cloudwatch,
+            );
+            return { provider, unavailableReasons: [], fleet };
+          } catch {
+            return { provider, unavailableReasons: ['Fleet telemetry is unavailable.'] };
+          }
+        })),
         applicationAlarms(cloudwatch),
         dependencies.store.pendingSms().then((jobs) => jobs.length),
       ]);
+      const fleetRows = providerTelemetry.flatMap((entry) => entry.fleet ? [entry.fleet] : []);
       const alarmsByName = new Map(allApplicationAlarms.flatMap((alarm) => alarm.name ? [[alarm.name, alarm] as const] : []));
       for (const alarm of fleetRows.flatMap((row) => row.alarms)) {
         if (alarm.name) alarmsByName.set(alarm.name, alarm);
@@ -542,6 +569,18 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
       const order: Record<SourceHealthState, number> = { quarantined: 0, degraded: 1, 'never-succeeded': 2, healthy: 3 };
       return reply(200, {
         generatedAt: new Date(timestamp).toISOString(),
+        providers: providerTelemetry.map(({ provider, unavailableReasons, fleet: providerFleet }) => ({
+          id: provider.id,
+          displayName: provider.displayName,
+          category: provider.category,
+          regions: provider.regions,
+          defaultRegion: provider.defaultRegion,
+          availability: unavailableReasons.length ? 'unavailable' : 'available',
+          unavailableReasons,
+          sourceActions: provider.sourceActions,
+          workflows: provider.workflows,
+          ...(providerFleet ? { fleet: providerFleet } : {}),
+        })),
         sources: rows,
         reliabilityRanking: [...rows].sort((a, b) => order[a.state] - order[b.state] || b.consecutiveFailures - a.consecutiveFailures || a.source.displayName.localeCompare(b.source.displayName)),
         fleet,
@@ -554,8 +593,24 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
     if (!match) return reply(404, { code: 'ROUTE_NOT_FOUND', message: 'Route not found.' });
     const sourceId = decodeURIComponent(match[1]);
     const row = rows.find((candidate) => candidate.source.sourceId === sourceId);
-    if (!row) return reply(404, { code: 'SOURCE_NOT_FOUND', message: 'Source not found.' });
-    const record = health.get(sourceId);
+    const record = health.get(sourceId) ?? await dependencies.store.getSourceHealth(sourceId);
+    if (!row && !record) return reply(404, { code: 'SOURCE_NOT_FOUND', message: 'Source not found.' });
+    if (!row) {
+      return reply(200, {
+        generatedAt: new Date(timestamp).toISOString(),
+        historical: true,
+        source: {
+          sourceId,
+          provider: record!.provider,
+          region: record!.region,
+          displayName: sourceId,
+          mode: 'historical',
+        },
+        state: record!.state ?? 'never-succeeded',
+        health: record,
+        recentRuns: record!.recentRuns ?? [],
+      });
+    }
     return reply(200, {
       generatedAt: new Date(timestamp).toISOString(),
       ...row,

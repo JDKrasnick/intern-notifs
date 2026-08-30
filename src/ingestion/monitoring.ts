@@ -1,8 +1,9 @@
 import type { SourceCheckpoint, SourceHealth, SourceOccurrenceState, SourceOccurrenceStatus } from '../types.js';
+import { catalogProviderIds, integrationRegistry, isCatalogProviderId } from '../integration-registry.js';
 
 export interface SourceFreshness {
   staleCount: number;
-  byProvider: Record<'github' | 'lever' | 'greenhouse' | 'ashby' | 'unknown', number>;
+  byProvider: Record<string, number>;
   staleSourceIds: string[];
 }
 
@@ -33,12 +34,18 @@ export function evaluateSourceFreshness(
   staleAfterMinutes?: number,
 ): SourceFreshness {
   const stale = records.filter((record) => {
-    const allowedMinutes = staleAfterMinutes ?? (record.provider === 'lever' || record.provider === 'greenhouse' ? 90 : 30);
+    const provider = record.provider;
+    const allowedMinutes = staleAfterMinutes
+      ?? (isCatalogProviderId(provider) ? integrationRegistry[provider].freshnessWindowMs / 60_000 : 30);
     const cutoff = now.getTime() - allowedMinutes * 60_000;
     return !record.lastSuccessAt || Date.parse(record.lastSuccessAt) < cutoff;
   });
-  const byProvider: SourceFreshness['byProvider'] = { github: 0, lever: 0, greenhouse: 0, ashby: 0, unknown: 0 };
-  for (const record of stale) byProvider[record.provider ?? 'unknown'] += 1;
+  const byProvider: SourceFreshness['byProvider'] = Object.fromEntries([...catalogProviderIds, 'unknown'].map((provider) => [provider, 0]));
+  for (const record of stale) {
+    const recordedProvider = record.provider;
+    const provider = isCatalogProviderId(recordedProvider) ? recordedProvider : 'unknown';
+    byProvider[provider] = (byProvider[provider] ?? 0) + 1;
+  }
   return {
     staleCount: stale.length,
     byProvider,

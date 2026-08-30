@@ -7,6 +7,7 @@ import { reviewedLeverSources } from '../src/sources/lever-config.js';
 import { reviewedAshbySources } from '../src/sources/ashby-config.js';
 import { MemoryInternshipStore } from '../src/store.js';
 import type { Internship } from '../src/types.js';
+import { defaultSources } from '../src/sources/index.js';
 
 const secret = 'fixture-secret';
 const event = (path: string, method = 'GET', body?: unknown) => ({
@@ -80,7 +81,7 @@ describe('shared source operations', () => {
     });
   });
 
-  it('returns Greenhouse, Lever, and Ashby sources through one fleet view', async () => {
+  it('returns every registered provider while keeping an incompletely configured fleet isolated', async () => {
     const store = new MemoryInternshipStore();
     const setup = dependencies(store);
     const response = await createSourceOperationsHandler(setup.value)(event('/operations/sources'));
@@ -88,8 +89,16 @@ describe('shared source operations', () => {
 
     expect(response.statusCode).toBe(200);
     expect(new Set(body.sources.map((row: { source: { provider: string } }) => row.source.provider)))
-      .toEqual(new Set(['greenhouse', 'lever', 'ashby']));
+      .toEqual(new Set(['greenhouse', 'lever', 'ashby', 'github']));
     expect(body.fleets.map((fleet: { provider: string }) => fleet.provider).sort()).toEqual(['ashby', 'greenhouse', 'lever']);
+    expect(body.providers.map((provider: { id: string }) => provider.id)).toEqual(['greenhouse', 'lever', 'ashby', 'github']);
+    expect(body.providers.find((provider: { id: string }) => provider.id === 'github')).toMatchObject({
+      availability: 'unavailable',
+      unavailableReasons: ['Work queue is not configured.', 'Dead-letter queue is not configured.'],
+      sourceActions: ['replay'],
+    });
+    expect(body.providers.filter((provider: { id: string }) => provider.id !== 'github'))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ availability: 'available' })]));
     expect(body.productionMetrics).toMatchObject({
       deadLetterMessages: 0,
       failedExtractions24h: 0,
@@ -233,6 +242,50 @@ describe('shared source operations', () => {
 
     expect(response.statusCode).toBe(200);
     expect(await store.getSourceHealth(source.id)).toMatchObject({ pollTier: 'quiet', pollTierMode: 'operator' });
+  });
+
+  it('enforces GitHub capabilities and builds its provider-specific replay message', async () => {
+    const store = new MemoryInternshipStore();
+    const setup = dependencies(store);
+    const source = defaultSources[0]!;
+    const handler = createSourceOperationsHandler({
+      ...setup.value,
+      fleets: {
+        ...setup.value.fleets,
+        github: { queueUrl: 'https://sqs.test/github', deadLetterQueueUrl: 'https://sqs.test/github-dlq' },
+      },
+    });
+
+    const paused = await handler(event(`/operations/sources/${source.id}/actions`, 'POST', { action: 'pause' }));
+    expect(paused.statusCode).toBe(409);
+    expect(JSON.parse(paused.body)).toMatchObject({ code: 'ACTION_NOT_SUPPORTED' });
+
+    const replayed = await handler(event(`/operations/sources/${source.id}/actions`, 'POST', { action: 'replay' }));
+    expect(replayed.statusCode).toBe(202);
+    const replay = setup.commands.find((command) => command instanceof SendMessageCommand) as SendMessageCommand;
+    expect(replay.input.QueueUrl).toBe('https://sqs.test/github');
+    expect(JSON.parse(replay.input.MessageBody!)).toEqual({ sourceId: source.id });
+  });
+
+  it('keeps historical provider and region strings visible but read-only', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putSourceHealth({
+      sourceId: 'retired-provider-source', provider: 'retired-ats', region: 'moon-1', state: 'degraded',
+      lastAttemptAt: '2026-07-30T19:00:00.000Z', consecutiveFailures: 1, durationMs: 4,
+    });
+    const handler = createSourceOperationsHandler(dependencies(store).value);
+
+    const detail = await handler(event('/operations/sources/retired-provider-source'));
+    expect(detail.statusCode).toBe(200);
+    expect(JSON.parse(detail.body)).toMatchObject({
+      historical: true,
+      source: { provider: 'retired-ats', region: 'moon-1' },
+      health: { provider: 'retired-ats', region: 'moon-1' },
+    });
+
+    const action = await handler(event('/operations/sources/retired-provider-source/actions', 'POST', { action: 'replay' }));
+    expect(action.statusCode).toBe(409);
+    expect(JSON.parse(action.body)).toMatchObject({ code: 'SOURCE_NOT_ACTIVE' });
   });
 
   it('routes an Ashby replay to the independently discovered fleet', async () => {

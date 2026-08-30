@@ -15,6 +15,7 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import type { Construct } from 'constructs';
 import { SOURCE_POLL_CADENCE } from '../src/source-poll-cadence.js';
+import { catalogProviderDefinitions } from '../src/integration-registry.js';
 import { NotificationPipeline } from './notification-pipeline.js';
 import { GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME } from '../src/grouped-notification-cohort.js';
 
@@ -139,36 +140,36 @@ export class InternNotifsStack extends cdk.Stack {
     // The poll Lambda publishes these as embedded metrics, so a source that
     // stops succeeding surfaces without anyone reading logs. Greenhouse boards
     // are alarmed in their own stack alongside their queue.
-    for (const provider of ['github', 'lever'] as const) {
-      const suffix = provider === 'github' ? 'Github' : 'Lever';
+    for (const provider of catalogProviderDefinitions) {
+      if (!('awsMainStackAlarm' in provider.runtime)) continue;
+      const alarm = provider.runtime.awsMainStackAlarm;
+      const suffix = `${provider.id[0]!.toUpperCase()}${provider.id.slice(1)}`;
       new cloudwatch.Alarm(this, `StaleSource${suffix}Alarm`, {
         metric: new cloudwatch.Metric({
           namespace: 'InternNotifs/Ingestion',
           metricName: 'StaleSourceCount',
-          dimensionsMap: { provider },
+          dimensionsMap: { provider: provider.id },
           statistic: 'Maximum',
           period: cdk.Duration.minutes(5),
         }),
         threshold: 1,
-        evaluationPeriods: provider === 'lever' ? 1 : 6,
-        datapointsToAlarm: provider === 'lever' ? 1 : 6,
+        evaluationPeriods: alarm.evaluationPeriods,
+        datapointsToAlarm: alarm.evaluationPeriods,
         treatMissingData: cloudwatch.TreatMissingData.BREACHING,
-        alarmDescription: provider === 'lever'
-          ? 'A lever source has gone 90 minutes without a trusted snapshot.'
-          : 'A github source has gone 30 minutes without a trusted snapshot.',
+        alarmDescription: alarm.freshnessDescription,
       });
       new cloudwatch.Alarm(this, `SourceFetchFailure${suffix}Alarm`, {
         metric: new cloudwatch.Metric({
           namespace: 'InternNotifs/Ingestion',
           metricName: 'SourceFetchFailure',
-          dimensionsMap: { provider },
+          dimensionsMap: { provider: provider.id },
           statistic: 'Sum',
           period: cdk.Duration.minutes(15),
         }),
         threshold: 3,
         evaluationPeriods: 1,
         treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-        alarmDescription: `A ${provider} source failed its bounded retries repeatedly within fifteen minutes.`,
+        alarmDescription: `A ${provider.id} source failed its bounded retries repeatedly within fifteen minutes.`,
       });
     }
     new cloudwatch.Alarm(this, 'PollErrorsAlarm', {

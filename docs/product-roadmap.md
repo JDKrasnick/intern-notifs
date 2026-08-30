@@ -82,6 +82,9 @@
 - [x] Add the SQS-backed Greenhouse shadow/published runner with thirty-minute published polling, three-hour shadow polling, bounded per-board concurrency, isolated retries, alarms, and a quiet promotion baseline.
 - [x] Publish the 166-board API-responsive Greenhouse inventory and admit 20 additional ownership-verified boards to production shadow monitoring, with current board identities, observed host allowlists, and per-source quiet baselines.
 - [x] Add a private operations dashboard for all official Greenhouse sources with per-run volume, withheld rows, redacted diagnostics, queue/DLQ and alarm status, plus deterministic quarantine and recovery.
+- [ ] Complete issue #28's registry-driven provider rollout.
+  - [x] Add the shared catalog-provider registry, forward-compatible source health, capability-aware operations metadata, isolated provider availability, and registry-resolved AWS/Cloudflare fleet telemetry for Greenhouse, Lever, Ashby, and GitHub.
+  - [ ] Deploy the Worker/Terraform binding update and update the separately deployed private monitoring console to render `providers`, unavailable integrations, and only advertised controls before closing #28.
 - [ ] Add the Greenhouse batch re-probe and post-publication ownership-review workflow described in [`greenhouse/registry-expansion-plan.md`](greenhouse/registry-expansion-plan.md).
 - [x] Implement Lever source adapter, ETag checkpoints, technical-role mapping, and deterministic fixtures for Palantir, PlusAI, Hermeus, and Xsolla.
 - [x] Add the SQS-backed Lever shadow/published runner with thirty-minute published polling, three-hour shadow polling, bounded per-board concurrency, isolated retries, alarms, and quiet promotion.

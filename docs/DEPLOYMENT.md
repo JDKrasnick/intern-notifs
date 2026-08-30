@@ -559,7 +559,8 @@ After both monitoring stacks are deployed, confirm:
 
 - the `InternNotifs-Lever` CloudWatch dashboard is present;
 - the active-source freshness alarm has data within one scheduler cycle;
-- the shared operations pane lists all three official provider fleets; and
+- `GET /operations/sources` lists Greenhouse, Lever, Ashby, and GitHub in `providers`, with live fleet telemetry or an explicit unavailable reason;
+- the separately deployed shared operations pane renders those provider sections and only the `sourceActions` and `workflows` each provider advertises;
 - pause, resume, and replay work for one shadow source from each provider;
 - the monthly monitoring checklist persists after a refresh; and
 - a test invocation of the monitoring reminder reaches the deployment address.
