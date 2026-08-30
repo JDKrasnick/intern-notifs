@@ -359,10 +359,12 @@ Provider identity does not choose any of those fields. Do not apply while
 `presentationDisagreements` is non-empty; the endpoint also refuses that apply.
 Keep the production dry run for the combined #50/#120 review.
 
-Run the deterministic integrity gate against the same snapshot before any
-apply or activation. Exit status `2` means the report found a new exact
+Run the deterministic integrity audit against the same snapshot before any
+apply and archive its legacy/classified counts. Exit status `2` is expected
+while legacy occurrences still require backfill; it also reports any exact
 duplicate, duplicate alert, alias conflict, untracked quarantine, presentation
-blocker, or occurrence-coverage regression:
+blocker, or occurrence-coverage regression that must be resolved before
+activation:
 
 ```bash
 npm run audit:posting-identity
@@ -383,13 +385,15 @@ npm run migrate:posting-identity -- --scope identity --apply \
 ```
 
 After the identity phase verifies at zero changes, repeat the same preview and
-guarded apply with `--scope occurrences`. This second bounded phase materializes
-authoritative source-occurrence decisions and reviewed exact provider aliases
-on the jobs. It never promotes an ordinary normalized URL to identity evidence
-and contains no employer-specific repair exception. It does not insert, reset,
-or replay notification/outbox work. Splitting the phases keeps each production
-invocation below D1's paid query limit. Finally run the default `all` dry run and
-require zero changes and a passing gate.
+guarded apply with `--scope occurrences`. This second phase owns only durable
+source-occurrence decisions and their synchronized job references; identity
+aliases, duplicate consolidation, and user-record remaps remain in the first
+phase. It never promotes an ordinary normalized URL to identity evidence and
+contains no employer-specific repair exception. It does not insert, reset, or
+replay notification/outbox work. Both phases stage exact before-images and use
+guarded set-based writes, keeping a production-sized invocation below D1's
+query limit. Finally run the default `all` dry run and require zero changes,
+zero legacy occurrences, and a passing gate.
 
 For eligible groups whose presentation already agrees, the repair preserves the
 oldest catalog job, merges source references,

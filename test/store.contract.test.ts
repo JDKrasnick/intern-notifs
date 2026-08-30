@@ -214,7 +214,9 @@ describe('DynamoDB persistence contract', () => {
     send.mockResolvedValueOnce({ Responses: { 'jobs-table': [] } });
     const resolution = await store.claimPostingIdentity(identity, 'legacy-job');
     expect(resolution).toMatchObject({ outcome: 'create', canonicalJobId: 'legacy-job' });
-    const transaction = (send.mock.calls[1]?.[0] as TransactWriteCommand).input.TransactItems ?? [];
+    const transactionCommand = send.mock.calls.map(([command]) => command)
+      .find((command) => command.constructor.name === 'TransactWriteCommand') as TransactWriteCommand;
+    const transaction = transactionCommand.input.TransactItems ?? [];
     expect(transaction.length).toBeGreaterThan(1);
     expect(transaction).toEqual(expect.arrayContaining([
       expect.objectContaining({ Put: expect.objectContaining({

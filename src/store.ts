@@ -6,7 +6,7 @@ import { employerCategory } from './core/employers.js';
 import { canonicalCatalogRecency, catalogRecency, catalogVisibleAt, compareCatalogRecency, openCatalogSortKey } from './catalog-recency.js';
 import { catalogSearchText, catalogSourceClasses, type CatalogSource } from './catalog-fields.js';
 import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, PostingIdentityDecision, PostingIdentityIncident, SourceCheckpoint, SourceHealth, SourceOccurrence, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
-import { resolvePostingAliases, type AliasResolution } from './identity/posting.js';
+import { preferredJobIdentityConflicts, resolvePostingAliases, type AliasResolution } from './identity/posting.js';
 import type { ApplicationSession } from './application-automation.js';
 import type { ReviewedLeverSource } from './sources/lever-config.js';
 import type { LeverOwnershipEvidence } from './sources/lever-evidence.js';
@@ -128,6 +128,13 @@ export class MemoryInternshipStore implements InternshipStore {
   async resolvePostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution> {
     const resolution = resolvePostingAliases(identity, this.postingAliases);
     if (resolution.outcome === 'quarantine') return resolution;
+    if (preferredJobId && preferredJobIdentityConflicts(identity, this.jobs.get(preferredJobId))) {
+      return {
+        outcome: 'quarantine', aliases: resolution.aliases,
+        conflictingCanonicalJobIds: [identity.canonicalJobId, preferredJobId].sort(),
+        reason: 'aliases-resolve-to-different-jobs',
+      };
+    }
     if (preferredJobId && resolution.outcome === 'merge' && resolution.canonicalJobId !== preferredJobId) {
       return {
         outcome: 'quarantine', aliases: resolution.aliases,
@@ -156,7 +163,8 @@ export class MemoryInternshipStore implements InternshipStore {
     const resolution = input.identity
       ? resolvePostingAliases(input.identity, this.postingAliases)
       : { outcome: 'create' as const, canonicalJobId: input.job.jobId, aliases: [] };
-    if (resolution.outcome === 'quarantine' || resolution.canonicalJobId !== input.job.jobId) {
+    const preferredConflict = input.identity && preferredJobIdentityConflicts(input.identity, this.jobs.get(input.job.jobId));
+    if (resolution.outcome === 'quarantine' || resolution.canonicalJobId !== input.job.jobId || preferredConflict) {
       const decision: Extract<PostingIdentityDecision, { status: 'quarantined' }> = {
         status: 'quarantined', reason: resolution.outcome === 'quarantine' ? resolution.reason : 'aliases-resolve-to-different-jobs',
         contradictoryEvidence: resolution.outcome === 'quarantine' ? resolution.conflictingCanonicalJobIds : [resolution.canonicalJobId, input.job.jobId].sort(),
@@ -391,10 +399,23 @@ export class DynamoInternshipStore implements InternshipStore {
     } while (keys.length);
     return claims;
   }
+  private async postingIdentityGuardJob(jobId: string) {
+    const result = await this.client.send(new GetCommand({
+      TableName: this.tableName, Key: { pk: `JOB#${jobId}`, sk: 'META' }, ConsistentRead: true,
+    }));
+    return result.Item?.job as Internship | undefined;
+  }
   async resolvePostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution> {
     const aliases = [...new Set(identity.aliases.map((item) => item.value))].sort();
     const resolution = resolvePostingAliases(identity, await this.postingAliasClaims(aliases));
     if (resolution.outcome === 'quarantine') return resolution;
+    if (preferredJobId && preferredJobIdentityConflicts(identity, await this.postingIdentityGuardJob(preferredJobId))) {
+      return {
+        outcome: 'quarantine', aliases: resolution.aliases,
+        conflictingCanonicalJobIds: [identity.canonicalJobId, preferredJobId].sort(),
+        reason: 'aliases-resolve-to-different-jobs',
+      };
+    }
     if (preferredJobId && resolution.outcome === 'merge' && resolution.canonicalJobId !== preferredJobId) {
       return {
         outcome: 'quarantine', aliases: resolution.aliases,
@@ -406,6 +427,13 @@ export class DynamoInternshipStore implements InternshipStore {
   }
   async claimPostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution> {
     const aliases = [...new Set(identity.aliases.map((item) => item.value))].sort();
+    if (preferredJobId && preferredJobIdentityConflicts(identity, await this.postingIdentityGuardJob(preferredJobId))) {
+      return {
+        outcome: 'quarantine', aliases,
+        conflictingCanonicalJobIds: [identity.canonicalJobId, preferredJobId].sort(),
+        reason: 'aliases-resolve-to-different-jobs',
+      };
+    }
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const claims = await this.postingAliasClaims(aliases);
       const resolution = resolvePostingAliases(identity, claims);
@@ -474,6 +502,15 @@ export class DynamoInternshipStore implements InternshipStore {
         TableName: this.tableName, Key: { pk: `JOB#${input.job.jobId}`, sk: 'META' }, ConsistentRead: true,
       }));
       const storedJob = storedJobResult.Item?.job as Internship | undefined;
+      if (input.identity && preferredJobIdentityConflicts(input.identity, storedJob)) {
+        const decision: Extract<PostingIdentityDecision, { status: 'quarantined' }> = {
+          status: 'quarantined', reason: 'aliases-resolve-to-different-jobs',
+          contradictoryEvidence: [input.identity.canonicalJobId, input.job.jobId].sort(),
+          reviewFamilyKey: input.decision.status === 'confirmed' ? input.decision.exactKey : input.decision.reviewFamilyKey,
+          observedAt: input.decision.observedAt,
+        };
+        return this.commitPostingObservation({ decision, sourceId: input.occurrence.sourceId, externalId: input.occurrence.externalId, occurrence: input.occurrence.occurrence });
+      }
       const projectedJob = postingObservationProjection(storedJob, input.job, input.occurrence);
       const reviewCandidate = input.decision.status === 'unconfirmed' ? {
         candidateId: createHash('sha256').update(`posting-review-family-v1:${input.decision.reviewFamilyKey}`).digest('hex'),

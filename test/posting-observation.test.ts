@@ -73,4 +73,18 @@ describe('atomic posting observation commit', () => {
     expect(store.occurrences.has('community#b')).toBe(false);
     expect(store.postingIdentityIncidents.size).toBe(1);
   });
+
+  it('rejects a preferred confirmed job that already owns another exact identity', async () => {
+    const store = new MemoryInternshipStore();
+    const firstIdentity = buildPostingIdentity({ applicationUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' });
+    const first = observation('existing', 'official', 'a', { ...firstIdentity, canonicalJobId: 'existing' });
+    await store.commitPostingObservation({
+      decision: first.occurrence.occurrence.postingIdentityDecision as Exclude<PostingIdentityDecision, { status: 'quarantined' }>,
+      identity: first.job.postingIdentity, ...first,
+    });
+    const secondIdentity = buildPostingIdentity({ applicationUrl: 'https://jobs.ashbyhq.com/acme/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' });
+    await expect(store.resolvePostingIdentity(secondIdentity, 'existing')).resolves.toMatchObject({
+      outcome: 'quarantine', reason: 'aliases-resolve-to-different-jobs',
+    });
+  });
 });

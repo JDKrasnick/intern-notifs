@@ -470,11 +470,14 @@ export function createApiHandler(dependencies: ApiDependencies) {
         const release = await dependencies.releases?.getRelease(userId, releaseId);
         if (!release) return reply(404, { message: 'Release not found' });
         const jobs = (await Promise.all(release.jobIds.map((jobId) => dependencies.jobs.getJob(jobId))))
-          .filter((job): job is NonNullable<typeof job> => Boolean(job) && catalogEligible(job!));
+          .filter((job): job is NonNullable<typeof job> => Boolean(job)
+            && catalogEligible(job!)
+            && identityPublished(job!, identityUnconfirmedPublicationEnabled));
+        const visibleJobIds = new Set(jobs.map((job) => job.jobId));
         return reply(200, {
           releaseId: release.releaseId,
           createdAt: release.createdAt,
-          newJobIds: release.newJobIds,
+          newJobIds: release.newJobIds.filter((jobId) => visibleJobIds.has(jobId)),
           deepLink: `internnotifs://releases/${encodeURIComponent(release.releaseId)}`,
           // Mobile clients render the complete role list directly; grouped
           // metadata remains alongside it for collapsed release summaries.
@@ -508,7 +511,8 @@ export function createApiHandler(dependencies: ApiDependencies) {
           return reply(200, { jobs: [], groups: [], total: 0, hasMore: false, previousOpenedAt: null, openedAt });
         }
         const matches = (await dependencies.jobs.listOpenSince(previousOpenedAt, openedAt))
-          .filter((job) => matchesJobFilter(job, previous?.filter));
+          .filter((job) => identityPublished(job, identityUnconfirmedPublicationEnabled)
+            && matchesJobFilter(job, previous?.filter));
         // Keep launch fast if a source backfills many records; the Feed remains
         // the complete catalog and provides the explicit path to the remainder.
         const limit = 50;
@@ -549,7 +553,8 @@ export function createApiHandler(dependencies: ApiDependencies) {
       }
       if (method === 'POST' && path === '/me/applications') {
         const body = parseBody(event); if (typeof body.jobId !== 'string') return reply(400, { message: 'jobId is required' });
-        const job = await dependencies.jobs.getJob?.(body.jobId); if (!job || !catalogEligible(job)) return reply(404, { message: 'Job not found' });
+        const job = await dependencies.jobs.getJob?.(body.jobId);
+        if (!job || !catalogEligible(job) || !identityPublished(job, identityUnconfirmedPublicationEnabled)) return reply(404, { message: 'Job not found' });
         const timestamp = now(); const existing = (await dependencies.users.listApplications(userId)).find((application) => application.jobId === job.jobId);
         const status = statuses.includes(body.status as ApplicationStatus) ? body.status as ApplicationStatus : existing?.status ?? 'saved';
         const application: ApplicationRecord = {
@@ -571,7 +576,9 @@ export function createApiHandler(dependencies: ApiDependencies) {
         if (application.status !== 'saved') return reply(409, { message: 'Only To Apply roles can start assistance' });
         const job = await dependencies.jobs.getJob?.(application.jobId);
         if (!job) return reply(404, { message: 'Job not found' });
-        if (!catalogEligible(job)) return reply(409, { message: 'Assistance is unavailable while InternNotifs reviews the official role page' });
+        if (!catalogEligible(job) || !identityPublished(job, identityUnconfirmedPublicationEnabled)) {
+          return reply(409, { message: 'Assistance is unavailable while InternNotifs reviews the official role page' });
+        }
         const body = parseBody(event);
         if (body.mode !== 'headed' && body.mode !== 'headless') return reply(400, { message: 'mode must be headed or headless' });
         const availability = assistanceAvailability(job, application.applyMode);

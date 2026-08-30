@@ -111,6 +111,35 @@ describe('D1 atomic posting observation', () => {
       .not.toContain('utm_');
   });
 
+  it('quarantines a new exact ID when a preferred D1 job already owns another one', async () => {
+    const { sqlite, store } = subject();
+    const first = input();
+    await store.commitPostingObservation(first);
+    const identity = buildPostingIdentity({ applicationUrl: 'https://jobs.ashbyhq.com/acme/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' });
+    const decision = {
+      ...first.decision,
+      exactKey: 'provider:ashby:acme:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+      evidenceHash: 'second-hash',
+    };
+    const occurrence = {
+      ...first.occurrence,
+      externalId: 'role-b',
+      occurrence: {
+        ...first.occurrence.occurrence,
+        externalId: 'role-b',
+        applyUrl: identity.canonicalApplicationUrl,
+        postingIdentityDecision: decision,
+      },
+    };
+    await expect(store.commitPostingObservation({
+      decision, identity,
+      job: { ...first.job, postingIdentity: identity, sourceReferences: [occurrence.occurrence] },
+      occurrence,
+    })).resolves.toMatchObject({ outcome: 'quarantined' });
+    expect(sqlite.prepare("SELECT count(*) AS count FROM catalog_items WHERE kind = 'internship'").get()).toEqual({ count: 1 });
+    expect(sqlite.prepare("SELECT count(*) AS count FROM catalog_items WHERE kind = 'posting-identity-incident'").get()).toEqual({ count: 1 });
+  });
+
   it('makes reviewer decisions immutable', () => {
     const { sqlite } = subject();
     sqlite.prepare("INSERT INTO posting_identity_review_candidates VALUES (?, ?, ?, ?, ?, ?, ?, ?)")

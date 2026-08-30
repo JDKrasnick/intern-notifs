@@ -550,7 +550,11 @@ export class IngestionRunner {
             if (!candidate) continue;
             const sameSourceOccurrence = candidate.sourceReferences.some((reference) => reference.sourceId === listing.sourceId
               && (reference.externalId === id || (!reference.externalId && reference.document === listing.document && reference.row === listing.row)));
-            if (identity || sameSourceOccurrence) { existing = candidate; break; }
+            const adoptableLegacyCandidate = Boolean(identity) && candidate.postingIdentityStatus === undefined;
+            const reviewedIdentityUrl = Boolean(identity)
+              && candidate.postingIdentityStatus === 'unconfirmed'
+              && observedUrls.some((observedUrl) => normalizeUrl(observedUrl) === lookupUrl);
+            if (adoptableLegacyCandidate || reviewedIdentityUrl || sameSourceOccurrence) { existing = candidate; break; }
           }
         }
         if (identity) {

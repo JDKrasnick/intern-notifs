@@ -4,7 +4,7 @@ import { catalogSearchText, catalogSourceClasses } from '../src/catalog-fields.j
 import { isPastSeason } from '../src/core/early-career.js';
 import { employerCategory } from '../src/core/employers.js';
 import type { ApplicationSession } from '../src/application-automation.js';
-import { resolvePostingAliases, type AliasResolution } from '../src/identity/posting.js';
+import { preferredJobIdentityConflicts, resolvePostingAliases, type AliasResolution } from '../src/identity/posting.js';
 import { deletedUserTombstoneKey, type InternshipStore, type LeverAdmission, type PostingObservationCommit, type PostingObservationCommitResult, type ReleaseStore, type UserStore, type CatalogQuery } from '../src/store.js';
 import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from '../src/catalog-groups.js';
 import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, PostingIdentityDecision, PostingIdentityIncident, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from '../src/types.js';
@@ -175,6 +175,9 @@ export class D1InternshipStore implements InternshipStore {
     const aliases = [...new Set(identity.aliases.map((item) => item.value))].sort();
     const resolution = resolvePostingAliases(identity, await this.postingAliasClaims(aliases));
     if (resolution.outcome === 'quarantine') return resolution;
+    if (preferredJobId && preferredJobIdentityConflicts(identity, await this.getJob(preferredJobId))) {
+      return { outcome: 'quarantine', aliases, conflictingCanonicalJobIds: [identity.canonicalJobId, preferredJobId].sort(), reason: 'aliases-resolve-to-different-jobs' };
+    }
     if (preferredJobId && resolution.outcome === 'merge' && resolution.canonicalJobId !== preferredJobId) {
       return { outcome: 'quarantine', aliases, conflictingCanonicalJobIds: [resolution.canonicalJobId, preferredJobId].sort(), reason: 'aliases-resolve-to-different-jobs' };
     }
@@ -182,6 +185,9 @@ export class D1InternshipStore implements InternshipStore {
   }
   async claimPostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution> {
     const aliases = [...new Set(identity.aliases.map((item) => item.value))].sort();
+    if (preferredJobId && preferredJobIdentityConflicts(identity, await this.getJob(preferredJobId))) {
+      return { outcome: 'quarantine', aliases, conflictingCanonicalJobIds: [identity.canonicalJobId, preferredJobId].sort(), reason: 'aliases-resolve-to-different-jobs' };
+    }
     const initial = resolvePostingAliases(identity, await this.postingAliasClaims(aliases));
     if (initial.outcome === 'quarantine') return initial;
     if (preferredJobId && initial.outcome === 'merge' && initial.canonicalJobId !== preferredJobId) {
@@ -253,6 +259,18 @@ export class D1InternshipStore implements InternshipStore {
     let projectionCommitted = false;
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const stored = await this.get<Internship>(`JOB#${input.job.jobId}`, 'META');
+      if (input.identity && preferredJobIdentityConflicts(input.identity, stored)) {
+        const decision: Extract<PostingIdentityDecision, { status: 'quarantined' }> = {
+          status: 'quarantined', reason: 'aliases-resolve-to-different-jobs',
+          contradictoryEvidence: [input.identity.canonicalJobId, input.job.jobId].sort(),
+          reviewFamilyKey: input.decision.status === 'confirmed' ? input.decision.exactKey : input.decision.reviewFamilyKey,
+          observedAt: input.decision.observedAt,
+        };
+        return this.commitPostingObservation({
+          decision, sourceId: input.occurrence.sourceId, externalId: input.occurrence.externalId,
+          occurrence: input.occurrence.occurrence,
+        });
+      }
       const canonical = postingObservationProjection(stored, input.job, input.occurrence);
       const canonicalJson = JSON.stringify(canonical);
       const expectedJson = stored ? JSON.stringify(stored) : '__posting_observation_absent__';

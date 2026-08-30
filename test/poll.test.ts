@@ -113,6 +113,19 @@ describe('polling', () => {
     expect(store.jobs.size).toBe(2);
     expect([...store.jobs.values()].map((job) => job.postingIdentity?.providerPostingId).sort()).toEqual(['100', '101']);
   });
+  it('never bridges distinct confirmed IDs through a reused ordinary application URL', async () => {
+    const store = new MemoryInternshipStore();
+    const shared = 'https://careers.example.test/apply';
+    await new Poller([new Adapter('greenhouse-acme', [reviewedListing({
+      provider: 'greenhouse', tenant: 'acme', postingId: '100', sourceId: 'greenhouse-acme', url: shared,
+    })])], store).poll();
+    await new Poller([new Adapter('greenhouse-acme', [reviewedListing({
+      provider: 'greenhouse', tenant: 'acme', postingId: '101', sourceId: 'greenhouse-acme', url: shared,
+    })])], store).poll();
+    expect(store.jobs.size).toBe(2);
+    expect([...store.jobs.values()].map((job) => job.postingIdentity?.providerPostingId).sort()).toEqual(['100', '101']);
+    expect([...store.jobs.values()].every((job) => job.sourceReferences.length === 1)).toBe(true);
+  });
   it('converges reviewed URL variants on one provider posting identity', async () => {
     const store = new MemoryInternshipStore();
     await new Poller([new Adapter('greenhouse-figma', [greenhouseListing('100', 'https://boards.greenhouse.io/figma?gh_jid=100')])], store).poll();
