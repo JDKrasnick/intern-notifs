@@ -477,6 +477,20 @@ describe('polling', () => {
       reasonCodes: ['posting-unattributed'], destination: { classification: 'posting-detail' } } });
     expect(queued).toMatchObject([{ candidateUrl: 'https://job-boards.greenhouse.io/axon/jobs/7978840003',
       providerIdentity: { provider: 'greenhouse', postingId: '7978840003' }, reason: 'first-sight' }]);
+
+    const first = [...store.jobs.values()][0]!;
+    const verified = {
+      ...first.sourceReferences[0]!.admission!, postingAttribution: 'attributed' as const,
+      destination: { ...first.sourceReferences[0]!.admission!.destination, browserVisible: true,
+        inspectedAt: '2026-08-28T00:05:00Z' }, catalogEligible: true, alertEligible: true, reasonCodes: [],
+    };
+    await store.putInternship({ ...first, admission: verified,
+      sourceReferences: [{ ...first.sourceReferences[0]!, admission: verified }] });
+    await new Poller([{ id: snapshot.sourceId, async fetch() { return snapshot; } }], store,
+      undefined, undefined, undefined, undefined, async (request) => { queued.push(request); }, resolver).poll();
+    expect(queued).toHaveLength(1);
+    expect([...store.jobs.values()][0]).toMatchObject({ admission: { destination: { browserVisible: true } },
+      sourceReferences: [{ admission: { destination: { browserVisible: true } } }] });
   });
 
   it('keeps an existing exact-URL community role visible while its posting attribution is queued', async () => {

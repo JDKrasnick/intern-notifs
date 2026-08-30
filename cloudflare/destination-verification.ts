@@ -1,7 +1,7 @@
 import puppeteer, { type BrowserWorker } from '@cloudflare/puppeteer';
 import { createHash } from 'node:crypto';
 import { evaluateCatalogAdmission, deriveCanonicalAdmission, metadataCompleteness } from '../src/catalog-admission.js';
-import { classifyDestination } from '../src/destination-verification.js';
+import { classifyDestination, matchingBrowserDestination } from '../src/destination-verification.js';
 import type { DestinationVerificationRequest } from '../src/destination-verification.js';
 import type { ApplicationPageEvidence } from '../src/core/application-url.js';
 import { reachabilityFromFailure, type Reachability } from '../src/core/application-verification.js';
@@ -156,18 +156,26 @@ export async function processDestinationVerificationBatch(
   const jobs = new D1InternshipStore(env.DB);
   const operations = new D1CatalogAdmissionStore(env.DB);
   const opened: Array<{ sourceId: string; host: string; reason: string; incidentId: string; messageType: 'incident-opened' | 'quarantine' }> = [];
+  const pending: Array<{ queued: MessageBatch<unknown>['messages'][number]; message: DestinationVerificationMessage; job: Internship; reference: SourceOccurrence }> = [];
+  for (const queued of batch.messages) {
+    try {
+      const message = parseMessage(queued.body);
+      const job = await jobs.getJob(message.jobId);
+      if (!job) { queued.ack(); continue; }
+      const reference = job.sourceReferences.find((item) => item.sourceId === message.sourceId && item.externalId === message.externalId);
+      if (!reference || matchingBrowserDestination(job, message, message.queuedAt)) { queued.ack(); continue; }
+      pending.push({ queued, message, job, reference });
+    } catch {
+      queued.retry({ delaySeconds: 300 });
+    }
+  }
+  if (!pending.length) return;
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
   try {
     browser = await puppeteer.launch(env.DESTINATION_BROWSER);
-    for (const queued of batch.messages) {
+    for (const { queued, message, job, reference } of pending) {
       const attemptedAt = now().toISOString();
-      let message: DestinationVerificationMessage | undefined;
       try {
-        message = parseMessage(queued.body);
-        const job = await jobs.getJob(message.jobId);
-        if (!job) { queued.ack(); continue; }
-        const reference = job.sourceReferences.find((item) => item.sourceId === message!.sourceId && item.externalId === message!.externalId);
-        if (!reference) { queued.ack(); continue; }
         const page = await browser.newPage();
         let reachability: Reachability = 'live';
         let evidence: ApplicationPageEvidence | undefined;
@@ -273,7 +281,7 @@ export async function processDestinationVerificationBatch(
       }
     }
   } catch {
-    for (const message of batch.messages) message.retry({ delaySeconds: 300 });
+    for (const { queued } of pending) queued.retry({ delaySeconds: 300 });
   } finally {
     if (browser) await browser.close();
   }
