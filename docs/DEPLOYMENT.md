@@ -363,8 +363,10 @@ Run the deterministic integrity audit against the same snapshot before any
 apply and archive its legacy/classified counts. Exit status `2` is expected
 while legacy occurrences still require backfill; it also reports any exact
 duplicate, duplicate alert, alias conflict, untracked quarantine, presentation
-blocker, or occurrence-coverage regression that must be resolved before
-activation:
+blocker, occurrence-coverage regression, or job/occurrence identity-projection
+mismatch that must be resolved before activation. `unknownUrlFamilyCandidates`
+is computed from the dry run's planned classifications, so repeated unknown or
+custom URL families are available for review before any write:
 
 ```bash
 npm run audit:posting-identity
@@ -393,7 +395,7 @@ contains no employer-specific repair exception. It does not insert, reset, or
 replay notification/outbox work. Both phases stage exact before-images and use
 guarded set-based writes, keeping a production-sized invocation below D1's
 query limit. Finally run the default `all` dry run and require zero changes,
-zero legacy occurrences, and a passing gate.
+zero legacy occurrences, zero `projectionMismatches`, and a passing gate.
 
 For eligible groups whose presentation already agrees, the repair preserves the
 oldest catalog job, merges source references,

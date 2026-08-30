@@ -5,6 +5,7 @@ import { openCatalogSortKey } from './catalog-recency.js';
 import { inferSeason } from './core/early-career.js';
 import { fingerprint, normalizeUrl } from './core/normalize.js';
 import { canonicalizePostingUrl } from './identity/posting.js';
+import { postingIdentityStatusForOccurrences } from './identity/projection.js';
 import { resolvePostingIdentityDecision, type PostingIdentityRegistryResult } from './identity/registry.js';
 import {
   providerEvidenceForOccurrence,
@@ -52,6 +53,7 @@ export interface PostingIdentityRepairPlan {
     untrackedQuarantines: number;
     presentationBlockers: number;
     legacyOccurrences: number;
+    projectionMismatches: number;
   };
   providerGroups: number;
   duplicateGroups: number;
@@ -408,9 +410,12 @@ export function postingIdentityRepairPlan(
   const incidentCount = catalogRows.filter((row) => row.kind === 'posting-identity-incident').length;
   const legacyOccurrences = decisionValues.filter((decision) => !decision).length;
   const classifiedOccurrences = confirmedOccurrences + unconfirmedOccurrences;
-  const familyCounts = new Map<string, number>();
-  for (const decision of decisionValues) if (decision?.status === 'unconfirmed') {
-    familyCounts.set(decision.reviewFamilyKey, (familyCounts.get(decision.reviewFamilyKey) ?? 0) + 1);
+  let projectionMismatches = 0;
+  for (const row of catalogRows.filter((item) => item.kind === 'internship')) {
+    try {
+      const job = parse<Internship>(row.value);
+      if (job.postingIdentityStatus !== postingIdentityStatusForOccurrences(job.sourceReferences)) projectionMismatches += 1;
+    } catch { /* The primary job scan reports malformed rows below. */ }
   }
   const checkpoints = new Map(catalogRows.filter((row) => row.kind === 'checkpoint').flatMap((row) => {
     try { const value = parse<SourceCheckpoint>(row.value); return [[value.sourceId, value] as const]; } catch { return []; }
@@ -607,6 +612,7 @@ export function postingIdentityRepairPlan(
     const synchronized: Internship = {
       ...base,
       sourceReferences,
+      postingIdentityStatus: postingIdentityStatusForOccurrences(sourceReferences),
       season,
       fingerprint: fingerprint(base.company, base.title, base.location, season),
     };
@@ -787,15 +793,25 @@ export function postingIdentityRepairPlan(
     } catch { conflicts.push(`${row.pk}:${row.sk}: malformed notification event JSON`); }
   }
   const duplicateAlertGroups = [...notificationGroups.values()].filter((count) => count > 1).length;
+  for (const occurrences of occurrencesByJob.values()) for (const occurrence of occurrences) {
+    classifyResult(occurrence, occurrence.firstAttachedAt ?? '1970-01-01T00:00:00.000Z');
+  }
+  const plannedFamilyCounts = new Map<string, number>();
+  for (const { result } of classificationByOccurrence.values()) if (result.decision.status === 'unconfirmed') {
+    const key = result.decision.reviewFamilyKey;
+    plannedFamilyCounts.set(key, (plannedFamilyCounts.get(key) ?? 0) + 1);
+  }
   const sortedConflicts = [...conflicts].sort();
   const gate = {
     passed: eligibleDuplicateGroups === 0 && sortedConflicts.length === 0 && untrackedQuarantines === 0
-      && presentationDisagreements.length === 0 && duplicateAlertGroups === 0 && legacyOccurrences === 0,
+      && presentationDisagreements.length === 0 && duplicateAlertGroups === 0 && legacyOccurrences === 0
+      && projectionMismatches === 0,
     exactDuplicateGroups: eligibleDuplicateGroups,
     aliasConflicts: sortedConflicts.length,
     untrackedQuarantines,
     presentationBlockers: presentationDisagreements.length,
     legacyOccurrences,
+    projectionMismatches,
   };
   return {
     schemaVersion: 2, scope, snapshotDigest, repairToken,
@@ -805,7 +821,7 @@ export function postingIdentityRepairPlan(
       confirmedCoverage: classifiedOccurrences ? confirmedOccurrences / classifiedOccurrences : null,
     },
     duplicateAlertGroups,
-    unknownUrlFamilyCandidates: [...familyCounts.entries()].filter(([, count]) => count > 1)
+    unknownUrlFamilyCandidates: [...plannedFamilyCounts.entries()].filter(([, count]) => count > 1)
       .map(([reviewFamilyKey, occurrences]) => ({ reviewFamilyKey, occurrences }))
       .sort((left, right) => right.occurrences - left.occurrences || left.reviewFamilyKey.localeCompare(right.reviewFamilyKey)),
     gate,

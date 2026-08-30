@@ -322,27 +322,43 @@ describe('D1 posting identity repair', () => {
         present: true, consecutiveOmissions: 0, changedSnapshotHash: 'legacy', changedAt: '2026-08-01T00:00:00.000Z',
       });
     }
+    for (const id of ['unknown-a', 'unknown-b']) {
+      const reference = occurrence('community-unknown', id, `https://careers.example.test/jobs/${id}`);
+      await store.putInternship(job(id, reference.applyUrl, '2026-08-01T00:00:00.000Z', [reference]));
+      await store.putSourceOccurrence({
+        sourceId: reference.sourceId, externalId: id, jobId: id, occurrence: reference,
+        present: true, consecutiveOmissions: 0, changedSnapshotHash: 'legacy', changedAt: '2026-08-01T00:00:00.000Z',
+      });
+    }
 
     const identity = await runPostingIdentityRepair(db, { scope: 'identity' });
     expect(identity).toMatchObject({
       providerGroups: 3, expectedChanges: 6,
-      occurrenceCounts: { confirmed: 0, unconfirmed: 0, legacy: 3 },
-      gate: { passed: false, legacyOccurrences: 3 },
+      occurrenceCounts: { confirmed: 0, unconfirmed: 0, legacy: 5 },
+      gate: { passed: false, legacyOccurrences: 5, projectionMismatches: 0 },
+      unknownUrlFamilyCandidates: [expect.objectContaining({ occurrences: 2 })],
     });
     await runPostingIdentityRepair(db, {
       apply: true, scope: 'identity', repairToken: identity.repairToken,
       expectedChanges: identity.expectedChanges, expectedDuplicateJobs: identity.duplicateJobs,
     });
     const occurrences = await runPostingIdentityRepair(db, { scope: 'occurrences' });
-    expect(occurrences).toMatchObject({ expectedChanges: 6, aliasWrites: 0, jobDeletes: 0 });
+    expect(occurrences).toMatchObject({
+      expectedChanges: 10, aliasWrites: 0, jobDeletes: 0,
+      unknownUrlFamilyCandidates: [expect.objectContaining({ occurrences: 2 })],
+    });
     await runPostingIdentityRepair(db, {
       apply: true, scope: 'occurrences', repairToken: occurrences.repairToken,
       expectedChanges: occurrences.expectedChanges, expectedDuplicateJobs: occurrences.duplicateJobs,
     });
+    expect(await store.getJob('ashby')).toMatchObject({ postingIdentityStatus: 'confirmed' });
+    expect(await store.getJob('unknown-a')).toMatchObject({ postingIdentityStatus: 'unconfirmed' });
+    expect(await store.getJob('unknown-b')).toMatchObject({ postingIdentityStatus: 'unconfirmed' });
     expect(await runPostingIdentityRepair(db)).toMatchObject({
       expectedChanges: 0,
-      occurrenceCounts: { confirmed: 3, unconfirmed: 0, legacy: 0 },
-      gate: { passed: true, legacyOccurrences: 0 },
+      occurrenceCounts: { confirmed: 3, unconfirmed: 2, legacy: 0 },
+      gate: { passed: true, legacyOccurrences: 0, projectionMismatches: 0 },
+      unknownUrlFamilyCandidates: [expect.objectContaining({ occurrences: 2 })],
     });
     sqlite.close();
   });

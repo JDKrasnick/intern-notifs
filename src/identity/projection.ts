@@ -49,7 +49,7 @@ function mergeReferences(current: Internship | undefined, proposed: Internship, 
     || occurrenceKey(left).localeCompare(occurrenceKey(right)));
 }
 
-function identityStatus(references: SourceOccurrence[]): Internship['postingIdentityStatus'] {
+export function postingIdentityStatusForOccurrences(references: SourceOccurrence[]): Internship['postingIdentityStatus'] {
   if (references.some((reference) => reference.postingIdentityDecision?.status === 'confirmed')) return 'confirmed';
   if (references.some((reference) => reference.postingIdentityDecision?.status === 'unconfirmed')) return 'unconfirmed';
   return undefined;
@@ -88,7 +88,7 @@ export function postingObservationProjection(
   const admission = deriveCanonicalAdmission(sourceReferences, latest([current?.lastSeenAt, proposed.lastSeenAt]) ?? proposed.lastSeenAt);
   const smsSentAt = latest([current?.notification.smsSentAt, proposed.notification.smsSentAt]);
   const digestedAt = latest([current?.notification.digestedAt, proposed.notification.digestedAt]);
-  const postingIdentityStatus = identityStatus(sourceReferences);
+  const postingIdentityStatus = postingIdentityStatusForOccurrences(sourceReferences);
   const anyOpen = sourceReferences.some((reference) => reference.state === 'open');
   const season = proposed.season;
   const seasonEvidence = (proposed.internshipIdentity ?? current?.internshipIdentity) as { season?: { evidenceStatus?: string } } | undefined;
