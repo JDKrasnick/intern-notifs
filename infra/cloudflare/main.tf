@@ -5,6 +5,7 @@ locals {
       { name = "PUBLIC_API_URL", type = "plain_text", text = var.public_api_url },
       { name = "AUTH_DEV_MODE", type = "plain_text", text = tostring(var.auth_dev_mode) },
       { name = "GMAIL_ENABLED", type = "plain_text", text = tostring(var.gmail_enabled) },
+      { name = "IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED", type = "plain_text", text = tostring(var.identity_unconfirmed_publication_enabled) },
     ],
     var.auth_from_email == null ? [] : [{ name = "AUTH_FROM_EMAIL", type = "plain_text", text = var.auth_from_email }],
     var.digest_to_email == null ? [] : [{ name = "DIGEST_TO_EMAIL", type = "plain_text", text = var.digest_to_email }],

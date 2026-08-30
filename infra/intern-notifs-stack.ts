@@ -74,7 +74,7 @@ export class InternNotifsStack extends cdk.Stack {
     const notifier = new lambdaNodejs.NodejsFunction(this, 'Notifier', {
       entry: 'src/lambda.ts', handler: 'handler', runtime: lambda.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.minutes(4), memorySize: 512,
-      environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName, RUNTIME_CONFIG_PARAMETER_NAME: runtimeConfigParameterName, GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME },
+      environment: { INTERNSHIPS_TABLE: internships.tableName, USERS_TABLE: users.tableName, RUNTIME_CONFIG_PARAMETER_NAME: runtimeConfigParameterName, GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME, IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED: 'false' },
       bundling: { externalModules: [] }
     });
     notifier.addToRolePolicy(new iam.PolicyStatement({ actions: ['dynamodb:BatchGetItem', 'dynamodb:BatchWriteItem', 'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query', 'dynamodb:Scan', 'dynamodb:TransactWriteItems'], resources: [internships.tableArn, `${internships.tableArn}/index/*`] }));

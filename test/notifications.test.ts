@@ -17,6 +17,13 @@ describe('notifications', () => {
     const messages: PushMessage[] = []; await sendPendingNotifications(store, { publish: async (message) => { messages.push(message); } });
     expect(messages).toHaveLength(6); expect(messages[0]).toMatchObject({ title: 'Role 1 — OpenAI', body: 'NYC · summer-2027 · $50/hr\nFound by InternNotifs: Jan 1, 2026\nSource: Job board\nhttps://apply.example.com/1', click: 'https://apply.example.com/1' }); expect(messages[5]?.body).toContain('Source: Lever'); expect(messages.map((message) => message.body).join('\n')).toContain('https://apply.example.com/7'); expect(await store.pendingSms()).toHaveLength(0);
   });
+  it('appends the identity-unconfirmed disclosure to legacy push copy', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putInternship({ ...job(1), postingIdentityStatus: 'unconfirmed' });
+    const messages: PushMessage[] = [];
+    await sendPendingNotifications(store, { publish: async (message) => { messages.push(message); } });
+    expect(messages[0]?.body).toMatch(/Identity unconfirmed$/u);
+  });
   it('does not mark a failed SMS and does not send empty digests', async () => {
     const store = new MemoryInternshipStore(); await store.putInternship(job(1));
     await sendPendingNotifications(store, { publish: async () => { throw new Error('nope'); } }); expect(await store.pendingSms()).toHaveLength(1);

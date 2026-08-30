@@ -11,6 +11,21 @@ const hasUndefined = (value: unknown): boolean =>
   (value !== null && typeof value === 'object' && Object.values(value).some(hasUndefined));
 
 describe('public API ownership boundary', () => {
+  it('keeps identity-unconfirmed roles in shadow until the rollout flag is enabled', async () => {
+    const jobs = new MemoryInternshipStore();
+    const users = new MemoryUserStore();
+    const unconfirmed = { ...job, postingIdentityStatus: 'unconfirmed' as const };
+    await jobs.putInternship(unconfirmed);
+    await users.putApplication('student', { applicationId: 'saved-shadow', jobId: job.jobId, status: 'saved', createdAt: job.firstSeenAt, updatedAt: job.lastSeenAt });
+    const shadow = createApiHandler({ jobs, users, identityUnconfirmedPublicationEnabled: false });
+    expect(JSON.parse((await shadow(event(undefined, 'GET', '/jobs'))).body).jobs).toEqual([]);
+    expect((await shadow(event(undefined, 'GET', `/jobs/${job.jobId}`))).statusCode).toBe(404);
+    expect(JSON.parse((await shadow(event('student', 'GET', '/me/applications'))).body).applications[0].job)
+      .toMatchObject({ availability: 'catalog-review' });
+    const active = createApiHandler({ jobs, users, identityUnconfirmedPublicationEnabled: true });
+    expect(JSON.parse((await active(event(undefined, 'GET', '/jobs'))).body).jobs).toMatchObject([{ jobId: job.jobId }]);
+  });
+
   it('retains quarantined roles in Saved without an unsafe handoff or assistance controls', async () => {
     const jobs = new MemoryInternshipStore(); const users = new MemoryUserStore();
     const review = { ...job, admission: {

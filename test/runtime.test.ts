@@ -14,8 +14,16 @@ describe('AWS runtime commands', () => {
   });
   it('keeps the personal ntfy fallback active alongside Expo delivery', async () => {
     const store = new MemoryInternshipStore(); const ntfy: PushMessage[] = []; await store.putCheckpoint({ sourceId: 'fixture', successfulFetches: 1, lastRowCount: 1 });
-    const result = await runRuntimeCommand('poll', { store, config: { ntfyTopic: 'test-topic', ntfyTitleTemplate: '{company}: {shortTitle}', sesFrom: 'a@example.com', sesTo: 'b@example.com' }, sources: [adapter], linkValidator: async (url) => url, userStore: new MemoryUserStore(), ntfyPublisher: { publish: async (message) => { ntfy.push(message); } } });
+    const result = await runRuntimeCommand('poll', { store, config: { ntfyTopic: 'test-topic', ntfyTitleTemplate: '{company}: {shortTitle}', sesFrom: 'a@example.com', sesTo: 'b@example.com' }, sources: [adapter], linkValidator: async (url) => url, userStore: new MemoryUserStore(), ntfyPublisher: { publish: async (message) => { ntfy.push(message); } }, identityUnconfirmedPublicationEnabled: true });
     expect(result).toMatchObject({ ntfy: { sent: 1, failed: 0 } }); expect(ntfy).toMatchObject([{ title: 'Acme: SWE', click: 'https://example.com/apply' }]);
+  });
+  it('shadows identity-unconfirmed publication and alerts by default', async () => {
+    const store = new MemoryInternshipStore(); const ntfy: PushMessage[] = [];
+    await store.putCheckpoint({ sourceId: 'fixture', successfulFetches: 1, lastRowCount: 1 });
+    const result = await runRuntimeCommand('poll', { store, config: { ntfyTopic: 'test-topic', sesFrom: 'a@example.com', sesTo: 'b@example.com' }, sources: [adapter], linkValidator: async (url) => url, ntfyPublisher: { publish: async (message) => { ntfy.push(message); } } });
+    expect(result).toMatchObject({ poll: { newJobs: [] } });
+    expect(ntfy).toEqual([]);
+    expect([...store.jobs.values()]).toMatchObject([{ postingIdentityStatus: 'unconfirmed' }]);
   });
   it('does not send an empty digest', async () => {
     const store = new MemoryInternshipStore(); let sent = false;

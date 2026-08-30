@@ -44,6 +44,7 @@
     "AUTH_FROM_EMAIL": "InternNotifs <notifications@send.internnotifs.app>",
     "AUTH_DEV_MODE": "false",
     "EMPLOYER_PORTAL_ENABLED": "true",
+    "IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED": "false",
     "GMAIL_ENABLED": "true",
     "GMAIL_CLIENT_ID": "17433524169-4753680goh32205can9g00ijqan3hic5.apps.googleusercontent.com",
     "GMAIL_REDIRECT_URI": "https://intern-notifs.jdkrasnick.workers.dev/oauth/gmail/callback",
