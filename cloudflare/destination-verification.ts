@@ -156,7 +156,7 @@ export async function processDestinationVerificationBatch(
   const jobs = new D1InternshipStore(env.DB);
   const operations = new D1CatalogAdmissionStore(env.DB);
   const opened: Array<{ sourceId: string; host: string; reason: string; incidentId: string; messageType: 'incident-opened' | 'quarantine' }> = [];
-  const pending: Array<{ queued: MessageBatch<unknown>['messages'][number]; message: DestinationVerificationMessage; job: Internship; reference: SourceOccurrence }> = [];
+  const pending: Array<{ queued: MessageBatch<unknown>['messages'][number]; message: DestinationVerificationMessage }> = [];
   for (const queued of batch.messages) {
     try {
       const message = parseMessage(queued.body);
@@ -164,7 +164,7 @@ export async function processDestinationVerificationBatch(
       if (!job) { queued.ack(); continue; }
       const reference = job.sourceReferences.find((item) => item.sourceId === message.sourceId && item.externalId === message.externalId);
       if (!reference || matchingBrowserDestination(job, message, message.queuedAt)) { queued.ack(); continue; }
-      pending.push({ queued, message, job, reference });
+      pending.push({ queued, message });
     } catch {
       queued.retry({ delaySeconds: 300 });
     }
@@ -173,9 +173,13 @@ export async function processDestinationVerificationBatch(
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
   try {
     browser = await puppeteer.launch(env.DESTINATION_BROWSER);
-    for (const { queued, message, job, reference } of pending) {
+    for (const { queued, message } of pending) {
       const attemptedAt = now().toISOString();
       try {
+        const job = await jobs.getJob(message.jobId);
+        if (!job) { queued.ack(); continue; }
+        const reference = job.sourceReferences.find((item) => item.sourceId === message.sourceId && item.externalId === message.externalId);
+        if (!reference || matchingBrowserDestination(job, message, message.queuedAt)) { queued.ack(); continue; }
         const page = await browser.newPage();
         let reachability: Reachability = 'live';
         let evidence: ApplicationPageEvidence | undefined;
