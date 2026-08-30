@@ -50,6 +50,8 @@ export interface RuntimeDependencies {
   allowCompleteEmptySnapshot?: boolean;
   enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>;
   catalogAdmissionResolver?: CatalogAdmissionResolver;
+  /** Defaults off in deployed runtimes until the compatible client is live. */
+  identityUnconfirmedPublicationEnabled?: boolean;
 }
 
 export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies: RuntimeDependencies) {
@@ -63,6 +65,7 @@ export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies
       dependencies.validateCatalogOnPoll === false ? false : undefined,
       dependencies.enqueueDestinationVerification,
       dependencies.catalogAdmissionResolver,
+      dependencies.identityUnconfirmedPublicationEnabled ?? false,
     ).poll({ allowCompleteEmptySnapshot: dependencies.allowCompleteEmptySnapshot });
     if (dependencies.userStore) {
       const publisher = dependencies.expoPublisher ?? new ExpoPushPublisher();
@@ -124,6 +127,7 @@ export async function runtimeHandler(event: { command?: string } = {}) {
   const result = await runRuntimeCommand(command, {
     store: new DynamoInternshipStore(tableName), userStore: new DynamoUserStore(usersTable), config: await loadRuntimeConfig(parameterName),
     groupedPipelineUserIds: cohort,
+    identityUnconfirmedPublicationEnabled: process.env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
   });
   console.log(JSON.stringify({ command, ...result }));
   return result;

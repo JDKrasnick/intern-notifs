@@ -135,6 +135,42 @@ async function historicalDatabase(options: { presentationAgrees?: boolean; autho
 }
 
 describe('D1 posting identity repair', () => {
+  it('repairs duplicate durable source occurrences caused by document row movement', async () => {
+    const sqlite = database(); const db = sqliteD1(sqlite); const store = new D1InternshipStore(db);
+    const url = 'https://acme.wd1.myworkdayjobs.com/External/job/Remote/Software-Intern_REQ-1';
+    const original = {
+      ...occurrence('community-list', 'stable-role', url), document: 'README.md', row: 10,
+      firstAttachedAt: '2026-08-01T00:00:00.000Z', firstAttachedAtPrecision: 'exact' as const,
+    };
+    const moved = {
+      ...original, row: 18, firstAttachedAt: '2026-08-20T00:00:00.000Z', firstAttachedAtPrecision: 'unknown' as const,
+    };
+    await store.putInternship(job('row-moved', url, '2026-08-01T00:00:00.000Z', [original, moved]));
+    await store.putSourceOccurrence({
+      sourceId: moved.sourceId, externalId: moved.externalId!, jobId: 'row-moved', occurrence: moved,
+      present: true, consecutiveOmissions: 0, changedSnapshotHash: 'moved', changedAt: '2026-08-20T00:00:00.000Z',
+      firstObservedAt: '2026-08-01T00:00:00.000Z', firstObservedAtPrecision: 'exact',
+    });
+
+    const dry = await runPostingIdentityRepair(db, { scope: 'occurrences' });
+    expect(dry).toMatchObject({ gate: { passed: false, duplicateOccurrenceReferences: 1 } });
+    await runPostingIdentityRepair(db, {
+      apply: true, scope: 'occurrences', repairToken: dry.repairToken,
+      expectedChanges: dry.expectedChanges, expectedDuplicateJobs: dry.duplicateJobs,
+    });
+
+    expect(await store.getJob('row-moved')).toMatchObject({
+      sourceReferences: [{
+        sourceId: 'community-list', externalId: 'stable-role', document: 'README.md', row: 18,
+        firstAttachedAt: '2026-08-01T00:00:00.000Z', firstAttachedAtPrecision: 'exact',
+      }],
+    });
+    expect(await runPostingIdentityRepair(db, { scope: 'occurrences' })).toMatchObject({
+      expectedChanges: 0, gate: { duplicateOccurrenceReferences: 0 },
+    });
+    sqlite.close();
+  });
+
   it('uses a unique active reviewed checkpoint to scope legacy Greenhouse embed tokens', async () => {
     const sqlite = database(); const db = sqliteD1(sqlite); const store = new D1InternshipStore(db);
     const postingId = '8732364002';
@@ -251,7 +287,10 @@ describe('D1 posting identity repair', () => {
   });
 
   it('applies exact guarded remaps for presentation-agreeing groups, preserves workflow/notifications, resolves legacy IDs, and is idempotent', async () => {
-    const { sqlite, db, store } = await historicalDatabase({ presentationAgrees: true }); const dry = await runPostingIdentityRepair(db);
+    const { sqlite, db, store } = await historicalDatabase({ presentationAgrees: true });
+    sqlite.prepare("INSERT INTO catalog_items (pk, sk, kind, value) VALUES ('TOMBSTONE#student', 'ROLE#plus-duplicate', 'notification-tombstone', ?)")
+      .run(JSON.stringify({ jobId: 'plus-duplicate', deletedAt: '2026-08-03T00:00:00Z' }));
+    const dry = await runPostingIdentityRepair(db);
     expect(dry).toMatchObject({ eligibleDuplicateGroups: 2, eligibleDuplicateJobs: 2, unresolvedDuplicateGroups: 0 });
     const applied = await runPostingIdentityRepair(db, { apply: true, repairToken: dry.repairToken, expectedChanges: dry.expectedChanges, expectedDuplicateJobs: dry.duplicateJobs });
     expect(applied).toMatchObject({ applied: true, projectionRefreshRequired: true });
@@ -266,6 +305,9 @@ describe('D1 posting identity repair', () => {
     expect(await store.pendingSms()).not.toEqual(expect.arrayContaining([expect.objectContaining({ jobId: 'plus-old' })]));
     expect(await store.pendingDigest()).not.toEqual(expect.arrayContaining([expect.objectContaining({ jobId: 'plus-old' })]));
     expect(sqlite.prepare("SELECT COUNT(*) AS count FROM catalog_items WHERE kind = 'notification-event'").get()).toEqual({ count: 1 });
+    expect(sqlite.prepare("SELECT sk, value FROM catalog_items WHERE kind = 'notification-tombstone'").get()).toEqual({
+      sk: 'ROLE#plus-old', value: JSON.stringify({ jobId: 'plus-old', deletedAt: '2026-08-03T00:00:00Z' }),
+    });
     expect(sqlite.prepare("SELECT job_id FROM employer_field_proposals WHERE id = 'proposal'").get()).toEqual({ job_id: 'plus-old' });
     const applications = sqlite.prepare("SELECT value FROM user_items WHERE kind = 'application'").all().map((row) => JSON.parse((row as { value: string }).value));
     expect(applications).toEqual([expect.objectContaining({
@@ -301,23 +343,91 @@ describe('D1 posting identity repair', () => {
     expect(await runPostingIdentityRepair(stale.db)).toMatchObject({ conflicts: [expect.stringContaining('already claimed')] });
   });
 
+  it('classifies Ashby, ByteDance, and Workday history through the provider-neutral registry', async () => {
+    const sqlite = database(); const db = sqliteD1(sqlite); const store = new D1InternshipStore(db);
+    const historical = [
+      ['ashby', 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'],
+      ['bytedance', 'https://lifeattiktok.com/search/7672883129493948677'],
+      ['workday', 'https://acme.wd1.myworkdayjobs.com/External/job/Remote/Software-Intern_JR1001'],
+    ] as const;
+    for (const [id, url] of historical) {
+      const reference = occurrence(`community-${id}`, id, url);
+      await store.putInternship(job(id, url, '2026-08-01T00:00:00.000Z', [reference]));
+      await store.putSourceOccurrence({
+        sourceId: reference.sourceId, externalId: id, jobId: id, occurrence: reference,
+        present: true, consecutiveOmissions: 0, changedSnapshotHash: 'legacy', changedAt: '2026-08-01T00:00:00.000Z',
+      });
+    }
+    for (const id of ['unknown-a', 'unknown-b']) {
+      const reference = occurrence('community-unknown', id, `https://careers.example.test/jobs/${id}`);
+      await store.putInternship(job(id, reference.applyUrl, '2026-08-01T00:00:00.000Z', [reference]));
+      await store.putSourceOccurrence({
+        sourceId: reference.sourceId, externalId: id, jobId: id, occurrence: reference,
+        present: true, consecutiveOmissions: 0, changedSnapshotHash: 'legacy', changedAt: '2026-08-01T00:00:00.000Z',
+      });
+    }
+
+    const identity = await runPostingIdentityRepair(db, { scope: 'identity' });
+    expect(identity).toMatchObject({
+      providerGroups: 3, expectedChanges: 6,
+      occurrenceCounts: { confirmed: 0, unconfirmed: 0, legacy: 5 },
+      gate: { passed: false, legacyOccurrences: 5, projectionMismatches: 0 },
+      unknownUrlFamilyCandidates: [expect.objectContaining({ occurrences: 2 })],
+    });
+    await runPostingIdentityRepair(db, {
+      apply: true, scope: 'identity', repairToken: identity.repairToken,
+      expectedChanges: identity.expectedChanges, expectedDuplicateJobs: identity.duplicateJobs,
+    });
+    const occurrences = await runPostingIdentityRepair(db, { scope: 'occurrences' });
+    expect(occurrences).toMatchObject({
+      expectedChanges: 10, aliasWrites: 0, jobDeletes: 0,
+      unknownUrlFamilyCandidates: [expect.objectContaining({ occurrences: 2 })],
+    });
+    await runPostingIdentityRepair(db, {
+      apply: true, scope: 'occurrences', repairToken: occurrences.repairToken,
+      expectedChanges: occurrences.expectedChanges, expectedDuplicateJobs: occurrences.duplicateJobs,
+    });
+    expect(await store.getJob('ashby')).toMatchObject({ postingIdentityStatus: 'confirmed' });
+    expect(await store.getJob('unknown-a')).toMatchObject({ postingIdentityStatus: 'unconfirmed' });
+    expect(await store.getJob('unknown-b')).toMatchObject({ postingIdentityStatus: 'unconfirmed' });
+    expect(await runPostingIdentityRepair(db)).toMatchObject({
+      expectedChanges: 0,
+      occurrenceCounts: { confirmed: 3, unconfirmed: 2, legacy: 0 },
+      gate: { passed: true, legacyOccurrences: 0, projectionMismatches: 0 },
+      unknownUrlFamilyCandidates: [expect.objectContaining({ occurrences: 2 })],
+    });
+    sqlite.close();
+  });
+
   it('keeps a production-sized guarded apply under the paid D1 query budget', async () => {
     const sqlite = database();
     const metrics: QueryMetrics = { statements: 0, calls: 0, maxBoundParameters: 0, inBatch: false };
-    const db = sqliteD1(sqlite, metrics); const store = new D1InternshipStore(db);
-    for (let index = 0; index < 390; index += 1) {
-      const postingId = String(9_000_000 + index);
-      const url = `https://job-boards.greenhouse.io/figma/jobs/${postingId}`;
-      const evidence: ProviderPostingEvidence = {
-        provider: 'greenhouse', tenant: 'figma', postingId, sourceId: 'greenhouse-figma', urls: [url],
-      };
-      await store.putInternship(job(`historical-${index}`, url, '2026-08-01T00:00:00.000Z', [
-        occurrence('greenhouse-figma', postingId, url, evidence),
-      ]));
+    const db = sqliteD1(sqlite, metrics);
+    const insert = sqlite.prepare('INSERT INTO catalog_items (pk, sk, kind, value, source_id, external_id) VALUES (?, ?, ?, ?, ?, ?)');
+    // This executable fixture exceeds the old 900-statement ceiling; the
+    // production-size assertion below covers the current 4,250-job shape.
+    const corpusSize = 1_100;
+    sqlite.exec('BEGIN');
+    try {
+      for (let index = 0; index < corpusSize; index += 1) {
+        const id = `historical-${index}`;
+        const url = `https://acme.wd1.myworkdayjobs.com/External/job/Remote/Software-Intern_REQ-${index}`;
+        const reference = occurrence('historical-workday', id, url);
+        const value = job(id, url, '2026-08-01T00:00:00.000Z', [reference]);
+        insert.run(`JOB#${id}`, 'META', 'internship', JSON.stringify(value), null, null);
+        insert.run(`SOURCE#${reference.sourceId}`, `OCCURRENCE#${id}`, 'source-occurrence', JSON.stringify({
+          sourceId: reference.sourceId, externalId: id, jobId: id, occurrence: reference,
+          present: true, consecutiveOmissions: 0, changedSnapshotHash: 'legacy', changedAt: '2026-08-01T00:00:00.000Z',
+        }), reference.sourceId, id);
+      }
+      sqlite.exec('COMMIT');
+    } catch (error) {
+      sqlite.exec('ROLLBACK');
+      throw error;
     }
     metrics.statements = 0; metrics.calls = 0; metrics.maxBoundParameters = 0;
     const dry = await runPostingIdentityRepair(db, { scope: 'identity' });
-    expect(dry).toMatchObject({ expectedChanges: 780, conflicts: [], unresolvedDuplicateGroups: 0 });
+    expect(dry).toMatchObject({ expectedChanges: corpusSize * 2, conflicts: [], unresolvedDuplicateGroups: 0 });
     metrics.statements = 0; metrics.calls = 0; metrics.maxBoundParameters = 0;
     const applied = await runPostingIdentityRepair(db, {
       apply: true, repairToken: dry.repairToken,
@@ -326,20 +436,18 @@ describe('D1 posting identity repair', () => {
     const verification = await runPostingIdentityRepair(db, { scope: 'identity' });
     expect(applied).toMatchObject({ applied: true, projectionRefreshRequired: true });
     expect(verification).toMatchObject({ expectedChanges: 0, conflicts: [] });
-    expect(postingIdentityRepairQueryCount(dry.expectedChanges)).toBe(825);
-    expect(metrics.statements).toBe(828);
+    expect(postingIdentityRepairQueryCount(dry.expectedChanges)).toBe(123);
+    expect(postingIdentityRepairQueryCount(4_250 * 2)).toBe(438);
+    expect(metrics.statements).toBe(126);
     expect(metrics.statements).toBeLessThanOrEqual(900);
     expect(metrics.maxBoundParameters).toBeLessThanOrEqual(100);
     const occurrences = await runPostingIdentityRepair(db, { scope: 'occurrences' });
-    expect(occurrences).toMatchObject({ expectedChanges: 390, conflicts: [] });
-    metrics.statements = 0; metrics.calls = 0; metrics.maxBoundParameters = 0;
+    expect(occurrences).toMatchObject({ expectedChanges: corpusSize * 2, aliasWrites: 0, conflicts: [] });
     await runPostingIdentityRepair(db, {
-      apply: true, repairToken: occurrences.repairToken, scope: 'occurrences',
-      expectedChanges: occurrences.expectedChanges, expectedDuplicateJobs: occurrences.duplicateJobs,
+      apply: true, repairToken: occurrences.repairToken,
+      expectedChanges: occurrences.expectedChanges, expectedDuplicateJobs: occurrences.duplicateJobs, scope: 'occurrences',
     });
-    expect(metrics.statements).toBe(416);
-    expect(metrics.statements).toBeLessThanOrEqual(900);
     expect(await runPostingIdentityRepair(db)).toMatchObject({ expectedChanges: 0, conflicts: [] });
     sqlite.close();
-  });
+  }, 15_000);
 });

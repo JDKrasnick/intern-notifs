@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { PostingAlias, PostingIdentity, PostingProvider, ProviderPostingEvidence } from '../types.js';
+import type { Internship, PostingAlias, PostingIdentity, PostingProvider, ProviderPostingEvidence } from '../types.js';
 
 const TRACKING_PARAMETERS = new Set([
   'fbclid', 'gclid', 'gh_src', 'mc_cid', 'mc_eid', 'ref', 'source',
@@ -208,4 +208,24 @@ export function resolvePostingAliases(identity: PostingIdentity, claims: Readonl
   }
   if (claimedIds.length === 1) return { outcome: 'merge', canonicalJobId: claimedIds[0]!, aliases };
   return { outcome: 'create', canonicalJobId: identity.canonicalJobId, aliases };
+}
+
+/** Prevents a caller-provided lookup hint from bridging two reviewed exact IDs. */
+export function preferredJobIdentityConflicts(identity: PostingIdentity, job: Internship | undefined): boolean {
+  if (!job) return false;
+  const incoming = new Set(identity.aliases.map((alias) => alias.value));
+  const confirmed = new Set(job.sourceReferences.flatMap((reference) =>
+    reference.postingIdentityDecision?.status === 'confirmed' ? [reference.postingIdentityDecision.exactKey] : []));
+  if (job.postingIdentityStatus === 'confirmed') {
+    for (const alias of job.postingIdentity?.aliases ?? []) {
+      if (alias.value.startsWith('provider:') || alias.value.startsWith('requisition:')) confirmed.add(alias.value);
+    }
+    // A confirmed URL-only identity can only have been created by the reviewed
+    // canonical-URL contract. Provider-backed jobs deliberately ignore their
+    // presentation URLs here because those URLs may be reused.
+    if (!confirmed.size && job.postingIdentity?.provider === 'unknown') {
+      for (const alias of job.postingIdentity.aliases) confirmed.add(alias.value);
+    }
+  }
+  return confirmed.size > 0 && ![...confirmed].some((exactKey) => incoming.has(exactKey));
 }

@@ -5,9 +5,22 @@ import type { ApplicationSession } from '../src/application-automation.js';
 import type { ApplicationRecord, DeliveryReceipt, Internship } from '../src/types.js';
 
 function job(jobId: string, applyUrl: string, firstSeenAt: string, open = true): Internship {
+  const greenhouseId = applyUrl.includes('greenhouse.io')
+    ? /(?:\/jobs\/|[?&]gh_jid=)(\d+)/u.exec(applyUrl)?.[1]
+    : undefined;
+  const sourceReferences = greenhouseId ? [{
+    sourceId: 'greenhouse-acme', externalId: greenhouseId, document: greenhouseId,
+    sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs', row: 1,
+    company: 'Acme', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2027',
+    applyUrl, compensation: { raw: '' }, state: 'open' as const,
+    providerEvidence: {
+      provider: 'greenhouse' as const, tenant: 'acme', postingId: greenhouseId,
+      sourceId: 'greenhouse-acme', urls: [applyUrl],
+    },
+  }] : [];
   return {
     jobId, company: 'Acme', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2027',
-    applyUrl, normalizedUrl: applyUrl, fingerprint: 'same-display-fingerprint', compensation: { raw: '' }, sourceReferences: [],
+    applyUrl, normalizedUrl: applyUrl, fingerprint: 'same-display-fingerprint', compensation: { raw: '' }, sourceReferences,
     technical: true, open, firstSeenAt, catalogVisibleAt: firstSeenAt, lastSeenAt: firstSeenAt,
     notification: { smsPending: false, digestPending: false },
   };
@@ -40,6 +53,14 @@ function session(sessionId: string, applicationId: string, jobId: string): { use
 }
 
 describe('posting identity migration plan', () => {
+  it('leaves syntactically matching unreviewed URLs unclassified and separate', () => {
+    const plan = planPostingIdentityMigration([
+      job('legacy-a', 'https://careers.example.test/jobs/42?utm_source=one', '2026-08-01T00:00:00.000Z'),
+      job('legacy-b', 'https://careers.example.test/jobs/42?utm_source=two', '2026-08-02T00:00:00.000Z'),
+    ], []);
+    expect(plan).toMatchObject({ identityClaims: 0, jobUpdates: 0, duplicateOpenJobs: 0, conflicts: [] });
+  });
+
   it('merges exact open aliases into the oldest canonical job and copies receipt tombstones', () => {
     const plan = planPostingIdentityMigration([
       job('legacy-a', 'https://boards.greenhouse.io/acme?gh_jid=100', '2026-08-01T00:00:00.000Z'),

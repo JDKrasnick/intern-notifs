@@ -124,7 +124,7 @@ describe('D1 filtered catalog projection', () => {
     details.roles[0]!.locations = ['Ithaca, NY'];
     const generatedAt = new Date().toISOString();
     const insert = database.prepare('INSERT INTO catalog_items (pk, sk, kind, value, catalog_sort_key) VALUES (?, ?, ?, ?, ?)');
-    insert.run('CATALOG_PROJECTION', 'CURRENT', 'catalog-projection-pointer', JSON.stringify({ version: 'version-a', generatedAt, schemaVersion: 3 }), null);
+    insert.run('CATALOG_PROJECTION', 'CURRENT', 'catalog-projection-pointer', JSON.stringify({ version: 'version-a', generatedAt, schemaVersion: 4 }), null);
     insert.run('CATALOG_PROJECTION#version-a', `GROUP#${details.group.groupId}`, 'catalog-projection', JSON.stringify(details), '00000000');
 
     try {
@@ -150,7 +150,7 @@ describe('D1 filtered catalog projection', () => {
         const statement: D1PreparedStatement = {
           bind(...values: unknown[]) { call.values = values; return statement; },
           async first<T>() {
-            return { value: JSON.stringify({ version: 'version-a', generatedAt: new Date().toISOString(), schemaVersion: 3 }) } as T;
+            return { value: JSON.stringify({ version: 'version-a', generatedAt: new Date().toISOString(), schemaVersion: 4 }) } as T;
           },
           async all<T>() { return { results: [{ value: JSON.stringify(details) } as T, { value: JSON.stringify(details) } as T] }; },
           async run() { return { meta: { changes: 0 } }; },

@@ -67,6 +67,10 @@
   - [x] Report employer/name/title/location/destination and future #120 admission disagreements, and refuse repair apply while any matched group lacks a reviewed presentation decision.
   - [x] Deploy runtime support and save the production dry-run report, while deferring unresolved production consolidation until #120 supplies reviewed admission and presentation decisions.
   - [x] Reconcile tenant-less Greenhouse embed URLs in both arrival orders only when one active reviewed checkpoint proves the provider scope; leave ambiguous public IDs separate.
+  - [x] Add durable confirmed/unconfirmed/quarantined occurrence decisions through one contract-versioned registry covering reviewed provider routes, authoritative requisitions, reviewed canonical URLs, stale evidence, and every conflict class without generic-URL or display-field merging.
+  - [x] Replace live alias/job/occurrence/outbox sequencing with an atomic memory, DynamoDB, and D1 posting-observation commit and deterministic occurrence projection, including concurrency, rollback, and one-alert regression coverage.
+  - [x] Add the immutable D1 review ledger, sanitized unknown-family queue, versioned audit/gate, notification-tombstone repair, shadow publication flag, and accessible unconfirmed status across catalog, detail, Saved, grouped results, push, and email.
+  - [ ] Deploy migration `0010_posting_identity.sql` with unconfirmed publication disabled, archive a passing production shadow audit, ship and physically verify compatible iOS/Android clients, then obtain owner approval before enabling publication.
   - [ ] After #120, apply the combined reviewed repair with exact token/count guards, then verify zero remaining approved candidates, legacy links, projections, saved applications, and unchanged notification/outbox counts.
 - [ ] Complete issue #124's high-priority normalized display contract across catalog cards, grouped results, role detail, saved roles, and notification previews without company-specific mappings.
 - [ ] Complete issue #99 catalog quality hardening and backfill.

@@ -5,14 +5,15 @@ import { isPastSeason } from './core/early-career.js';
 import { employerCategory } from './core/employers.js';
 import { canonicalCatalogRecency, catalogRecency, catalogVisibleAt, compareCatalogRecency, openCatalogSortKey } from './catalog-recency.js';
 import { catalogSearchText, catalogSourceClasses, type CatalogSource } from './catalog-fields.js';
-import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
-import { resolvePostingAliases, type AliasResolution } from './identity/posting.js';
+import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, PostingIdentityDecision, PostingIdentityIncident, SourceCheckpoint, SourceHealth, SourceOccurrence, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
+import { preferredJobIdentityConflicts, resolvePostingAliases, type AliasResolution } from './identity/posting.js';
 import type { ApplicationSession } from './application-automation.js';
 import type { ReviewedLeverSource } from './sources/lever-config.js';
 import type { LeverOwnershipEvidence } from './sources/lever-evidence.js';
 import type { LeverCandidateProbeResult } from './sources/lever-probe.js';
 import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from './catalog-groups.js';
 import { alertEligible, catalogEligible } from './catalog-admission.js';
+import { postingObservationProjection } from './identity/projection.js';
 
 export interface LeverAdmission {
   source: ReviewedLeverSource;
@@ -40,6 +41,25 @@ export function deletedUserTombstoneKey(userId: string) {
 export type { CatalogSource } from './catalog-fields.js';
 export type CatalogQuery = { query?: string; source?: CatalogSource };
 
+export type PostingObservationCommit =
+  | {
+      decision: Exclude<PostingIdentityDecision, { status: 'quarantined' }>;
+      identity?: PostingIdentity;
+      job: Internship;
+      occurrence: SourceOccurrenceState;
+      notificationEvent?: NotificationEvent;
+    }
+  | {
+      decision: Extract<PostingIdentityDecision, { status: 'quarantined' }>;
+      sourceId: string;
+      externalId: string;
+      occurrence: SourceOccurrence;
+    };
+
+export type PostingObservationCommitResult =
+  | { outcome: 'committed'; canonicalJobId: string; notificationInserted: boolean }
+  | { outcome: 'quarantined'; incident: PostingIdentityIncident };
+
 export interface InternshipStore {
   getCheckpoint(sourceId: string): Promise<SourceCheckpoint | undefined>;
   getCheckpointsMany(sourceIds: string[]): Promise<SourceCheckpoint[]>;
@@ -53,6 +73,10 @@ export interface InternshipStore {
   findByFingerprint(fingerprint: string): Promise<Internship | undefined>;
   /** Atomically claims every exact posting alias, converging concurrent sources on one job. */
   claimPostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution>;
+  /** Read-only identity preview. The commit revalidates this decision at the transaction boundary. */
+  resolvePostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution>;
+  /** Atomically claims aliases and writes the occurrence projection plus deterministic outbox event. */
+  commitPostingObservation(input: PostingObservationCommit): Promise<PostingObservationCommitResult>;
   putInternship(job: Internship): Promise<void>;
   getJob(jobId: string): Promise<Internship | undefined>;
   getSourceOccurrences(sourceId: string): Promise<SourceOccurrenceState[]>;
@@ -86,6 +110,10 @@ export class MemoryInternshipStore implements InternshipStore {
   readonly monitoringChecklists = new Map<string, MonitoringChecklist>();
   readonly leverAdmissions = new Map<string, LeverAdmission>();
   readonly postingAliases = new Map<string, string>();
+  readonly postingIdentityIncidents = new Map<string, PostingIdentityIncident>();
+  readonly postingIdentityReviewCandidates = new Map<string, {
+    reviewFamilyKey: string; occurrenceKeys: Set<string>; firstObservedAt: string; lastObservedAt: string;
+  }>();
   catalogProjection?: { generatedAt: string; groups: CatalogGroupDetails[] };
   async getCheckpoint(sourceId: string) { return this.checkpoints.get(sourceId); }
   async getCheckpointsMany(sourceIds: string[]) { return sourceIds.map((id) => this.checkpoints.get(id)).filter((value): value is SourceCheckpoint => Boolean(value)); }
@@ -97,9 +125,16 @@ export class MemoryInternshipStore implements InternshipStore {
   async putMonitoringChecklist(checklist: MonitoringChecklist) { this.monitoringChecklists.set(checklist.period, structuredClone(checklist)); }
   async findByUrl(url: string) { const job = [...this.jobs.values()].find((item) => item.normalizedUrl === url); return job && withEmployerCategory(job); }
   async findByFingerprint(fingerprint: string) { const job = [...this.jobs.values()].find((item) => item.fingerprint === fingerprint); return job && withEmployerCategory(job); }
-  async claimPostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution> {
+  async resolvePostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution> {
     const resolution = resolvePostingAliases(identity, this.postingAliases);
     if (resolution.outcome === 'quarantine') return resolution;
+    if (preferredJobId && preferredJobIdentityConflicts(identity, this.jobs.get(preferredJobId))) {
+      return {
+        outcome: 'quarantine', aliases: resolution.aliases,
+        conflictingCanonicalJobIds: [identity.canonicalJobId, preferredJobId].sort(),
+        reason: 'aliases-resolve-to-different-jobs',
+      };
+    }
     if (preferredJobId && resolution.outcome === 'merge' && resolution.canonicalJobId !== preferredJobId) {
       return {
         outcome: 'quarantine', aliases: resolution.aliases,
@@ -108,8 +143,55 @@ export class MemoryInternshipStore implements InternshipStore {
       };
     }
     const canonicalJobId = resolution.outcome === 'create' && preferredJobId ? preferredJobId : resolution.canonicalJobId;
-    for (const alias of resolution.aliases) this.postingAliases.set(alias, canonicalJobId);
     return { ...resolution, canonicalJobId };
+  }
+  async claimPostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution> {
+    const resolution = await this.resolvePostingIdentity(identity, preferredJobId);
+    if (resolution.outcome !== 'quarantine') for (const alias of resolution.aliases) this.postingAliases.set(alias, resolution.canonicalJobId);
+    return resolution;
+  }
+  async commitPostingObservation(input: PostingObservationCommit): Promise<PostingObservationCommitResult> {
+    if ('sourceId' in input) {
+      const incident: PostingIdentityIncident = {
+        incidentId: createHash('sha256').update(`identity-incident-v1:${input.sourceId}\0${input.externalId}\0${JSON.stringify(input.decision)}`).digest('hex'),
+        sourceId: input.sourceId, externalId: input.externalId, decision: input.decision,
+        occurrence: structuredClone(input.occurrence), recordedAt: input.decision.observedAt,
+      };
+      this.postingIdentityIncidents.set(incident.incidentId, incident);
+      return { outcome: 'quarantined', incident };
+    }
+    const resolution = input.identity
+      ? resolvePostingAliases(input.identity, this.postingAliases)
+      : { outcome: 'create' as const, canonicalJobId: input.job.jobId, aliases: [] };
+    const preferredConflict = input.identity && preferredJobIdentityConflicts(input.identity, this.jobs.get(input.job.jobId));
+    if (resolution.outcome === 'quarantine' || resolution.canonicalJobId !== input.job.jobId || preferredConflict) {
+      const decision: Extract<PostingIdentityDecision, { status: 'quarantined' }> = {
+        status: 'quarantined', reason: resolution.outcome === 'quarantine' ? resolution.reason : 'aliases-resolve-to-different-jobs',
+        contradictoryEvidence: resolution.outcome === 'quarantine' ? resolution.conflictingCanonicalJobIds : [resolution.canonicalJobId, input.job.jobId].sort(),
+        reviewFamilyKey: input.decision.status === 'unconfirmed' ? input.decision.reviewFamilyKey : input.decision.exactKey,
+        observedAt: input.decision.observedAt,
+      };
+      return this.commitPostingObservation({ decision, sourceId: input.occurrence.sourceId, externalId: input.occurrence.externalId, occurrence: input.occurrence.occurrence });
+    }
+    for (const alias of resolution.aliases) this.postingAliases.set(alias, resolution.canonicalJobId);
+    const projected = postingObservationProjection(this.jobs.get(input.job.jobId), input.job, input.occurrence);
+    this.jobs.set(input.job.jobId, structuredClone(projected));
+    this.occurrences.set(`${input.occurrence.sourceId}#${input.occurrence.externalId}`, structuredClone(input.occurrence));
+    if (input.decision.status === 'unconfirmed') {
+      const candidateId = createHash('sha256').update(`posting-review-family-v1:${input.decision.reviewFamilyKey}`).digest('hex');
+      const prior = this.postingIdentityReviewCandidates.get(candidateId);
+      this.postingIdentityReviewCandidates.set(candidateId, {
+        reviewFamilyKey: input.decision.reviewFamilyKey,
+        occurrenceKeys: new Set([...(prior?.occurrenceKeys ?? []), `${input.occurrence.sourceId}\0${input.occurrence.externalId}`]),
+        firstObservedAt: prior?.firstObservedAt && prior.firstObservedAt < input.decision.observedAt
+          ? prior.firstObservedAt : input.decision.observedAt,
+        lastObservedAt: prior?.lastObservedAt && prior.lastObservedAt > input.decision.observedAt
+          ? prior.lastObservedAt : input.decision.observedAt,
+      });
+    }
+    const notificationInserted = Boolean(input.notificationEvent && !this.notificationEvents.has(input.notificationEvent.eventId));
+    if (notificationInserted) this.notificationEvents.set(input.notificationEvent!.eventId, structuredClone(input.notificationEvent!));
+    return { outcome: 'committed', canonicalJobId: input.job.jobId, notificationInserted };
   }
   async putInternship(job: Internship) { const canonical = canonicalCatalogRecency(job); this.jobs.set(canonical.jobId, structuredClone(canonical)); }
   async getSourceOccurrences(sourceId: string) { return [...this.occurrences.values()].filter((value) => value.sourceId === sourceId).map((value) => structuredClone(value)); }
@@ -299,22 +381,61 @@ export class DynamoInternshipStore implements InternshipStore {
   }
   findByUrl(url: string) { return this.find('urlIndex', 'urlPk', `URL#${url}`); }
   findByFingerprint(fingerprint: string) { return this.find('fingerprintIndex', 'fingerprintPk', `FP#${fingerprint}`); }
+  private postingAliasKey(alias: string) {
+    return { pk: `POSTING_ALIAS#${createHash('sha256').update(alias).digest('hex')}`, sk: 'CLAIM' as const };
+  }
+  private async postingAliasClaims(aliases: string[]) {
+    if (!aliases.length) return new Map<string, string>();
+    const claims = new Map<string, string>();
+    let keys = aliases.map((alias) => this.postingAliasKey(alias));
+    do {
+      const result = await this.client.send(new BatchGetCommand({
+        RequestItems: { [this.tableName]: { Keys: keys, ConsistentRead: true } },
+      }));
+      for (const item of result.Responses?.[this.tableName] ?? []) {
+        if (typeof item.alias === 'string' && typeof item.canonicalJobId === 'string') claims.set(item.alias, item.canonicalJobId);
+      }
+      keys = (result.UnprocessedKeys?.[this.tableName]?.Keys as typeof keys | undefined) ?? [];
+    } while (keys.length);
+    return claims;
+  }
+  private async postingIdentityGuardJob(jobId: string) {
+    const result = await this.client.send(new GetCommand({
+      TableName: this.tableName, Key: { pk: `JOB#${jobId}`, sk: 'META' }, ConsistentRead: true,
+    }));
+    return result.Item?.job as Internship | undefined;
+  }
+  async resolvePostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution> {
+    const aliases = [...new Set(identity.aliases.map((item) => item.value))].sort();
+    const resolution = resolvePostingAliases(identity, await this.postingAliasClaims(aliases));
+    if (resolution.outcome === 'quarantine') return resolution;
+    if (preferredJobId && preferredJobIdentityConflicts(identity, await this.postingIdentityGuardJob(preferredJobId))) {
+      return {
+        outcome: 'quarantine', aliases: resolution.aliases,
+        conflictingCanonicalJobIds: [identity.canonicalJobId, preferredJobId].sort(),
+        reason: 'aliases-resolve-to-different-jobs',
+      };
+    }
+    if (preferredJobId && resolution.outcome === 'merge' && resolution.canonicalJobId !== preferredJobId) {
+      return {
+        outcome: 'quarantine', aliases: resolution.aliases,
+        conflictingCanonicalJobIds: [resolution.canonicalJobId, preferredJobId].sort(),
+        reason: 'aliases-resolve-to-different-jobs',
+      };
+    }
+    return { ...resolution, canonicalJobId: resolution.outcome === 'create' && preferredJobId ? preferredJobId : resolution.canonicalJobId };
+  }
   async claimPostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution> {
     const aliases = [...new Set(identity.aliases.map((item) => item.value))].sort();
-    const keyFor = (alias: string) => ({
-      pk: `POSTING_ALIAS#${createHash('sha256').update(alias).digest('hex')}`,
-      sk: 'CLAIM',
-    });
+    if (preferredJobId && preferredJobIdentityConflicts(identity, await this.postingIdentityGuardJob(preferredJobId))) {
+      return {
+        outcome: 'quarantine', aliases,
+        conflictingCanonicalJobIds: [identity.canonicalJobId, preferredJobId].sort(),
+        reason: 'aliases-resolve-to-different-jobs',
+      };
+    }
     for (let attempt = 0; attempt < 4; attempt += 1) {
-      const result = await this.client.send(new BatchGetCommand({
-        RequestItems: { [this.tableName]: { Keys: aliases.map(keyFor), ConsistentRead: true } },
-      }));
-      const items = result.Responses?.[this.tableName] ?? [];
-      const claims = new Map<string, string>();
-      for (const item of items) {
-        if (typeof item.alias !== 'string' || typeof item.canonicalJobId !== 'string') continue;
-        claims.set(item.alias, item.canonicalJobId);
-      }
+      const claims = await this.postingAliasClaims(aliases);
       const resolution = resolvePostingAliases(identity, claims);
       if (resolution.outcome === 'quarantine') return resolution;
       if (preferredJobId && resolution.outcome === 'merge' && resolution.canonicalJobId !== preferredJobId) {
@@ -331,7 +452,7 @@ export class DynamoInternshipStore implements InternshipStore {
         await this.client.send(new TransactWriteCommand({
           TransactItems: unclaimed.map((alias) => ({ Put: {
             TableName: this.tableName,
-            Item: { ...keyFor(alias), alias, canonicalJobId, claimedAt: new Date().toISOString() },
+            Item: { ...this.postingAliasKey(alias), alias, canonicalJobId, claimedAt: new Date().toISOString() },
             ConditionExpression: 'attribute_not_exists(pk)',
           } })),
         }));
@@ -341,6 +462,107 @@ export class DynamoInternshipStore implements InternshipStore {
       }
     }
     throw new Error('Unable to claim posting identity aliases');
+  }
+  async commitPostingObservation(input: PostingObservationCommit): Promise<PostingObservationCommitResult> {
+    if ('sourceId' in input) {
+      const incident: PostingIdentityIncident = {
+        incidentId: createHash('sha256').update(`identity-incident-v1:${input.sourceId}\0${input.externalId}\0${JSON.stringify(input.decision)}`).digest('hex'),
+        sourceId: input.sourceId, externalId: input.externalId, decision: input.decision,
+        occurrence: input.occurrence, recordedAt: input.decision.observedAt,
+      };
+      await this.client.send(new PutCommand({
+        TableName: this.tableName,
+        Item: { pk: `IDENTITY_INCIDENT#${incident.incidentId}`, sk: 'INCIDENT', kind: 'posting-identity-incident', incident },
+        ConditionExpression: 'attribute_not_exists(pk)',
+      })).catch((error: unknown) => {
+        if ((error as { name?: string }).name !== 'ConditionalCheckFailedException') throw error;
+      });
+      return { outcome: 'quarantined', incident };
+    }
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const aliases = input.identity ? [...new Set(input.identity.aliases.map((item) => item.value))].sort() : [];
+      const claims = await this.postingAliasClaims(aliases);
+      const resolution = input.identity
+        ? resolvePostingAliases(input.identity, claims)
+        : { outcome: 'create' as const, canonicalJobId: input.job.jobId, aliases: [] };
+      if (resolution.outcome === 'quarantine' || (resolution.outcome === 'merge' && resolution.canonicalJobId !== input.job.jobId)) {
+        const conflicting = resolution.outcome === 'quarantine' ? resolution.conflictingCanonicalJobIds : [resolution.canonicalJobId, input.job.jobId];
+        const decision: Extract<PostingIdentityDecision, { status: 'quarantined' }> = {
+          status: 'quarantined', reason: resolution.outcome === 'quarantine' ? resolution.reason : 'aliases-resolve-to-different-jobs',
+          contradictoryEvidence: [...new Set(conflicting)].sort(),
+          reviewFamilyKey: input.decision.status === 'confirmed' ? input.decision.exactKey : input.decision.reviewFamilyKey,
+          observedAt: input.decision.observedAt,
+        };
+        return this.commitPostingObservation({ decision, sourceId: input.occurrence.sourceId, externalId: input.occurrence.externalId, occurrence: input.occurrence.occurrence });
+      }
+      const eventExists = input.notificationEvent ? Boolean((await this.client.send(new GetCommand({
+        TableName: this.tableName, Key: { pk: `OUTBOX#${input.notificationEvent.eventId}`, sk: 'EVENT' }, ConsistentRead: true,
+      }))).Item) : false;
+      const storedJobResult = await this.client.send(new GetCommand({
+        TableName: this.tableName, Key: { pk: `JOB#${input.job.jobId}`, sk: 'META' }, ConsistentRead: true,
+      }));
+      const storedJob = storedJobResult.Item?.job as Internship | undefined;
+      if (input.identity && preferredJobIdentityConflicts(input.identity, storedJob)) {
+        const decision: Extract<PostingIdentityDecision, { status: 'quarantined' }> = {
+          status: 'quarantined', reason: 'aliases-resolve-to-different-jobs',
+          contradictoryEvidence: [input.identity.canonicalJobId, input.job.jobId].sort(),
+          reviewFamilyKey: input.decision.status === 'confirmed' ? input.decision.exactKey : input.decision.reviewFamilyKey,
+          observedAt: input.decision.observedAt,
+        };
+        return this.commitPostingObservation({ decision, sourceId: input.occurrence.sourceId, externalId: input.occurrence.externalId, occurrence: input.occurrence.occurrence });
+      }
+      const projectedJob = postingObservationProjection(storedJob, input.job, input.occurrence);
+      const reviewCandidate = input.decision.status === 'unconfirmed' ? {
+        candidateId: createHash('sha256').update(`posting-review-family-v1:${input.decision.reviewFamilyKey}`).digest('hex'),
+        reviewFamilyKey: input.decision.reviewFamilyKey,
+        evidenceHash: createHash('sha256').update(JSON.stringify({
+          reviewFamilyKey: input.decision.reviewFamilyKey,
+          reason: input.decision.reason,
+        })).digest('hex'),
+      } : undefined;
+      const transaction = [
+        ...aliases.map((alias) => claims.has(alias)
+          ? { ConditionCheck: {
+              TableName: this.tableName, Key: this.postingAliasKey(alias),
+              ConditionExpression: 'canonicalJobId = :canonicalJobId', ExpressionAttributeValues: { ':canonicalJobId': input.job.jobId },
+            } }
+          : { Put: {
+              TableName: this.tableName, Item: { ...this.postingAliasKey(alias), alias, canonicalJobId: input.job.jobId, claimedAt: input.decision.observedAt },
+              ConditionExpression: 'attribute_not_exists(pk)',
+            } }),
+        { Put: {
+          TableName: this.tableName, Item: internshipItem(projectedJob),
+          ConditionExpression: storedJob ? 'job = :expectedJob' : 'attribute_not_exists(pk)',
+          ...(storedJob ? { ExpressionAttributeValues: { ':expectedJob': storedJob } } : {}),
+        } },
+        { Put: { TableName: this.tableName, Item: { pk: `SOURCE#${input.occurrence.sourceId}`, sk: `OCCURRENCE#${input.occurrence.externalId}`, occurrence: input.occurrence } } },
+        ...(reviewCandidate ? [{ Update: {
+          TableName: this.tableName,
+          Key: { pk: `IDENTITY_REVIEW#${reviewCandidate.candidateId}`, sk: 'CANDIDATE' },
+          UpdateExpression: 'SET #kind = :kind, reviewFamilyKey = :family, evidenceHash = :evidenceHash, firstObservedAt = if_not_exists(firstObservedAt, :observedAt), lastObservedAt = :observedAt ADD occurrenceKeys :occurrenceKeys',
+          ExpressionAttributeNames: { '#kind': 'kind' },
+          ExpressionAttributeValues: {
+            ':kind': 'posting-identity-review-candidate',
+            ':family': reviewCandidate.reviewFamilyKey,
+            ':evidenceHash': reviewCandidate.evidenceHash,
+            ':observedAt': input.decision.observedAt,
+            ':occurrenceKeys': new Set([`${input.occurrence.sourceId}\0${input.occurrence.externalId}`]),
+          },
+        } }] : []),
+        ...(input.notificationEvent && !eventExists ? [{ Put: {
+          TableName: this.tableName, Item: { pk: `OUTBOX#${input.notificationEvent.eventId}`, sk: 'EVENT', event: input.notificationEvent },
+          ConditionExpression: 'attribute_not_exists(pk)',
+        } }] : []),
+      ];
+      if (transaction.length > 100) throw new Error('Posting observation exceeds the DynamoDB transaction limit');
+      try {
+        await this.client.send(new TransactWriteCommand({ TransactItems: transaction }));
+        return { outcome: 'committed', canonicalJobId: input.job.jobId, notificationInserted: Boolean(input.notificationEvent && !eventExists) };
+      } catch (error) {
+        if ((error as { name?: string }).name !== 'TransactionCanceledException' || attempt === 3) throw error;
+      }
+    }
+    throw new Error('Unable to commit posting observation');
   }
   async putInternship(job: Internship): Promise<void> {
     await this.client.send(new PutCommand({ TableName: this.tableName, Item: internshipItem(job) }));
@@ -461,7 +683,7 @@ export class DynamoInternshipStore implements InternshipStore {
     }
     await this.client.send(new PutCommand({
       TableName: this.tableName,
-      Item: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT', schemaVersion: 4, version, generatedAt, groupCount: groups.length },
+      Item: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT', schemaVersion: 5, version, generatedAt, groupCount: groups.length },
     }));
   }
   async listCatalogProjection(cursor?: string, limit = 25): Promise<CatalogProjectionPage | undefined> {
@@ -469,7 +691,7 @@ export class DynamoInternshipStore implements InternshipStore {
     const pointer = decoded ? undefined : await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT' }, ConsistentRead: true }));
     const version = decoded?.version ?? pointer?.Item?.version as string | undefined;
     const schemaVersion = decoded?.schemaVersion ?? pointer?.Item?.schemaVersion as number | undefined;
-    if (!version || schemaVersion !== 4) return undefined;
+    if (!version || schemaVersion !== 5) return undefined;
     const generatedAt = decoded?.generatedAt ?? pointer?.Item?.generatedAt as string | undefined;
     if (generatedAt && Date.now() - Date.parse(generatedAt) > 24 * 60 * 60 * 1_000) return undefined;
     const result = await this.client.send(new QueryCommand({
@@ -491,7 +713,7 @@ export class DynamoInternshipStore implements InternshipStore {
     const pointer = await this.client.send(new GetCommand({ TableName: this.tableName, Key: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT' }, ConsistentRead: true }));
     const version = pointer.Item?.version as string | undefined;
     const generatedAt = pointer.Item?.generatedAt as string | undefined;
-    if (!version || pointer.Item?.schemaVersion !== 4 || !generatedAt || Date.now() - Date.parse(generatedAt) > 24 * 60 * 60 * 1_000) return undefined;
+    if (!version || pointer.Item?.schemaVersion !== 5 || !generatedAt || Date.now() - Date.parse(generatedAt) > 24 * 60 * 60 * 1_000) return undefined;
     const result = await this.client.send(new GetCommand({
       TableName: this.tableName,
       Key: { pk: `CATALOG_PROJECTION#${version}`, sk: `GROUP#${groupId}` },

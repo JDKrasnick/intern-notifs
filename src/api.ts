@@ -3,7 +3,7 @@ import { DeleteObjectCommand, GetObjectCommand, S3Client, PutObjectCommand } fro
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { jobCategories, matchesJobFilter, parseJobFilter } from './core/filters.js';
 import { DynamoInternshipStore, DynamoReleaseStore, DynamoUserStore, type InternshipStore, type ReleaseStore, type UserStore } from './store.js';
-import { ACCOUNT_EXPORT_SCHEMA_VERSION, type AccountDataExport, type ApplicantProfile, type ApplicationRecord, type ApplicationStatus, type DeviceToken, type OccurrenceProvenance, type UserPreferences } from './types.js';
+import { ACCOUNT_EXPORT_SCHEMA_VERSION, type AccountDataExport, type ApplicantProfile, type ApplicationRecord, type ApplicationStatus, type DeviceToken, type Internship, type OccurrenceProvenance, type UserPreferences } from './types.js';
 import { EmployerIntegrationRegistry } from './providers.js';
 import { assistanceAvailability } from './application-assistance.js';
 import { createApplicationSession, transitionApplicationSession, type ApplicationFieldDraft, type ApplicationSession, type ApplicationSessionEvent } from './application-automation.js';
@@ -48,15 +48,38 @@ function catalogFilter(parameters: Record<string, string> | undefined): CatalogG
   };
 }
 
-async function completeCatalog(store: InternshipStore) {
-  if (store.listCatalog) return store.listCatalog();
+function identityPublished<T extends { postingIdentityStatus?: string }>(value: T, enabled: boolean): boolean {
+  return enabled || value.postingIdentityStatus !== 'unconfirmed';
+}
+
+async function completeCatalog(store: InternshipStore, identityUnconfirmedPublicationEnabled = true) {
+  if (store.listCatalog) return (await store.listCatalog()).filter((job) => identityPublished(job, identityUnconfirmedPublicationEnabled));
   const jobs = []; let cursor: string | undefined;
   do {
     const page = await store.listOpen?.(cursor, 50, 'open');
     if (!page) break;
-    jobs.push(...page.jobs); cursor = page.cursor;
+    jobs.push(...page.jobs.filter((job) => identityPublished(job, identityUnconfirmedPublicationEnabled))); cursor = page.cursor;
   } while (cursor);
   return jobs;
+}
+
+async function jobsPage(
+  store: InternshipStore,
+  cursor: string | undefined,
+  limit: number,
+  status: 'open' | 'closed',
+  query: Parameters<NonNullable<InternshipStore['listOpen']>>[3],
+  identityUnconfirmedPublicationEnabled: boolean,
+) {
+  const jobs: Internship[] = [];
+  let next = cursor;
+  do {
+    const page = await store.listOpen?.(next, Math.max(1, limit - jobs.length), status, query);
+    if (!page) return { jobs: [] };
+    jobs.push(...page.jobs.filter((job) => identityPublished(job, identityUnconfirmedPublicationEnabled)));
+    next = page.cursor;
+  } while (jobs.length < limit && next);
+  return { jobs, ...(next ? { cursor: next } : {}) };
 }
 
 async function projectedCatalogPage(store: InternshipStore, cursor: string | undefined, limit: number, filter: CatalogGroupFilter) {
@@ -94,10 +117,14 @@ function safeSession(session: ApplicationSession) {
   return safe;
 }
 
-function applicationSummary(application: ApplicationRecord, job: Awaited<ReturnType<NonNullable<InternshipStore['getJob']>>>) {
+function applicationSummary(
+  application: ApplicationRecord,
+  job: Awaited<ReturnType<NonNullable<InternshipStore['getJob']>>>,
+  identityUnconfirmedPublicationEnabled = true,
+) {
   const availability = !job ? 'catalog-review' as const
     : !job.open ? 'closed' as const
-      : catalogEligible(job) ? 'available' as const : 'catalog-review' as const;
+      : catalogEligible(job) && identityPublished(job, identityUnconfirmedPublicationEnabled) ? 'available' as const : 'catalog-review' as const;
   return {
     ...application,
     ...(job ? {
@@ -108,12 +135,15 @@ function applicationSummary(application: ApplicationRecord, job: Awaited<ReturnT
         location: job.location,
         season: job.season,
         open: job.open,
+        ...(job.postingIdentityStatus ? { postingIdentityStatus: job.postingIdentityStatus } : {}),
         availability,
         ...(availability !== 'catalog-review' ? {
           applyUrl: job.applyUrl,
           assistance: assistanceAvailability(job, application.applyMode),
         } : {
-          unavailableReason: 'InternNotifs couldn’t verify the official role page and is reviewing it.',
+          unavailableReason: job.postingIdentityStatus === 'unconfirmed' && !identityUnconfirmedPublicationEnabled
+            ? 'InternNotifs verified the employer and application page, but is still reviewing this listing’s exact posting identity.'
+            : 'InternNotifs couldn’t verify the official role page and is reviewing it.',
         }),
         sourceReferences: publicJob(job).sourceReferences.map(({ sourceId, sourceUrl, provenance, state }) => ({ sourceId, sourceUrl, provenance, state })),
       },
@@ -291,8 +321,10 @@ export interface ApiDependencies {
   integrations?: EmployerIntegrationRegistry;
   s3?: S3Client;
   now?: () => string;
+  identityUnconfirmedPublicationEnabled?: boolean;
 }
 export function createApiHandler(dependencies: ApiDependencies) {
+  const identityUnconfirmedPublicationEnabled = dependencies.identityUnconfirmedPublicationEnabled ?? true;
   const integrations = dependencies.integrations ?? new EmployerIntegrationRegistry();
   const documentStorage: DocumentStorage | undefined = dependencies.documentStorage ?? (dependencies.documentsBucket ? {
     async createUploadUrl(document) {
@@ -345,8 +377,8 @@ export function createApiHandler(dependencies: ApiDependencies) {
         if (query && query.length > 120) return reply(400, { message: 'q must be 120 characters or fewer' });
         const source = event.queryStringParameters?.source;
         if (source && !['all', 'direct', 'community', 'corroborated'].includes(source)) return reply(400, { message: 'source is not supported' });
-        const page = await dependencies.jobs.listOpen?.(event.queryStringParameters?.cursor, limit, status, { ...(query ? { query } : {}), ...(source ? { source: source as 'all' | 'direct' | 'community' | 'corroborated' } : {}) });
-        return reply(200, page ? { ...page, jobs: page.jobs.map(publicJob) } : { jobs: [] });
+        const page = await jobsPage(dependencies.jobs, event.queryStringParameters?.cursor, limit, status, { ...(query ? { query } : {}), ...(source ? { source: source as 'all' | 'direct' | 'community' | 'corroborated' } : {}) }, identityUnconfirmedPublicationEnabled);
+        return reply(200, { ...page, jobs: page.jobs.map(publicJob) });
       }
       if (method === 'GET' && path === '/catalog') {
         const requestedLimit = Number(event.queryStringParameters?.limit ?? 25);
@@ -358,12 +390,15 @@ export function createApiHandler(dependencies: ApiDependencies) {
         if (query && query.length > 120) return reply(400, { message: 'q must be 120 characters or fewer' });
         const source = event.queryStringParameters?.source;
         if (source && !['all', 'direct', 'community', 'corroborated'].includes(source)) return reply(400, { message: 'source is not supported' });
-        const filter = catalogFilter(event.queryStringParameters);
+        const filter = {
+          ...catalogFilter(event.queryStringParameters),
+          ...(!identityUnconfirmedPublicationEnabled ? { postingIdentityConfirmedOnly: true } : {}),
+        };
         const requestedOffset = Number(cursor ?? 0);
         if (!Number.isFinite(requestedOffset) || requestedOffset < 0 || !Number.isInteger(requestedOffset)) return reply(400, { message: 'cursor is invalid' });
         const projected = await projectedCatalogPage(dependencies.jobs, cursor, limit, filter);
         if (projected) return reply(200, { groups: projected.groups.map((group) => group.group), ...(projected.cursor ? { cursor: projected.cursor } : {}) });
-        const grouped = filterCatalogGroups(groupCatalogJobs(await completeCatalog(dependencies.jobs), { includeClosed: true }), filter);
+        const grouped = filterCatalogGroups(groupCatalogJobs(await completeCatalog(dependencies.jobs, identityUnconfirmedPublicationEnabled), { includeClosed: true }), filter);
         const page = grouped.slice(requestedOffset, requestedOffset + limit).map((group) => group.row);
         const nextOffset = requestedOffset + page.length;
         return reply(200, { groups: page, ...(nextOffset < grouped.length ? { cursor: String(nextOffset) } : {}) });
@@ -375,17 +410,25 @@ export function createApiHandler(dependencies: ApiDependencies) {
         const groupId = decodeURIComponent(catalogGroupMatch[1]!);
         const projected = await dependencies.jobs.getCatalogProjectionGroup?.(groupId);
         if (projected) {
-          const filtered = filterCatalogGroupDetails([projected], catalogFilter(event.queryStringParameters))[0];
+          const filtered = filterCatalogGroupDetails([projected], {
+            ...catalogFilter(event.queryStringParameters),
+            ...(!identityUnconfirmedPublicationEnabled ? { postingIdentityConfirmedOnly: true } : {}),
+          })[0];
           return filtered ? reply(200, filtered) : reply(404, { message: 'Catalog group not found' });
         }
-        const group = groupCatalogJobs(await completeCatalog(dependencies.jobs), { includeClosed: true }).find((candidate) => candidate.row.groupId === groupId);
-        const filtered = group && filterCatalogGroupDetails([catalogGroupDetails(group)], catalogFilter(event.queryStringParameters))[0];
+        const group = groupCatalogJobs(await completeCatalog(dependencies.jobs, identityUnconfirmedPublicationEnabled), { includeClosed: true }).find((candidate) => candidate.row.groupId === groupId);
+        const filtered = group && filterCatalogGroupDetails([catalogGroupDetails(group)], {
+          ...catalogFilter(event.queryStringParameters),
+          ...(!identityUnconfirmedPublicationEnabled ? { postingIdentityConfirmedOnly: true } : {}),
+        })[0];
         return filtered ? reply(200, filtered) : reply(404, { message: 'Catalog group not found' });
       }
       const jobMatch = path.match(/^\/jobs\/([^/]+)$/);
       if (method === 'GET' && jobMatch) {
         const job = await dependencies.jobs.getJob?.(decodeURIComponent(jobMatch[1]));
-        return job && catalogEligible(job) ? reply(200, { ...publicJob(job), assistance: assistanceAvailability(job) }) : reply(404, { message: 'Job not found' });
+        return job && catalogEligible(job) && identityPublished(job, identityUnconfirmedPublicationEnabled)
+          ? reply(200, { ...publicJob(job), assistance: assistanceAvailability(job) })
+          : reply(404, { message: 'Job not found' });
       }
       if (method === 'POST' && path === '/assist/exchange') {
         const body = parseBody(event);
@@ -427,11 +470,14 @@ export function createApiHandler(dependencies: ApiDependencies) {
         const release = await dependencies.releases?.getRelease(userId, releaseId);
         if (!release) return reply(404, { message: 'Release not found' });
         const jobs = (await Promise.all(release.jobIds.map((jobId) => dependencies.jobs.getJob(jobId))))
-          .filter((job): job is NonNullable<typeof job> => Boolean(job) && catalogEligible(job!));
+          .filter((job): job is NonNullable<typeof job> => Boolean(job)
+            && catalogEligible(job!)
+            && identityPublished(job!, identityUnconfirmedPublicationEnabled));
+        const visibleJobIds = new Set(jobs.map((job) => job.jobId));
         return reply(200, {
           releaseId: release.releaseId,
           createdAt: release.createdAt,
-          newJobIds: release.newJobIds,
+          newJobIds: release.newJobIds.filter((jobId) => visibleJobIds.has(jobId)),
           deepLink: `internnotifs://releases/${encodeURIComponent(release.releaseId)}`,
           // Mobile clients render the complete role list directly; grouped
           // metadata remains alongside it for collapsed release summaries.
@@ -465,7 +511,8 @@ export function createApiHandler(dependencies: ApiDependencies) {
           return reply(200, { jobs: [], groups: [], total: 0, hasMore: false, previousOpenedAt: null, openedAt });
         }
         const matches = (await dependencies.jobs.listOpenSince(previousOpenedAt, openedAt))
-          .filter((job) => matchesJobFilter(job, previous?.filter));
+          .filter((job) => identityPublished(job, identityUnconfirmedPublicationEnabled)
+            && matchesJobFilter(job, previous?.filter));
         // Keep launch fast if a source backfills many records; the Feed remains
         // the complete catalog and provides the explicit path to the remainder.
         const limit = 50;
@@ -498,12 +545,16 @@ export function createApiHandler(dependencies: ApiDependencies) {
         const requestedStatus = event.queryStringParameters?.status;
         if (requestedStatus !== undefined && !statuses.includes(requestedStatus as ApplicationStatus)) return reply(400, { message: `status must be one of ${statuses.join(', ')}` });
         const applications = (await dependencies.users.listApplications(userId)).filter((application) => !requestedStatus || application.status === requestedStatus);
-        const summaries = await Promise.all(applications.map(async (application) => applicationSummary(application, await dependencies.jobs.getJob?.(application.jobId))));
+        const summaries = await Promise.all(applications.map(async (application) => {
+          const job = await dependencies.jobs.getJob?.(application.jobId);
+          return applicationSummary(application, job, identityUnconfirmedPublicationEnabled);
+        }));
         return reply(200, { applications: summaries });
       }
       if (method === 'POST' && path === '/me/applications') {
         const body = parseBody(event); if (typeof body.jobId !== 'string') return reply(400, { message: 'jobId is required' });
-        const job = await dependencies.jobs.getJob?.(body.jobId); if (!job || !catalogEligible(job)) return reply(404, { message: 'Job not found' });
+        const job = await dependencies.jobs.getJob?.(body.jobId);
+        if (!job || !catalogEligible(job) || !identityPublished(job, identityUnconfirmedPublicationEnabled)) return reply(404, { message: 'Job not found' });
         const timestamp = now(); const existing = (await dependencies.users.listApplications(userId)).find((application) => application.jobId === job.jobId);
         const status = statuses.includes(body.status as ApplicationStatus) ? body.status as ApplicationStatus : existing?.status ?? 'saved';
         const application: ApplicationRecord = {
@@ -525,7 +576,9 @@ export function createApiHandler(dependencies: ApiDependencies) {
         if (application.status !== 'saved') return reply(409, { message: 'Only To Apply roles can start assistance' });
         const job = await dependencies.jobs.getJob?.(application.jobId);
         if (!job) return reply(404, { message: 'Job not found' });
-        if (!catalogEligible(job)) return reply(409, { message: 'Assistance is unavailable while InternNotifs reviews the official role page' });
+        if (!catalogEligible(job) || !identityPublished(job, identityUnconfirmedPublicationEnabled)) {
+          return reply(409, { message: 'Assistance is unavailable while InternNotifs reviews the official role page' });
+        }
         const body = parseBody(event);
         if (body.mode !== 'headed' && body.mode !== 'headless') return reply(400, { message: 'mode must be headed or headless' });
         const availability = assistanceAvailability(job, application.applyMode);
@@ -610,4 +663,10 @@ export function createApiHandler(dependencies: ApiDependencies) {
   };
 }
 
-export const handler = createApiHandler({ jobs: new DynamoInternshipStore(process.env.INTERNSHIPS_TABLE ?? ''), users: new DynamoUserStore(process.env.USERS_TABLE ?? ''), releases: new DynamoReleaseStore(process.env.USERS_TABLE ?? ''), documentsBucket: process.env.DOCUMENTS_BUCKET });
+export const handler = createApiHandler({
+  jobs: new DynamoInternshipStore(process.env.INTERNSHIPS_TABLE ?? ''),
+  users: new DynamoUserStore(process.env.USERS_TABLE ?? ''),
+  releases: new DynamoReleaseStore(process.env.USERS_TABLE ?? ''),
+  documentsBucket: process.env.DOCUMENTS_BUCKET,
+  identityUnconfirmedPublicationEnabled: process.env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
+});

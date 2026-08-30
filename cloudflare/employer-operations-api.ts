@@ -8,6 +8,8 @@ import { deriveCanonicalAdmission } from '../src/catalog-admission.js';
 import type { Internship } from '../src/types.js';
 import { parseEmployerBoardUrl } from '../src/employer/index.js';
 import { normalizeUrl } from '../src/core/normalize.js';
+import { resolvePostingIdentityDecision } from '../src/identity/registry.js';
+import type { SourceOccurrence, SourceOccurrenceState } from '../src/types.js';
 
 const json = (status: number, value: unknown) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
 
@@ -63,7 +65,7 @@ export async function employerAutomaticPublishingEligibility(store: D1EmployerSt
   }, now);
 }
 
-export async function closeEmployerOccurrence(jobs: InternshipStore, organizationId: string, submissionId?: string, applicationUrl?: string): Promise<void> {
+export async function closeEmployerOccurrence(jobs: InternshipStore, organizationId: string, submissionId?: string, applicationUrl?: string, changedAt = new Date().toISOString()): Promise<void> {
   if (!submissionId) return;
   const submissionsSource = `employer:${organizationId}:submission:${submissionId}`;
   const occurrences = await jobs.getSourceOccurrences(submissionsSource);
@@ -76,7 +78,25 @@ export async function closeEmployerOccurrence(jobs: InternshipStore, organizatio
     const job = await jobs.getJob(candidate);
     if (!job) continue;
     const references = job.sourceReferences.map((reference) => reference.sourceId === submissionsSource ? { ...reference, state: 'closed' as const } : reference);
-    await jobs.putInternship({ ...job, sourceReferences: references, open: references.some((reference) => reference.state === 'open') });
+    const closed = { ...job, sourceReferences: references, open: references.some((reference) => reference.state === 'open') };
+    const prior = occurrences.find((occurrence) => occurrence.jobId === candidate && occurrence.externalId === submissionId);
+    const decision = prior?.occurrence.postingIdentityDecision;
+    if (!prior || !decision || decision.status === 'quarantined') {
+      await jobs.putInternship(closed);
+      continue;
+    }
+    await jobs.commitPostingObservation({
+      decision,
+      ...(closed.postingIdentity ? { identity: closed.postingIdentity } : {}),
+      job: closed,
+      occurrence: {
+        ...prior,
+        occurrence: { ...prior.occurrence, state: 'closed' },
+        present: false,
+        consecutiveOmissions: Math.max(1, prior.consecutiveOmissions),
+        changedAt,
+      },
+    });
   }
 }
 
@@ -112,7 +132,7 @@ export async function runEmployerMaintenance(store: D1EmployerStore, jobs: Inter
         id: randomUUID(), organizationId: verification.organizationId, action: 'submission.quarantined', actorType: 'system',
         subjectType: 'submission', subjectId: submission.id, details: { reason: 'Employer verification expired' }, createdAt: timestamp,
       });
-      await closeEmployerOccurrence(jobs, verification.organizationId, submission.id, submission.applicationUrl);
+      await closeEmployerOccurrence(jobs, verification.organizationId, submission.id, submission.applicationUrl, timestamp);
     }
   }
   for (const submission of await store.listSubmissionsByState('published')) {
@@ -122,7 +142,7 @@ export async function runEmployerMaintenance(store: D1EmployerStore, jobs: Inter
       id: randomUUID(), organizationId: submission.organizationId, action: 'submission.closed', actorType: 'system',
       subjectType: 'submission', subjectId: submission.id, details: { reason: 'Application deadline passed' }, createdAt: timestamp,
     });
-    await closeEmployerOccurrence(jobs, submission.organizationId, submission.id, submission.applicationUrl);
+    await closeEmployerOccurrence(jobs, submission.organizationId, submission.id, submission.applicationUrl, timestamp);
   }
   const [, , , redactedOrganizations] = await Promise.all([
     store.deleteExpiredChallenges(now), store.deleteExpiredInvitations(now),
@@ -133,20 +153,45 @@ export async function runEmployerMaintenance(store: D1EmployerStore, jobs: Inter
 
 export async function publishEmployerSubmission(jobs: InternshipStore, submission: EmployerSubmission, timestamp: string): Promise<Internship> {
   const incoming = publishedInternshipFromSubmission(submission, timestamp);
-  const postingIdentity = {
-    provider: 'unknown' as const, canonicalApplicationUrl: incoming.normalizedUrl,
-    aliases: [{ kind: 'application-url' as const, value: incoming.normalizedUrl }], canonicalJobId: incoming.jobId,
-  };
-  const resolution = await jobs.claimPostingIdentity(postingIdentity, incoming.jobId);
+  const sourceReference = incoming.sourceReferences[0]!;
+  const identityResult = resolvePostingIdentityDecision({
+    sourceId: sourceReference.sourceId,
+    externalId: submission.id,
+    applicationUrl: incoming.applyUrl,
+    observedAt: timestamp,
+    employerId: submission.organizationId,
+    employerRequisitionId: submission.id,
+    employerRequisitionAuthoritative: true,
+  });
+  if (identityResult.decision.status !== 'confirmed' || !identityResult.identity) {
+    throw new Error('Published employer submission did not produce authoritative posting identity');
+  }
+  const postingIdentity = identityResult.identity;
+  const exactUrlMatch = await jobs.findByUrl(incoming.normalizedUrl);
+  // Exact URL is only an adoption bridge for an identity-unconfirmed role. A
+  // previously confirmed role may legitimately reuse its URL for a different
+  // authoritative requisition and must not be merged through URL syntax.
+  const adoptableJobId = exactUrlMatch?.postingIdentityStatus === 'unconfirmed' ? exactUrlMatch.jobId : undefined;
+  const resolution = await jobs.resolvePostingIdentity(postingIdentity, adoptableJobId);
   if (resolution.outcome === 'quarantine') throw new Error('Submission aliases conflict with more than one catalog role');
+  postingIdentity.canonicalJobId = resolution.canonicalJobId;
   const existing = await jobs.getJob(resolution.canonicalJobId);
+  const classifiedReference: SourceOccurrence = {
+    ...sourceReference,
+    postingIdentityDecision: identityResult.decision,
+  };
+  let job: Internship;
   if (existing) {
-    const duplicate = existing.sourceReferences.some((reference) => reference.sourceId === incoming.sourceReferences[0]!.sourceId);
-    const sourceReferences = duplicate ? existing.sourceReferences : [...existing.sourceReferences, incoming.sourceReferences[0]!];
-    const merged: Internship = {
+    const duplicate = existing.sourceReferences.findIndex((reference) => reference.sourceId === classifiedReference.sourceId);
+    const sourceReferences = duplicate >= 0
+      ? existing.sourceReferences.map((reference, index) => index === duplicate ? classifiedReference : reference)
+      : [...existing.sourceReferences, classifiedReference];
+    job = {
       ...existing,
       sourceReferences,
       admission: deriveCanonicalAdmission(sourceReferences, timestamp),
+      postingIdentity,
+      postingIdentityStatus: 'confirmed',
       workAuthorizationStatus: existing.workAuthorizationStatus && existing.workAuthorizationStatus !== 'unknown' ? existing.workAuthorizationStatus : incoming.workAuthorizationStatus,
       applicationDeadline: existing.applicationDeadline ?? incoming.applicationDeadline,
       graduationWindow: existing.graduationWindow ?? incoming.graduationWindow,
@@ -154,15 +199,45 @@ export async function publishEmployerSubmission(jobs: InternshipStore, submissio
       workMode: existing.workMode ?? incoming.workMode,
       open: true, lastSeenAt: timestamp,
     };
-    await jobs.putInternship(merged);
-    return merged;
+  } else {
+    job = {
+      ...incoming,
+      jobId: resolution.canonicalJobId,
+      postingIdentity,
+      postingIdentityStatus: 'confirmed',
+      sourceReferences: [classifiedReference],
+    };
   }
-  const created = { ...incoming, jobId: resolution.canonicalJobId, postingIdentity: { ...postingIdentity, canonicalJobId: resolution.canonicalJobId } };
-  await jobs.putInternshipWithNotificationEvent(created, {
-    eventId: createHash('sha256').update(`employer-submission:${submission.id}`).digest('hex'), sourceId: created.sourceReferences[0]!.sourceId,
-    externalId: submission.id, jobId: created.jobId, kind: 'new-job', createdAt: timestamp,
+  const priorOccurrence = (await jobs.getSourceOccurrences(classifiedReference.sourceId))
+    .find((candidate) => candidate.externalId === submission.id);
+  const occurrence: SourceOccurrenceState = {
+    sourceId: classifiedReference.sourceId,
+    externalId: submission.id,
+    jobId: job.jobId,
+    occurrence: classifiedReference,
+    present: true,
+    consecutiveOmissions: 0,
+    changedSnapshotHash: createHash('sha256').update(`employer-submission:${submission.id}:${submission.updatedAt}`).digest('hex'),
+    changedAt: timestamp,
+    firstObservedAt: priorOccurrence?.firstObservedAt ?? submission.publishedAt ?? timestamp,
+    firstObservedAtPrecision: priorOccurrence?.firstObservedAtPrecision ?? 'exact',
+  };
+  const committed = await jobs.commitPostingObservation({
+    decision: identityResult.decision,
+    identity: postingIdentity,
+    job,
+    occurrence,
+    notificationEvent: {
+      eventId: createHash('sha256').update(`posting-observation-v2|${job.jobId}|new-job`).digest('hex'),
+      sourceId: classifiedReference.sourceId,
+      externalId: submission.id,
+      jobId: job.jobId,
+      kind: 'new-job',
+      createdAt: timestamp,
+    },
   });
-  return created;
+  if (committed.outcome === 'quarantined') throw new Error('Submission aliases conflict with more than one catalog role');
+  return job;
 }
 
 export async function handleEmployerOperations(request: Request, dependencies: {
@@ -230,7 +305,7 @@ export async function handleEmployerOperations(request: Request, dependencies: {
         }
         for (const submission of await store.listSubmissions(orgId, 'published')) {
           await store.putSubmission({ ...submission, state: 'quarantined', reason: `Organization revoked: ${reason}`, updatedAt: timestamp });
-          await closeEmployerOccurrence(jobs, orgId, submission.id, submission.applicationUrl);
+          await closeEmployerOccurrence(jobs, orgId, submission.id, submission.applicationUrl, timestamp);
         }
       }
       await store.claimIdempotency(orgId, operation, key, timestamp, result);
@@ -335,7 +410,7 @@ export async function handleEmployerOperations(request: Request, dependencies: {
       const updated = { ...submission, state: decision as EmployerSubmission['state'], reason: reason || undefined, updatedAt: timestamp, ...(decision === 'published' ? { publishedAt: submission.publishedAt ?? timestamp } : {}) };
       const result: { submission: EmployerSubmission; jobId?: string } = { submission: updated };
       if (decision === 'published') result.jobId = (await publishEmployerSubmission(jobs, updated, timestamp)).jobId;
-      else await closeEmployerOccurrence(jobs, orgId, submission.id, submission.applicationUrl);
+      else await closeEmployerOccurrence(jobs, orgId, submission.id, submission.applicationUrl, timestamp);
       await store.putSubmission(updated, reviewerAudit(orgId, actor, `submission.${decision}`, 'submission', submission.id, timestamp, key, reason ? { reason } : undefined));
       await store.claimIdempotency(orgId, operation, key, timestamp, result);
       return json(200, result);
@@ -354,7 +429,7 @@ export async function handleEmployerOperations(request: Request, dependencies: {
         const reportedSubmission = report.submissionId ? await store.getSubmission(orgId, report.submissionId) : undefined;
         if (reportedSubmission) await store.putSubmission({ ...reportedSubmission, state: 'quarantined', reason: `Upheld report: ${reason}`, updatedAt: timestamp },
           reviewerAudit(orgId, actor, 'submission.quarantined', 'submission', reportedSubmission.id, timestamp, `${key}:submission`, { reason, reportId: report.id }));
-        await closeEmployerOccurrence(jobs, orgId, report.submissionId, reportedSubmission?.applicationUrl);
+        await closeEmployerOccurrence(jobs, orgId, report.submissionId, reportedSubmission?.applicationUrl, timestamp);
       }
       await store.claimIdempotency(orgId, operation, key, timestamp, result);
       return json(200, result);

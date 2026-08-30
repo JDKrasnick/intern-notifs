@@ -186,6 +186,13 @@ Every screen follows these rules. They are as important as colors and type.
 - Give each new card a small, one-time arrival moment: an 8 pt lift, a soft teal sheen that fades within 420 ms, and a compact sparkle-plus-**New** marker beside the company. Stagger only the first five cards by 80 ms; never loop, pulse, or use a full-card neon treatment.
 - Honor the device Reduce Motion preference by showing the card and static **New** marker without movement. The treatment uses opacity and transforms so it stays smooth without making the list feel busy.
 
+### Posting identity certainty
+
+- Treat posting identity as deduplication certainty, not as employer or application safety. Admission remains responsible for verifying that the employer and official application page are valid.
+- When a published role has `postingIdentityStatus: "unconfirmed"`, show a quiet shield-and-**Identity unconfirmed** secondary label on role cards, detail, and Saved. It is informational, accessible text—not a warning color, blocking state, or competing action.
+- On detail, explain: “We verified the employer and application page, but have not yet matched this listing to reviewed exact posting evidence. It may later be combined with another listing.” Keep **Apply on employer site** as the only primary action.
+- Group cards report the number of unconfirmed roles. Individual and grouped notifications use the same plain-language disclosure. An absent status is a legacy record and must not be presented as confirmed or unconfirmed.
+
 ### Buttons
 
 - Primary: 52 pt, 12 pt radius, ink fill, white semibold label.

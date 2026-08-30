@@ -391,7 +391,8 @@ export function renderPushTemplate(template: string, job: Internship, roleAbbrev
 }
 function renderPushDescription(template: string, job: Internship, roleAbbreviations: Record<string, string>) {
   const body = renderPushTemplate(template, job, roleAbbreviations);
-  return template.includes('{source}') ? body : `${body}\nSource: ${notificationSourceLabel(job)}`.trim();
+  const sourced = template.includes('{source}') ? body : `${body}\nSource: ${notificationSourceLabel(job)}`.trim();
+  return job.postingIdentityStatus === 'unconfirmed' ? `${sourced}\nIdentity unconfirmed` : sourced;
 }
 function pushMessage(job: Internship, templates: PushTemplates): PushMessage {
   const aliases = { ...defaultRoleAbbreviations, ...(templates.roleAbbreviations ?? {}) };
