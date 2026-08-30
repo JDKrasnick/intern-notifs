@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createDynamoDocumentClient, deletedUserTombstoneKey, DynamoInternshipStore, DynamoUserStore, MemoryUserStore } from '../src/store.js';
 import { buildPostingIdentity } from '../src/identity/posting.js';
 import { catalogGroupDetails, groupCatalogJobs } from '../src/catalog-groups.js';
-import type { DeliveryReceipt, Internship } from '../src/types.js';
+import type { DeliveryReceipt, Internship, PostingIdentityDecision, SourceOccurrenceState } from '../src/types.js';
 
 const job = (title = 'Software Engineering Intern', overrides: Partial<Internship> = {}): Internship => ({
   jobId: 'job-1', company: 'Acme', title, location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/job-1',
@@ -42,6 +42,45 @@ describe('DynamoDB persistence contract', () => {
         { pk: 'SOURCE#greenhouse-b', sk: 'CHECKPOINT' },
       ] },
     } });
+  });
+
+  it('commits the complete posting observation through one guarded DynamoDB transaction', async () => {
+    const { send, client } = fakeClient(); const store = new DynamoInternshipStore('jobs-table', client);
+    const identity = buildPostingIdentity({ applicationUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' });
+    const observedAt = '2026-08-29T12:00:00.000Z';
+    const decision: Exclude<PostingIdentityDecision, { status: 'quarantined' }> = {
+      status: 'confirmed', exactKey: 'provider:ashby:acme:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      evidenceKind: 'immutable-provider-id', provider: 'ashby', tenant: 'acme', contractId: 'posting-provider-ashby',
+      contractVersion: 1, approvalReference: 'registry:ashby:v1', evidenceHash: 'hash', observedAt,
+    };
+    const reference = {
+      sourceId: 'community', externalId: 'role-a', document: 'README', sourceUrl: 'https://source.example.test', row: 1,
+      company: 'Acme', title: 'Software Engineering Intern', location: 'Remote', season: 'summer-2027',
+      applyUrl: identity.canonicalApplicationUrl, compensation: { raw: '' }, state: 'open' as const,
+      postingIdentityDecision: decision,
+    };
+    const occurrence: SourceOccurrenceState = {
+      sourceId: reference.sourceId, externalId: reference.externalId, jobId: identity.canonicalJobId,
+      occurrence: reference, present: true, consecutiveOmissions: 0, changedSnapshotHash: 'snapshot', changedAt: observedAt,
+    };
+    const projected = job(reference.title, {
+      jobId: identity.canonicalJobId, applyUrl: reference.applyUrl, normalizedUrl: reference.applyUrl,
+      sourceReferences: [reference], postingIdentity: identity, postingIdentityStatus: 'confirmed',
+    });
+    send.mockResolvedValueOnce({ Responses: { 'jobs-table': [] } });
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({});
+    await expect(store.commitPostingObservation({
+      decision, identity, job: projected, occurrence,
+      notificationEvent: { eventId: 'event', sourceId: reference.sourceId, externalId: reference.externalId, jobId: identity.canonicalJobId, kind: 'new-job', createdAt: observedAt },
+    })).resolves.toMatchObject({ outcome: 'committed', notificationInserted: true });
+    const transaction = (send.mock.calls[3]?.[0] as TransactWriteCommand).input.TransactItems ?? [];
+    expect(transaction).toEqual(expect.arrayContaining([
+      expect.objectContaining({ Put: expect.objectContaining({ ConditionExpression: 'attribute_not_exists(pk)', Item: expect.objectContaining({ pk: `JOB#${identity.canonicalJobId}` }) }) }),
+      expect.objectContaining({ Put: expect.objectContaining({ Item: expect.objectContaining({ pk: 'SOURCE#community', sk: 'OCCURRENCE#role-a' }) }) }),
+      expect.objectContaining({ Put: expect.objectContaining({ ConditionExpression: 'attribute_not_exists(pk)', Item: expect.objectContaining({ pk: 'OUTBOX#event' }) }) }),
+    ]));
   });
 
   it('writes canonical and query-index keys only for open technical roles', async () => {
@@ -84,9 +123,9 @@ describe('DynamoDB persistence contract', () => {
       expect.objectContaining({ PutRequest: { Item: expect.objectContaining({ pk: expect.stringContaining('CATALOG_PROJECTION#'), sk: expect.stringContaining('ORDER#'), details }) } }),
       expect.objectContaining({ PutRequest: { Item: expect.objectContaining({ pk: expect.stringContaining('CATALOG_PROJECTION#'), sk: expect.stringContaining('GROUP#'), details }) } }),
     ]));
-    expect((send.mock.calls[1]?.[0] as PutCommand).input.Item).toMatchObject({ pk: 'CATALOG_PROJECTION', sk: 'CURRENT', schemaVersion: 4, groupCount: 1 });
+    expect((send.mock.calls[1]?.[0] as PutCommand).input.Item).toMatchObject({ pk: 'CATALOG_PROJECTION', sk: 'CURRENT', schemaVersion: 5, groupCount: 1 });
 
-    send.mockResolvedValueOnce({ Item: { schemaVersion: 4, version: 'version-a', generatedAt: new Date().toISOString() } });
+    send.mockResolvedValueOnce({ Item: { schemaVersion: 5, version: 'version-a', generatedAt: new Date().toISOString() } });
     send.mockResolvedValueOnce({ Items: [{ details }] });
     expect(await store.listCatalogProjection!(undefined, 1)).toMatchObject({ groups: [details] });
     expect((send.mock.calls[2]?.[0] as GetCommand).input).toMatchObject({ Key: { pk: 'CATALOG_PROJECTION', sk: 'CURRENT' }, ConsistentRead: true });
@@ -175,7 +214,9 @@ describe('DynamoDB persistence contract', () => {
     send.mockResolvedValueOnce({ Responses: { 'jobs-table': [] } });
     const resolution = await store.claimPostingIdentity(identity, 'legacy-job');
     expect(resolution).toMatchObject({ outcome: 'create', canonicalJobId: 'legacy-job' });
-    const transaction = (send.mock.calls[1]?.[0] as TransactWriteCommand).input.TransactItems ?? [];
+    const transactionCommand = send.mock.calls.map(([command]) => command)
+      .find((command) => command.constructor.name === 'TransactWriteCommand') as TransactWriteCommand;
+    const transaction = transactionCommand.input.TransactItems ?? [];
     expect(transaction.length).toBeGreaterThan(1);
     expect(transaction).toEqual(expect.arrayContaining([
       expect.objectContaining({ Put: expect.objectContaining({

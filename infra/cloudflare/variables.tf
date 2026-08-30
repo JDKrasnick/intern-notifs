@@ -68,6 +68,12 @@ variable "gmail_enabled" {
   default     = false
 }
 
+variable "identity_unconfirmed_publication_enabled" {
+  description = "Publishes and alerts admission-valid roles that do not yet have reviewed exact posting identity."
+  type        = bool
+  default     = false
+}
+
 variable "gmail_client_id" {
   description = "Google OAuth web client identifier. The client secret remains a Worker secret binding."
   type        = string

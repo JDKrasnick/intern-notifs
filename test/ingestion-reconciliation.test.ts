@@ -15,7 +15,7 @@ const listing = (sourceId: string, overrides: Partial<ProcessedListing> = {}): P
   title: 'Software Engineering Intern',
   location: 'Remote',
   season: 'summer-2027',
-  applyUrl: 'https://careers.example.test/role-1',
+  applyUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
   compensation: { raw: '' },
   requirements: { requiresUsCitizenship: false, advancedDegreeRequired: false },
   state: 'open',
@@ -146,10 +146,10 @@ describe('snapshot reconciliation', () => {
 
     expect([...store.jobs.values()][0]).toMatchObject({ technical: true, open: true });
     expect((await store.listOpen()).jobs).toHaveLength(1);
-    expect([...store.jobs.values()][0]?.sourceReferences).toEqual([
+    expect([...store.jobs.values()][0]?.sourceReferences).toEqual(expect.arrayContaining([
       expect.objectContaining({ sourceId: 'source-technical', technical: true }),
       expect.objectContaining({ sourceId: 'source-shelved', technical: false }),
-    ]);
+    ]));
   });
 
   it('closes a Markdown occurrence the connector stops listing', async () => {
@@ -189,7 +189,39 @@ describe('snapshot reconciliation', () => {
     expect(store.jobs.size).toBe(1);
     expect(store.notificationEvents.size).toBe(1);
     expect([...store.jobs.values()][0]?.sourceReferences.map((reference) => reference.document))
-      .toEqual(['README.md', 'INTERN_INTL.md']);
+      .toEqual(['INTERN_INTL.md', 'README.md']);
+  });
+
+  it('keeps the canonical alert tombstone when one duplicate occurrence commit fails', async () => {
+    class FailingStore extends MemoryInternshipStore {
+      fail = true;
+      override async commitPostingObservation(input: Parameters<MemoryInternshipStore['commitPostingObservation']>[0]) {
+        if (this.fail && !('sourceId' in input)) {
+          this.fail = false;
+          throw new Error('first duplicate commit failed');
+        }
+        return super.commitPostingObservation(input);
+      }
+    }
+    const store = new FailingStore();
+    await store.putCheckpoint({ sourceId: 'source-a', successfulFetches: 1, lastRowCount: 0 });
+    const adapter = new MutableAdapter('source-a', [
+      listing('source-a', { externalId: 'README.md:role-1', document: 'README.md' }),
+      listing('source-a', { externalId: 'INTERN_INTL.md:role-1', document: 'INTERN_INTL.md' }),
+    ]);
+
+    const failed = await new IngestionRunner([adapter], store).run();
+    expect(failed.failures).toEqual(['first duplicate commit failed']);
+    expect(store.jobs.size).toBe(1);
+    expect(store.notificationEvents.size).toBe(1);
+    expect(store.occurrences.size).toBe(1);
+    expect((await store.getCheckpoint('source-a'))?.lastRowCount).toBe(0);
+
+    const retried = await new IngestionRunner([adapter], store).run();
+    expect(retried.newJobs).toEqual([]);
+    expect(store.jobs.size).toBe(1);
+    expect(store.notificationEvents.size).toBe(1);
+    expect(store.occurrences.size).toBe(2);
   });
 
   it('updates the stored season when a source correction arrives', async () => {
@@ -246,9 +278,9 @@ describe('snapshot reconciliation', () => {
   it('does not advance a checkpoint or duplicate an outbox event after a partial write failure', async () => {
     class FailingStore extends MemoryInternshipStore {
       fail = true;
-      override async putSourceOccurrence(value: SourceOccurrenceState) {
+      override async commitPostingObservation(input: Parameters<MemoryInternshipStore['commitPostingObservation']>[0]) {
         if (this.fail) { this.fail = false; throw new Error('occurrence write failed'); }
-        return super.putSourceOccurrence(value);
+        return super.commitPostingObservation(input);
       }
     }
     const store = new FailingStore();
@@ -256,11 +288,13 @@ describe('snapshot reconciliation', () => {
     const adapter = new MutableAdapter('source-a', [listing('source-a')]);
     const failed = await new IngestionRunner([adapter], store).run();
     expect(failed.failures).toEqual(['occurrence write failed']);
-    expect(failed.newJobs).toHaveLength(1);
+    expect(failed.newJobs).toEqual([]);
+    expect(store.jobs.size).toBe(0);
+    expect(store.occurrences.size).toBe(0);
     expect((await store.getCheckpoint('source-a'))?.lastRowCount).toBe(0);
 
     const retried = await new IngestionRunner([adapter], store).run();
-    expect(retried.newJobs).toEqual([]);
+    expect(retried.newJobs).toHaveLength(1);
     expect(store.notificationEvents.size).toBe(1);
     expect((await store.getCheckpoint('source-a'))?.lastRowCount).toBe(1);
 
@@ -274,15 +308,12 @@ describe('snapshot reconciliation', () => {
   it('retries an atomic job and outbox write without exposing pending delivery state first', async () => {
     class FailingStore extends MemoryInternshipStore {
       fail = true;
-      override async putInternshipWithNotificationEvent(
-        job: Internship,
-        event: Parameters<MemoryInternshipStore['putInternshipWithNotificationEvent']>[1],
-      ) {
+      override async commitPostingObservation(input: Parameters<MemoryInternshipStore['commitPostingObservation']>[0]) {
         if (this.fail) {
           this.fail = false;
           throw new Error('outbox transaction failed');
         }
-        return super.putInternshipWithNotificationEvent(job, event);
+        return super.commitPostingObservation(input);
       }
     }
     const store = new FailingStore();

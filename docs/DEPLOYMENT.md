@@ -332,10 +332,15 @@ from deployment and this code change.
 
 ### Posting identity D1 repair
 
-Deploy the runtime identity support first. Greenhouse and Lever workers then
-retain reviewed board/site and immutable public posting evidence, while legacy
-IDs can resolve through permanent one-hop aliases after consolidation. The
-operational repair runs only against active D1; retained DynamoDB resources are
+Deploy migration `0010_posting_identity.sql` and the runtime identity support
+first, with `IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED=false`. Greenhouse, Lever,
+and Ashby workers then retain contract-versioned immutable posting evidence;
+reviewed Workday/ByteDance routes, authoritative employer requisitions, and
+checked-in canonical-URL approvals use the same provider-neutral registry.
+Unrecognized URL families remain source-local and enter the sanitized review
+queue; they do not mint cross-source aliases. Legacy IDs can resolve through
+permanent one-hop aliases only after guarded consolidation. The operational
+repair runs only against active D1; retained DynamoDB resources are
 rollback/export sources and must not receive this repair.
 
 The default command calls the protected Worker endpoint in read-only mode. It
@@ -354,6 +359,25 @@ Provider identity does not choose any of those fields. Do not apply while
 `presentationDisagreements` is non-empty; the endpoint also refuses that apply.
 Keep the production dry run for the combined #50/#120 review.
 
+Run the deterministic integrity audit against the same snapshot before any
+apply and archive its legacy/classified counts. Exit status `2` is expected
+while legacy occurrences still require backfill; it also reports any exact
+duplicate, duplicate alert, alias conflict, untracked quarantine, presentation
+blocker, occurrence-coverage regression, or job/occurrence identity-projection
+mismatch that must be resolved before activation. The gate also requires zero
+`duplicateOccurrenceReferences`, keyed by the durable `(sourceId, externalId)`
+identity rather than an upstream document row. `unknownUrlFamilyCandidates` is
+computed from the dry run's planned classifications, so repeated unknown or
+custom URL families are available for review before any write:
+
+```bash
+npm run audit:posting-identity
+```
+
+Archive the versioned report, its snapshot digest, repair token, exact write
+count, and gate result. A skipped or unavailable live identity contract is
+missing evidence, not a passing verification.
+
 Only a dry run with zero conflicts and zero unresolved presentation groups may
 be applied, using all three exact guards copied from that report:
 
@@ -365,12 +389,16 @@ npm run migrate:posting-identity -- --scope identity --apply \
 ```
 
 After the identity phase verifies at zero changes, repeat the same preview and
-guarded apply with `--scope occurrences`. This second bounded phase materializes
-authoritative source-occurrence evidence and canonical URL aliases on the jobs;
-it also corrects an explicitly named multi-season value from official evidence.
-It does not change notification state or the outbox. Splitting the phases keeps
-each production invocation below D1's paid query limit. Finally run the default
-`all` dry run and require zero changes.
+guarded apply with `--scope occurrences`. This second phase owns only durable
+source-occurrence decisions and their synchronized job references; identity
+aliases, duplicate consolidation, and user-record remaps remain in the first
+phase. It never promotes an ordinary normalized URL to identity evidence and
+contains no employer-specific repair exception. It does not insert, reset, or
+replay notification/outbox work. Both phases stage exact before-images and use
+guarded set-based writes, keeping a production-sized invocation below D1's
+query limit. Finally run the default `all` dry run and require zero changes,
+zero legacy occurrences, zero `projectionMismatches`, zero
+`duplicateOccurrenceReferences`, and a passing gate.
 
 For eligible groups whose presentation already agrees, the repair preserves the
 oldest catalog job, merges source references,
@@ -394,6 +422,14 @@ legacy job IDs through `GET /jobs/{jobId}`, representative Greenhouse standard,
 applications, releases, `GET /catalog?limit=1`, and one returned
 `/catalog/groups/{groupId}`. Never put the operations secret in Git,
 documentation, or shell history.
+
+Ship and verify the compatible mobile/web client before changing
+`IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED` to `true`. In the disabled state,
+new identity-unconfirmed observations are retained for review but excluded from
+catalog and alert publication. Before activation, verify light/dark mode, large
+text, card/detail/Saved labels, grouped unconfirmed counts, and individual and
+grouped push copy on iOS and Android. The owner performs physical-device QA and
+approves both the guarded production manifest and the flag change.
 
 After the infrastructure deployment, wait for `CatalogGroupProjectionSchedule`
 or invoke the notifier once with `{"command":"refresh-catalog-groups"}`. Verify

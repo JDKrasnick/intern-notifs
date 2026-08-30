@@ -112,6 +112,19 @@ describe('employer channel API', () => {
     expect(await replay.json()).toMatchObject({ replayed: true });
     expect([...jobs.jobs.values()][0]?.sourceReferences).toHaveLength(1);
 
+    const reusedUrlSubmission = await handleEmployerApi(request(`/employer/organizations/${orgId}/submissions`, {
+      company: 'Acme', title: 'Backend Engineering Intern', programType: 'internship', discipline: 'software',
+      location: 'Remote', workMode: 'remote', season: 'summer-2027', applicationUrl: 'https://careers.acme.test/apply/1',
+      deadline: 'rolling', workAuthorization: 'unknown', submit: true,
+    }, 'submission-reused-url'), dependencies);
+    const reusedUrlBody = await reusedUrlSubmission.json() as { submission: { submissionId: string } };
+    const reusedUrlDecision = await handleEmployerOperations(request(
+      `/operations/employers/organizations/${orgId}/submissions/${reusedUrlBody.submission.submissionId}/decision`,
+      { decision: 'published' }, 'publish-reused-url',
+    ), operations({ store, jobs, actor: 'reviewer', now: at }));
+    expect(reusedUrlDecision.status).toBe(200);
+    expect(jobs.jobs.size).toBe(2);
+
     const list = await handleEmployerApi(new Request('https://api.test/employer/organizations'), dependencies);
     expect(await list.json()).toMatchObject({ organizations: [{ organizationId: orgId, role: 'owner', verificationState: 'verified' }] });
     const revoked = await handleEmployerOperations(request(`/operations/employers/organizations/${orgId}/verification/decision`,

@@ -2784,6 +2784,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
         "Environment": {
           "Variables": {
             "GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME": "/intern-notifs/grouped-notification-user-ids",
+            "IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED": "false",
             "INTERNSHIPS_TABLE": {
               "Ref": "InternshipsB67F358B",
             },

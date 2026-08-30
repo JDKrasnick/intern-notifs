@@ -1,6 +1,7 @@
 const args = new Set(process.argv.slice(2));
 const value = (name: string) => process.argv[process.argv.indexOf(name) + 1];
 const apply = args.has('--apply');
+const gate = args.has('--gate');
 const repairToken = args.has('--repair-token') ? value('--repair-token') : undefined;
 const expectedChanges = args.has('--expected-changes') ? Number(value('--expected-changes')) : undefined;
 const expectedDuplicateJobs = args.has('--expected-duplicate-jobs') ? Number(value('--expected-duplicate-jobs')) : undefined;
@@ -20,3 +21,7 @@ const response = await fetch(`${baseUrl.replace(/\/$/u, '')}/internal/posting-id
 const body = await response.text();
 console.log(body);
 if (!response.ok) process.exitCode = 1;
+else if (gate) {
+  const report = JSON.parse(body) as { gate?: { passed?: boolean } };
+  if (report.gate?.passed !== true) process.exitCode = 2;
+}

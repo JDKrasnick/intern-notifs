@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createApiHandler } from '../src/api.js';
-import { MemoryInternshipStore, MemoryUserStore } from '../src/store.js';
+import { MemoryInternshipStore, MemoryReleaseStore, MemoryUserStore } from '../src/store.js';
 import type { Internship } from '../src/types.js';
 
 const job: Internship = { jobId: 'job-1', company: 'Acme', title: 'Software Intern', location: 'Remote', season: 'summer-2027', applyUrl: 'https://apply.example.test/role', normalizedUrl: 'https://apply.example.test/role', fingerprint: 'acme', compensation: { raw: '' }, sourceReferences: [], open: true, firstSeenAt: '2026-07-19T00:00:00.000Z', lastSeenAt: '2026-07-19T00:00:00.000Z', notification: { smsPending: false, digestPending: false } };
@@ -11,6 +11,32 @@ const hasUndefined = (value: unknown): boolean =>
   (value !== null && typeof value === 'object' && Object.values(value).some(hasUndefined));
 
 describe('public API ownership boundary', () => {
+  it('keeps identity-unconfirmed roles in shadow until the rollout flag is enabled', async () => {
+    const jobs = new MemoryInternshipStore();
+    const users = new MemoryUserStore();
+    const unconfirmed = { ...job, postingIdentityStatus: 'unconfirmed' as const };
+    await jobs.putInternship(unconfirmed);
+    await users.putApplication('student', { applicationId: 'saved-shadow', jobId: job.jobId, status: 'saved', createdAt: job.firstSeenAt, updatedAt: job.lastSeenAt });
+    await users.putPreferences({
+      userId: 'student', filter: {}, alertsEnabled: false, onboardingComplete: true,
+      lastCatalogOpenedAt: '2026-07-18T00:00:00.000Z', updatedAt: '2026-07-18T00:00:00.000Z',
+    });
+    const releases = new MemoryReleaseStore();
+    await releases.putRelease({ releaseId: 'shadow-release', userId: 'student', jobIds: [job.jobId], newJobIds: [job.jobId], createdAt: job.lastSeenAt });
+    const shadow = createApiHandler({ jobs, users, releases, identityUnconfirmedPublicationEnabled: false, now: () => '2026-07-20T00:00:00.000Z' });
+    expect(JSON.parse((await shadow(event(undefined, 'GET', '/jobs'))).body).jobs).toEqual([]);
+    expect((await shadow(event(undefined, 'GET', `/jobs/${job.jobId}`))).statusCode).toBe(404);
+    expect(JSON.parse((await shadow(event('student', 'GET', '/me/applications'))).body).applications[0].job)
+      .toMatchObject({ availability: 'catalog-review' });
+    expect(JSON.parse((await shadow(event('student', 'GET', '/me/releases/shadow-release'))).body))
+      .toMatchObject({ jobs: [], newJobIds: [] });
+    expect(JSON.parse((await shadow(event('student', 'POST', '/me/opening'))).body).jobs).toEqual([]);
+    expect((await shadow(event('student', 'POST', '/me/applications', { jobId: job.jobId }))).statusCode).toBe(404);
+    expect((await shadow(event('student', 'POST', '/me/applications/saved-shadow/assistance-sessions', { mode: 'headed' }))).statusCode).toBe(409);
+    const active = createApiHandler({ jobs, users, identityUnconfirmedPublicationEnabled: true });
+    expect(JSON.parse((await active(event(undefined, 'GET', '/jobs'))).body).jobs).toMatchObject([{ jobId: job.jobId }]);
+  });
+
   it('retains quarantined roles in Saved without an unsafe handoff or assistance controls', async () => {
     const jobs = new MemoryInternshipStore(); const users = new MemoryUserStore();
     const review = { ...job, admission: {

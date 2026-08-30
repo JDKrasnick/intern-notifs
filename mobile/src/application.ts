@@ -6,6 +6,7 @@ export type ApplicationJobSummary = {
   open: boolean;
   availability?: 'available' | 'closed' | 'catalog-review';
   unavailableReason?: string;
+  postingIdentityStatus?: 'confirmed' | 'unconfirmed';
   sourceReferences?: Array<{ sourceId: string; sourceUrl: string }>;
 };
 

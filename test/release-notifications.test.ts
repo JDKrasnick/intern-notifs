@@ -47,6 +47,20 @@ describe('release notification pipeline domain', () => {
     expect(renderReleasePush(grouped)).toMatchObject({ title: 'Google posted 4 matching roles', data: { destination: 'release', url: `internnotifs://releases/${release.releaseId}` } });
   });
 
+  it('discloses individual and mixed-group unconfirmed identity without classifying legacy roles', () => {
+    const individual = personalizeRelease(createCandidateRelease([
+      { ...job('one', 'Software Intern'), postingIdentityStatus: 'unconfirmed' },
+    ], new Date('2026-08-23T12:00:00.000Z')), 'student', {})[0]!;
+    expect(renderReleasePush(individual).body).toContain('Identity unconfirmed');
+    const grouped = personalizeRelease(createCandidateRelease([
+      { ...job('1', 'Software Intern', 'Summer 2027', ['Undergraduate']), postingIdentityStatus: 'unconfirmed' },
+      job('2', 'ML Intern', 'Summer 2027', ['Undergraduate']),
+      job('3', 'Product Intern', 'Summer 2027', ['Undergraduate']),
+      job('4', 'Quant Intern', 'Summer 2027', ['Undergraduate']),
+    ], new Date('2026-08-23T12:00:00.000Z')), 'student', {})[0]!;
+    expect(renderReleasePush(grouped).body).toContain('1 role: identity unconfirmed.');
+  });
+
   it('uses the current structured education contract when forming cohorts', () => {
     const identity = (level: 'undergraduate' | 'doctoral'): InternshipIdentity => ({
       company: { canonicalId: 'google', displayName: { value: 'Google', provenance: [] } },

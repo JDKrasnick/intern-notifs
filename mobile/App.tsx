@@ -104,6 +104,7 @@ type Job = {
   lastSeenAt: string;
   applicationUrlValidatedAt?: string;
   invalidApplicationUrl?: string;
+  postingIdentityStatus?: "confirmed" | "unconfirmed";
   sourceReferences: Array<{
     sourceId: string;
     provenance?: "official-ats" | "official-structured" | "employer-submitted" | "reviewed-community";
@@ -124,6 +125,7 @@ type CatalogGroupRow = {
   seasons: string[];
   education: CatalogEducation[];
   roleCount: number;
+  unconfirmedRoleCount: number;
   titles: string[];
   disciplines: string[];
   locations: string[];
@@ -161,6 +163,7 @@ type CatalogGroupRole = {
   sourceReferences: Job["sourceReferences"];
   applicationUrlValidatedAt?: string;
   invalidApplicationUrl?: string;
+  postingIdentityStatus?: "confirmed" | "unconfirmed";
 };
 type CatalogGroupDetails = { group: CatalogGroupRow; roles: CatalogGroupRole[] };
 type Application = {
@@ -372,6 +375,15 @@ function JobSource({ source }: { source: ReturnType<typeof sourcePresentation> }
   );
 }
 
+function IdentityTrustLabel() {
+  return (
+    <View style={styles.identityTrustRow} accessibilityLabel="Identity unconfirmed">
+      <Ionicons name="shield-outline" size={14} color={colors.muted} />
+      <Text style={styles.identityTrustText}>Identity unconfirmed</Text>
+    </View>
+  );
+}
+
 function openAppSettings() {
   void Linking.openSettings().catch(() => {
     Alert.alert("Could not open Settings", "Open your device settings and select InternNotifs.");
@@ -517,7 +529,7 @@ function JobCard({
       >
         <TouchableOpacity
           accessibilityRole="button"
-          accessibilityLabel={`${recencyBadge ? `${recencyBadge} role, ` : ""}${display.title} at ${display.company}, ${display.location}, ${postingTiming.summary}, ${source.primary}${source.corroboration ? ", corroborated by a community listing" : ""}${applicationStatus ? `, ${applicationStatus}` : ""}`}
+          accessibilityLabel={`${recencyBadge ? `${recencyBadge} role, ` : ""}${display.title} at ${display.company}, ${display.location}, ${postingTiming.summary}, ${source.primary}${source.corroboration ? ", corroborated by a community listing" : ""}${job.postingIdentityStatus === "unconfirmed" ? ", identity unconfirmed" : ""}${applicationStatus ? `, ${applicationStatus}` : ""}`}
           accessibilityHint={
             canSaveForWeb && canHideLocally
               ? "Swipe left to save this role for the web app, or swipe right to hide it on this device."
@@ -554,6 +566,7 @@ function JobCard({
             {display.location} · {display.season}
           </Text>
           <JobSource source={source} />
+          {job.postingIdentityStatus === "unconfirmed" ? <IdentityTrustLabel /> : null}
           <Text style={styles.postingTiming}>{postingTiming.summary}</Text>
           {!job.open ? <Text style={styles.closedStatus}>Closed</Text> : null}
           {display.compensation ? (
@@ -595,6 +608,7 @@ function catalogRoleJob(role: CatalogGroupRole): Job {
     sourceReferences: role.sourceReferences ?? [],
     ...(role.applicationUrlValidatedAt ? { applicationUrlValidatedAt: role.applicationUrlValidatedAt } : {}),
     ...(role.invalidApplicationUrl ? { invalidApplicationUrl: role.invalidApplicationUrl } : {}),
+    ...(role.postingIdentityStatus ? { postingIdentityStatus: role.postingIdentityStatus } : {}),
   };
 }
 
@@ -630,7 +644,7 @@ function CatalogGroupCard({
   return (
     <TouchableOpacity
       accessibilityRole="button"
-      accessibilityLabel={`${groupCompany}, ${label}, ${boundedCatalogText(groupTitles.join(", "), 480)}`}
+      accessibilityLabel={`${groupCompany}, ${label}, ${boundedCatalogText(groupTitles.join(", "), 480)}${group.unconfirmedRoleCount ? `, ${group.unconfirmedRoleCount} ${group.unconfirmedRoleCount === 1 ? "role has" : "roles have"} unconfirmed identity` : ""}`}
       accessibilityHint="Opens every role in this group"
       onPress={onOpenGroup}
       style={styles.catalogGroupCard}
@@ -653,6 +667,11 @@ function CatalogGroupCard({
         </Text>
       ) : null}
       {education ? <Text style={styles.catalogGroupEducation} numberOfLines={2}>{education}</Text> : null}
+      {group.unconfirmedRoleCount ? (
+        <Text style={styles.catalogGroupIdentity} accessibilityLabel={`${group.unconfirmedRoleCount} ${group.unconfirmedRoleCount === 1 ? "role" : "roles"}: identity unconfirmed`}>
+          {group.unconfirmedRoleCount} {group.unconfirmedRoleCount === 1 ? "role" : "roles"}: identity unconfirmed
+        </Text>
+      ) : null}
       <View style={styles.jobCardAction}>
         <Text style={styles.jobCardActionText}>View roles</Text>
         <Ionicons name="chevron-forward" size={17} color={colors.signal} />
@@ -700,6 +719,11 @@ function CatalogGroupSheet({
                 <Text style={styles.sheetCompany}>
                   {details.group.roleCount} {details.roles.every((role) => role.open) ? "open " : details.roles.every((role) => !role.open) ? "closed " : ""}role{details.group.roleCount === 1 ? "" : "s"}
                 </Text>
+                {details.group.unconfirmedRoleCount ? (
+                  <Text style={styles.sheetTrustSecondary}>
+                    {details.group.unconfirmedRoleCount} {details.group.unconfirmedRoleCount === 1 ? "role" : "roles"}: identity unconfirmed
+                  </Text>
+                ) : null}
                 {details.group.education.map((item) => item.label).filter(Boolean).map((label) => (
                   <Text key={label} style={styles.sheetDetail}>{label}</Text>
                 ))}
@@ -711,13 +735,14 @@ function CatalogGroupSheet({
                 renderItem={({ item }) => (
                   <TouchableOpacity
                     accessibilityRole="button"
-                    accessibilityLabel={`${boundedCatalogText(item.title, 240)}, ${compactLocations(item.locations, item.location)}`}
+                    accessibilityLabel={`${boundedCatalogText(item.title, 240)}, ${compactLocations(item.locations, item.location)}${item.postingIdentityStatus === "unconfirmed" ? ", identity unconfirmed" : ""}`}
                     onPress={() => onOpenRole(item.jobId)}
                     style={styles.catalogGroupRole}
                   >
                     <View style={styles.catalogGroupRoleCopy}>
                       <Text style={styles.catalogGroupRoleTitle} numberOfLines={2}>{boundedCatalogText(item.title, 240)}</Text>
                       <Text style={styles.catalogGroupRoleMeta} numberOfLines={2}>{compactLocations(item.locations, item.location)} · {seasonLabel(item.season)}</Text>
+                      {item.postingIdentityStatus === "unconfirmed" ? <IdentityTrustLabel /> : null}
                       {item.compensation?.raw ? <Text style={styles.catalogGroupRolePay} numberOfLines={2}>{boundedCatalogText(item.compensation.raw, 160)}</Text> : null}
                     </View>
                     <Ionicons name="chevron-forward" size={18} color={colors.signal} />
@@ -911,6 +936,14 @@ function JobDetailSheet({
                 {postingTiming ? <Text style={styles.sheetTrustSecondary}>{postingTiming.detail}</Text> : null}
                 <Text style={styles.sheetTrustSecondary}>{freshnessLabel(role.lastSeenAt)}</Text>
               </View>
+              {role.postingIdentityStatus === "unconfirmed" ? (
+                <View style={styles.sheetIdentityNotice} accessibilityLabel="Identity unconfirmed. We verified the employer and application page, but have not yet matched this listing to reviewed exact posting evidence. It may later be combined with another listing.">
+                  <Ionicons name="shield-outline" size={17} color={colors.signal} />
+                  <Text style={styles.sheetIdentityNoticeText}>
+                    We verified the employer and application page, but have not yet matched this listing to reviewed exact posting evidence. It may later be combined with another listing.
+                  </Text>
+                </View>
+              ) : null}
               {matchedReasons.length ? (
                 <View style={styles.sheetMatchBlock} accessibilityLabel={`Matched filters: ${matchedReasons.map((reason) => reason.label).join(", ")}${exclusionsApplied ? ". Your exclusions were also applied." : ""}`}>
                   <Text style={styles.sheetMatchTitle}>Why you received this alert</Text>
@@ -3684,6 +3717,7 @@ function Applications({
             <Text style={styles.company}>{job?.company ?? "Saved role"}</Text>
             <Text style={styles.title}>{job?.title ?? "Role details unavailable"}</Text>
             {job ? <JobSource source={source} /> : null}
+            {job?.postingIdentityStatus === "unconfirmed" ? <IdentityTrustLabel /> : null}
             <View style={styles.statusPill}>
               <Text style={styles.statusPillText}>{item.status.toUpperCase()}</Text>
             </View>
@@ -5373,6 +5407,7 @@ const styles = StyleSheet.create({
   catalogGroupTitle: { color: colors.ink, fontSize: 18, fontWeight: "700", lineHeight: 25, marginTop: 7 },
   catalogGroupMeta: { color: colors.muted, fontSize: 14, lineHeight: 20, marginTop: 7 },
   catalogGroupEducation: { color: colors.body, fontSize: 13, lineHeight: 19, marginTop: 5 },
+  catalogGroupIdentity: { color: colors.muted, fontSize: 13, fontWeight: "600", lineHeight: 19, marginTop: 6 },
   catalogGroupSheet: {
     backgroundColor: colors.canvas,
     borderTopLeftRadius: 24,
@@ -5494,6 +5529,16 @@ const styles = StyleSheet.create({
   sheetTrustBlock: { gap: 3, marginTop: 16 },
   sheetTrustPrimary: { color: colors.body, fontSize: 14, fontWeight: "700", lineHeight: 20 },
   sheetTrustSecondary: { color: colors.muted, fontSize: 13, lineHeight: 19 },
+  sheetIdentityNotice: {
+    alignItems: "flex-start",
+    backgroundColor: colors.signalSoft,
+    borderRadius: 12,
+    flexDirection: "row",
+    gap: 9,
+    marginTop: 18,
+    padding: 14,
+  },
+  sheetIdentityNoticeText: { color: colors.body, flex: 1, fontSize: 14, lineHeight: 20 },
   sheetMatchBlock: {
     backgroundColor: colors.signalSoft,
     borderRadius: 12,
@@ -5573,6 +5618,8 @@ const styles = StyleSheet.create({
   jobCardAction: { alignItems: "center", flexDirection: "row", marginTop: 14 },
   jobCardActionText: { color: colors.signal, fontSize: 15, fontWeight: "700" },
   jobCardActionArrow: { color: colors.signal, fontSize: 22, lineHeight: 20, marginLeft: 5 },
+  identityTrustRow: { alignItems: "center", flexDirection: "row", gap: 5, marginTop: 6 },
+  identityTrustText: { color: colors.muted, fontSize: 13, fontWeight: "600", lineHeight: 18 },
   jobApplicationStatus: {
     alignSelf: "flex-start",
     backgroundColor: colors.signalSoft,

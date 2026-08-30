@@ -2,8 +2,117 @@ import { describe, expect, it } from 'vitest';
 import { normalizeUrl, postingIdentity, postingIdentityKey, roleFamilyFingerprint } from '../src/core/normalize.js';
 import { buildPostingIdentity, providerPostingReference, resolvePostingAliases } from '../src/identity/posting.js';
 import { providerEvidenceForOccurrence, reviewedProviderUrlReference } from '../src/identity/reviewed-provider.js';
+import { postingReviewFamily, resolvePostingIdentityDecision, reviewedCanonicalUrlEvidenceHash, stableSourceOccurrenceJobId } from '../src/identity/registry.js';
 
 describe('posting identity', () => {
+  it('keeps syntactically normalized but unreviewed URLs source-local', () => {
+    const first = resolvePostingIdentityDecision({
+      sourceId: 'community-a', externalId: '42', applicationUrl: 'https://careers.example.test/jobs/42?utm_source=a',
+      observedAt: '2026-08-29T12:00:00.000Z',
+    });
+    expect(first).toMatchObject({ decision: { status: 'unconfirmed', reason: 'unrecognized-url-family' } });
+    expect(first.identity).toBeUndefined();
+    expect(stableSourceOccurrenceJobId('community-a', '42')).not.toBe(stableSourceOccurrenceJobId('community-b', '42'));
+  });
+
+  it('confirms reviewed provider evidence with a versioned evidence hash', () => {
+    const result = resolvePostingIdentityDecision({
+      sourceId: 'greenhouse-figma', externalId: '100',
+      applicationUrl: 'https://job-boards.greenhouse.io/figma/jobs/100', observedAt: '2026-08-29T12:00:00.000Z',
+      providerEvidence: { provider: 'greenhouse', tenant: 'figma', postingId: '100', sourceId: 'greenhouse-figma', urls: [] },
+    });
+    expect(result).toMatchObject({
+      decision: { status: 'confirmed', evidenceKind: 'immutable-provider-id', exactKey: 'provider:greenhouse:figma:100', contractVersion: 1 },
+      identity: { provider: 'greenhouse', providerPostingId: '100' },
+    });
+  });
+
+  it('preserves historical confirmation but does not authorize a new alias from stale evidence', () => {
+    const input = {
+      sourceId: 'greenhouse-figma', externalId: '100', applicationUrl: 'https://job-boards.greenhouse.io/figma/jobs/100',
+      observedAt: '2026-08-29T12:00:00.000Z',
+      providerEvidence: { provider: 'greenhouse' as const, tenant: 'figma', postingId: '100', sourceId: 'greenhouse-figma', urls: [], expiresAt: '2026-08-28T00:00:00.000Z' },
+    };
+    expect(resolvePostingIdentityDecision(input)).toMatchObject({ decision: { status: 'unconfirmed', reason: 'stale-evidence' } });
+    const current = resolvePostingIdentityDecision({ ...input, providerEvidence: { ...input.providerEvidence, expiresAt: undefined } });
+    const historical = resolvePostingIdentityDecision({ ...input, previousDecision: current.decision });
+    expect(historical).toMatchObject({ decision: { status: 'confirmed' } });
+    expect(historical.identity?.aliases.map((alias) => alias.value)).toEqual(['provider:greenhouse:figma:100']);
+  });
+
+  it('sanitizes URL-family candidates without retaining query values', () => {
+    expect(postingReviewFamily('https://Careers.Example.test/jobs/123?token=secret&ref=email'))
+      .toBe('careers.example.test/jobs/:number?ref&token');
+  });
+
+  it('confirms an authoritative employer requisition without relying on URL syntax', () => {
+    const result = resolvePostingIdentityDecision({
+      sourceId: 'employer:acme:submission:req-42', externalId: 'req-42',
+      applicationUrl: 'https://careers.acme.test/apply', observedAt: '2026-08-29T12:00:00.000Z',
+      employerId: 'acme', employerRequisitionId: 'REQ-42', employerRequisitionAuthoritative: true,
+    });
+    expect(result).toMatchObject({
+      decision: {
+        status: 'confirmed', evidenceKind: 'authoritative-employer-requisition',
+        exactKey: 'requisition:acme:req-42', employerId: 'acme', contractVersion: 1,
+      },
+      identity: { employerRequisitionId: 'req-42', employerRequisitionAuthoritative: true },
+    });
+    expect(result.identity?.aliases.map((alias) => alias.value)).toEqual(['requisition:acme:req-42']);
+  });
+
+  it('does not let one reused application URL bridge different exact provider postings', () => {
+    const applicationUrl = 'https://careers.example.test/apply';
+    const first = resolvePostingIdentityDecision({
+      sourceId: 'ashby-acme', externalId: 'first', applicationUrl,
+      observedAt: '2026-08-29T12:00:00.000Z',
+      reviewedProviderReferences: [{ provider: 'ashby', tenant: 'acme', postingId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }],
+    });
+    const second = resolvePostingIdentityDecision({
+      sourceId: 'ashby-acme', externalId: 'second', applicationUrl,
+      observedAt: '2026-08-29T12:00:00.000Z',
+      reviewedProviderReferences: [{ provider: 'ashby', tenant: 'acme', postingId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' }],
+    });
+    expect(first.identity?.aliases.map((alias) => alias.value)).toEqual(['provider:ashby:acme:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa']);
+    expect(second.identity?.aliases.map((alias) => alias.value)).toEqual(['provider:ashby:acme:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb']);
+    expect(first.identity?.canonicalJobId).not.toBe(second.identity?.canonicalJobId);
+  });
+
+  it('requires a checked-in contract and an observed exact URL for reviewer-approved URL identity', () => {
+    const canonicalUrl = 'https://careers.example.test/jobs/42';
+    const reviewedCanonicalUrl = {
+      canonicalUrl,
+      contractId: 'reviewed-canonical-url',
+      contractVersion: 1,
+      approvalReference: 'review:decision-42',
+      evidenceHash: reviewedCanonicalUrlEvidenceHash(canonicalUrl),
+      observedAt: '2026-08-29T12:00:00.000Z',
+    };
+    expect(resolvePostingIdentityDecision({
+      sourceId: 'community', externalId: '42', applicationUrl: canonicalUrl,
+      observedAt: reviewedCanonicalUrl.observedAt, reviewedCanonicalUrl,
+    })).toMatchObject({ decision: { status: 'confirmed', evidenceKind: 'reviewed-canonical-url' } });
+    expect(resolvePostingIdentityDecision({
+      sourceId: 'community', externalId: '43', applicationUrl: 'https://careers.example.test/jobs/43',
+      observedAt: reviewedCanonicalUrl.observedAt, reviewedCanonicalUrl,
+    })).toMatchObject({ decision: { status: 'quarantined', reason: 'evidence-contract-mismatch' } });
+  });
+
+  it.each([
+    [
+      'multiple-authoritative-requisitions',
+      [{ employerId: 'acme', requisitionId: 'one' }, { employerId: 'acme', requisitionId: 'two' }],
+    ],
+    [
+      'employer-scope-mismatch',
+      [{ employerId: 'acme', requisitionId: 'one' }, { employerId: 'other', requisitionId: 'one' }],
+    ],
+  ] as const)('quarantines %s before any alias is claimed', (reason, authoritativeEmployerRequisitions) => {
+    expect(resolvePostingIdentityDecision({
+      sourceId: 'employer-review', externalId: 'row', applicationUrl: 'https://careers.example.test/apply',
+      observedAt: '2026-08-29T12:00:00.000Z', authoritativeEmployerRequisitions: [...authoritativeEmployerRequisitions],
+    })).toMatchObject({ decision: { status: 'quarantined', reason } });
+  });
   it.each([
     ['Ashby', 'https://jobs.ashbyhq.com/OpusClip/501d374d-7d4f-4889-bc53-0a1fd16253ea/application?embed=true', 'https://jobs.ashbyhq.com/opusclip/501d374d-7d4f-4889-bc53-0a1fd16253ea'],
     ['Greenhouse', 'https://boards.greenhouse.io/AssuredGuaranty/jobs/8700953002?gh_jid=8700953002', 'https://job-boards.greenhouse.io/assuredguaranty/jobs/8700953002'],

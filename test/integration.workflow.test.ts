@@ -8,7 +8,7 @@ import type { RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult } f
 const row = (number: number, sourceId = 'fixture'): RawListing => ({
   sourceId, document: 'README.md', sourceUrl: 'https://github.com/fixture/list', row: number,
   company: number === 1 ? 'OpenAI' : `Company ${number}`, title: `Software Intern ${number}`,
-  location: 'New York, NY', season: 'summer-2027', applyUrl: `https://jobs.example.com/${number}?utm_source=fixture`,
+  location: 'New York, NY', season: 'summer-2027', applyUrl: `https://jobs.ashbyhq.com/fixture/00000000-0000-0000-0000-${String(number).padStart(12, '0')}?utm_source=fixture`,
   compensation: { raw: `$${40 + number}/hr`, maxHourlyUSD: 40 + number }, state: 'open',
   postedAt: `2026-07-${String(number).padStart(2, '0')}`, fetchedAt: '2026-07-18T12:00:00.000Z'
 });
@@ -38,7 +38,7 @@ describe('mocked production workflow integration', () => {
     expect(await store.pendingSms()).toEqual([]);
 
     // The duplicated URL comes from a newly added source; it must not create another canonical job or alert.
-    const duplicate = { ...baseline, sourceId: 'feed-b', applyUrl: 'https://JOBS.example.com/1?utm_source=second#apply' };
+    const duplicate = { ...baseline, sourceId: 'feed-b', applyUrl: 'https://JOBS.ashbyhq.com/fixture/00000000-0000-0000-0000-000000000001/application?utm_source=second#apply' };
     const fresh = Array.from({ length: 7 }, (_, index) => row(index + 2));
     const second = await new Poller([new FixtureAdapter('feed-a', [baseline, ...fresh]), new FixtureAdapter('feed-b', [duplicate])], store, () => new Date('2026-07-18T12:05:00.000Z')).poll();
     expect(second.newJobs).toHaveLength(7);
@@ -49,7 +49,7 @@ describe('mocked production workflow integration', () => {
     const firstSms = await sendPendingNotifications(store, sms, undefined, () => new Date('2026-07-18T12:05:01.000Z'));
     expect(firstSms).toEqual({ sent: 6, failed: 1 });
     expect(await store.pendingSms()).toHaveLength(1);
-    expect(sms.messages.map((message) => message.body).join('\n')).toContain('https://jobs.example.com/8?utm_source=fixture');
+    expect(sms.messages.map((message) => message.body).join('\n')).toContain('https://jobs.ashbyhq.com/fixture/00000000-0000-0000-0000-000000000008?utm_source=fixture');
 
     const retry = new RecorderSms();
     expect(await sendPendingNotifications(store, retry)).toEqual({ sent: 1, failed: 0 });
@@ -58,7 +58,7 @@ describe('mocked production workflow integration', () => {
     const email = new RecorderEmail();
     expect(await sendDigest(store, email, () => new Date('2026-07-18T17:00:00.000Z'))).toBe(7);
     expect(email).toMatchObject({ calls: 1, subject: 'Internship digest: 7 new roles' });
-    expect(email.html).toContain('https://jobs.example.com/2?utm_source=fixture');
+    expect(email.html).toContain('https://jobs.ashbyhq.com/fixture/00000000-0000-0000-0000-000000000002?utm_source=fixture');
     expect(await store.pendingDigest()).toEqual([]);
     expect(await sendDigest(store, email)).toBe(0);
     expect(email.calls).toBe(1);

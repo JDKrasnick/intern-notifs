@@ -23,6 +23,8 @@ export interface CatalogGroupRow {
   seasons: string[];
   education: CatalogEducationSummary[];
   roleCount: number;
+  /** Counts only explicitly classified roles; legacy-unclassified roles are not inferred. */
+  unconfirmedRoleCount: number;
   titles: string[];
   disciplines: string[];
   locations: string[];
@@ -76,6 +78,7 @@ export interface CatalogGroupRole {
   sourceReferences: Internship['sourceReferences'];
   applicationUrlValidatedAt?: string;
   invalidApplicationUrl?: string;
+  postingIdentityStatus?: Internship['postingIdentityStatus'];
 }
 
 export interface CatalogGroupFilter {
@@ -90,6 +93,8 @@ export interface CatalogGroupFilter {
   employerCategories?: EmployerCategory[];
   hideUsCitizenshipRequired?: boolean;
   hideAdvancedDegreeRequired?: boolean;
+  /** Internal rollout filter; absent statuses remain legacy-visible. */
+  postingIdentityConfirmedOnly?: boolean;
 }
 
 /** A durable release already contains the job set matched for one user. */
@@ -251,6 +256,7 @@ function summarize(kind: CatalogGroupKind, jobs: Internship[], stableGroupId?: s
     seasons: unique(sorted.map(seasonFor)),
     education: unique(sorted.map((job) => JSON.stringify(catalogEducation(job)))).map((item) => JSON.parse(item) as CatalogEducationSummary),
     roleCount: sorted.length,
+    unconfirmedRoleCount: sorted.filter((job) => job.postingIdentityStatus === 'unconfirmed').length,
     titles: unique(sorted.map(titleFor)).slice(0, 3),
     disciplines: unique(sorted.flatMap(disciplinesFor)).slice(0, 6),
     locations: unique(sorted.flatMap(locationsFor)),
@@ -356,6 +362,7 @@ function catalogGroupRole(job: Internship): CatalogGroupRole {
     sourceReferences: job.sourceReferences,
     ...(job.applicationUrlValidatedAt ? { applicationUrlValidatedAt: job.applicationUrlValidatedAt } : {}),
     ...(job.invalidApplicationUrl ? { invalidApplicationUrl: job.invalidApplicationUrl } : {}),
+    ...(job.postingIdentityStatus ? { postingIdentityStatus: job.postingIdentityStatus } : {}),
   };
 }
 
@@ -403,6 +410,7 @@ export function filterCatalogGroupDetails(groups: CatalogGroupDetails[], filter:
       && (!filter.employerCategories?.length || filter.employerCategories.includes(role.employerCategory))
       && (!filter.hideUsCitizenshipRequired || !role.requiresUsCitizenship)
       && (!filter.hideAdvancedDegreeRequired || !role.advancedDegreeRequired)
+      && (!filter.postingIdentityConfirmedOnly || role.postingIdentityStatus !== 'unconfirmed')
       && (!filter.source || credibilityMatches(role.sourceCredibility, filter.source))
       && (!filter.disciplines?.length || includesFolded(role.disciplines, filter.disciplines))
       && (!filter.seasons?.length || includesFolded([role.season], filter.seasons))
@@ -415,6 +423,7 @@ export function filterCatalogGroupDetails(groups: CatalogGroupDetails[], filter:
         ...details.group,
         education: unique(roles.map((role) => JSON.stringify(role.education))).map((item) => JSON.parse(item) as CatalogEducationSummary),
         roleCount: roles.length,
+        unconfirmedRoleCount: roles.filter((role) => role.postingIdentityStatus === 'unconfirmed').length,
         titles: unique(roles.map((role) => role.title)).slice(0, 3),
         disciplines: unique(roles.flatMap((role) => role.disciplines)).slice(0, 6),
         locations: unique(roles.flatMap((role) => role.locations ?? role.location.split(/\s*(?:;|\||\n)\s*/))),

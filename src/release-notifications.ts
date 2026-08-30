@@ -229,18 +229,21 @@ export function naturalTruncate(value: string, maxLength: number) {
 
 export function renderReleasePush(release: PersonalizedRelease) {
   const first = release.jobs[0]!;
+  const unconfirmed = release.jobs.filter((job) => job.postingIdentityStatus === 'unconfirmed').length;
   if (release.presentation === 'individual') {
-    return { title: naturalTruncate(first.title, 120), body: `${first.company} · ${release.season} · ${release.education}`, data: { destination: 'release', releaseId: release.releaseId, url: `internnotifs://releases/${release.releaseId}` } } as const;
+    const body = `${first.company} · ${release.season} · ${release.education}${unconfirmed ? '\nIdentity unconfirmed' : ''}`;
+    return { title: naturalTruncate(first.title, 120), body, data: { destination: 'release', releaseId: release.releaseId, url: `internnotifs://releases/${release.releaseId}` } } as const;
   }
+  const identityNote = unconfirmed ? `${unconfirmed} role${unconfirmed === 1 ? '' : 's'}: identity unconfirmed.` : '';
   return {
     title: `${first.company} posted ${release.jobs.length} matching roles`,
-    body: [release.disciplines.join(', '), release.season, release.education].filter(Boolean).join(' · '),
+    body: [[release.disciplines.join(', '), release.season, release.education].filter(Boolean).join(' · '), identityNote].filter(Boolean).join('\n'),
     data: { destination: 'release', releaseId: release.releaseId, url: `internnotifs://releases/${release.releaseId}` },
   } as const;
 }
 
 export function renderReleaseEmail(release: PersonalizedRelease) {
-  const rows = release.jobs.map((job) => `${job.title}\n${job.company} · ${job.location} · ${seasonLabel(job)} · ${educationLabel(job)}\nInternNotifs: internnotifs://releases/${release.releaseId}\nOfficial application: ${job.applyUrl}`);
+  const rows = release.jobs.map((job) => `${job.title}\n${job.company} · ${job.location} · ${seasonLabel(job)} · ${educationLabel(job)}${job.postingIdentityStatus === 'unconfirmed' ? '\nIdentity unconfirmed' : ''}\nInternNotifs: internnotifs://releases/${release.releaseId}\nOfficial application: ${job.applyUrl}`);
   return { subject: `${release.jobs[0]!.company} posted ${release.jobs.length} matching role${release.jobs.length === 1 ? '' : 's'}`, text: rows.join('\n\n') };
 }
 

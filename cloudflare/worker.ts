@@ -70,6 +70,7 @@ export interface Environment extends AuthEnvironment {
   NTFY_ENDPOINT?: string;
   OPERATIONS_SHARED_SECRET: string;
   EMPLOYER_PORTAL_ENABLED?: string;
+  IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED?: string;
   BILLING_WEBHOOK_SECRET?: string;
   CLOUDFLARE_SHUTDOWN_TOKEN?: string;
   CLOUDFLARE_ACCOUNT_ID: string;
@@ -225,6 +226,7 @@ async function runStructuredSource(source: ReviewedStructuredSource, env: Enviro
   const result = await runRuntimeCommand('poll', { store, userStore, sources: [connector], validateCatalogOnPoll: false,
     enqueueDestinationVerification: (request) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(request)),
     catalogAdmissionResolver: catalogAdmissionResolver(env),
+    identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
     allowCompleteEmptySnapshot: true,
     config: { sesFrom: env.AUTH_FROM_EMAIL ?? '', sesTo: env.DIGEST_TO_EMAIL ?? '', ntfyTopic: env.NTFY_TOPIC, ntfyEndpoint: env.NTFY_ENDPOINT } });
   if ('poll' in result && result.poll?.failures.length) throw new Error(result.poll.failures.join('; '));
@@ -737,6 +739,7 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
     users: new D1UserStore(env.DB),
     releases: new D1ReleaseStore(env.DB),
     documentStorage: documentStorage(env),
+    identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
     beforeDeleteUser: (userId) => disconnectGmail(userId, env),
     deleteIdentity: async (id) => {
       const email = await accountEmail(env, id);
@@ -967,6 +970,7 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
           validateCatalogOnPoll: false,
           enqueueDestinationVerification: (request) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(request)),
           catalogAdmissionResolver: admissionResolver,
+          identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
           config: { sesFrom: env.AUTH_FROM_EMAIL ?? '', sesTo: env.DIGEST_TO_EMAIL ?? '', ntfyTopic: env.NTFY_TOPIC, ntfyEndpoint: env.NTFY_ENDPOINT },
         });
       } catch (error) {
