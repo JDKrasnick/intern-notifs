@@ -74,6 +74,17 @@ variable "identity_unconfirmed_publication_enabled" {
   default     = false
 }
 
+variable "identity_confirmed_coverage_floor" {
+  description = "Minimum reviewed exact posting-identity coverage required by the recurring integrity gate."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.identity_confirmed_coverage_floor >= 0 && var.identity_confirmed_coverage_floor <= 1
+    error_message = "identity_confirmed_coverage_floor must be between 0 and 1."
+  }
+}
+
 variable "gmail_client_id" {
   description = "Google OAuth web client identifier. The client secret remains a Worker secret binding."
   type        = string

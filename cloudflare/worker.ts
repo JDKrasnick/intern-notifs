@@ -71,6 +71,7 @@ export interface Environment extends AuthEnvironment {
   OPERATIONS_SHARED_SECRET: string;
   EMPLOYER_PORTAL_ENABLED?: string;
   IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED?: string;
+  IDENTITY_CONFIRMED_COVERAGE_FLOOR?: string;
   BILLING_WEBHOOK_SECRET?: string;
   CLOUDFLARE_SHUTDOWN_TOKEN?: string;
   CLOUDFLARE_ACCOUNT_ID: string;
@@ -852,6 +853,8 @@ export type PostingIdentityAuditEvent = {
   confirmedOccurrences: number | null;
   unconfirmedOccurrences: number | null;
   confirmedCoverage: number | null;
+  confirmedCoverageFloor: number | null;
+  coverageRegression: boolean | null;
   exactDuplicateGroups: number | null;
   duplicateJobs: number | null;
   duplicateAlertGroups: number | null;
@@ -864,14 +867,22 @@ export type PostingIdentityAuditEvent = {
   duplicateOccurrenceReferences: number | null;
 };
 
-function postingIdentityAuditEvent(plan: PostingIdentityRepairPlan, enforcementActive: boolean): PostingIdentityAuditEvent {
+function postingIdentityAuditEvent(
+  plan: PostingIdentityRepairPlan,
+  enforcementActive: boolean,
+  confirmedCoverageFloor: number,
+): PostingIdentityAuditEvent {
+  const coverageRegression = plan.occurrenceCounts.confirmedCoverage === null
+    || plan.occurrenceCounts.confirmedCoverage < confirmedCoverageFloor;
   return {
     event: 'posting_identity_integrity_audit',
     enforcementActive,
-    status: plan.gate.passed ? 'passed' : 'failed',
+    status: plan.gate.passed && !coverageRegression ? 'passed' : 'failed',
     confirmedOccurrences: plan.occurrenceCounts.confirmed,
     unconfirmedOccurrences: plan.occurrenceCounts.unconfirmed,
     confirmedCoverage: plan.occurrenceCounts.confirmedCoverage,
+    confirmedCoverageFloor,
+    coverageRegression,
     exactDuplicateGroups: plan.gate.exactDuplicateGroups,
     duplicateJobs: plan.duplicateJobs,
     duplicateAlertGroups: plan.duplicateAlertGroups,
@@ -889,21 +900,33 @@ function postingIdentityAuditEvent(plan: PostingIdentityRepairPlan, enforcementA
  * review samples stay out of production logs. Disabled rollout reports a
  * failed gate without failing the cron; enabled publication makes it fatal. */
 export async function runScheduledPostingIdentityAudit(
-  env: Pick<Environment, 'DB' | 'IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED'>,
+  env: Pick<Environment, 'DB' | 'IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED' | 'IDENTITY_CONFIRMED_COVERAGE_FLOOR'>,
   dependencies: {
     audit?: (db: D1Database) => Promise<PostingIdentityRepairPlan>;
     log?: (event: string) => void;
   } = {},
 ): Promise<PostingIdentityAuditEvent> {
   const enforcementActive = env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true';
+  const parsedCoverageFloor = Number(env.IDENTITY_CONFIRMED_COVERAGE_FLOOR);
+  const confirmedCoverageFloor = env.IDENTITY_CONFIRMED_COVERAGE_FLOOR?.trim()
+    && Number.isFinite(parsedCoverageFloor) && parsedCoverageFloor >= 0 && parsedCoverageFloor <= 1
+    ? parsedCoverageFloor
+    : undefined;
   const audit = dependencies.audit ?? ((db: D1Database) => runPostingIdentityRepair(db));
   let event: PostingIdentityAuditEvent;
   try {
-    event = postingIdentityAuditEvent(await audit(env.DB), enforcementActive);
+    const plan = await audit(env.DB);
+    event = confirmedCoverageFloor === undefined
+      ? {
+        ...postingIdentityAuditEvent(plan, enforcementActive, 1),
+        status: 'error', confirmedCoverageFloor: null, coverageRegression: null,
+      }
+      : postingIdentityAuditEvent(plan, enforcementActive, confirmedCoverageFloor);
   } catch {
     event = {
       event: 'posting_identity_integrity_audit', enforcementActive, status: 'error',
       confirmedOccurrences: null, unconfirmedOccurrences: null, confirmedCoverage: null,
+      confirmedCoverageFloor: confirmedCoverageFloor ?? null, coverageRegression: null,
       exactDuplicateGroups: null, duplicateJobs: null, duplicateAlertGroups: null, aliasConflicts: null,
       quarantinedOccurrences: null, untrackedQuarantines: null, presentationBlockers: null,
       legacyOccurrences: null, projectionMismatches: null, duplicateOccurrenceReferences: null,

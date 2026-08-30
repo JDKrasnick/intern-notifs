@@ -404,7 +404,11 @@ zero legacy occurrences, zero `projectionMismatches`, zero
 The dedicated `17 9 * * *` Cloudflare cron runs the same all-scope audit once
 per day and emits one aggregate `posting_identity_integrity_audit` event. The
 event contains only coverage, duplicate, conflict, quarantine, presentation,
-legacy-occurrence, projection, and duplicate-reference counts. While
+legacy-occurrence, projection, and duplicate-reference counts. Its
+`IDENTITY_CONFIRMED_COVERAGE_FLOOR` is an owner-reviewed decimal from zero to
+one; a missing/invalid floor, unavailable coverage, or coverage below that
+floor is not passing evidence. The checked-in floor is `1` as a fail-safe.
+While
 `IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED=false`, a failed gate is logged but
 does not fail the invocation. Once publication enforcement is active, a failed
 or unavailable audit fails the invocation. Broader dashboards and source
@@ -441,7 +445,8 @@ Git. Do not close issue #50 or its product-roadmap checkbox until the final
    conflicts or presentation disagreements.
 7. Preview the occurrence scope, obtain its independent token/count guards,
    apply it, then run the final all-scope audit. Require a passing gate and every
-   mutation count at zero.
+   mutation count at zero. Record its exact `confirmedCoverage` as the proposed
+   production coverage floor.
 8. Confirm notification-event, notification-tombstone, pending-notification,
    and outbox counts match the baseline. Test all eight affected legacy job IDs
    and their canonical aliases, representative catalog/group endpoints, saved
@@ -453,9 +458,12 @@ Git. Do not close issue #50 or its product-roadmap checkbox until the final
     performs physical-device QA for card/detail/Saved labels, grouped counts,
     individual and grouped push copy, large text, and the intentional light
     appearance under both light and dark device settings.
-11. After owner approval, review and apply a production OpenTofu plan setting
-    `identity_unconfirmed_publication_enabled=true`. Keep the checked-in default
-    `false` as the fail-safe.
+11. After owner approval, first review and apply a production OpenTofu plan
+    setting `identity_confirmed_coverage_floor` to the approved value while
+    publication remains disabled. Trigger the daily audit and require it to
+    pass. Then review and apply a separate plan setting
+    `identity_unconfirmed_publication_enabled=true`. Keep the checked-in
+    publication default `false` and coverage floor `1` as fail-safes.
 12. Observe at least one complete 24-hour source cycle and one successful daily
     posting-identity audit. On any regression, disable the flag first and do not
     attempt another repair until a fresh guarded preview passes.
