@@ -110,11 +110,11 @@ export function successfulSourceHealth(input: {
   };
   return {
     sourceId: input.sourceId,
+    ...operationalFields(input.previous),
     ...(input.employerId ? { employerId: input.employerId } : {}),
     ...(input.provider ? { provider: input.provider } : {}),
     ...(input.region ? { region: input.region } : {}),
     state: 'healthy',
-    ...operationalFields(input.previous),
     sourceStatus: input.previous?.sourceStatus ?? 'active',
     pollTier: pollTierMode === 'operator' ? input.previous?.pollTier ?? automaticPollTier : automaticPollTier,
     pollTierMode,
@@ -185,11 +185,11 @@ export function failedSourceHealth(input: {
   const backoffUntil = sourceBackoffUntil(input.error, failures, input.completedAt);
   return {
     sourceId: input.sourceId,
+    ...operationalFields(input.previous),
     ...(input.employerId ? { employerId: input.employerId } : {}),
     ...(input.provider ? { provider: input.provider } : {}),
     ...(input.region ? { region: input.region } : {}),
     state: quarantined ? 'quarantined' : 'degraded',
-    ...operationalFields(input.previous),
     sourceStatus: input.previous?.sourceStatus ?? 'active',
     pollTier: input.previous?.pollTier ?? 'active',
     configVersion: input.previous?.configVersion ?? 1,

@@ -4,6 +4,7 @@ import { normalizeInternship, normalizeListing, catalogQualityHash } from './cat
 import { isPastSeason } from './core/early-career.js';
 import type { Internship, SourceCheckpoint, SourceOccurrenceState } from './types.js';
 import type { D1Database } from '../cloudflare/types.js';
+import { catalogProviderForSourceId, isOfficialProviderSourceId } from './integration-registry.js';
 
 export type CatalogQualityRow = { pk: string; sk: string; kind: string; value: string };
 type Category = 'changed' | 'closed' | 'unchanged' | 'unrepairable';
@@ -37,7 +38,7 @@ type StagedRepair = {
   sourceClasses?: string | null;
 };
 
-const provider = (sourceId: string) => /^(greenhouse|lever|ashby)-/iu.exec(sourceId)?.[1]?.toLowerCase() ?? 'community';
+const provider = (sourceId: string) => catalogProviderForSourceId(sourceId) ?? 'community';
 const emptyCounts = (): Counts => ({});
 
 function qualityFlags(value: Internship | SourceOccurrenceState): Record<Field, boolean> {
@@ -61,7 +62,7 @@ function explicitElapsedRole(job: Internship, checkpoints: Map<string, SourceChe
   const identity = job.internshipIdentity as { season?: { evidence?: string; evidenceStatus?: string } } | undefined;
   const explicit = identity?.season?.evidence === 'explicit' || identity?.season?.evidenceStatus === 'explicit';
   return Boolean(explicit && job.sourceReferences.some((reference) => {
-    if (reference.state !== 'open' || !reference.externalId || !/^(greenhouse|lever|ashby)-/iu.test(reference.sourceId)) return false;
+    if (reference.state !== 'open' || !reference.externalId || !isOfficialProviderSourceId(reference.sourceId)) return false;
     return checkpoints.get(reference.sourceId)?.activeExternalIds?.includes(reference.externalId);
   }));
 }

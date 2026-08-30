@@ -1,5 +1,7 @@
 locals {
-  worker_bundle = "${path.module}/../../cloudflare/dist/worker.js"
+  worker_bundle       = "${path.module}/../../cloudflare/dist/worker.js"
+  catalog_providers   = toset(["greenhouse", "lever", "ashby", "github"])
+  asynchronous_queues = setunion(local.catalog_providers, toset(["gmail"]))
   plain_bindings = concat(
     [
       { name = "PUBLIC_API_URL", type = "plain_text", text = var.public_api_url },
@@ -32,7 +34,7 @@ resource "cloudflare_r2_bucket" "documents" {
 }
 
 resource "cloudflare_queue" "work" {
-  for_each   = toset(["greenhouse", "lever", "ashby", "github", "gmail"])
+  for_each   = local.asynchronous_queues
   account_id = var.cloudflare_account_id
   queue_name = "${var.worker_name}-${each.key}"
   settings = {
@@ -42,7 +44,7 @@ resource "cloudflare_queue" "work" {
 }
 
 resource "cloudflare_queue" "dead_letter" {
-  for_each   = toset(["greenhouse", "lever", "ashby", "github", "gmail"])
+  for_each   = local.asynchronous_queues
   account_id = var.cloudflare_account_id
   queue_name = "${var.worker_name}-${each.key}-dlq"
   settings = {
@@ -64,23 +66,27 @@ resource "cloudflare_workers_script" "application" {
     [
       { name = "DB", type = "d1", id = cloudflare_d1_database.application.id },
       { name = "DOCUMENTS", type = "r2_bucket", bucket_name = cloudflare_r2_bucket.documents.name },
-      { name = "GREENHOUSE_QUEUE", type = "queue", queue_name = cloudflare_queue.work["greenhouse"].queue_name },
-      { name = "LEVER_QUEUE", type = "queue", queue_name = cloudflare_queue.work["lever"].queue_name },
-      { name = "ASHBY_QUEUE", type = "queue", queue_name = cloudflare_queue.work["ashby"].queue_name },
-      { name = "GITHUB_QUEUE", type = "queue", queue_name = cloudflare_queue.work["github"].queue_name },
       { name = "GMAIL_QUEUE", type = "queue", queue_name = cloudflare_queue.work["gmail"].queue_name },
-      { name = "GREENHOUSE_DLQ", type = "queue", queue_name = cloudflare_queue.dead_letter["greenhouse"].queue_name },
-      { name = "LEVER_DLQ", type = "queue", queue_name = cloudflare_queue.dead_letter["lever"].queue_name },
-      { name = "ASHBY_DLQ", type = "queue", queue_name = cloudflare_queue.dead_letter["ashby"].queue_name },
       { name = "GMAIL_DLQ", type = "queue", queue_name = cloudflare_queue.dead_letter["gmail"].queue_name },
       { name = "CLOUDFLARE_ACCOUNT_ID", type = "plain_text", text = var.cloudflare_account_id },
       { name = "WORKER_NAME", type = "plain_text", text = var.worker_name },
-      { name = "GREENHOUSE_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["greenhouse"].queue_id },
-      { name = "LEVER_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["lever"].queue_id },
-      { name = "ASHBY_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["ashby"].queue_id },
-      { name = "GITHUB_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["github"].queue_id },
       { name = "GMAIL_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["gmail"].queue_id },
     ],
+    [for provider in local.catalog_providers : {
+      name       = "${upper(provider)}_QUEUE"
+      type       = "queue"
+      queue_name = cloudflare_queue.work[provider].queue_name
+    }],
+    [for provider in local.catalog_providers : {
+      name       = "${upper(provider)}_DLQ"
+      type       = "queue"
+      queue_name = cloudflare_queue.dead_letter[provider].queue_name
+    }],
+    [for provider in local.catalog_providers : {
+      name = "${upper(provider)}_QUEUE_ID"
+      type = "plain_text"
+      text = cloudflare_queue.work[provider].queue_id
+    }],
     local.plain_bindings,
   )
 

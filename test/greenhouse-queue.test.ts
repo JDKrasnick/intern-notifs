@@ -166,8 +166,12 @@ describe('Greenhouse queue worker', () => {
     });
 
     expect(result).toEqual({ batchItemFailures: [{ itemIdentifier: 'bad' }] });
-    expect((await store.getSourceHealth(acmeSource.id))?.state).toBe('healthy');
-    expect((await store.getSourceHealth('greenhouse-unknown'))?.state).toBe('degraded');
+    expect(await store.getSourceHealth(acmeSource.id)).toMatchObject({
+      state: 'healthy', provider: 'greenhouse', region: 'unknown',
+    });
+    expect(await store.getSourceHealth('greenhouse-unknown')).toMatchObject({
+      state: 'degraded', provider: 'greenhouse', region: 'unknown',
+    });
   });
 
   it('does not process later FIFO records from a board whose earlier record failed', async () => {

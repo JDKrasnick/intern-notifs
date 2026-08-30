@@ -161,8 +161,10 @@ export type SourceOutcome =
 export interface SourceHealth {
   sourceId: string;
   employerId?: string;
-  provider?: 'github' | 'lever' | 'greenhouse' | 'ashby' | 'unknown';
-  region?: 'global' | 'eu' | 'unknown';
+  /** Persisted identifiers remain open strings so retired and future providers stay readable. */
+  provider?: string;
+  /** Provider-declared region identifier; historical unregistered values remain readable. */
+  region?: string;
   state?: SourceHealthState;
   sourceStatus?: SourceOperationalStatus;
   pollTier?: SourcePollTier;

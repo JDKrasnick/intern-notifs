@@ -176,7 +176,7 @@ rotating the shutdown credentials.
 
 Before changing the mobile build, verify public catalog paging, sign-up and
 verification, sign-in, account deletion, notification registration, R2 document
-upload/download, all three provider queues, DLQs, Cron events, and operations
+upload/download, all four catalog-provider queues and DLQs, Cron events, and operations
 replay against the deployed Worker.
 
 Set `EXPO_PUBLIC_API_URL` to the Cloudflare custom hostname and produce a test

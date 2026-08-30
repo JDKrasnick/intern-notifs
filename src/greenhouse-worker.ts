@@ -10,6 +10,7 @@ import { failedSourceHealth, successfulSourceHealth } from './source-health.js';
 import { processFifoBatch } from './sqs-fifo-batch.js';
 import { legacyDeliveryExclusions, loadGroupedNotificationCohort, type GroupedNotificationCohort } from './grouped-notification-cohort.js';
 import type { CatalogAdmissionResolver, DestinationVerificationRequest } from './destination-verification.js';
+import { integrationRegistry } from './integration-registry.js';
 
 const SHADOW_CHECKPOINT_PREFIX = 'shadow-';
 const SHADOW_LINK_CONCURRENCY = 4;
@@ -170,6 +171,8 @@ export async function processGreenhouseQueue(
       const completedAt = new Date().toISOString();
       await dependencies.store.putSourceHealth(successfulSourceHealth({
         sourceId: result.sourceId,
+        provider: integrationRegistry.greenhouse.id,
+        region: integrationRegistry.greenhouse.defaultRegion,
         previous: previousHealth,
         startedAt,
         completedAt,
@@ -185,6 +188,8 @@ export async function processGreenhouseQueue(
         const completedAt = new Date().toISOString();
         await dependencies.store.putSourceHealth(failedSourceHealth({
           sourceId: message.sourceId,
+          provider: integrationRegistry.greenhouse.id,
+          region: integrationRegistry.greenhouse.defaultRegion,
           previous,
           startedAt,
           completedAt,

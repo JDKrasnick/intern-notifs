@@ -1,4 +1,9 @@
 import type { SourceCheckpoint, SourceHealth } from './types.js';
+import { catalogProviderDefinitions, type CatalogProviderId } from './integration-registry.js';
+
+const providerSchedules = Object.fromEntries(
+  catalogProviderDefinitions.map((provider) => [provider.id, provider.runtime.awsSchedule]),
+) as Record<CatalogProviderId, string>;
 
 /** The single cadence contract used by provider dispatchers and their stacks. */
 export const SOURCE_POLL_CADENCE = {
@@ -7,12 +12,7 @@ export const SOURCE_POLL_CADENCE = {
   // With the current account concurrency quota of 10, three provider fleets
   // can use at most six worker executions and leave capacity for the public API.
   workerMaxConcurrency: 2,
-  schedules: {
-    github: 'cron(7/10 * * * ? *)',
-    greenhouse: 'cron(12,42 * * * ? *)',
-    lever: 'cron(22,52 * * * ? *)',
-    ashby: 'cron(2,32 * * * ? *)',
-  },
+  schedules: providerSchedules,
 } as const;
 
 function stableSourceBucket(sourceId: string, buckets: number): number {

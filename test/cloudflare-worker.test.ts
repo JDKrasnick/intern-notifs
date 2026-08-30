@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { queueHasBacklog } from '../cloudflare/queue-backlog.js';
-import { cloudflareOperationsQueueClient, documentContent, failedStructuredRecoveryHealth, readDocumentUpload, recoveredStructuredSourceHealth, structuredSourceRunBlocked } from '../cloudflare/worker.js';
+import { cloudflareOperationsFleets, cloudflareOperationsQueueClient, documentContent, failedStructuredRecoveryHealth, readDocumentUpload, recoveredStructuredSourceHealth, structuredSourceRunBlocked, validBackfillProvider } from '../cloudflare/worker.js';
 import type { Environment } from '../cloudflare/worker.js';
 import type { Queue } from '../cloudflare/types.js';
+import { catalogProviderIds, integrationRegistry } from '../src/integration-registry.js';
 
 const queue = (metrics: Queue['metrics']): Queue => ({
   async send() {},
@@ -59,24 +60,47 @@ describe('structured source recovery guard', () => {
 });
 
 describe('Cloudflare operations queue adapter', () => {
+  it('validates backfill providers from the registry while retaining structured fleet sharing', () => {
+    for (const provider of catalogProviderIds) expect(validBackfillProvider(provider)).toBe(true);
+    expect(validBackfillProvider('all')).toBe(true);
+    expect(validBackfillProvider('structured')).toBe(true);
+    expect(validBackfillProvider('retired-provider')).toBe(false);
+  });
+
   it('reports live work-queue and dead-letter-queue backlogs', async () => {
     const client = cloudflareOperationsQueueClient({
       GREENHOUSE_QUEUE: queue(async () => ({ backlogCount: 7, backlogBytes: 700 })),
       LEVER_QUEUE: queue(async () => ({ backlogCount: 0, backlogBytes: 0 })),
       ASHBY_QUEUE: queue(async () => ({ backlogCount: 0, backlogBytes: 0 })),
+      GITHUB_QUEUE: queue(async () => ({ backlogCount: 3, backlogBytes: 300 })),
       GREENHOUSE_DLQ: queue(async () => ({ backlogCount: 2, backlogBytes: 200 })),
       LEVER_DLQ: queue(async () => ({ backlogCount: 0, backlogBytes: 0 })),
       ASHBY_DLQ: queue(async () => ({ backlogCount: 0, backlogBytes: 0 })),
+      GITHUB_DLQ: queue(async () => ({ backlogCount: 1, backlogBytes: 100 })),
     });
 
-    await expect(client.send({ input: { QueueUrl: 'greenhouse' } })).resolves.toMatchObject({
+    await expect(client.send({ input: { QueueUrl: integrationRegistry.greenhouse.queues.work } })).resolves.toMatchObject({
       Attributes: { ApproximateNumberOfMessages: '7' },
     });
-    await expect(client.send({ input: { QueueUrl: 'greenhouse' } })).resolves.not.toMatchObject({
+    await expect(client.send({ input: { QueueUrl: integrationRegistry.greenhouse.queues.work } })).resolves.not.toMatchObject({
       Attributes: { ApproximateNumberOfMessagesNotVisible: expect.anything() },
     });
-    await expect(client.send({ input: { QueueUrl: 'greenhouse-dlq' } })).resolves.toMatchObject({
+    await expect(client.send({ input: { QueueUrl: integrationRegistry.greenhouse.queues.deadLetter } })).resolves.toMatchObject({
       Attributes: { ApproximateNumberOfMessages: '2' },
+    });
+    await expect(client.send({ input: { QueueUrl: integrationRegistry.github.queues.deadLetter } })).resolves.toMatchObject({
+      Attributes: { ApproximateNumberOfMessages: '1' },
+    });
+  });
+
+  it('reports missing registered bindings without hiding the provider', () => {
+    const fleets = cloudflareOperationsFleets({
+      GREENHOUSE_QUEUE: queue(async () => ({ backlogCount: 0, backlogBytes: 0 })),
+      GREENHOUSE_DLQ: queue(async () => ({ backlogCount: 0, backlogBytes: 0 })),
+    });
+    expect(fleets).toMatchObject({
+      greenhouse: { queueUrl: integrationRegistry.greenhouse.queues.work, deadLetterQueueUrl: integrationRegistry.greenhouse.queues.deadLetter },
+      github: {},
     });
   });
 });

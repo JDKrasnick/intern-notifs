@@ -15,6 +15,7 @@ import {
 import { isTechnicalJob, type JobFilter } from './core/filters.js';
 import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
 import { evaluateSourceFreshness } from './ingestion/monitoring.js';
+import { sourceProvider, sourceRegion } from './integration-registry.js';
 import { processSnapshot } from './ingestion/processor.js';
 import { evaluateCatalogAdmission } from './catalog-admission.js';
 import { classifyDestination, requiresBrowserVerification, type CatalogAdmissionResolver, type DestinationVerificationRequest } from './destination-verification.js';
@@ -106,14 +107,11 @@ async function forEachBounded<T>(items: readonly T[], task: (item: T, index: num
 }
 
 function providerFor(sourceId: string): SourceHealth['provider'] {
-  if (sourceId.startsWith('ashby-')) return 'ashby';
-  if (sourceId.startsWith('lever-')) return 'lever';
-  if (sourceId.includes('greenhouse-')) return 'greenhouse';
-  return sourceId ? 'github' : 'unknown';
+  return sourceProvider(sourceId);
 }
 
 function regionFor(provider: SourceHealth['provider']): NonNullable<SourceHealth['region']> {
-  return provider === 'lever' || provider === 'ashby' ? 'global' : 'unknown';
+  return sourceRegion(provider);
 }
 
 function emitSuccessMetric(
@@ -178,7 +176,7 @@ function emitSuccessMetric(
 function emitFreshnessMetric(records: SourceHealth[], now: Date) {
   const freshness = evaluateSourceFreshness(records, now);
   const polled = new Set(records.map((record) => record.provider));
-  for (const [provider, staleCount] of Object.entries(freshness.byProvider).filter(([name]) => polled.has(name as SourceHealth['provider']))) {
+  for (const [provider, staleCount] of Object.entries(freshness.byProvider).filter(([name]) => polled.has(name))) {
     console.log(JSON.stringify({
       _aws: {
         Timestamp: now.getTime(),

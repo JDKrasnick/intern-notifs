@@ -35,6 +35,16 @@ import { failedSourceHealth, successfulSourceHealth } from '../src/source-health
 import type { BrowserWorker } from '@cloudflare/puppeteer';
 import { destinationVerificationMessage, enqueueDueDestinationVerifications, processDestinationVerificationBatch } from './destination-verification.js';
 import type { CatalogAdmissionResolver } from '../src/destination-verification.js';
+import {
+  catalogProviderDefinitions,
+  catalogProviderIds,
+  integrationRegistry,
+  isCatalogProviderId,
+  providerForCloudflareCron,
+  providerForQueueName,
+  type CatalogProviderId,
+  type CloudflareCatalogQueueBinding,
+} from '../src/integration-registry.js';
 
 export interface Environment extends AuthEnvironment {
   DOCUMENTS: R2Bucket;
@@ -48,6 +58,7 @@ export interface Environment extends AuthEnvironment {
   GREENHOUSE_DLQ: Queue;
   LEVER_DLQ: Queue;
   ASHBY_DLQ: Queue;
+  GITHUB_DLQ: Queue;
   GMAIL_DLQ: Queue;
   DESTINATION_VERIFICATION_DLQ: Queue;
   PUBLIC_API_URL: string;
@@ -259,24 +270,22 @@ async function removeEmployerAccessForDeletedAccount(env: Environment, userId: s
   await store.removeUserAccess(userId, email);
 }
 
-type OperationsQueueEnvironment = Pick<Environment,
-  'GREENHOUSE_QUEUE' | 'LEVER_QUEUE' | 'ASHBY_QUEUE' | 'GREENHOUSE_DLQ' | 'LEVER_DLQ' | 'ASHBY_DLQ'>;
+type OperationsQueueEnvironment = Partial<Record<CloudflareCatalogQueueBinding, Queue>>;
 
 const maxDocumentBytes = 5 * 1024 * 1024;
 
 export function cloudflareOperationsQueueClient(env: OperationsQueueEnvironment) {
-  const queues: Record<string, Queue> = {
-    greenhouse: env.GREENHOUSE_QUEUE,
-    lever: env.LEVER_QUEUE,
-    ashby: env.ASHBY_QUEUE,
-    'greenhouse-dlq': env.GREENHOUSE_DLQ,
-    'lever-dlq': env.LEVER_DLQ,
-    'ashby-dlq': env.ASHBY_DLQ,
-  };
+  const queues = new Map<string, Queue>();
+  for (const provider of catalogProviderDefinitions) {
+    const work = env[provider.runtime.cloudflareWorkBinding];
+    const deadLetter = env[provider.runtime.cloudflareDeadLetterBinding];
+    if (work) queues.set(provider.queues.work, work);
+    if (deadLetter) queues.set(provider.queues.deadLetter, deadLetter);
+  }
   return {
     async send(command: { input?: { QueueUrl?: string; MessageBody?: string } }) {
       const input = command.input;
-      const queue = input?.QueueUrl ? queues[input.QueueUrl] : undefined;
+      const queue = input?.QueueUrl ? queues.get(input.QueueUrl) : undefined;
       if (!queue) throw new Error(`Cloudflare queue ${JSON.stringify(input?.QueueUrl)} is not configured`);
       if (input?.MessageBody) {
         await queue.send(JSON.parse(input.MessageBody));
@@ -296,6 +305,13 @@ export function cloudflareOperationsQueueClient(env: OperationsQueueEnvironment)
   };
 }
 
+export function cloudflareOperationsFleets(env: OperationsQueueEnvironment) {
+  return Object.fromEntries(catalogProviderDefinitions.map((provider) => [provider.id, {
+    ...(env[provider.runtime.cloudflareWorkBinding] ? { queueUrl: provider.queues.work } : {}),
+    ...(env[provider.runtime.cloudflareDeadLetterBinding] ? { deadLetterQueueUrl: provider.queues.deadLetter } : {}),
+  }]));
+}
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Authorization,Content-Type,Idempotency-Key,X-Operations-Key,X-Operations-Actor',
@@ -306,6 +322,10 @@ function withCors(response: Response): Response {
   const headers = new Headers(response.headers);
   for (const [key, value] of Object.entries(corsHeaders)) headers.set(key, value);
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+export function validBackfillProvider(value: string): boolean {
+  return value === 'all' || value === 'structured' || isCatalogProviderId(value);
 }
 
 function eventResponse(result: { body: string; statusCode: number; headers?: Record<string, string> }): Response {
@@ -358,7 +378,10 @@ async function billingShutdown(request: Request, env: Environment): Promise<Resp
     return Response.json({ message: 'Not found' }, { status: 404 });
   }
 
-  const queueIds = [env.GREENHOUSE_QUEUE_ID, env.LEVER_QUEUE_ID, env.ASHBY_QUEUE_ID, env.GITHUB_QUEUE_ID, env.GMAIL_QUEUE_ID];
+  const queueIds = [
+    ...catalogProviderDefinitions.map((provider) => env[provider.runtime.cloudflareQueueIdBinding]),
+    env.GMAIL_QUEUE_ID,
+  ];
   const scriptPath = `/workers/scripts/${encodeURIComponent(env.WORKER_NAME)}`;
   if (new URL(request.url).searchParams.get('dry-run') === 'true') {
     await Promise.all([
@@ -562,7 +585,8 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
     const provider = url.searchParams.get('provider');
     const sourceId = url.searchParams.get('sourceId');
-    if (!sourceId || !['greenhouse', 'lever', 'ashby', 'structured'].includes(provider ?? '')) {
+    const atsProvider = isCatalogProviderId(provider) && provider !== 'github' ? provider : undefined;
+    if (!sourceId || (provider !== 'structured' && !atsProvider)) {
       return withCors(Response.json({ message: 'provider and sourceId are required' }, { status: 400 }));
     }
     const employerStore = new D1EmployerStore(env.DB);
@@ -577,20 +601,20 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
       }
     }
     const providers = await reviewedProviderRegistry(employerStore);
-    const registry = provider === 'greenhouse' ? providers.greenhouse : provider === 'lever' ? providers.lever : providers.ashby;
+    const registry = atsProvider === 'greenhouse' ? providers.greenhouse : atsProvider === 'lever' ? providers.lever : providers.ashby;
     const source = registry.find((candidate) => candidate.id === sourceId);
     if (!source) return withCors(Response.json({ message: 'Source not found' }, { status: 404 }));
     const now = new Date();
-    const message = provider === 'greenhouse'
+    const message = atsProvider === 'greenhouse'
       ? { ...greenhouseWorkMessages([source as typeof reviewedGreenhouseSources[number]], now)[0]!, force: true }
-      : provider === 'lever'
+      : atsProvider === 'lever'
         ? { ...leverWorkMessages([source as typeof reviewedLeverSources[number]], now, crypto.randomUUID())[0]!, force: true }
         : { ...ashbyWorkMessages([source as typeof reviewedAshbySources[number]], now, crypto.randomUUID())[0]!, force: true };
     const event = { Records: [{ messageId: crypto.randomUUID(), body: JSON.stringify(message) }] };
     const dependencies = { store: new D1InternshipStore(env.DB), userStore: new D1UserStore(env.DB) };
-    const result = provider === 'greenhouse'
+    const result = atsProvider === 'greenhouse'
       ? await processGreenhouseQueue(event, { ...dependencies, sources: providers.greenhouse })
-      : provider === 'lever'
+      : atsProvider === 'lever'
         ? await processLeverQueue(event, { ...dependencies, sources: providers.lever })
         : await processAshbyQueue(event, { ...dependencies, sources: providers.ashby });
     if (result.batchItemFailures.length) return withCors(Response.json({ sourceId, processed: false }, { status: 502 }));
@@ -599,7 +623,7 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
   if (request.method === 'POST' && url.pathname === '/internal/backfill') {
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
     const provider = url.searchParams.get('provider') ?? 'all';
-    if (!['all', 'github', 'structured', 'greenhouse', 'lever', 'ashby'].includes(provider)) {
+    if (!validBackfillProvider(provider)) {
       return withCors(Response.json({ message: 'provider is invalid' }, { status: 400 }));
     }
     const queued: Record<string, number> = {};
@@ -612,7 +636,7 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
       await sendQueueMessages(env.GITHUB_QUEUE, structured.map((source) => ({ sourceId: source.id, sourceKind: 'structured' })));
       queued.structured = structured.length;
     }
-    for (const candidate of ['greenhouse', 'lever', 'ashby'] as const) {
+    for (const candidate of catalogProviderIds.filter((id): id is Exclude<CatalogProviderId, 'github'> => id !== 'github')) {
       if (provider === 'all' || provider === candidate) queued[candidate] = await dispatchProviders(env, candidate, new Date(), true);
     }
     return withCors(Response.json({ queued }));
@@ -630,11 +654,7 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
     const operations = createSourceOperationsHandler({
       store: new D1InternshipStore(env.DB),
       sharedSecret: env.OPERATIONS_SHARED_SECRET,
-      fleets: {
-        greenhouse: { queueUrl: 'greenhouse', deadLetterQueueUrl: 'greenhouse-dlq' },
-        lever: { queueUrl: 'lever', deadLetterQueueUrl: 'lever-dlq' },
-        ashby: { queueUrl: 'ashby', deadLetterQueueUrl: 'ashby-dlq' },
-      },
+      fleets: cloudflareOperationsFleets(env),
       sqs: queueClient as never,
       cloudwatch: cloudwatch as never,
       alarmTelemetry: {
@@ -785,7 +805,7 @@ async function sendQueueMessages(queue: Queue, messages: unknown[]): Promise<voi
 
 async function dispatchProviders(
   env: Environment,
-  provider: 'greenhouse' | 'lever' | 'ashby',
+  provider: Exclude<CatalogProviderId, 'github'>,
   now = new Date(),
   force = false,
 ): Promise<number> {
@@ -825,7 +845,8 @@ async function refreshCatalogProjection(store: D1InternshipStore) {
 async function scheduledHandler(event: ScheduledController, env: Environment): Promise<void> {
   if (await isShutdown(env)) return;
   const store = new D1InternshipStore(env.DB);
-  if (event.cron === '7-57/10 * * * *') {
+  const scheduledProvider = providerForCloudflareCron(event.cron);
+  if (scheduledProvider === 'github') {
     if (await queueHasBacklog(env.GITHUB_QUEUE, 'github')) return;
     const structured = await reviewedStructuredRegistry(new D1EmployerStore(env.DB));
     const dueStructured = (await Promise.all(structured.map(async (source) => {
@@ -860,16 +881,10 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
     } satisfies GmailWorkMessage)));
     return;
   }
-  if (event.cron === '12,42 * * * *') {
-    if (!await queueHasBacklog(env.GREENHOUSE_QUEUE, 'greenhouse')) await dispatchProviders(env, 'greenhouse');
-    return;
-  }
-  if (event.cron === '22,52 * * * *') {
-    if (!await queueHasBacklog(env.LEVER_QUEUE, 'lever')) await dispatchProviders(env, 'lever');
-    return;
-  }
-  if (event.cron === '2,32 * * * *') {
-    if (!await queueHasBacklog(env.ASHBY_QUEUE, 'ashby')) await dispatchProviders(env, 'ashby');
+  if (scheduledProvider) {
+    const provider = scheduledProvider as Exclude<CatalogProviderId, 'github'>;
+    const queue = env[integrationRegistry[provider].runtime.cloudflareWorkBinding];
+    if (!await queueHasBacklog(queue, provider)) await dispatchProviders(env, provider);
     return;
   }
   if (event.cron === '0 * * * *') {
@@ -928,7 +943,8 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
     }
     return;
   }
-  if (batch.queue.includes('github')) {
+  const catalogProvider = providerForQueueName(batch.queue);
+  if (catalogProvider === 'github') {
     const failed = new Set<string>();
     const employerStore = new D1EmployerStore(env.DB);
     const admissionResolver = catalogAdmissionResolver(env);
@@ -973,11 +989,13 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
   };
   const legacyLever = (await dependencies.store.listLeverAdmissions?.() ?? []).map(({ source }) => source);
   const leverRegistry = [...registry.lever, ...legacyLever.filter((source) => !registry.lever.some((candidate) => candidate.id === source.id))];
-  const result = batch.queue.includes('greenhouse')
+  const result = catalogProvider === 'greenhouse'
     ? await processGreenhouseQueue(event, { ...dependencies, sources: registry.greenhouse })
-    : batch.queue.includes('lever')
+    : catalogProvider === 'lever'
       ? await processLeverQueue(event, { ...dependencies, sources: leverRegistry })
-      : await processAshbyQueue(event, { ...dependencies, sources: registry.ashby });
+      : catalogProvider === 'ashby'
+        ? await processAshbyQueue(event, { ...dependencies, sources: registry.ashby })
+        : { batchItemFailures: records.map((record) => ({ itemIdentifier: record.messageId })) };
   const failed = new Set(result.batchItemFailures.map(({ itemIdentifier }) => itemIdentifier));
   for (const message of batch.messages) {
     if (failed.has(message.id)) message.retry();

@@ -24,6 +24,7 @@
       { "binding": "GREENHOUSE_DLQ", "queue": "intern-notifs-greenhouse-dlq" },
       { "binding": "LEVER_DLQ", "queue": "intern-notifs-lever-dlq" },
       { "binding": "ASHBY_DLQ", "queue": "intern-notifs-ashby-dlq" },
+      { "binding": "GITHUB_DLQ", "queue": "intern-notifs-github-dlq" },
       { "binding": "GMAIL_DLQ", "queue": "intern-notifs-gmail-dlq" },
       { "binding": "DESTINATION_VERIFICATION_DLQ", "queue": "intern-notifs-destination-verification-dlq" }
     ],
