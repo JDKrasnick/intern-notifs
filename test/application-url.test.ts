@@ -40,6 +40,23 @@ describe('application URL validation', () => {
     expect(methods).toEqual(['HEAD', 'GET', 'GET']);
   });
 
+  it('releases every response while validating more than six application URLs', async () => {
+    const responses: Response[] = [];
+    const validate = (index: number) => validateApplicationUrl(`https://careers.example.com/role-${index}`, async (_url, init) => {
+      const response = init?.method === 'HEAD'
+        ? new Response('HEAD not supported', { status: 405 })
+        : new Headers(init?.headers).has('Range')
+          ? new Response('range probe', { status: 200 })
+          : new Response(`<title>Software Engineer Intern ${index}</title>`, { status: 200, headers: { 'content-type': 'text/html' } });
+      responses.push(response);
+      return response;
+    });
+
+    await expect(Promise.all(Array.from({ length: 8 }, (_, index) => validate(index)))).resolves.toHaveLength(8);
+    expect(responses).toHaveLength(24);
+    expect(responses.every((response) => response.bodyUsed)).toBe(true);
+  });
+
   it("reads a rendered job page instead of accepting a generic 200 shell", async () => {
     const id = '7623166667125508357';
     const methods: string[] = [];

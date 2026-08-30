@@ -167,24 +167,42 @@ function structuredJobText(html: string): { text?: string; source?: 'json-ld' } 
   return {};
 }
 
+async function discardResponseBody(response: Response): Promise<void> {
+  if (!response.body || response.bodyUsed) return;
+  try {
+    await response.body.cancel();
+  } catch {
+    // Cleanup is best-effort and must not replace the validation outcome.
+  }
+}
+
 async function boundedResponseText(response: Response, maximumBytes = 512 * 1024): Promise<string> {
   const declared = Number(response.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maximumBytes) {
+    await discardResponseBody(response);
     throw new ApplicationUrlValidationError('Application page exceeds the inspection size limit');
   }
   if (!response.body) return '';
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
+  let complete = false;
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) { complete = true; break; }
       size += value.byteLength;
       if (size > maximumBytes) throw new ApplicationUrlValidationError('Application page exceeds the inspection size limit');
       chunks.push(value);
     }
   } finally {
+    if (!complete) {
+      try {
+        await reader.cancel();
+      } catch {
+        // Preserve the read or validation error that caused cancellation.
+      }
+    }
     reader.releaseLock();
   }
   const bytes = new Uint8Array(size);
@@ -290,20 +308,29 @@ export async function inspectApplicationPage(
   }
   const destination = new URL(response.url || url.toString());
   if (!response.ok) {
-    if ([401, 403, 429].includes(response.status) || response.status >= 500) return {
-      url: destination.toString(),
-      ...(expectedPostingId ? { expectedPostingId } : {}),
-      confidence: confidenceFor({ html: false, ...([401, 403, 429].includes(response.status) ? { accessRestricted: true } : { temporarilyUnavailable: true }), ...(expectedPostingId ? { expectedPostingId } : {}) }),
-    };
+    await discardResponseBody(response);
+    if ([401, 403, 429].includes(response.status) || response.status >= 500) {
+      return {
+        url: destination.toString(),
+        ...(expectedPostingId ? { expectedPostingId } : {}),
+        confidence: confidenceFor({ html: false, ...([401, 403, 429].includes(response.status) ? { accessRestricted: true } : { temporarilyUnavailable: true }), ...(expectedPostingId ? { expectedPostingId } : {}) }),
+      };
+    }
     throw new ApplicationUrlValidationError(`Application page returned HTTP ${response.status}`);
   }
-  if (explicitErrorDestination(destination)) throw new ApplicationUrlValidationError('Application page redirected to an explicit error destination');
+  if (explicitErrorDestination(destination)) {
+    await discardResponseBody(response);
+    throw new ApplicationUrlValidationError('Application page redirected to an explicit error destination');
+  }
   const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
-  if (contentType && !contentType.includes('html')) return {
-    url: destination.toString(),
-    ...(expectedPostingId ? { expectedPostingId } : {}),
-    confidence: confidenceFor({ html: false, ...(expectedPostingId ? { expectedPostingId } : {}) }),
-  };
+  if (contentType && !contentType.includes('html')) {
+    await discardResponseBody(response);
+    return {
+      url: destination.toString(),
+      ...(expectedPostingId ? { expectedPostingId } : {}),
+      confidence: confidenceFor({ html: false, ...(expectedPostingId ? { expectedPostingId } : {}) }),
+    };
+  }
   const html = await boundedResponseText(response);
   const content = applicationContent(html);
   const title = /<title[^>]*>\s*([^<]+?)\s*<\/title>/i.exec(html)?.[1]?.replace(/\s+/g, ' ').trim();
@@ -392,7 +419,10 @@ export async function validateApplicationUrlWithEvidence(
   let response: Response;
   try {
     response = await request('HEAD');
-    if (!response.ok) response = await request('GET');
+    if (!response.ok) {
+      await discardResponseBody(response);
+      response = await request('GET');
+    }
   } catch (error) {
     const detail = error instanceof Error && error.name === 'TimeoutError'
       ? 'timed out'
@@ -401,6 +431,7 @@ export async function validateApplicationUrlWithEvidence(
   }
 
   if (!response.ok) {
+    await discardResponseBody(response);
     if ([401, 403, 429].includes(response.status) || response.status >= 500) {
       const restricted = httpsUrl(response.url || sourceUrl.toString(), 'Resolved application link');
       if (policy?.allowedFinalHosts && !hostAllowed(restricted.hostname, policy.allowedFinalHosts)) {
@@ -412,6 +443,7 @@ export async function validateApplicationUrlWithEvidence(
   }
 
   const resolved = httpsUrl(response.url || sourceUrl.toString(), 'Resolved application link');
+  await discardResponseBody(response);
   if (policy?.allowedFinalHosts && !hostAllowed(resolved.hostname, policy.allowedFinalHosts)) {
     throw new ApplicationUrlValidationError(`Resolved application link host ${resolved.hostname} is not an approved destination host`);
   }
