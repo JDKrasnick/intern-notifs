@@ -1,6 +1,6 @@
 import { sourceRoleAgreement, type ApplicationPageEvidence } from './core/application-url.js';
 import { providerPostingReference } from './identity/posting.js';
-import type { CanonicalEmployer, DestinationEvidence, DestinationReviewRule, ProcessedListing, ProviderIdentity } from './types.js';
+import type { CanonicalEmployer, DestinationEvidence, DestinationReviewRule, Internship, ProcessedListing, ProviderIdentity } from './types.js';
 import type { Reachability } from './core/application-verification.js';
 import { evidenceHash } from './catalog-admission.js';
 
@@ -17,6 +17,27 @@ export interface CatalogAdmissionResolver {
   resolveCanonicalEmployer(identity: ProviderIdentity): Promise<Pick<CanonicalEmployer, 'id' | 'displayName'> | undefined>;
   resolveDestinationRule(identity: ProviderIdentity, candidateUrl: string): Promise<DestinationReviewRule | undefined>;
   configurationVersion?(): Promise<string>;
+}
+
+export function matchingBrowserDestination(
+  existing: Internship | undefined,
+  request: Pick<DestinationVerificationRequest, 'sourceId' | 'externalId' | 'providerIdentity' | 'candidateUrl'>,
+  queuedAt?: string,
+): DestinationEvidence | undefined {
+  const reference = existing?.sourceReferences.find((item) => item.sourceId === request.sourceId && item.externalId === request.externalId);
+  const destination = reference?.admission?.destination;
+  if (!destination?.browserVisible || destination.candidateUrl !== request.candidateUrl
+    || destination.provider !== request.providerIdentity.provider) return undefined;
+  if (request.providerIdentity.tenant
+    && destination.tenant?.toLowerCase() !== request.providerIdentity.tenant.toLowerCase()) return undefined;
+  if (request.providerIdentity.postingId
+    && destination.expectedPostingId?.toLowerCase() !== request.providerIdentity.postingId.toLowerCase()) return undefined;
+  if (queuedAt) {
+    const queuedAtMs = Date.parse(queuedAt);
+    const inspectedAtMs = Date.parse(destination.inspectedAt);
+    if (!Number.isFinite(queuedAtMs) || !Number.isFinite(inspectedAtMs) || inspectedAtMs < queuedAtMs) return undefined;
+  }
+  return destination;
 }
 
 function standardRouteMatches(identity: ProviderIdentity, url: string): boolean {

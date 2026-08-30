@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import { persistDestinationAdmission, reachabilityFromHttpStatus, type DestinationVerificationMessage } from '../cloudflare/destination-verification.js';
+import { matchingBrowserDestination } from '../src/destination-verification.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 import type { CatalogAdmission, Internship } from '../src/types.js';
 
@@ -206,6 +207,23 @@ describe('D1 catalog admission operations', () => {
     expect(reachabilityFromHttpStatus(403)).toBe('blocked');
     expect(reachabilityFromHttpStatus(503)).toBe('unreachable');
     expect(reachabilityFromHttpStatus(200)).toBe('live');
+  });
+
+  it('recognizes queued verification work already covered by browser evidence', () => {
+    const current = job();
+    const verified = admission(true);
+    verified.destination = { ...verified.destination, browserVisible: true, provider: 'greenhouse', tenant: 'acme',
+      expectedPostingId: 'role-1', inspectedAt: '2026-08-28T00:05:00Z' };
+    current.sourceReferences = [{ sourceId: 'community-list', externalId: 'row-1', provenance: 'reviewed-community',
+      document: 'README.md', sourceUrl: 'https://github.com/example/jobs', row: 1, company: current.company, title: current.title,
+      location: current.location, season: current.season, applyUrl: current.applyUrl, compensation: current.compensation,
+      state: 'open', admission: verified }];
+    const request = { sourceId: 'community-list', externalId: 'row-1', candidateUrl: current.applyUrl,
+      providerIdentity: { provider: 'greenhouse' as const, sourceId: 'community-list', sourceUrl: 'https://github.com/example/jobs',
+        tenant: 'acme', postingId: 'role-1' } };
+    expect(matchingBrowserDestination(current, request, '2026-08-28T00:00:00Z')).toEqual(verified.destination);
+    expect(matchingBrowserDestination(current, request, '2026-08-28T00:10:00Z')).toBeUndefined();
+    expect(matchingBrowserDestination(current, { ...request, candidateUrl: `${current.applyUrl}?changed=1` })).toBeUndefined();
   });
 
   it('lets rendered posting proof attribute a reviewed community occurrence', async () => {

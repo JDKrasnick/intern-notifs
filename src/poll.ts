@@ -18,7 +18,7 @@ import { evaluateSourceFreshness } from './ingestion/monitoring.js';
 import { sourceProvider, sourceRegion } from './integration-registry.js';
 import { processSnapshot } from './ingestion/processor.js';
 import { evaluateCatalogAdmission } from './catalog-admission.js';
-import { classifyDestination, requiresBrowserVerification, type CatalogAdmissionResolver, type DestinationVerificationRequest } from './destination-verification.js';
+import { classifyDestination, matchingBrowserDestination, requiresBrowserVerification, type CatalogAdmissionResolver, type DestinationVerificationRequest } from './destination-verification.js';
 import { reviewedBoardIndex } from './sources/index.js';
 import { sourceQualityFailures } from './sources/quality.js';
 import { SourceFetchError } from './sources/source-error.js';
@@ -577,12 +577,24 @@ export class IngestionRunner {
           return;
         }
         const inspectedAt = this.now().toISOString();
-        const destination = classifyDestination({ listing, reachability, ...(pageEvidence ? { evidence: pageEvidence } : {}), inspectedAt,
+        const observedDestination = classifyDestination({ listing, reachability, ...(pageEvidence ? { evidence: pageEvidence } : {}), inspectedAt,
           ...(destinationRule ? { rule: destinationRule } : {}) });
+        // Explicit reviewed decisions remain authoritative when configuration
+        // changes. Browser evidence may only supplement an unresolved route or
+        // satisfy a rule that specifically requires browser inspection.
+        const browserDestination = listing.providerIdentity
+          && (!destinationRule || destinationRule.decision === 'browser-required')
+          ? matchingBrowserDestination(existing, {
+            sourceId: listing.sourceId, externalId: id, providerIdentity: listing.providerIdentity, candidateUrl: listing.applyUrl,
+          })
+          : undefined;
+        const destination = browserDestination ?? observedDestination;
         const admission = evaluateCatalogAdmission({
           listing,
           destination,
-          postingAttributed: listing.provenance !== 'reviewed-community' || attribution !== 'unattributed' || described === true,
+          postingAttributed: listing.provenance !== 'reviewed-community' || attribution !== 'unattributed' || described === true
+            || existing?.sourceReferences.some((reference) => reference.sourceId === listing.sourceId && reference.externalId === id
+              && reference.admission?.postingAttribution === 'attributed') === true,
           evaluatedAt: inspectedAt,
           previous: existing?.admission,
         });
@@ -596,7 +608,7 @@ export class IngestionRunner {
           && destination.classification === 'posting-detail'
           && admission.reasonCodes.length === 1 && admission.reasonCodes[0] === 'posting-unattributed');
         if (!preserveLegacyWhileAttributionPending) listing = { ...listing, admission };
-        if (this.enqueueDestinationVerification && listing.providerIdentity
+        if (!browserDestination && this.enqueueDestinationVerification && listing.providerIdentity
           && (requiresBrowserVerification(destination) || admission.reasonCodes.includes('posting-unattributed'))) {
           await this.enqueueDestinationVerification({
             jobId: listing.postingIdentity!.canonicalJobId,

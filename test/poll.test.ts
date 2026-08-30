@@ -467,9 +467,13 @@ describe('polling', () => {
         content: [], locations: ['Arizona, USA'], applyUrl: 'https://job-boards.greenhouse.io/axon/jobs/7978840003',
         sourceState: 'open', lifecycleAuthority: 'source' }],
     };
+    const reviewed: { decision?: 'aggregate-board' } = {};
     const resolver = {
       async resolveCanonicalEmployer() { return { id: 'axon', displayName: 'Axon' }; },
-      async resolveDestinationRule() { return undefined; },
+      async resolveDestinationRule() {
+        return reviewed.decision ? { id: 'axon-route', host: 'job-boards.greenhouse.io', provider: 'greenhouse' as const,
+          tenant: 'axon', decision: reviewed.decision, reviewedAt: '2026-08-28T00:00:00Z', reviewedBy: 'reviewer' } : undefined;
+      },
     };
     await new Poller([{ id: snapshot.sourceId, async fetch() { return snapshot; } }], store,
       undefined, undefined, undefined, undefined, async (request) => { queued.push(request); }, resolver).poll();
@@ -477,6 +481,28 @@ describe('polling', () => {
       reasonCodes: ['posting-unattributed'], destination: { classification: 'posting-detail' } } });
     expect(queued).toMatchObject([{ candidateUrl: 'https://job-boards.greenhouse.io/axon/jobs/7978840003',
       providerIdentity: { provider: 'greenhouse', postingId: '7978840003' }, reason: 'first-sight' }]);
+
+    const first = [...store.jobs.values()][0]!;
+    const verified = {
+      ...first.sourceReferences[0]!.admission!, postingAttribution: 'attributed' as const,
+      destination: { ...first.sourceReferences[0]!.admission!.destination, browserVisible: true,
+        inspectedAt: '2026-08-28T00:05:00Z' }, catalogEligible: true, alertEligible: true, reasonCodes: [],
+    };
+    await store.putInternship({ ...first, admission: verified,
+      sourceReferences: [{ ...first.sourceReferences[0]!, admission: verified }] });
+    await new Poller([{ id: snapshot.sourceId, async fetch() { return snapshot; } }], store,
+      undefined, undefined, undefined, undefined, async (request) => { queued.push(request); }, resolver).poll();
+    expect(queued).toHaveLength(1);
+    expect([...store.jobs.values()][0]).toMatchObject({ admission: { destination: { browserVisible: true } },
+      sourceReferences: [{ admission: { destination: { browserVisible: true } } }] });
+
+    reviewed.decision = 'aggregate-board';
+    await new Poller([{ id: snapshot.sourceId, async fetch() { return snapshot; } }], store,
+      undefined, undefined, undefined, undefined, async (request) => { queued.push(request); }, resolver).poll();
+    expect(queued).toHaveLength(1);
+    expect([...store.jobs.values()][0]).toMatchObject({ admission: {
+      catalogEligible: false, destination: { classification: 'aggregate-board' }, reasonCodes: ['destination-aggregate-board'],
+    } });
   });
 
   it('keeps an existing exact-URL community role visible while its posting attribution is queued', async () => {
