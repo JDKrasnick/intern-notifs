@@ -64,6 +64,13 @@ export function notificationCandidateEligible(job: Internship | undefined, at = 
   return Boolean(job?.open && job.technical !== false && alertEligible(job, at));
 }
 
+export function notificationCandidatesForFlush(
+  candidates: Array<Internship | undefined>,
+  attemptedAt = new Date(),
+): Internship[] {
+  return candidates.filter((job) => notificationCandidateEligible(job, attemptedAt));
+}
+
 export interface ReceiptMessage {
   claim: DeliveryClaim;
   ticketId: string;
@@ -174,11 +181,12 @@ async function aggregationWorker(event: SqsEvent) {
 }
 
 async function flushBucket(message: { bucketId: string }) {
+  const attemptedAt = new Date();
   const bucketKey = { pk: `RELEASE_BUCKET#${message.bucketId}`, sk: 'META' };
   const result = await documentClient.send(new GetCommand({ TableName: catalogTable, Key: bucketKey, ConsistentRead: true }));
   const initial = result.Item as { employerId?: string; openedAt?: string; closedAt?: string; processedAt?: string } | undefined;
   if (!initial?.employerId || !initial.openedAt || initial.processedAt) return;
-  const closedAt = initial.closedAt ?? new Date().toISOString();
+  const closedAt = initial.closedAt ?? attemptedAt.toISOString();
   if (!initial.closedAt) {
     try {
       // Close aggregation before reading the final job set. An aggregation
@@ -205,8 +213,10 @@ async function flushBucket(message: { bucketId: string }) {
   const final = await documentClient.send(new GetCommand({ TableName: catalogTable, Key: bucketKey, ConsistentRead: true }));
   const bucket = final.Item as { openedAt?: string; jobIds?: Set<string> } | undefined;
   if (!bucket?.openedAt) return;
-  const releaseJobs = (await Promise.all([...(bucket.jobIds ?? [])].map((jobId) => jobs.getJob(jobId))))
-    .filter((job) => notificationCandidateEligible(job, new Date(closedAt)));
+  const releaseJobs = notificationCandidatesForFlush(
+    await Promise.all([...(bucket.jobIds ?? [])].map((jobId) => jobs.getJob(jobId))),
+    attemptedAt,
+  );
   if (releaseJobs.length) {
     const candidate = createCandidateRelease(releaseJobs, new Date(bucket.openedAt));
     const cohortParameterName = process.env.GROUPED_NOTIFICATION_COHORT_PARAMETER_NAME;

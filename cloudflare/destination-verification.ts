@@ -354,8 +354,12 @@ export async function processDestinationVerificationBatch(
                   const matching = escapedPostingId ? structuredPostings.filter((record) => new RegExp(
                     `(?:^|[^a-z0-9])${escapedPostingId}(?:$|[^a-z0-9])`, 'i',
                   ).test(JSON.stringify(record))) : [];
+                  const solePostingDeclaresIdentity = structuredPostings.length === 1
+                    && ['identifier', '@id', 'url', 'jobId', 'postingId', 'requisitionId']
+                      .some((key) => structuredPostings[0][key] !== undefined && structuredPostings[0][key] !== null);
                   const selectedPosting = matching.length === 1 ? matching[0]
-                    : structuredPostings.length === 1 ? structuredPostings[0] : undefined;
+                    : structuredPostings.length === 1 && (!requestedPostingId || !solePostingDeclaresIdentity)
+                      ? structuredPostings[0] : undefined;
                   const selectedValidThrough = typeof selectedPosting?.validThrough === 'string'
                     && !Number.isNaN(Date.parse(selectedPosting.validThrough))
                     ? new Date(selectedPosting.validThrough).toISOString() : undefined;

@@ -183,6 +183,17 @@ describe('application URL validation', () => {
       new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
     )).resolves.toMatchObject({ validThrough: '2030-01-01T00:00:00.000Z', closureState: 'open' });
   });
+  it('ignores a sole structured posting when its identity does not match the requested role', async () => {
+    const html = `<main>Requested role details and qualifications.</main><script type="application/ld+json">${JSON.stringify({
+      '@type': 'JobPosting', identifier: '999999', description: 'Related expired role', validThrough: '2020-01-01',
+    })}</script>`;
+    const evidence = await inspectApplicationPage('https://careers.example.com/jobs/123456', async () =>
+      new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+    );
+    expect(evidence).toMatchObject({ expectedPostingId: '123456', postingIdPresent: false, closureState: 'open',
+      contentExcerpt: 'Requested role details and qualifications.', contentSource: 'main' });
+    expect(evidence).not.toHaveProperty('validThrough');
+  });
   it('recognizes common explicit closure artifacts with surrounding copy', async () => {
     for (const closure of ['This job has expired.', 'No longer accepting applications. View similar roles.']) {
       await expect(inspectApplicationPage('https://careers.example.com/jobs/123456', async () =>

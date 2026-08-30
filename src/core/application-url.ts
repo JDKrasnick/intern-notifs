@@ -160,6 +160,11 @@ function structuredPostingMatches(record: Record<string, unknown>, expectedPosti
   return new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, 'iu').test(JSON.stringify(record));
 }
 
+function structuredPostingDeclaresIdentity(record: Record<string, unknown>): boolean {
+  return ['identifier', '@id', 'url', 'jobId', 'postingId', 'requisitionId']
+    .some((key) => record[key] !== undefined && record[key] !== null);
+}
+
 function structuredJobText(html: string, expectedPostingId?: string): { text?: string; source?: 'json-ld'; validThrough?: string } {
   const postings: Record<string, unknown>[] = [];
   for (const match of html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
@@ -179,7 +184,8 @@ function structuredJobText(html: string, expectedPostingId?: string): { text?: s
     } catch { /* A malformed publisher JSON-LD block is non-fatal. */ }
   }
   const matching = expectedPostingId ? postings.filter((record) => structuredPostingMatches(record, expectedPostingId)) : [];
-  const selected = matching.length === 1 ? matching[0] : postings.length === 1 ? postings[0] : undefined;
+  const selected = matching.length === 1 ? matching[0]
+    : postings.length === 1 && (!expectedPostingId || !structuredPostingDeclaresIdentity(postings[0])) ? postings[0] : undefined;
   if (!selected) return {};
   return {
     ...(typeof selected.description === 'string' ? { text: textFromHtml(selected.description), source: 'json-ld' as const } : {}),

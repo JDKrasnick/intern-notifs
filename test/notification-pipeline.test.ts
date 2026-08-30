@@ -6,7 +6,8 @@ import * as ses from 'aws-cdk-lib/aws-ses';
 import { describe, expect, it, vi } from 'vitest';
 import { NotificationPipeline } from '../infra/notification-pipeline.js';
 import { candidateFitsActiveBucket, EXPO_RECEIPT_DELAY_SECONDS, expoReceiptRetryDelaySeconds, MAX_EXPO_RECEIPT_CHECKS,
-  nextReceiptCheck, notificationCandidateEligible, notificationStreamTarget, transitionClaim } from '../src/notification-pipeline-handler.js';
+  nextReceiptCheck, notificationCandidateEligible, notificationCandidatesForFlush, notificationStreamTarget,
+  transitionClaim } from '../src/notification-pipeline-handler.js';
 import type { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { Internship } from '../src/types.js';
 
@@ -91,6 +92,15 @@ describe('NotificationPipeline', () => {
     } } as Internship;
     expect(notificationCandidateEligible(job, new Date('2026-08-29T23:59:59Z'))).toBe(true);
     expect(notificationCandidateEligible(job, new Date('2026-08-30T00:00:00Z'))).toBe(false);
+  });
+  it('rechecks freshness at the current flush attempt after a bucket was closed earlier', () => {
+    const job = { open: true, technical: true, admission: {
+      destination: { freshUntil: '2026-08-30T00:00:00Z' }, alertEligible: true,
+    } } as Internship;
+    const priorClosedAt = new Date('2026-08-29T23:59:59Z');
+    const retriedAt = new Date('2026-08-30T00:00:01Z');
+    expect(notificationCandidateEligible(job, priorClosedAt)).toBe(true);
+    expect(notificationCandidatesForFlush([job], retriedAt)).toEqual([]);
   });
   it('bounds receipt retries and backs them off instead of sending a receipt to the DLQ while pending', () => {
     const message = {
