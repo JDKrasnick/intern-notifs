@@ -17,10 +17,10 @@ import { defaultSources } from '../src/sources/index.js';
 import type { SourceCheckpoint, SourceHealth } from '../src/types.js';
 import { authenticatedInstallation, authenticatedUser, cleanupExpiredAuth, consumeAuthRateLimit, createInstallation, deleteAuthUser, handleAuthRequest, type AuthEnvironment } from './auth.js';
 import { runCatalogQualityBackfill } from '../src/catalog-quality-backfill.js';
-import { runPostingIdentityRepair } from '../src/posting-identity-repair.js';
+import { runPostingIdentityRepair, type PostingIdentityRepairPlan } from '../src/posting-identity-repair.js';
 import { cleanupExpiredUserData, D1InternshipStore, D1ReleaseStore, D1UserStore } from './d1-store.js';
 import { queueHasBacklog } from './queue-backlog.js';
-import type { MessageBatch, Queue, R2Bucket, ScheduledController } from './types.js';
+import type { D1Database, MessageBatch, Queue, R2Bucket, ScheduledController } from './types.js';
 import { disconnectGmail, gmailApi, gmailCallback, GmailStore, processGmailWork, recordGmailFailure, type GmailWorkMessage } from './gmail.js';
 import { D1EmployerStore } from './employer-store.js';
 import { D1CatalogAdmissionStore } from './catalog-admission-store.js';
@@ -845,9 +845,87 @@ async function refreshCatalogProjection(store: D1InternshipStore) {
   };
 }
 
+export type PostingIdentityAuditEvent = {
+  event: 'posting_identity_integrity_audit';
+  enforcementActive: boolean;
+  status: 'passed' | 'failed' | 'error';
+  confirmedOccurrences: number | null;
+  unconfirmedOccurrences: number | null;
+  confirmedCoverage: number | null;
+  exactDuplicateGroups: number | null;
+  duplicateJobs: number | null;
+  duplicateAlertGroups: number | null;
+  aliasConflicts: number | null;
+  quarantinedOccurrences: number | null;
+  untrackedQuarantines: number | null;
+  presentationBlockers: number | null;
+  legacyOccurrences: number | null;
+  projectionMismatches: number | null;
+  duplicateOccurrenceReferences: number | null;
+};
+
+function postingIdentityAuditEvent(plan: PostingIdentityRepairPlan, enforcementActive: boolean): PostingIdentityAuditEvent {
+  return {
+    event: 'posting_identity_integrity_audit',
+    enforcementActive,
+    status: plan.gate.passed ? 'passed' : 'failed',
+    confirmedOccurrences: plan.occurrenceCounts.confirmed,
+    unconfirmedOccurrences: plan.occurrenceCounts.unconfirmed,
+    confirmedCoverage: plan.occurrenceCounts.confirmedCoverage,
+    exactDuplicateGroups: plan.gate.exactDuplicateGroups,
+    duplicateJobs: plan.duplicateJobs,
+    duplicateAlertGroups: plan.duplicateAlertGroups,
+    aliasConflicts: plan.gate.aliasConflicts,
+    quarantinedOccurrences: plan.occurrenceCounts.quarantined,
+    untrackedQuarantines: plan.gate.untrackedQuarantines,
+    presentationBlockers: plan.gate.presentationBlockers,
+    legacyOccurrences: plan.gate.legacyOccurrences,
+    projectionMismatches: plan.gate.projectionMismatches,
+    duplicateOccurrenceReferences: plan.gate.duplicateOccurrenceReferences,
+  };
+}
+
+/** Emit only aggregate integrity counts. Repair tokens, job IDs, URLs, and
+ * review samples stay out of production logs. Disabled rollout reports a
+ * failed gate without failing the cron; enabled publication makes it fatal. */
+export async function runScheduledPostingIdentityAudit(
+  env: Pick<Environment, 'DB' | 'IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED'>,
+  dependencies: {
+    audit?: (db: D1Database) => Promise<PostingIdentityRepairPlan>;
+    log?: (event: string) => void;
+  } = {},
+): Promise<PostingIdentityAuditEvent> {
+  const enforcementActive = env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true';
+  const audit = dependencies.audit ?? ((db: D1Database) => runPostingIdentityRepair(db));
+  let event: PostingIdentityAuditEvent;
+  try {
+    event = postingIdentityAuditEvent(await audit(env.DB), enforcementActive);
+  } catch {
+    event = {
+      event: 'posting_identity_integrity_audit', enforcementActive, status: 'error',
+      confirmedOccurrences: null, unconfirmedOccurrences: null, confirmedCoverage: null,
+      exactDuplicateGroups: null, duplicateJobs: null, duplicateAlertGroups: null, aliasConflicts: null,
+      quarantinedOccurrences: null, untrackedQuarantines: null, presentationBlockers: null,
+      legacyOccurrences: null, projectionMismatches: null, duplicateOccurrenceReferences: null,
+    };
+  }
+  const serialized = JSON.stringify(event);
+  if (dependencies.log) dependencies.log(serialized);
+  else if (event.status === 'passed') console.log(serialized);
+  else console.error(serialized);
+  if (enforcementActive && event.status !== 'passed') {
+    throw new Error('Posting identity integrity gate failed while publication enforcement is active');
+  }
+  return event;
+}
+
 async function scheduledHandler(event: ScheduledController, env: Environment): Promise<void> {
   if (await isShutdown(env)) return;
   const store = new D1InternshipStore(env.DB);
+  if (event.cron === '17 9 * * *') {
+    await runScheduledPostingIdentityAudit(env);
+    return;
+  }
   const scheduledProvider = providerForCloudflareCron(event.cron);
   if (scheduledProvider === 'github') {
     if (await queueHasBacklog(env.GITHUB_QUEUE, 'github')) return;

@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { queueHasBacklog } from '../cloudflare/queue-backlog.js';
-import { cloudflareOperationsFleets, cloudflareOperationsQueueClient, documentContent, failedStructuredRecoveryHealth, readDocumentUpload, recoveredStructuredSourceHealth, structuredSourceRunBlocked, validBackfillProvider } from '../cloudflare/worker.js';
+import { cloudflareOperationsFleets, cloudflareOperationsQueueClient, documentContent, failedStructuredRecoveryHealth, readDocumentUpload, recoveredStructuredSourceHealth, runScheduledPostingIdentityAudit, structuredSourceRunBlocked, validBackfillProvider } from '../cloudflare/worker.js';
 import type { Environment } from '../cloudflare/worker.js';
+import type { PostingIdentityRepairPlan } from '../src/posting-identity-repair.js';
 import type { Queue } from '../cloudflare/types.js';
 import { catalogProviderIds, integrationRegistry } from '../src/integration-registry.js';
 
@@ -24,6 +25,40 @@ describe('Cloudflare scheduled dispatch cost guard', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await expect(queueHasBacklog(queue(async () => { throw new Error('metrics unavailable'); }), 'greenhouse')).resolves.toBe(false);
     vi.restoreAllMocks();
+  });
+});
+
+describe('Cloudflare scheduled posting identity audit', () => {
+  const failedPlan = {
+    occurrenceCounts: { confirmed: 4_200, unconfirmed: 68, legacy: 2, quarantined: 1, confirmedCoverage: 4_200 / 4_268 },
+    duplicateAlertGroups: 1,
+    duplicateJobs: 2,
+    gate: {
+      passed: false, exactDuplicateGroups: 1, aliasConflicts: 2, untrackedQuarantines: 1,
+      presentationBlockers: 3, legacyOccurrences: 2, projectionMismatches: 4, duplicateOccurrenceReferences: 5,
+    },
+  } as PostingIdentityRepairPlan;
+
+  it('logs a sanitized failed gate while disabled and throws after logging when enforcement is active', async () => {
+    const disabledLogs: string[] = [];
+    await expect(runScheduledPostingIdentityAudit({
+      DB: {} as Environment['DB'], IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED: 'false',
+    }, { audit: async () => failedPlan, log: (event) => disabledLogs.push(event) })).resolves.toMatchObject({
+      status: 'failed', enforcementActive: false, exactDuplicateGroups: 1, aliasConflicts: 2,
+      quarantinedOccurrences: 1, presentationBlockers: 3, legacyOccurrences: 2,
+      projectionMismatches: 4, duplicateOccurrenceReferences: 5,
+    });
+    expect(disabledLogs).toHaveLength(1);
+    expect(disabledLogs[0]).not.toContain('repairToken');
+    expect(disabledLogs[0]).not.toContain('jobId');
+
+    const enabledLogs: string[] = [];
+    await expect(runScheduledPostingIdentityAudit({
+      DB: {} as Environment['DB'], IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED: 'true',
+    }, { audit: async () => failedPlan, log: (event) => enabledLogs.push(event) }))
+      .rejects.toThrow('integrity gate failed');
+    expect(enabledLogs).toHaveLength(1);
+    expect(JSON.parse(enabledLogs[0]!)).toMatchObject({ status: 'failed', enforcementActive: true });
   });
 });
 

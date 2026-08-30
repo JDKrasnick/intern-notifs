@@ -332,7 +332,8 @@ from deployment and this code change.
 
 ### Posting identity D1 repair
 
-Deploy migration `0010_posting_identity.sql` and the runtime identity support
+Deploy migrations `0010_posting_identity.sql` and
+`0011_issue_50_reviewed_employer_identity.sql` and the runtime identity support
 first, with `IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED=false`. Greenhouse, Lever,
 and Ashby workers then retain contract-versioned immutable posting evidence;
 reviewed Workday/ByteDance routes, authoritative employer requisitions, and
@@ -399,6 +400,68 @@ guarded set-based writes, keeping a production-sized invocation below D1's
 query limit. Finally run the default `all` dry run and require zero changes,
 zero legacy occurrences, zero `projectionMismatches`, zero
 `duplicateOccurrenceReferences`, and a passing gate.
+
+The dedicated `17 9 * * *` Cloudflare cron runs the same all-scope audit once
+per day and emits one aggregate `posting_identity_integrity_audit` event. The
+event contains only coverage, duplicate, conflict, quarantine, presentation,
+legacy-occurrence, projection, and duplicate-reference counts. While
+`IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED=false`, a failed gate is logged but
+does not fail the invocation. Once publication enforcement is active, a failed
+or unavailable audit fails the invocation. Broader dashboards and source
+discovery-latency metrics remain part of issue #40.
+
+#### Issue #50 staged production execution
+
+Keep the checked-in Terraform and Wrangler defaults at `false` throughout this
+procedure. Store exports, full audit reports, manifests, and secrets outside
+Git. Do not close issue #50 or its product-roadmap checkbox until the final
+24-hour acceptance window passes.
+
+1. Export production D1 to an absolute path outside the repository with
+   `npx wrangler d1 export intern-notifs-db --remote --output ABSOLUTE_PATH`.
+   Record baseline counts for internships, durable source occurrences, saved
+   applications, delivery receipts, catalog releases, notification
+   tombstones/events, and pending outbox rows.
+2. Run `npm run cloudflare:migrate:remote`, confirm both `0010` and `0011` in
+   the applied migration list, then deploy the Worker with
+   `IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED=false`. Do not apply either repair
+   phase yet.
+3. Let the admission-configuration version change force complete Greenhouse
+   and GitHub source reprocessing. Wait for both work queues and DLQs to drain,
+   then verify every affected checkpoint records the new configuration version.
+4. Run `npm run audit:posting-identity` read-only. Archive its snapshot digest,
+   repair token, exact counts, blockers, and unknown-URL-family report outside
+   Git. A skipped audit or missing live evidence is a failure.
+5. Require all four former presentation blockers across Aquatic Capital
+   Management, Jump Trading, and Squarepoint Capital to be resolved. Obtain
+   owner approval for the exact identity-scope manifest,
+   including token, expected changes, and expected duplicate jobs.
+6. Apply the identity scope with the approved token and counts. Immediately
+   preview it again and require `expectedChanges: 0`, `duplicateJobs: 0`, and no
+   conflicts or presentation disagreements.
+7. Preview the occurrence scope, obtain its independent token/count guards,
+   apply it, then run the final all-scope audit. Require a passing gate and every
+   mutation count at zero.
+8. Confirm notification-event, notification-tombstone, pending-notification,
+   and outbox counts match the baseline. Test all eight affected legacy job IDs
+   and their canonical aliases, representative catalog/group endpoints, saved
+   applications, releases, and official application links.
+9. Run the Greenhouse, Lever, and Ashby live contracts without skipped
+   evidence. Axon, Databricks, and Momentus must either produce current evidence
+   or remain quarantined while publication stays disabled.
+10. Deploy the compatible web client and prepare the mobile build. The owner
+    performs physical-device QA for card/detail/Saved labels, grouped counts,
+    individual and grouped push copy, large text, and the intentional light
+    appearance under both light and dark device settings.
+11. After owner approval, review and apply a production OpenTofu plan setting
+    `identity_unconfirmed_publication_enabled=true`. Keep the checked-in default
+    `false` as the fail-safe.
+12. Observe at least one complete 24-hour source cycle and one successful daily
+    posting-identity audit. On any regression, disable the flag first and do not
+    attempt another repair until a fresh guarded preview passes.
+13. Only after those checks pass, update issue #50 and
+    `docs/product-roadmap.md` as complete with sanitized rollout counts and links
+    to the production checks.
 
 For eligible groups whose presentation already agrees, the repair preserves the
 oldest catalog job, merges source references,
