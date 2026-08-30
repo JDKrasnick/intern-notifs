@@ -577,11 +577,18 @@ export class IngestionRunner {
           return;
         }
         const inspectedAt = this.now().toISOString();
-        const browserDestination = listing.providerIdentity ? matchingBrowserDestination(existing, {
-          sourceId: listing.sourceId, externalId: id, providerIdentity: listing.providerIdentity, candidateUrl: listing.applyUrl,
-        }) : undefined;
-        const destination = browserDestination ?? classifyDestination({ listing, reachability, ...(pageEvidence ? { evidence: pageEvidence } : {}), inspectedAt,
+        const observedDestination = classifyDestination({ listing, reachability, ...(pageEvidence ? { evidence: pageEvidence } : {}), inspectedAt,
           ...(destinationRule ? { rule: destinationRule } : {}) });
+        // Explicit reviewed decisions remain authoritative when configuration
+        // changes. Browser evidence may only supplement an unresolved route or
+        // satisfy a rule that specifically requires browser inspection.
+        const browserDestination = listing.providerIdentity
+          && (!destinationRule || destinationRule.decision === 'browser-required')
+          ? matchingBrowserDestination(existing, {
+            sourceId: listing.sourceId, externalId: id, providerIdentity: listing.providerIdentity, candidateUrl: listing.applyUrl,
+          })
+          : undefined;
+        const destination = browserDestination ?? observedDestination;
         const admission = evaluateCatalogAdmission({
           listing,
           destination,
