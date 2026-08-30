@@ -514,12 +514,17 @@ describe('polling', () => {
     expect([...store.jobs.values()][0]).toMatchObject({ admission: { destination: { browserVisible: true } },
       sourceReferences: [{ admission: { destination: { browserVisible: true } } }] });
 
+    const attributed = [...store.jobs.values()][0]!;
+    const unattributed = { ...attributed.admission!, postingAttribution: 'unattributed' as const };
+    await store.putInternship({ ...attributed, admission: unattributed,
+      sourceReferences: [{ ...attributed.sourceReferences[0]!, admission: unattributed }] });
     reviewed.decision = 'aggregate-board';
     await new Poller([{ id: snapshot.sourceId, async fetch() { return snapshot; } }], store,
       undefined, undefined, undefined, undefined, async (request) => { queued.push(request); }, resolver).poll();
     expect(queued).toHaveLength(1);
     expect([...store.jobs.values()][0]).toMatchObject({ admission: {
-      catalogEligible: false, destination: { classification: 'aggregate-board' }, reasonCodes: ['destination-aggregate-board'],
+      catalogEligible: false, destination: { classification: 'aggregate-board' },
+      reasonCodes: ['destination-aggregate-board', 'posting-unattributed'],
     } });
   });
 
