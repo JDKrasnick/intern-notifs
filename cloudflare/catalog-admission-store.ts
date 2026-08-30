@@ -80,21 +80,25 @@ export function destinationOccurrenceKey(sourceId: string, externalId: string): 
   return hash(`${sourceId}\0${externalId}`);
 }
 
-function providerIdentityForReference(reference: SourceOccurrence, prior?: CatalogAdmission['destination']): ProviderIdentity {
+export function providerIdentityForReference(reference: SourceOccurrence, prior?: CatalogAdmission['destination']): ProviderIdentity {
   let route: ReturnType<typeof providerPostingReference> = { provider: 'unknown' };
   try { route = providerPostingReference(reference.applyUrl); } catch { /* Malformed destinations remain fail-closed candidates. */ }
   const source = /^(greenhouse|lever|ashby)-(.+)$/u.exec(reference.sourceId);
-  let provider = prior?.provider ?? (route.provider !== 'unknown' ? route.provider
-    : source?.[1] as ProviderIdentity['provider'] | undefined) ?? 'unknown';
-  const tenant = prior?.tenant ?? route.tenant ?? source?.[2];
-  let postingId = prior?.expectedPostingId ?? route.postingId;
-  if (provider === 'unknown') {
-    try {
-      const queryId = new URL(reference.applyUrl).searchParams.get('gh_jid');
-      if (queryId && /^\d+$/u.test(queryId)) { provider = 'greenhouse'; postingId = queryId; }
-    } catch { /* Preserve the unknown identity. */ }
-  }
-  postingId ??= reference.externalId;
+  let queryPostingId: string | undefined;
+  try {
+    const queryId = new URL(reference.applyUrl).searchParams.get('gh_jid');
+    if (queryId && /^\d+$/u.test(queryId)) queryPostingId = queryId;
+  } catch { /* Preserve malformed candidate evidence. */ }
+  const provider = reference.providerEvidence?.provider
+    ?? (route.provider !== 'unknown' ? route.provider : undefined)
+    ?? (queryPostingId ? 'greenhouse' : undefined)
+    ?? prior?.provider
+    ?? source?.[1] as ProviderIdentity['provider'] | undefined
+    ?? 'unknown';
+  const tenant = reference.providerEvidence?.tenant ?? route.tenant ?? prior?.tenant ?? source?.[2];
+  const postingId = reference.providerEvidence?.postingId ?? route.postingId ?? queryPostingId
+    ?? (prior?.candidateUrl === reference.applyUrl ? prior.expectedPostingId : undefined)
+    ?? reference.externalId;
   const mayUseEmployerScope = reference.provenance !== 'reviewed-community'
     || reference.employerLabelOrigin === 'explicit'
     || reference.employerInheritance === 'same-tenant';
@@ -104,6 +108,21 @@ function providerIdentityForReference(reference: SourceOccurrence, prior?: Catal
     ...(tenant ? { tenant } : {}),
     ...(postingId ? { postingId } : {}),
   };
+}
+
+/** A live queue item may only mutate the occurrence generation that produced it. */
+export function destinationVerificationMatchesReference(
+  reference: SourceOccurrence,
+  request: Pick<ScheduledDestinationVerification, 'candidateUrl' | 'providerIdentity'>,
+): boolean {
+  if (reference.applyUrl !== request.candidateUrl) return false;
+  const current = providerIdentityForReference(reference, reference.admission?.destination);
+  const equal = (left: string | undefined, right: string | undefined) => left?.toLowerCase() === right?.toLowerCase();
+  return current.sourceId === request.providerIdentity.sourceId
+    && current.sourceUrl === request.providerIdentity.sourceUrl
+    && (current.provider === 'unknown' || current.provider === request.providerIdentity.provider)
+    && (!current.tenant || equal(current.tenant, request.providerIdentity.tenant))
+    && (!current.postingId || equal(current.postingId, request.providerIdentity.postingId));
 }
 
 function sameProviderIdentity(left: ProviderIdentity, right: ProviderIdentity): boolean {
@@ -468,7 +487,17 @@ export class D1CatalogAdmissionStore {
           ON CONFLICT(occurrence_key) DO UPDATE SET job_id=excluded.job_id, candidate_url=excluded.candidate_url,
             provider_identity=excluded.provider_identity,
             next_check_at=CASE WHEN destination_verification_schedule.candidate_url <> excluded.candidate_url
+                OR destination_verification_schedule.provider_identity <> excluded.provider_identity
               THEN excluded.updated_at ELSE destination_verification_schedule.next_check_at END,
+            lease_token=CASE WHEN destination_verification_schedule.candidate_url <> excluded.candidate_url
+                OR destination_verification_schedule.provider_identity <> excluded.provider_identity
+              THEN NULL ELSE destination_verification_schedule.lease_token END,
+            lease_until=CASE WHEN destination_verification_schedule.candidate_url <> excluded.candidate_url
+                OR destination_verification_schedule.provider_identity <> excluded.provider_identity
+              THEN NULL ELSE destination_verification_schedule.lease_until END,
+            last_enqueued_at=CASE WHEN destination_verification_schedule.candidate_url <> excluded.candidate_url
+                OR destination_verification_schedule.provider_identity <> excluded.provider_identity
+              THEN NULL ELSE destination_verification_schedule.last_enqueued_at END,
             updated_at=excluded.updated_at`)
           .bind(occurrenceKey, job.jobId, reference.sourceId, reference.externalId, reference.applyUrl,
             JSON.stringify(providerIdentity), nextCheckAt, now));

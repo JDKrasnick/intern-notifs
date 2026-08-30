@@ -52,7 +52,12 @@ function frameEvidence(frame: RenderedFrameSnapshot, expectedPostingId?: string)
   const renderedPostingText = [contentExcerpt, frame.structuredJobText].filter(Boolean).join(' ');
   const postingIdPresent = includesPostingId(renderedPostingText, expectedPostingId);
   const validThroughExpired = Boolean(frame.validThrough && Date.parse(frame.validThrough) <= Date.now());
-  const explicitlyGone = [frame.title, frame.description, contentExcerpt].some((value) => explicitDestinationClosure(value ?? ''));
+  // Browser extraction has already selected the requested JobPosting record.
+  // When it exists, arbitrary body text can include expired related-role cards
+  // and must not become closure evidence for the selected posting.
+  const closureArtifact = frame.structuredJobText ?? contentExcerpt;
+  const explicitlyGone = [frame.title, frame.description, closureArtifact]
+    .some((value) => explicitDestinationClosure(value ?? ''));
   return {
     url: frame.url,
     ...(frame.title ? { title: frame.title } : {}),

@@ -86,6 +86,59 @@ describe('destination verification queue consumer', () => {
     expect(newPage).not.toHaveBeenCalled();
   });
 
+  it('discards a live message when the occurrence URL and posting identity have changed', async () => {
+    const { db, jobs } = subject();
+    const { job, reference } = role();
+    const currentReference = { ...reference, applyUrl: 'https://job-boards.greenhouse.io/acme/jobs/8765432' };
+    await jobs.putInternship({ ...job, applyUrl: currentReference.applyUrl, normalizedUrl: currentReference.applyUrl,
+      sourceReferences: [currentReference] });
+    const queued = queueMessage({ version: 1, jobId: job.jobId, sourceId: reference.sourceId,
+      externalId: reference.externalId!, candidateUrl: reference.applyUrl, providerIdentity: {
+        provider: 'greenhouse', sourceId: reference.sourceId, sourceUrl: reference.sourceUrl,
+        tenant: 'acme', postingId: reference.externalId,
+      }, reason: 'daily-retry', queuedAt: '2026-08-30T00:00:00Z', idempotencyKey: 'stale-generation' });
+    await processDestinationVerificationBatch({ queue: 'destination-verification', messages: [queued] }, environment(db),
+      () => new Date('2026-08-30T00:01:00Z'));
+    expect(queued.ack).toHaveBeenCalledOnce();
+    expect(queued.retry).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
+    expect(await jobs.getJob(job.jobId)).toMatchObject({ applyUrl: currentReference.applyUrl,
+      sourceReferences: [{ applyUrl: currentReference.applyUrl }] });
+  });
+
+  it('does not persist evidence when the occurrence changes while the browser is running', async () => {
+    const { database, db, jobs } = subject();
+    const { job, reference } = role();
+    await jobs.putInternship(job);
+    const changedReference = { ...reference, applyUrl: 'https://job-boards.greenhouse.io/acme/jobs/8765432' };
+    const frame = { evaluate: vi.fn().mockResolvedValue({ url: reference.applyUrl, title: reference.title,
+      visibleText: `${reference.title} ${reference.externalId} Apply`,
+      structuredJobText: JSON.stringify({ '@type': 'JobPosting', identifier: reference.externalId, title: reference.title }),
+      jobPostingCount: 1, distinctJobLinkCount: 0, applicationFormPresent: true }), parentFrame: () => null };
+    launch.mockResolvedValue({ newPage: vi.fn().mockResolvedValue({
+      goto: vi.fn().mockImplementation(async () => {
+        await jobs.putInternship({ ...job, applyUrl: changedReference.applyUrl, normalizedUrl: changedReference.applyUrl,
+          sourceReferences: [changedReference] });
+        return { status: () => 200 };
+      }),
+      frames: () => [frame], close: vi.fn(),
+    }), close: vi.fn() });
+    const queued = queueMessage({ version: 1, jobId: job.jobId, sourceId: reference.sourceId,
+      externalId: reference.externalId!, candidateUrl: reference.applyUrl, providerIdentity: {
+        provider: 'greenhouse', sourceId: reference.sourceId, sourceUrl: reference.sourceUrl,
+        tenant: 'acme', postingId: reference.externalId,
+      }, reason: 'daily-retry', queuedAt: '2026-08-30T00:00:00Z', idempotencyKey: 'raced-generation' });
+    await processDestinationVerificationBatch({ queue: 'destination-verification', messages: [queued] }, environment(db),
+      () => new Date('2026-08-30T00:01:00Z'));
+    expect(queued.ack).toHaveBeenCalledOnce();
+    expect(queued.retry).not.toHaveBeenCalled();
+    const stored = await jobs.getJob(job.jobId);
+    expect(stored).toMatchObject({ applyUrl: changedReference.applyUrl,
+      sourceReferences: [{ applyUrl: changedReference.applyUrl }] });
+    expect(stored?.sourceReferences[0]).not.toHaveProperty('admission');
+    expect(database.prepare('SELECT count(*) AS count FROM destination_verification_evidence').get()).toEqual({ count: 0 });
+  });
+
   it('keeps historical evidence out of live evidence and catalog state', async () => {
     const { database, db, operations, jobs } = subject();
     const { job, reference } = role();

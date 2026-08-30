@@ -8,7 +8,7 @@ import { reachabilityFromFailure, type Reachability } from '../src/core/applicat
 import { normalizeUrl } from '../src/core/normalize.js';
 import { combineRenderedFrameEvidence, type RenderedFrameSnapshot } from '../src/rendered-destination-evidence.js';
 import type { CatalogAdmissionReason, Internship, ProcessedListing, ProviderIdentity, SourceOccurrence } from '../src/types.js';
-import { D1CatalogAdmissionStore } from './catalog-admission-store.js';
+import { D1CatalogAdmissionStore, destinationVerificationMatchesReference } from './catalog-admission-store.js';
 import { D1InternshipStore } from './d1-store.js';
 import type { D1Database, MessageBatch, Queue } from './types.js';
 
@@ -108,6 +108,7 @@ export async function persistDestinationAdmission(input: {
   browserVisible?: boolean;
 }): Promise<{
   destination: ReturnType<typeof classifyDestination>;
+  obsolete?: true;
   incident?: { sourceId: string; host: string; reason: string; incidentId: string; messageType: 'incident-opened' | 'quarantine' };
 }> {
   const { jobs, operations, message, job, reference, reachability, inspectedAt, evidence, browserVisible } = input;
@@ -129,8 +130,7 @@ export async function persistDestinationAdmission(input: {
   let normalizedCandidate = message.candidateUrl;
   try { normalizedCandidate = normalizeUrl(message.candidateUrl); } catch { /* Preserve the reviewed candidate verbatim if normalization fails. */ }
   const reopeningFromClosure = verifiedOpen && Boolean(job.invalidApplicationUrl);
-  await jobs.putAdmissionState(
-    { ...job, sourceReferences, admission: canonicalAdmission,
+  const proposedJob = { ...job, sourceReferences, admission: canonicalAdmission,
       ...(authoritativeClosure ? {
         open: false,
         applicationUrlValidatedAt: undefined,
@@ -142,9 +142,12 @@ export async function persistDestinationAdmission(input: {
         invalidApplicationUrl: undefined,
       } : verifiedOpen ? { applicationUrlValidatedAt: inspectedAt }
         : canonicalAdmission?.alertEligible ? { applicationUrlValidatedAt: job.applicationUrlValidatedAt }
-          : { applicationUrlValidatedAt: undefined }) },
-    occurrence ? { ...occurrence, occurrence: { ...occurrence.occurrence, admission }, changedAt: inspectedAt } : undefined,
-  );
+          : { applicationUrlValidatedAt: undefined }) };
+  const proposedOccurrence = occurrence
+    ? { ...occurrence, occurrence: { ...occurrence.occurrence, admission }, changedAt: inspectedAt }
+    : undefined;
+  const persisted = await jobs.putAdmissionState(proposedJob, reference, proposedOccurrence, occurrence);
+  if (!persisted) return { destination, obsolete: true };
 
   const reason = admission.reasonCodes[0];
   await operations.resolveIncidents(message.jobId, message.sourceId, inspectedAt, reason);
@@ -220,6 +223,18 @@ export async function processDestinationVerificationBatch(
 ): Promise<void> {
   const jobs = new D1InternshipStore(env.DB);
   const operations = new D1CatalogAdmissionStore(env.DB);
+  const settleWithoutVerification = async (
+    queued: MessageBatch<unknown>['messages'][number],
+    message: DestinationVerificationMessage,
+    completedAt: string,
+    classification: string,
+    nextCheckAt = completedAt,
+  ) => {
+    if (message.occurrenceKey) await operations.completeScheduledVerification({ occurrenceKey: message.occurrenceKey,
+      leaseToken: message.leaseToken, completedAt, classification, nextCheckAt });
+    if (message.idempotencyKey) await operations.recordVerificationCompletion(message.idempotencyKey, completedAt);
+    queued.ack();
+  };
   const opened: Array<{ sourceId: string; host: string; reason: string; incidentId: string; messageType: 'incident-opened' | 'quarantine' }> = [];
   const pending: Array<{ queued: MessageBatch<unknown>['messages'][number]; message: DestinationVerificationMessage }> = [];
   const pendingAttemptKeys = new Set<string>();
@@ -227,12 +242,26 @@ export async function processDestinationVerificationBatch(
   for (const queued of batch.messages) {
     try {
       const message = parseMessage(queued.body);
+      if (message.idempotencyKey && await operations.verificationCompleted(message.idempotencyKey)) {
+        queued.ack();
+        continue;
+      }
       const job = await jobs.getJob(message.jobId);
       if (!job) { queued.ack(); continue; }
       const reference = job.sourceReferences.find((item) => item.sourceId === message.sourceId && item.externalId === message.externalId);
+      if (!reference) { queued.ack(); continue; }
+      const candidateOnly = message.reason === 'historical-backfill';
+      if (!candidateOnly && !destinationVerificationMatchesReference(reference, message)) {
+        await settleWithoutVerification(queued, message, now().toISOString(), 'obsolete');
+        continue;
+      }
+      const existing = candidateOnly ? undefined : matchingBrowserDestination(job, message, message.queuedAt);
+      if (existing) {
+        await settleWithoutVerification(queued, message, now().toISOString(), existing.classification, existing.nextCheckAt);
+        continue;
+      }
       const attemptKey = `${message.jobId}\0${message.sourceId}\0${message.candidateUrl}`;
-      if (!reference || matchingBrowserDestination(job, message, message.queuedAt)
-        || pendingAttemptKeys.has(attemptKey)
+      if (pendingAttemptKeys.has(attemptKey)
         || await operations.hasVerificationAttemptSince(message.jobId, message.sourceId, message.candidateUrl, recentAttemptCutoff)) {
         queued.ack(); continue;
       }
@@ -256,13 +285,22 @@ export async function processDestinationVerificationBatch(
         const job = await jobs.getJob(message.jobId);
         if (!job) { queued.ack(); continue; }
         const reference = job.sourceReferences.find((item) => item.sourceId === message.sourceId && item.externalId === message.externalId);
-        if (!reference || matchingBrowserDestination(job, message, message.queuedAt)) { queued.ack(); continue; }
+        if (!reference) { queued.ack(); continue; }
+        const candidateOnly = message.reason === 'historical-backfill';
+        if (!candidateOnly && !destinationVerificationMatchesReference(reference, message)) {
+          await settleWithoutVerification(queued, message, attemptedAt, 'obsolete');
+          continue;
+        }
+        const existing = candidateOnly ? undefined : matchingBrowserDestination(job, message, message.queuedAt);
+        if (existing) {
+          await settleWithoutVerification(queued, message, attemptedAt, existing.classification, existing.nextCheckAt);
+          continue;
+        }
         const page = await browser.newPage();
         let reachability: Reachability = 'live';
         let evidence: ApplicationPageEvidence | undefined;
         let collisionJobIds: string[] = [];
         let browserError: unknown;
-        const candidateOnly = message.reason === 'historical-backfill';
         try {
           const response = await page.goto(message.candidateUrl, { waitUntil: 'networkidle0', timeout: 20_000 });
           reachability = reachabilityFromHttpStatus(response?.status());
@@ -353,6 +391,19 @@ export async function processDestinationVerificationBatch(
           await page.close();
         }
         const inspectedAt = now().toISOString();
+        let currentJob = job;
+        let currentReference = reference;
+        if (!candidateOnly) {
+          const refreshedJob = await jobs.getJob(message.jobId);
+          const refreshedReference = refreshedJob?.sourceReferences.find((item) => item.sourceId === message.sourceId
+            && item.externalId === message.externalId);
+          if (!refreshedJob || !refreshedReference || !destinationVerificationMatchesReference(refreshedReference, message)) {
+            await settleWithoutVerification(queued, message, inspectedAt, 'obsolete');
+            continue;
+          }
+          currentJob = refreshedJob;
+          currentReference = refreshedReference;
+        }
         for (const collisionJobId of message.reason === 'historical-backfill' ? [] : collisionJobIds) {
           const collisionJob = await jobs.getJob(collisionJobId);
           const collisionReference = collisionJob?.sourceReferences.find((item) => item.externalId
@@ -373,10 +424,14 @@ export async function processDestinationVerificationBatch(
           if (collisionResult.incident) opened.push(collisionResult.incident);
         }
         const result = candidateOnly
-          ? await classifyReferenceDestination({ operations, message, job, reference, reachability, inspectedAt,
+          ? await classifyReferenceDestination({ operations, message, job: currentJob, reference: currentReference, reachability, inspectedAt,
             ...(evidence ? { evidence, browserVisible: true } : {}) })
-          : await persistDestinationAdmission({ jobs, operations, message, job, reference, reachability, inspectedAt,
+          : await persistDestinationAdmission({ jobs, operations, message, job: currentJob, reference: currentReference, reachability, inspectedAt,
             ...(evidence ? { evidence, browserVisible: true } : {}) });
+        if ('obsolete' in result && result.obsolete) {
+          await settleWithoutVerification(queued, message, inspectedAt, 'obsolete');
+          continue;
+        }
         if ('incident' in result && result.incident) opened.push(result.incident);
         await operations.recordVerificationAttempt({ id: crypto.randomUUID(), jobId: message.jobId, sourceId: message.sourceId,
           candidateUrl: message.candidateUrl, state: browserError ? 'failed' : 'succeeded', classification: result.destination.classification,

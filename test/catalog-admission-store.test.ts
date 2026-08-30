@@ -237,6 +237,53 @@ describe('D1 catalog admission operations', () => {
     expect(resumed[0]!.occurrenceKey).toBe(first[0]!.occurrenceKey);
   });
 
+  it('releases a stale lease immediately when the occurrence destination generation changes', async () => {
+    const { admission: store, jobs } = subject();
+    const current = job();
+    const firstUrl = 'https://job-boards.greenhouse.io/acme/jobs/7654321';
+    const secondUrl = 'https://job-boards.greenhouse.io/acme/jobs/8765432';
+    current.admission = admission(true);
+    current.admission.destination = { ...current.admission.destination, candidateUrl: firstUrl,
+      provider: 'greenhouse', tenant: 'acme', expectedPostingId: '7654321', nextCheckAt: '2026-08-30T00:00:00Z' };
+    const reference = { sourceId: 'greenhouse-acme', provenance: 'official-ats' as const, externalId: 'role-1', document: 'role-1',
+      sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs', row: 1, company: 'Acme', title: current.title,
+      location: current.location, season: current.season, applyUrl: firstUrl,
+      compensation: current.compensation, state: 'open' as const, admission: current.admission };
+    current.sourceReferences = [reference];
+    await jobs.putInternship(current);
+    await store.syncVerificationSchedule('2026-08-30T00:00:00Z');
+    expect(await store.leaseDueVerifications('2026-08-30T00:00:00Z')).toHaveLength(1);
+
+    await jobs.putInternship({ ...current, applyUrl: secondUrl, normalizedUrl: secondUrl,
+      sourceReferences: [{ ...reference, applyUrl: secondUrl }] });
+    await store.syncVerificationSchedule('2026-08-30T00:01:00Z');
+    const [replacement] = await store.leaseDueVerifications('2026-08-30T00:01:00Z');
+    expect(replacement).toMatchObject({ candidateUrl: secondUrl,
+      providerIdentity: { provider: 'greenhouse', tenant: 'acme', postingId: '8765432' } });
+  });
+
+  it('atomically rejects an admission write after its exact occurrence generation drifts', async () => {
+    const { jobs } = subject();
+    const current = job();
+    const expectedReference = { sourceId: 'greenhouse-acme', provenance: 'official-ats' as const, externalId: '7654321',
+      document: '7654321', sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs', row: 1,
+      company: 'Acme', title: current.title, location: current.location, season: current.season,
+      applyUrl: 'https://job-boards.greenhouse.io/acme/jobs/7654321', compensation: current.compensation, state: 'open' as const };
+    const expected = { ...current, sourceReferences: [expectedReference] };
+    await jobs.putInternship(expected);
+    const changedReference = { ...expectedReference, title: 'Security Engineering Intern',
+      applyUrl: 'https://job-boards.greenhouse.io/acme/jobs/8765432' };
+    await jobs.putInternship({ ...expected, title: changedReference.title, applyUrl: changedReference.applyUrl,
+      normalizedUrl: changedReference.applyUrl, sourceReferences: [changedReference] });
+
+    const proposedAdmission = admission(true);
+    const persisted = await jobs.putAdmissionState({ ...expected, admission: proposedAdmission,
+      sourceReferences: [{ ...expectedReference, admission: proposedAdmission }] }, expectedReference);
+    expect(persisted).toBe(false);
+    expect(await jobs.getJob(current.jobId)).toMatchObject({ title: changedReference.title, applyUrl: changedReference.applyUrl,
+      sourceReferences: [{ title: changedReference.title, applyUrl: changedReference.applyUrl }] });
+  });
+
   it('resolves tenant-specific review rules ahead of host-wide rules', async () => {
     const { admission: store } = subject();
     await store.putReviewRule({ id: 'host', host: 'careers.acme.test', provider: 'greenhouse', decision: 'browser-required',
@@ -333,6 +380,11 @@ describe('D1 catalog admission operations', () => {
     const alternateReference = { ...closed.sourceReferences[0]!, applyUrl: alternateUrl };
     const alternateJob = { ...closed, applyUrl: alternateUrl, normalizedUrl: alternateUrl,
       sourceReferences: [alternateReference] };
+    await jobs.putInternship(alternateJob);
+    const [alternateOccurrence] = await jobs.getSourceOccurrences(reference.sourceId);
+    await jobs.putSourceOccurrence({ ...alternateOccurrence!, occurrence: {
+      ...alternateOccurrence!.occurrence, applyUrl: alternateUrl, admission: alternateReference.admission,
+    }, changedAt: '2026-08-30T00:30:00Z' });
     const alternateMessage = { ...message, candidateUrl: alternateUrl };
     await persistDestinationAdmission({ jobs, operations, message: alternateMessage, job: alternateJob, reference: alternateReference,
       reachability: 'live', inspectedAt: '2026-08-30T01:00:00Z', browserVisible: true,
