@@ -95,6 +95,17 @@ describe('grouped catalog domain', () => {
     });
   });
 
+  it('counts only explicitly unconfirmed roles and preserves legacy compatibility', () => {
+    const details = catalogGroupDetails(groupCatalogJobs([
+      job('confirmed', 0, { postingIdentityStatus: 'confirmed' }),
+      job('unconfirmed', 2, { postingIdentityStatus: 'unconfirmed' }),
+      job('legacy', 4),
+      job('unconfirmed-two', 8, { postingIdentityStatus: 'unconfirmed' }),
+    ])[0]!);
+    expect(details.group).toMatchObject({ roleCount: 4, unconfirmedRoleCount: 2 });
+    expect(details.roles.map((role) => role.postingIdentityStatus)).toEqual(['unconfirmed', undefined, 'unconfirmed', 'confirmed']);
+  });
+
   it('keeps structured-location filtering identical before and after materialization', () => {
     const structured = identity();
     structured.locations = [{ name: 'Boston', workMode: 'onsite', provenance: [] }];

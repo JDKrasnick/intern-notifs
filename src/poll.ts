@@ -3,7 +3,8 @@ import { assessApplicationPageForListing, canonicalApplicationUrl, type Applicat
 import { boardReference, reachabilityFromFailure, reachabilityFromSignals, verifyApplication, type AttributionBasis, type Reachability } from './core/application-verification.js';
 import { inferSeason, isPastSeason } from './core/early-career.js';
 import { normalizeUrl } from './core/normalize.js';
-import { buildPostingIdentity, type ProviderPostingReference } from './identity/posting.js';
+import type { ProviderPostingReference } from './identity/posting.js';
+import { resolvePostingIdentityDecision, stableSourceOccurrenceJobId } from './identity/registry.js';
 import {
   providerEvidenceForOccurrence,
   reviewedProviderEvidenceError,
@@ -30,6 +31,8 @@ import type {
   SourceCheckpoint,
   SourceFetchResult,
   SourceHealth,
+  SourceOccurrence,
+  SourceOccurrenceState,
   SourceSnapshot,
 } from './types.js';
 import type { InternshipStore } from './store.js';
@@ -54,6 +57,34 @@ function legacyNormalizedUrl(input: string): string {
   }
   url.searchParams.sort();
   return url.toString().replace(/\/$/, '');
+}
+
+function quarantinedOccurrence(
+  listing: ProcessedListing,
+  externalId: string,
+  decision: Extract<NonNullable<ProcessedListing['postingIdentityDecision']>, { status: 'quarantined' }>,
+): SourceOccurrence {
+  return {
+    sourceId: listing.sourceId,
+    ...(listing.provenance ? { provenance: listing.provenance } : {}),
+    document: listing.document,
+    sourceUrl: listing.sourceUrl,
+    row: listing.row,
+    ...(listing.postedAt ? { postedAt: listing.postedAt } : {}),
+    externalId,
+    ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
+    postingIdentityDecision: decision,
+    company: listing.company,
+    title: listing.title,
+    location: listing.location,
+    ...(listing.locations ? { locations: listing.locations } : {}),
+    season: listing.season,
+    applyUrl: listing.applyUrl,
+    compensation: listing.compensation,
+    ...(listing.requirements ? { requirements: listing.requirements } : {}),
+    technical: listing.technical,
+    state: listing.state,
+  };
 }
 
 export interface PollReport {
@@ -321,6 +352,7 @@ export class IngestionRunner {
     private readonly validateCatalogApplicationUrl: ApplicationUrlValidator | false | undefined = validateApplicationUrl,
     private readonly enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>,
     private readonly catalogAdmissionResolver?: CatalogAdmissionResolver,
+    private readonly publishUnconfirmedIdentities = true,
   ) {}
 
   private async quarantine(job: Internship) {
@@ -438,7 +470,7 @@ export class IngestionRunner {
     return (await this.activePostingIds(sourceId)).has(reference.postingId) ? 'reviewed-board' : 'unattributed';
   }
 
-  private async resolveListings(listings: ProcessedListing[], report: PollReport) {
+  private async resolveListings(listings: ProcessedListing[], report: PollReport, priorOccurrences: SourceOccurrenceState[] = []) {
     const resolved = new Map<string, Internship | undefined>();
     const validatedAt = new Map<string, string>();
     const metadataValidated = new Map<string, number>();
@@ -447,6 +479,7 @@ export class IngestionRunner {
     // reported failures do not depend on which worker finished first.
     const accepted = new Array<ProcessedListing | undefined>(listings.length);
     const failures = new Array<string | undefined>(listings.length);
+    const priorByExternalId = new Map(priorOccurrences.map((occurrence) => [occurrence.externalId, occurrence]));
     await forEachBounded(listings, async (sourceListing, slot) => {
       // Transitional RawListing adapters predate provider-neutral evidence.
       // Real connectors now emit SourceSnapshot postings and are always managed
@@ -470,36 +503,91 @@ export class IngestionRunner {
       };
       const id = listing.externalId;
       let existing: Internship | undefined;
+      let identityMerged = false;
       try {
         const normalizedUrl = normalizeUrl(listing.applyUrl);
         const reviewedProviderReferences = await this.reviewedReferences(listing);
         const observedUrls = await this.inferredEmbedAliases(listing);
-        const identity = buildPostingIdentity({
+        const identityResult = resolvePostingIdentityDecision({
+          sourceId: listing.sourceId,
+          externalId: id,
           applicationUrl: listing.applyUrl,
+          observedAt: this.now().toISOString(),
           ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
           reviewedProviderReferences,
           observedUrls,
+          previousDecision: priorByExternalId.get(id)?.occurrence.postingIdentityDecision,
         });
-        // A legacy row may be adopted only through its exact canonical URL.
-        // Title/location fingerprints are search hints, not proof that two
-        // employer requisitions are the same posting.
-        existing = await this.store.findByUrl(normalizedUrl)
-          ?? (legacyUrl === normalizedUrl ? undefined : await this.store.findByUrl(legacyUrl));
-        const identityResolution = await this.store.claimPostingIdentity(identity, existing?.jobId);
-        if (identityResolution.outcome === 'quarantine') {
+        if (identityResult.decision.status === 'quarantined') {
+          await this.store.commitPostingObservation({
+            decision: identityResult.decision,
+            sourceId: listing.sourceId,
+            externalId: id,
+            occurrence: quarantinedOccurrence(listing, id, identityResult.decision),
+          });
           report.quarantinedListings.push({
             sourceId: listing.sourceId,
             row: listing.row,
-            reason: `posting identity conflict (${identityResolution.reason})`,
+            reason: `posting identity conflict (${identityResult.decision.reason})`,
           });
           return;
         }
-        if (!existing || existing.jobId !== identityResolution.canonicalJobId) {
-          existing = await this.store.getJob(identityResolution.canonicalJobId);
+        const identity = identityResult.identity;
+        // A legacy row may be adopted only through its exact canonical URL.
+        // Title/location fingerprints are search hints, not proof that two
+        // employer requisitions are the same posting.
+        const prior = priorByExternalId.get(id);
+        existing = prior ? await this.store.getJob(prior.jobId) : undefined;
+        const lookupUrls = [...new Set([
+          normalizedUrl,
+          legacyUrl,
+          ...observedUrls,
+          ...(identity?.aliases.filter((candidate) => candidate.value.startsWith('url:')).map((candidate) => candidate.value.slice(4)) ?? []),
+        ])];
+        if (!existing) {
+          for (const lookupUrl of lookupUrls) {
+            const candidate = await this.store.findByUrl(lookupUrl);
+            if (!candidate) continue;
+            const sameSourceOccurrence = candidate.sourceReferences.some((reference) => reference.sourceId === listing.sourceId
+              && (reference.externalId === id || (!reference.externalId && reference.document === listing.document && reference.row === listing.row)));
+            if (identity || sameSourceOccurrence) { existing = candidate; break; }
+          }
+        }
+        if (identity) {
+          const identityResolution = await this.store.resolvePostingIdentity(identity, existing?.jobId);
+          if (identityResolution.outcome === 'quarantine') {
+            const decision = {
+              status: 'quarantined' as const,
+              reason: identityResolution.reason,
+              contradictoryEvidence: identityResolution.conflictingCanonicalJobIds,
+              reviewFamilyKey: identityResult.decision.status === 'confirmed'
+                ? identityResult.decision.exactKey
+                : identityResult.decision.reviewFamilyKey,
+              observedAt: identityResult.decision.observedAt,
+            };
+            await this.store.commitPostingObservation({
+              decision,
+              sourceId: listing.sourceId,
+              externalId: id,
+              occurrence: quarantinedOccurrence(listing, id, decision),
+            });
+            report.quarantinedListings.push({
+              sourceId: listing.sourceId,
+              row: listing.row,
+              reason: `posting identity conflict (${identityResolution.reason})`,
+            });
+            return;
+          }
+          if (!existing || existing.jobId !== identityResolution.canonicalJobId) {
+            existing = await this.store.getJob(identityResolution.canonicalJobId);
+          }
+          identityMerged = identityResolution.outcome === 'merge';
+          identity.canonicalJobId = identityResolution.canonicalJobId;
         }
         listing = {
           ...listing,
-          postingIdentity: { ...identity, canonicalJobId: identityResolution.canonicalJobId },
+          postingIdentityDecision: identityResult.decision,
+          ...(identity ? { postingIdentity: identity } : {}),
         };
         if (supportsAdmission && listing.providerIdentity && this.catalogAdmissionResolver) {
           const canonicalEmployer = await this.catalogAdmissionResolver.resolveCanonicalEmployer(listing.providerIdentity);
@@ -517,7 +605,7 @@ export class IngestionRunner {
           || existing?.sourceReferences.some((reference) => reference.sourceId === listing.sourceId
             && sameApplicationUrl(reference.applyUrl, normalizedUrl));
         const preserveLegacyAdmission = Boolean(existing && !existing.admission
-          && (knownLegacyDestination || identityResolution.outcome === 'merge')
+          && (knownLegacyDestination || identityMerged)
           && !listing.employerEvidence?.canonicalEmployer);
         const admissionManaged = supportsAdmission && !preserveLegacyAdmission;
         const attribution = await this.attribute(listing);
@@ -601,7 +689,7 @@ export class IngestionRunner {
         if (this.enqueueDestinationVerification && listing.providerIdentity
           && (requiresBrowserVerification(destination) || admission.reasonCodes.includes('posting-unattributed'))) {
           await this.enqueueDestinationVerification({
-            jobId: listing.postingIdentity!.canonicalJobId,
+            jobId: listing.postingIdentity?.canonicalJobId ?? stableSourceOccurrenceJobId(listing.sourceId, id),
             sourceId: listing.sourceId,
             externalId: id,
             providerIdentity: listing.providerIdentity,
@@ -721,7 +809,7 @@ export class IngestionRunner {
         // An unchanged snapshot repeats postings the checkpoint already trusts, so
         // only omission progress is reconciled; re-resolving every row would cost a
         // full catalog rewrite on every poll for byte-identical source content.
-        const resolution = await this.resolveListings(batch.unchanged ? [] : batch.processed.listings, report);
+        const resolution = await this.resolveListings(batch.unchanged ? [] : batch.processed.listings, report, priorOccurrences);
         const closureCandidates = priorOccurrences.filter((prior) => !resolution.resolved.has(prior.externalId)
           && !batch.activeExternalIds.has(prior.externalId)
           && prior.consecutiveOmissions >= 1);
@@ -741,37 +829,74 @@ export class IngestionRunner {
           validatedAt: resolution.validatedAt,
           metadataValidated: resolution.metadataValidated,
           alertEligible: resolution.alertEligible,
+          publishUnconfirmedIdentities: this.publishUnconfirmedIdentities,
         });
         failureCategory = 'persistence';
         const notificationByJobId = new Map(plan.notifications.map((event) => [event.jobId, event]));
-        await forEachBounded(
-          plan.jobs.filter((job) => !notificationByJobId.has(job.jobId)),
-          (job) => this.store.putInternship(job),
-        );
-        // A notification-pending job and its outbox event become visible
-        // atomically. Successful units are reported even if a later persistence
-        // step fails; their deterministic event keeps the retry quiet.
+        const plannedJobs = new Map(plan.jobs.map((job) => [job.jobId, job]));
+        const committedJobIds = new Set<string>();
+        const blockedJobIds = new Set<string>();
         const alertedJobIds = new Set<string>();
         const notificationErrors = new Array<unknown>(plan.notifications.length);
-        const plannedJobs = new Map(plan.jobs.map((job) => [job.jobId, job]));
-        await forEachBounded(plan.notifications, async (event, index) => {
-          const job = plannedJobs.get(event.jobId);
-          if (!job) {
-            notificationErrors[index] = new Error(`Notification event ${event.eventId} has no catalog job`);
+        const consumedEvents = new Set<string>();
+        const classifiedEventIds = new Set<string>();
+        await forEachBounded(plan.occurrences, async (occurrence) => {
+          const job = plannedJobs.get(occurrence.jobId);
+          const decision = occurrence.occurrence.postingIdentityDecision;
+          if (!job || !decision || decision.status === 'quarantined') {
+            await this.store.putSourceOccurrence(occurrence);
             return;
           }
+          const event = notificationByJobId.get(job.jobId);
+          // Every classified occurrence for the canonical job may carry the
+          // same deterministic event. The transaction/outbox uniqueness
+          // boundary chooses the inserter, so one failed sibling cannot leave
+          // a successfully committed job without its alert tombstone.
+          const includeEvent = event;
+          if (includeEvent) classifiedEventIds.add(includeEvent.eventId);
           try {
-            if (await this.store.putInternshipWithNotificationEvent(job, event)) alertedJobIds.add(event.jobId);
+            const result = await this.store.commitPostingObservation({
+              decision,
+              ...(job.postingIdentity ? { identity: job.postingIdentity } : {}),
+              job,
+              occurrence,
+              ...(includeEvent ? { notificationEvent: includeEvent } : {}),
+            });
+            if (result.outcome === 'quarantined') {
+              blockedJobIds.add(job.jobId);
+              report.quarantinedListings.push({
+                sourceId: occurrence.sourceId,
+                row: occurrence.occurrence.row,
+                reason: `posting identity conflict (${result.incident.decision.reason})`,
+              });
+              return;
+            }
+            committedJobIds.add(job.jobId);
+            if (includeEvent) {
+              consumedEvents.add(includeEvent.eventId);
+              if (result.notificationInserted) alertedJobIds.add(job.jobId);
+            }
           } catch (error) {
-            notificationErrors[index] = error;
+            if (includeEvent) notificationErrors[plan.notifications.indexOf(includeEvent)] = error;
+            else throw error;
           }
+        });
+        await forEachBounded(
+          plan.jobs.filter((job) => !committedJobIds.has(job.jobId) && !blockedJobIds.has(job.jobId) && !notificationByJobId.has(job.jobId)),
+          (job) => this.store.putInternship(job),
+        );
+        // Legacy-unclassified plans retain the compatible job+event operation.
+        await forEachBounded(plan.notifications.filter((event) => !classifiedEventIds.has(event.eventId) && !consumedEvents.has(event.eventId) && !blockedJobIds.has(event.jobId)), async (event, index) => {
+          const job = plannedJobs.get(event.jobId);
+          if (!job) { notificationErrors[index] = new Error(`Notification event ${event.eventId} has no catalog job`); return; }
+          try { if (await this.store.putInternshipWithNotificationEvent(job, event)) alertedJobIds.add(event.jobId); }
+          catch (error) { notificationErrors[index] = error; }
         });
         for (const job of plan.newJobs) {
           if (alertedJobIds.has(job.jobId)) report.newJobs.push(job);
         }
         const notificationError = notificationErrors.find((error) => error !== undefined);
         if (notificationError) throw notificationError;
-        await forEachBounded(plan.occurrences, (occurrence) => this.store.putSourceOccurrence(occurrence));
         const provider = providerFor(connector.id);
         const unchanged304 = result.unchangedReason === 'not_modified';
         const metricCounts: ProcessedSnapshot['counts'] = unchanged304 ? {

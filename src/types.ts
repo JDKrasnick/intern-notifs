@@ -518,6 +518,70 @@ export interface ProviderPostingEvidence {
   sourceId: string;
   /** Every provider-issued presentation URL observed in the same API row. */
   urls: string[];
+  /** Registry contract that validated this observation. Older evidence omits rollout metadata. */
+  contractId?: string;
+  contractVersion?: number;
+  approvalReference?: string;
+  evidenceHash?: string;
+  observedAt?: string;
+  expiresAt?: string;
+}
+
+export type PostingIdentityEvidenceKind =
+  | 'immutable-provider-id'
+  | 'authoritative-employer-requisition'
+  | 'reviewed-canonical-url';
+
+export type PostingIdentityUnconfirmedReason =
+  | 'unrecognized-url-family'
+  | 'under-scoped-id'
+  | 'stale-evidence'
+  | 'insufficient-exact-evidence';
+
+export type PostingIdentityConflictReason =
+  | 'aliases-resolve-to-different-jobs'
+  | 'multiple-immutable-provider-postings'
+  | 'provider-scope-mismatch'
+  | 'employer-scope-mismatch'
+  | 'multiple-authoritative-requisitions'
+  | 'evidence-contract-mismatch';
+
+/** Durable occurrence-level decision; posting attribution remains a separate admission fact. */
+export type PostingIdentityDecision =
+  | {
+      status: 'confirmed';
+      exactKey: string;
+      evidenceKind: PostingIdentityEvidenceKind;
+      provider?: Exclude<PostingProvider, 'unknown'>;
+      tenant?: string;
+      employerId?: string;
+      contractId: string;
+      contractVersion: number;
+      approvalReference: string;
+      evidenceHash: string;
+      observedAt: string;
+    }
+  | {
+      status: 'unconfirmed';
+      reason: PostingIdentityUnconfirmedReason;
+      reviewFamilyKey: string;
+      observedAt: string;
+    }
+  | {
+      status: 'quarantined';
+      reason: PostingIdentityConflictReason;
+      contradictoryEvidence: string[];
+      reviewFamilyKey: string;
+      observedAt: string;
+    };
+
+export interface PostingIdentityIncident {
+  incidentId: string;
+  sourceId: string;
+  externalId: string;
+  decision: Extract<PostingIdentityDecision, { status: 'quarantined' }>;
+  occurrence: SourceOccurrence;
+  recordedAt: string;
 }
 
 /** Exact requisition identity. It is intentionally independent from `InternshipIdentity`. */
@@ -550,6 +614,8 @@ export interface SourceOccurrence extends SourceReference {
   externalId?: string;
   /** Reviewed provider facts retained for identity repair and audit. */
   providerEvidence?: ProviderPostingEvidence;
+  /** Durable identity decision for this occurrence. Missing means legacy-unclassified. */
+  postingIdentityDecision?: PostingIdentityDecision;
   /** Source-local classification retained so job eligibility is independent of poll order. */
   technical?: boolean;
   company: string;
@@ -618,6 +684,8 @@ export interface ProcessedListing extends SourceOccurrence {
   seasonSource?: 'posting' | 'source-default';
   /** Exact provider-aware identity resolved before reconciliation. */
   postingIdentity?: PostingIdentity;
+  /** Identity certainty is independent from publication admission. */
+  postingIdentityDecision?: PostingIdentityDecision;
   /** Reviewed evidence used to build `postingIdentity`; never inferred from display fields. */
   providerEvidence?: ProviderPostingEvidence;
   /** Descriptive identity used for program grouping and audience filtering. */
@@ -728,6 +796,8 @@ export interface Internship {
   normalizedUrl: string;
   /** Lazily attached exact identity; absent on legacy rows. */
   postingIdentity?: PostingIdentity;
+  /** Derived from classified occurrences. Missing is intentionally legacy-unclassified. */
+  postingIdentityStatus?: 'confirmed' | 'unconfirmed';
   /** Legacy/rollout rows may retain the earlier loose enrichment document until observed again. */
   internshipIdentity?: InternshipIdentity | Record<string, unknown>;
   /** Present only after the official destination has resolved successfully. */

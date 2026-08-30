@@ -5,11 +5,12 @@ import { isPastSeason } from '../src/core/early-career.js';
 import { employerCategory } from '../src/core/employers.js';
 import type { ApplicationSession } from '../src/application-automation.js';
 import { resolvePostingAliases, type AliasResolution } from '../src/identity/posting.js';
-import { deletedUserTombstoneKey, type InternshipStore, type LeverAdmission, type ReleaseStore, type UserStore, type CatalogQuery } from '../src/store.js';
+import { deletedUserTombstoneKey, type InternshipStore, type LeverAdmission, type PostingObservationCommit, type PostingObservationCommitResult, type ReleaseStore, type UserStore, type CatalogQuery } from '../src/store.js';
 import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from '../src/catalog-groups.js';
-import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from '../src/types.js';
+import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, PostingIdentityDecision, PostingIdentityIncident, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from '../src/types.js';
 import type { D1Database, D1PreparedStatement } from './types.js';
 import { alertEligible, catalogEligible } from '../src/catalog-admission.js';
+import { postingObservationProjection } from '../src/identity/projection.js';
 
 type JsonRow = { value: string };
 const deliveryReceiptLifetimeSeconds = 90 * 24 * 60 * 60;
@@ -170,6 +171,15 @@ export class D1InternshipStore implements InternshipStore {
     }
     return claims;
   }
+  async resolvePostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution> {
+    const aliases = [...new Set(identity.aliases.map((item) => item.value))].sort();
+    const resolution = resolvePostingAliases(identity, await this.postingAliasClaims(aliases));
+    if (resolution.outcome === 'quarantine') return resolution;
+    if (preferredJobId && resolution.outcome === 'merge' && resolution.canonicalJobId !== preferredJobId) {
+      return { outcome: 'quarantine', aliases, conflictingCanonicalJobIds: [resolution.canonicalJobId, preferredJobId].sort(), reason: 'aliases-resolve-to-different-jobs' };
+    }
+    return { ...resolution, canonicalJobId: resolution.outcome === 'create' && preferredJobId ? preferredJobId : resolution.canonicalJobId };
+  }
   async claimPostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution> {
     const aliases = [...new Set(identity.aliases.map((item) => item.value))].sort();
     const initial = resolvePostingAliases(identity, await this.postingAliasClaims(aliases));
@@ -205,6 +215,155 @@ export class D1InternshipStore implements InternshipStore {
       return { outcome: 'quarantine', aliases, conflictingCanonicalJobIds: conflicts, reason: 'aliases-resolve-to-different-jobs' };
     }
     return { ...initial, canonicalJobId };
+  }
+  async commitPostingObservation(input: PostingObservationCommit): Promise<PostingObservationCommitResult> {
+    if ('sourceId' in input) {
+      const incident: PostingIdentityIncident = {
+        incidentId: createHash('sha256').update(`identity-incident-v1:${input.sourceId}\0${input.externalId}\0${JSON.stringify(input.decision)}`).digest('hex'),
+        sourceId: input.sourceId, externalId: input.externalId, decision: input.decision,
+        occurrence: input.occurrence, recordedAt: input.decision.observedAt,
+      };
+      await this.db.prepare("INSERT INTO catalog_items (pk, sk, kind, value, source_id, external_id) VALUES (?, 'INCIDENT', 'posting-identity-incident', ?, ?, ?) ON CONFLICT(pk, sk) DO NOTHING")
+        .bind(`IDENTITY_INCIDENT#${incident.incidentId}`, JSON.stringify(incident), incident.sourceId, incident.externalId).run();
+      return { outcome: 'quarantined', incident };
+    }
+    const aliases = input.identity ? [...new Set(input.identity.aliases.map((item) => item.value))].sort() : [];
+    const preview = input.identity
+      ? await this.resolvePostingIdentity(input.identity, input.job.jobId)
+      : { outcome: 'create' as const, aliases: [], canonicalJobId: input.job.jobId };
+    if (preview.outcome === 'quarantine' || preview.canonicalJobId !== input.job.jobId) {
+      const conflicts = preview.outcome === 'quarantine' ? preview.conflictingCanonicalJobIds : [preview.canonicalJobId, input.job.jobId];
+      const decision: Extract<PostingIdentityDecision, { status: 'quarantined' }> = {
+        status: 'quarantined', reason: preview.outcome === 'quarantine' ? preview.reason : 'aliases-resolve-to-different-jobs',
+        contradictoryEvidence: [...new Set(conflicts)].sort(),
+        reviewFamilyKey: input.decision.status === 'confirmed' ? input.decision.exactKey : input.decision.reviewFamilyKey,
+        observedAt: input.decision.observedAt,
+      };
+      return this.commitPostingObservation({ decision, sourceId: input.occurrence.sourceId, externalId: input.occurrence.externalId, occurrence: input.occurrence.occurrence });
+    }
+    const aliasKeys = aliases.map((alias) => `POSTING_ALIAS#${alias}`);
+    const conflictGuard = aliasKeys.length ? `NOT EXISTS (
+      SELECT 1 FROM catalog_items WHERE kind = 'posting-alias'
+        AND pk IN (${aliasKeys.map(() => '?').join(', ')})
+        AND json_extract(value, '$.canonicalJobId') <> ?
+    )` : '1 = 1';
+    const guardValues = aliasKeys.length ? [...aliasKeys, input.job.jobId] : [];
+    let results: Awaited<ReturnType<D1Database['batch']>> = [];
+    let notificationInserted = false;
+    let projectionCommitted = false;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const stored = await this.get<Internship>(`JOB#${input.job.jobId}`, 'META');
+      const canonical = postingObservationProjection(stored, input.job, input.occurrence);
+      const canonicalJson = JSON.stringify(canonical);
+      const expectedJson = stored ? JSON.stringify(stored) : '__posting_observation_absent__';
+      const projectionGuard = "EXISTS (SELECT 1 FROM catalog_items WHERE pk = ? AND sk = 'META' AND value = ?)";
+      const statements = [this.db.prepare(`
+        INSERT INTO catalog_items (
+          pk, sk, kind, value, url_key, fingerprint_key, sms_pending, digest_pending,
+          catalog_state, catalog_sort_key, search_text, source_classes
+        ) SELECT ?, 'META', 'internship', ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${conflictGuard}
+        ON CONFLICT(pk, sk) DO UPDATE SET kind = excluded.kind, value = excluded.value,
+          url_key = excluded.url_key, fingerprint_key = excluded.fingerprint_key,
+          sms_pending = excluded.sms_pending, digest_pending = excluded.digest_pending,
+          catalog_state = excluded.catalog_state, catalog_sort_key = excluded.catalog_sort_key,
+          search_text = excluded.search_text, source_classes = excluded.source_classes
+        WHERE catalog_items.value = ?
+      `).bind(
+        `JOB#${canonical.jobId}`, canonicalJson, canonical.normalizedUrl, canonical.fingerprint,
+        canonical.notification.smsPending && alertEligible(canonical) ? 1 : 0,
+        canonical.notification.digestPending && alertEligible(canonical) ? 1 : 0,
+        canonical.technical === false || !catalogEligible(canonical) ? null : canonical.open ? 'OPEN' : 'CLOSED',
+        canonical.technical === false || !catalogEligible(canonical) ? null : canonical.open ? openCatalogSortKey(canonical) : `${canonical.lastSeenAt}#${canonical.jobId}`,
+        canonical.technical === false || !catalogEligible(canonical) ? null : catalogSearchText(canonical),
+        canonical.technical === false || !catalogEligible(canonical) ? null : JSON.stringify(catalogSourceClasses(canonical)),
+        ...guardValues, expectedJson,
+      )];
+      statements.push(...aliases.map((alias) => this.db.prepare(`
+        INSERT INTO catalog_items (pk, sk, kind, value)
+        SELECT ?, 'CLAIM', 'posting-alias', ? WHERE ${conflictGuard} AND ${projectionGuard}
+        ON CONFLICT(pk, sk) DO NOTHING
+      `).bind(
+        `POSTING_ALIAS#${alias}`,
+        JSON.stringify({ alias, canonicalJobId: input.job.jobId, claimedAt: input.decision.observedAt }),
+        ...guardValues, `JOB#${canonical.jobId}`, canonicalJson,
+      )));
+      statements.push(this.db.prepare(`
+        INSERT INTO catalog_items (pk, sk, kind, value, source_id, external_id)
+        SELECT ?, ?, 'source-occurrence', ?, ?, ? WHERE ${conflictGuard} AND ${projectionGuard}
+        ON CONFLICT(pk, sk) DO UPDATE SET kind = excluded.kind, value = excluded.value,
+          source_id = excluded.source_id, external_id = excluded.external_id
+      `).bind(
+        `SOURCE#${input.occurrence.sourceId}`, `OCCURRENCE#${input.occurrence.externalId}`,
+        JSON.stringify(input.occurrence), input.occurrence.sourceId, input.occurrence.externalId,
+        ...guardValues, `JOB#${canonical.jobId}`, canonicalJson,
+      ));
+      if (input.decision.status === 'unconfirmed') {
+        const candidateId = createHash('sha256').update(`posting-review-family-v1:${input.decision.reviewFamilyKey}`).digest('hex');
+        const evidenceHash = createHash('sha256').update(JSON.stringify({
+          reviewFamilyKey: input.decision.reviewFamilyKey,
+          reason: input.decision.reason,
+        })).digest('hex');
+        const candidateGuardValues = [...guardValues, `JOB#${canonical.jobId}`, canonicalJson];
+        statements.push(this.db.prepare(`
+          INSERT INTO posting_identity_review_candidates (
+            id, review_family_key, sanitized_signature, occurrence_count, evidence_hash,
+            first_observed_at, last_observed_at, state
+          ) SELECT ?, ?, ?, 0, ?, ?, ?, 'open' WHERE ${conflictGuard} AND ${projectionGuard}
+          ON CONFLICT(id) DO UPDATE SET
+            last_observed_at = MAX(posting_identity_review_candidates.last_observed_at, excluded.last_observed_at),
+            evidence_hash = excluded.evidence_hash
+          WHERE posting_identity_review_candidates.state = 'open'
+        `).bind(
+          candidateId, input.decision.reviewFamilyKey, input.decision.reviewFamilyKey, evidenceHash,
+          input.decision.observedAt, input.decision.observedAt, ...candidateGuardValues,
+        ));
+        statements.push(this.db.prepare(`
+          INSERT INTO posting_identity_review_candidate_occurrences (
+            candidate_id, source_id, external_id, first_observed_at
+          ) SELECT ?, ?, ?, ? WHERE ${conflictGuard} AND ${projectionGuard}
+          ON CONFLICT(candidate_id, source_id, external_id) DO NOTHING
+        `).bind(
+          candidateId, input.occurrence.sourceId, input.occurrence.externalId, input.decision.observedAt,
+          ...candidateGuardValues,
+        ));
+        statements.push(this.db.prepare(`
+          UPDATE posting_identity_review_candidates
+          SET occurrence_count = (
+            SELECT COUNT(*) FROM posting_identity_review_candidate_occurrences WHERE candidate_id = ?
+          )
+          WHERE id = ? AND ${conflictGuard} AND ${projectionGuard}
+        `).bind(candidateId, candidateId, ...candidateGuardValues));
+      }
+      const notificationIndex = input.notificationEvent ? statements.length : -1;
+      if (input.notificationEvent) statements.push(this.db.prepare(`
+        INSERT INTO catalog_items (pk, sk, kind, value)
+        SELECT ?, 'EVENT', 'notification-event', ? WHERE ${conflictGuard} AND ${projectionGuard}
+        ON CONFLICT(pk, sk) DO NOTHING
+      `).bind(
+        `OUTBOX#${input.notificationEvent.eventId}`, JSON.stringify(input.notificationEvent),
+        ...guardValues, `JOB#${canonical.jobId}`, canonicalJson,
+      ));
+      results = await this.db.batch(statements);
+      projectionCommitted = Boolean(results[0]?.meta.changes);
+      notificationInserted = Boolean(notificationIndex >= 0 && results[notificationIndex]?.meta.changes);
+      if (projectionCommitted) break;
+    }
+    if (!projectionCommitted) throw new Error('Unable to commit posting observation projection');
+    const verified = input.identity ? await this.resolvePostingIdentity(input.identity, input.job.jobId) : preview;
+    if (verified.outcome === 'quarantine' || verified.canonicalJobId !== input.job.jobId) {
+      const conflicts = verified.outcome === 'quarantine' ? verified.conflictingCanonicalJobIds : [verified.canonicalJobId, input.job.jobId];
+      const decision: Extract<PostingIdentityDecision, { status: 'quarantined' }> = {
+        status: 'quarantined', reason: verified.outcome === 'quarantine' ? verified.reason : 'aliases-resolve-to-different-jobs',
+        contradictoryEvidence: [...new Set(conflicts)].sort(),
+        reviewFamilyKey: input.decision.status === 'confirmed' ? input.decision.exactKey : input.decision.reviewFamilyKey,
+        observedAt: input.decision.observedAt,
+      };
+      return this.commitPostingObservation({ decision, sourceId: input.occurrence.sourceId, externalId: input.occurrence.externalId, occurrence: input.occurrence.occurrence });
+    }
+    return {
+      outcome: 'committed', canonicalJobId: input.job.jobId,
+      notificationInserted,
+    };
   }
   async putInternship(job: Internship): Promise<void> {
     await this.internshipStatement(job).run();
@@ -366,7 +525,7 @@ export class D1InternshipStore implements InternshipStore {
       ])));
     }
     for (let offset = 0; offset < statements.length; offset += 50) await this.db.batch(statements.slice(offset, offset + 50));
-    await this.put('CATALOG_PROJECTION', 'CURRENT', 'catalog-projection-pointer', { version, generatedAt, schemaVersion: 3 });
+    await this.put('CATALOG_PROJECTION', 'CURRENT', 'catalog-projection-pointer', { version, generatedAt, schemaVersion: 4 });
     // Projection versions are rebuildable caches. Deleting only the version
     // observed before this refresh keeps overlapping refreshes from deleting
     // whichever version wins the pointer race.
@@ -377,7 +536,7 @@ export class D1InternshipStore implements InternshipStore {
   }
   async listCatalogProjection(cursor?: string, limit = 25): Promise<CatalogProjectionPage | undefined> {
     const pointer = await this.get<{ version: string; generatedAt: string; schemaVersion: number }>('CATALOG_PROJECTION', 'CURRENT');
-    if (!pointer || pointer.schemaVersion !== 3 || Date.now() - Date.parse(pointer.generatedAt) > 24 * 60 * 60 * 1_000) return undefined;
+    if (!pointer || pointer.schemaVersion !== 4 || Date.now() - Date.parse(pointer.generatedAt) > 24 * 60 * 60 * 1_000) return undefined;
     const offset = cursorOffset(cursor);
     const rows = await this.db.prepare("SELECT value FROM catalog_items WHERE pk = ? AND kind = 'catalog-projection' ORDER BY catalog_sort_key ASC LIMIT ? OFFSET ?")
       .bind(`CATALOG_PROJECTION#${pointer.version}`, limit + 1, offset).all<JsonRow>();
@@ -386,7 +545,7 @@ export class D1InternshipStore implements InternshipStore {
   }
   async listCatalogProjectionFiltered(cursor: string | undefined, limit: number, filter: CatalogGroupFilter): Promise<CatalogProjectionPage | undefined> {
     const pointer = await this.get<{ version: string; generatedAt: string; schemaVersion: number }>('CATALOG_PROJECTION', 'CURRENT');
-    if (!pointer || pointer.schemaVersion !== 3 || Date.now() - Date.parse(pointer.generatedAt) > 24 * 60 * 60 * 1_000) return undefined;
+    if (!pointer || pointer.schemaVersion !== 4 || Date.now() - Date.parse(pointer.generatedAt) > 24 * 60 * 60 * 1_000) return undefined;
     const offset = cursorOffset(cursor);
     const roleClauses = ["json_extract(role.value, '$.open') = ?"];
     const values: unknown[] = [filter.status === 'closed' ? 0 : 1];
@@ -414,6 +573,7 @@ export class D1InternshipStore implements InternshipStore {
     }
     if (filter.hideUsCitizenshipRequired) roleClauses.push("coalesce(json_extract(role.value, '$.requiresUsCitizenship'), 0) = 0");
     if (filter.hideAdvancedDegreeRequired) roleClauses.push("coalesce(json_extract(role.value, '$.advancedDegreeRequired'), 0) = 0");
+    if (filter.postingIdentityConfirmedOnly) roleClauses.push("coalesce(json_extract(role.value, '$.postingIdentityStatus'), 'legacy') <> 'unconfirmed'");
     const exactArrayFilter = (path: string, requested: string[]) => {
       const normalized = requested.map((value) => value.toLowerCase());
       roleClauses.push(`EXISTS (SELECT 1 FROM json_each(role.value, '${path}') AS item WHERE lower(item.value) IN (${placeholders(normalized)}))`);
@@ -464,7 +624,7 @@ export class D1InternshipStore implements InternshipStore {
   }
   async getCatalogProjectionGroup(groupId: string): Promise<CatalogGroupDetails | undefined> {
     const pointer = await this.get<{ version: string; generatedAt: string; schemaVersion: number }>('CATALOG_PROJECTION', 'CURRENT');
-    if (!pointer || pointer.schemaVersion !== 3 || Date.now() - Date.parse(pointer.generatedAt) > 24 * 60 * 60 * 1_000) return undefined;
+    if (!pointer || pointer.schemaVersion !== 4 || Date.now() - Date.parse(pointer.generatedAt) > 24 * 60 * 60 * 1_000) return undefined;
     return this.get<CatalogGroupDetails>(`CATALOG_PROJECTION#${pointer.version}`, `GROUP#${groupId}`);
   }
   async listLeverAdmissions(): Promise<LeverAdmission[]> {

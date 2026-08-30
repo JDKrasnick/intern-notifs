@@ -6,6 +6,7 @@ import { normalizeInternship, normalizeListing } from '../catalog-quality.js';
 import { isOfficialOccurrence } from '../sources/provenance.js';
 import { isPastSeason } from '../core/early-career.js';
 import { deriveCanonicalAdmission } from '../catalog-admission.js';
+import { stableSourceOccurrenceJobId } from '../identity/registry.js';
 import type {
   Internship,
   NotificationEvent,
@@ -27,6 +28,8 @@ export interface ReconciliationInput {
   validatedAt?: Map<string, string>;
   metadataValidated?: Map<string, number>;
   alertEligible?: Set<string>;
+  /** Rollout gate: classified rows remain durable while publication is shadowed. */
+  publishUnconfirmedIdentities?: boolean;
 }
 
 export interface ReconciliationPlan {
@@ -43,6 +46,7 @@ function occurrence(listing: ProcessedListing, externalId: string): SourceOccurr
     ...(listing.provenance ? { provenance: listing.provenance } : {}),
     externalId,
     ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
+    ...(listing.postingIdentityDecision ? { postingIdentityDecision: listing.postingIdentityDecision } : {}),
     document: listing.document,
     sourceUrl: listing.sourceUrl,
     row: listing.row,
@@ -105,6 +109,13 @@ function anyOpenTechnicalOccurrence(references: SourceOccurrence[]): boolean {
   return references.some((reference) => reference.state === 'open' && reference.technical !== false);
 }
 
+function postingIdentityStatus(references: SourceOccurrence[]): Internship['postingIdentityStatus'] {
+  const decisions = references.map((reference) => reference.postingIdentityDecision).filter(Boolean);
+  if (decisions.some((decision) => decision?.status === 'confirmed')) return 'confirmed';
+  if (decisions.some((decision) => decision?.status === 'unconfirmed')) return 'unconfirmed';
+  return undefined;
+}
+
 function seasonAllowsOpen(season: string, identity: Internship['internshipIdentity'], references: SourceOccurrence[], now: string): boolean {
   if (!isPastSeason(season, new Date(now))) return true;
   const evidence = (identity as { season?: { evidenceStatus?: string } } | undefined)?.season?.evidenceStatus;
@@ -154,6 +165,7 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
     applyUrl: replaceStoredUrl ? listing.applyUrl : existing.applyUrl || listing.applyUrl,
     normalizedUrl: replaceStoredUrl ? listingNormalizedUrl : existing.normalizedUrl,
     postingIdentity: mergedPostingIdentity(existing.postingIdentity, listing.postingIdentity),
+    ...(postingIdentityStatus(sourceReferences) ? { postingIdentityStatus: postingIdentityStatus(sourceReferences) } : {}),
     internshipIdentity,
     fingerprint: fingerprint(company, title, location, season),
     compensation: listing.compensation.maxHourlyUSD ? listing.compensation : existing.compensation,
@@ -179,7 +191,10 @@ function create(listing: ProcessedListing, externalId: string, now: string, base
   const reference = { ...occurrence(listing, externalId), firstAttachedAt: now, firstAttachedAtPrecision: 'exact' as const };
   const admission = deriveCanonicalAdmission([reference], now);
   return {
-    jobId: listing.postingIdentity?.canonicalJobId ?? jobId(normalizedUrl, key),
+    jobId: listing.postingIdentity?.canonicalJobId
+      ?? (listing.postingIdentityDecision?.status === 'unconfirmed'
+        ? stableSourceOccurrenceJobId(listing.sourceId, externalId)
+        : jobId(normalizedUrl, key)),
     company: admission?.canonicalEmployer?.displayName ?? listing.company,
     title: listing.title,
     location: listing.location,
@@ -188,6 +203,8 @@ function create(listing: ProcessedListing, externalId: string, now: string, base
     applyUrl: listing.applyUrl,
     normalizedUrl,
     ...(listing.postingIdentity ? { postingIdentity: listing.postingIdentity } : {}),
+    ...(listing.postingIdentityDecision?.status === 'confirmed' ? { postingIdentityStatus: 'confirmed' as const }
+      : listing.postingIdentityDecision?.status === 'unconfirmed' ? { postingIdentityStatus: 'unconfirmed' as const } : {}),
     ...(listing.internshipIdentity ? { internshipIdentity: listing.internshipIdentity } : {}),
     ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}),
     ...(metadataVersion ? { applicationPageMetadataVersion: metadataVersion } : {}),
@@ -209,7 +226,9 @@ function create(listing: ProcessedListing, externalId: string, now: string, base
 
 function notificationEvent(sourceId: string, externalId: string, job: Internship, now: string): NotificationEvent {
   return {
-    eventId: createHash('sha256').update(`${sourceId}|${externalId}|${job.jobId}|new-job`).digest('hex'),
+    // The canonical job identity, not arrival source, owns the one-time alert.
+    // This makes official/community races converge on one outbox tombstone.
+    eventId: createHash('sha256').update(`posting-observation-v2|${job.jobId}|new-job`).digest('hex'),
     sourceId,
     externalId,
     jobId: job.jobId,
@@ -253,7 +272,9 @@ export class CatalogReconciler {
     // One snapshot can list one exact posting twice, across documents or through
     // reviewed provider URL variants. Only exact identity or URL evidence may
     // converge them; title/location fingerprints can collide across requisitions.
-    const byUrl = new Map<string, Internship>();
+    // URL-only convergence remains solely for legacy-unclassified adapters.
+    // Classified occurrences require an exact reviewed identity.
+    const legacyByUrl = new Map<string, Internship>();
     const byPostingIdentity = new Map<string, Internship>();
 
     for (const listing of input.listings) {
@@ -263,7 +284,7 @@ export class CatalogReconciler {
       const stored = input.resolvedJobs.get(externalId);
       const inSnapshot = (stored && jobs.get(stored.jobId))
         ?? (listing.postingIdentity ? byPostingIdentity.get(listing.postingIdentity.canonicalJobId) : undefined)
-        ?? byUrl.get(listingUrl);
+        ?? (!listing.postingIdentityDecision ? legacyByUrl.get(listingUrl) : undefined);
       const existing = inSnapshot ?? stored;
       const validatedAt = input.validatedAt?.get(externalId);
       const metadataVersion = input.metadataValidated?.get(externalId);
@@ -278,6 +299,7 @@ export class CatalogReconciler {
       if (!existing || retryingUncommittedCreate) {
         if (input.baseline || !job.open || !job.technical || !matchesJobFilter(job, input.filter)
           || job.admission?.alertEligible === false
+          || (job.postingIdentityStatus === 'unconfirmed' && input.publishUnconfirmedIdentities === false)
           || (input.alertEligible && !input.alertEligible.has(externalId))) {
           job.notification = { smsPending: false, digestPending: false };
           filteredJobs.push(job);
@@ -287,8 +309,10 @@ export class CatalogReconciler {
         }
       }
       jobs.set(job.jobId, job);
-      byUrl.set(job.normalizedUrl, job);
-      byUrl.set(listingUrl, job);
+      if (!listing.postingIdentityDecision) {
+        legacyByUrl.set(job.normalizedUrl, job);
+        legacyByUrl.set(listingUrl, job);
+      }
       if (listing.postingIdentity) byPostingIdentity.set(listing.postingIdentity.canonicalJobId, job);
       const next: SourceOccurrenceState = {
         sourceId: input.sourceId,

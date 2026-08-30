@@ -3,8 +3,8 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DeleteCommand, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { ApplicationSession } from './application-automation.js';
-import { buildPostingIdentity } from './identity/posting.js';
 import { providerEvidenceForOccurrence } from './identity/reviewed-provider.js';
+import { resolvePostingIdentityDecision } from './identity/registry.js';
 import { notificationDedupeKey } from './notifications.js';
 import { createDynamoDocumentClient, DynamoInternshipStore, DynamoUserStore } from './store.js';
 import type { ApplicationRecord, DeliveryReceipt, Internship, PostingAlias, PostingIdentity, SourceOccurrence, UserPreferences } from './types.js';
@@ -110,12 +110,21 @@ function receiptRank(receipt: DeliveryReceipt) {
   return 1;
 }
 
-function migrationIdentity(job: Internship): PostingIdentity {
+function migrationIdentity(job: Internship): PostingIdentity | undefined {
   const urls = [job.applyUrl, ...job.sourceReferences.map((reference) => reference.applyUrl)];
   const providerEvidence = job.sourceReferences.map((reference) => reference.providerEvidence
     ?? (reference.externalId ? providerEvidenceForOccurrence(reference.sourceId, reference.externalId, [reference.applyUrl]) : undefined))
     .find((value) => value !== undefined);
-  return buildPostingIdentity({ applicationUrl: job.applyUrl, observedUrls: urls, ...(providerEvidence ? { providerEvidence } : {}) });
+  const reference = job.sourceReferences.find((item) => item.providerEvidence === providerEvidence) ?? job.sourceReferences[0];
+  const result = resolvePostingIdentityDecision({
+    sourceId: reference?.sourceId ?? 'legacy-dynamo-migration',
+    externalId: reference?.externalId ?? job.jobId,
+    applicationUrl: job.applyUrl,
+    observedUrls: urls,
+    observedAt: job.lastSeenAt,
+    ...(providerEvidence ? { providerEvidence } : {}),
+  });
+  return result.decision.status === 'confirmed' ? result.identity : undefined;
 }
 
 export function planApplicationIdentityMigration(
@@ -181,7 +190,10 @@ export function planPostingIdentityMigration(
   const conflicts: string[] = [];
   const identities = new Map<string, PostingIdentity>();
   for (const job of selected) {
-    try { identities.set(job.jobId, migrationIdentity(job)); }
+    try {
+      const identity = migrationIdentity(job);
+      if (identity) identities.set(job.jobId, identity);
+    }
     catch (error) { conflicts.push(`${job.jobId}: ${error instanceof Error ? error.message : String(error)}`); }
   }
 

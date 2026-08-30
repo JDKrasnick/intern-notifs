@@ -58,20 +58,23 @@ describe('polling', () => {
     expect(await store.listOpenSince('2026-08-08T00:00:00.000Z', '2026-08-11T00:00:00.000Z')).toMatchObject([{ title: 'Platform Engineering Intern' }]);
     expect(store.notificationEvents.size).toBe(1);
   });
-  it('preserves normal catalog recency when a provider baseline attaches to a community role', async () => {
+  it('keeps identity-unconfirmed same-URL occurrences source-local', async () => {
     const store = new MemoryInternshipStore();
     await store.putCheckpoint({ sourceId: 'community', successfulFetches: 1, lastRowCount: 0 });
     await new Poller([new Adapter('community', [listing('https://jobs.example.com/shared', 'community')])], store, () => new Date('2026-08-08T12:00:00.000Z')).poll();
     await new Poller([new Adapter('ashby-provider', [listing('https://jobs.example.com/shared?utm_source=ashby', 'ashby-provider')])], store, () => new Date('2026-08-09T12:00:00.000Z')).poll();
-    const shared = [...store.jobs.values()][0]!;
-    expect(shared).toMatchObject({ firstSeenAt: '2026-08-08T12:00:00.000Z', catalogVisibleAt: '2026-08-08T12:00:00.000Z', catalogRecency: 'normal' });
-    expect(shared.sourceReferences[1]).toMatchObject({ sourceId: 'ashby-provider', firstAttachedAt: '2026-08-09T12:00:00.000Z', firstAttachedAtPrecision: 'exact' });
+    expect(store.jobs.size).toBe(2);
+    expect([...store.jobs.values()]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ firstSeenAt: '2026-08-08T12:00:00.000Z', catalogRecency: 'normal', postingIdentityStatus: 'unconfirmed' }),
+      expect.objectContaining({ firstSeenAt: '2026-08-09T12:00:00.000Z', postingIdentityStatus: 'unconfirmed' }),
+    ]));
   });
-  it('merges cross-source duplicates without alerting during baseline', async () => {
+  it('does not merge cross-source occurrences from normalized URL syntax alone', async () => {
     const store = new MemoryInternshipStore();
     await new Poller([new Adapter('one', [listing('https://jobs.example.com/a')])], store).poll();
     await new Poller([new Adapter('two', [listing('https://jobs.example.com/a?utm_source=two', 'two')])], store).poll();
-    expect(store.jobs.size).toBe(1); expect([...store.jobs.values()][0].sourceReferences).toHaveLength(2);
+    expect(store.jobs.size).toBe(2);
+    expect([...store.jobs.values()].every((job) => job.postingIdentityStatus === 'unconfirmed')).toBe(true);
   });
   it('does not let an unverified community occurrence revive a closed canonical posting', async () => {
     const store = new MemoryInternshipStore();
@@ -171,7 +174,8 @@ describe('polling', () => {
       url: `https://job-boards.greenhouse.io/databricks/jobs/${postingId}`,
     })])], store).poll();
     expect(store.jobs.size).toBe(2);
-    expect([...store.jobs.values()].map((job) => job.postingIdentity?.provider).sort()).toEqual(['greenhouse', 'unknown']);
+    expect([...store.jobs.values()].map((job) => job.postingIdentity?.provider).sort()).toEqual(['greenhouse', undefined]);
+    expect([...store.jobs.values()].find((job) => !job.postingIdentity)).toMatchObject({ postingIdentityStatus: 'unconfirmed' });
   });
   it('keeps a fresh tenant-less embed separate when two current reviewed snapshots share its ID', async () => {
     const store = new MemoryInternshipStore();
@@ -215,7 +219,8 @@ describe('polling', () => {
     const store = new MemoryInternshipStore();
     await store.putCheckpoint({ sourceId: 'greenhouse-drweng', successfulFetches: 1, activeExternalIds: ['3413670'] });
     await new Poller([new Adapter('community', [listing('https://www.drw.com/work-at-drw/listings/software-developer-intern-9999999', 'community')])], store).poll();
-    expect([...store.jobs.values()][0]?.postingIdentity).toMatchObject({ provider: 'unknown' });
+    expect([...store.jobs.values()][0]).toMatchObject({ postingIdentityStatus: 'unconfirmed' });
+    expect([...store.jobs.values()][0]?.postingIdentity).toBeUndefined();
   });
   it('uses a reviewed custom-host ID for identity without treating a generic destination as alert eligible', async () => {
     const store = new MemoryInternshipStore();

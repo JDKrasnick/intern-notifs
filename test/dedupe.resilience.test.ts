@@ -8,7 +8,7 @@ import type { Internship, RawListing, SourceAdapter, SourceCheckpoint, SourceFet
 const listing = (overrides: Partial<RawListing> = {}): RawListing => ({
   sourceId: 'source-a', document: 'README.md', sourceUrl: 'https://github.com/example/list', row: 1,
   company: 'Acme, Inc.', title: 'Software Engineering Internship', location: 'New York, NY', season: 'Summer-2027',
-  applyUrl: 'https://careers.example.test/jobs/123?utm_source=list', compensation: { raw: '$50/hr', maxHourlyUSD: 50 },
+  applyUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa?utm_source=list', compensation: { raw: '$50/hr', maxHourlyUSD: 50 },
   state: 'open', fetchedAt: '2026-07-19T12:00:00.000Z', ...overrides,
 });
 class Adapter implements SourceAdapter {
@@ -19,12 +19,12 @@ class Adapter implements SourceAdapter {
 }
 
 describe('dedupe resilience experiment', () => {
-  it('merges display variants only when their exact canonical URL agrees', async () => {
+  it('merges display variants only when their exact reviewed provider identity agrees', async () => {
     const store = new MemoryInternshipStore();
     await new Poller([new Adapter('source-a', [listing()])], store).poll();
     const variants = [
-      listing({ sourceId: 'source-b', document: 'OFFSEASON.md', row: 4, company: 'Acme Incorporated', title: 'Software Engineer Intern', location: 'NYC', season: 'summer 2027', applyUrl: 'https://careers.example.test/jobs/123?utm_medium=feed' }),
-      listing({ sourceId: 'source-c', document: 'roles.md', row: 9, company: 'ACME INC', title: 'SWE Intern', location: 'New York City', season: 'SUMMER 2027', applyUrl: 'https://careers.example.test/jobs/123?utm_campaign=mail' }),
+      listing({ sourceId: 'source-b', document: 'OFFSEASON.md', row: 4, company: 'Acme Incorporated', title: 'Software Engineer Intern', location: 'NYC', season: 'summer 2027', applyUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/application?utm_medium=feed' }),
+      listing({ sourceId: 'source-c', document: 'roles.md', row: 9, company: 'ACME INC', title: 'SWE Intern', location: 'New York City', season: 'SUMMER 2027', applyUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa?utm_campaign=mail' }),
     ];
     const report = await new Poller([new Adapter('source-b', [variants[0]]), new Adapter('source-c', [variants[1]])], store).poll();
     expect(report.newJobs).toEqual([]);

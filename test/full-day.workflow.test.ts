@@ -42,14 +42,14 @@ describe('a full day of internship discovery', () => {
     }
 
     const midday = [...morning,
-      role(4, 'Northstar', 'Full Stack Software Engineering Intern', 'New York, NY', 'https://careers.example.test/northstar/full-stack'),
-      role(5, 'ModelWorks', 'Machine Learning Intern', 'Remote (US)', 'https://careers.example.test/modelworks/ml'),
-      role(6, 'QuantCo', 'Quantitative Trading Intern', 'New York, NY', 'https://careers.example.test/quantco/trading'),
+      role(4, 'Northstar', 'Full Stack Software Engineering Intern', 'New York, NY', 'https://jobs.ashbyhq.com/northstar/00000000-0000-0000-0000-000000000004'),
+      role(5, 'ModelWorks', 'Machine Learning Intern', 'Remote (US)', 'https://jobs.ashbyhq.com/modelworks/00000000-0000-0000-0000-000000000005'),
+      role(6, 'QuantCo', 'Quantitative Trading Intern', 'New York, NY', 'https://jobs.ashbyhq.com/quantco/00000000-0000-0000-0000-000000000006'),
     ];
     const secondaryCopies = [
-      role(7, 'Northstar, Inc.', 'Full Stack Software Engineer Intern', 'NYC', 'https://careers.example.test/northstar/full-stack?utm_source=secondary'),
-      role(8, 'ModelWorks Incorporated', 'Machine Learning Internship', 'Remote US', 'https://careers.example.test/modelworks/ml?utm_source=secondary'),
-      role(9, 'QuantCo Corp.', 'Quantitative Trading Internship', 'New York City', 'https://careers.example.test/quantco/trading?utm_source=secondary'),
+      role(7, 'Northstar, Inc.', 'Full Stack Software Engineer Intern', 'NYC', 'https://jobs.ashbyhq.com/northstar/00000000-0000-0000-0000-000000000004/application?utm_source=secondary'),
+      role(8, 'ModelWorks Incorporated', 'Machine Learning Internship', 'Remote US', 'https://jobs.ashbyhq.com/modelworks/00000000-0000-0000-0000-000000000005/application?utm_source=secondary'),
+      role(9, 'QuantCo Corp.', 'Quantitative Trading Internship', 'New York City', 'https://jobs.ashbyhq.com/quantco/00000000-0000-0000-0000-000000000006/application?utm_source=secondary'),
     ].map((listing) => ({ ...listing, sourceId: 'secondary', document: 'OFFSEASON.md' }));
     const discovered = await new Poller([new Adapter('primary', midday), new Adapter('secondary', secondaryCopies)], jobs, at('2026-07-19T12:00:00.000Z')).poll();
     expect(discovered.failures).toEqual([]);
@@ -80,7 +80,7 @@ describe('a full day of internship discovery', () => {
 
     const saved = await api(event('ada', 'POST', '/me/applications', { jobId: tappedId, status: 'applied', notes: 'Applied after the push alert.' }));
     expect(saved.statusCode).toBe(201);
-    expect(json<{ officialApplyUrl: string }>(saved).officialApplyUrl).toBe('https://careers.example.test/modelworks/ml');
+    expect(json<{ officialApplyUrl: string }>(saved).officialApplyUrl).toBe('https://jobs.ashbyhq.com/modelworks/00000000-0000-0000-0000-000000000005');
     expect(json<{ applications: Array<{ jobId: string; status: string }> }>(await api(event('ada', 'GET', '/me/applications'))).applications).toMatchObject([{ jobId: tappedId, status: 'applied' }]);
 
     // A noon re-poll and scheduler retry must not produce duplicate catalog rows or device alerts.
