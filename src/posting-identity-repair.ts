@@ -297,7 +297,7 @@ function presentation(job: Internship): Record<PresentationField, unknown> {
   const future = job as FutureAdmissionJob;
   const identity = (job.internshipIdentity as { company?: { canonicalId?: string } } | undefined)?.company?.canonicalId;
   return {
-    employerIdentity: future.employerId ?? identity,
+    employerIdentity: job.admission?.canonicalEmployer?.id ?? future.employerId ?? identity,
     employerName: job.company,
     title: job.title,
     location: { location: job.location, locations: job.locations ?? [] },

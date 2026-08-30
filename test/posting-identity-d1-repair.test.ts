@@ -275,6 +275,58 @@ describe('D1 posting identity repair', () => {
     });
   });
 
+  it('reconciles Aquatic, Jump, and Squarepoint spellings through the same reviewed employer decision', async () => {
+    const sqlite = database(); const db = sqliteD1(sqlite); const store = new D1InternshipStore(db);
+    const cases = [
+      ['aquatic', '910001', 'aquaticcapitalmanagement', 'aquatic-capital-management', 'Aquatic Capital Management'],
+      ['jumptrading', '910002', 'jumptrading', 'jump-trading', 'Jump Trading'],
+      ['squarepointcapital', '910003', 'squarepointcapital', 'squarepoint-capital', 'Squarepoint Capital'],
+    ] as const;
+    for (const [legacyEmployerId, postingId, tenant, canonicalEmployerId, displayName] of cases) {
+      const sourceId = `greenhouse-${tenant}`;
+      const url = `https://job-boards.greenhouse.io/${tenant}/jobs/${postingId}`;
+      const evidence: ProviderPostingEvidence = { provider: 'greenhouse', tenant, postingId, sourceId, urls: [url] };
+      await store.putCheckpoint({ sourceId, successfulFetches: 10, activeExternalIds: [postingId] });
+      const admission = { canonicalEmployer: { id: canonicalEmployerId, displayName } };
+      await store.putInternship(job(`community-${postingId}`, url, '2026-08-01T00:00:00.000Z', [
+        occurrence('community-list', `community-${postingId}`, url),
+      ], { employerId: legacyEmployerId, admission }));
+      await store.putInternship(job(`official-${postingId}`, url, '2026-08-02T00:00:00.000Z', [
+        { ...occurrence(sourceId, postingId, url, evidence), provenance: 'official-ats' },
+      ], { employerId: tenant, admission }));
+    }
+
+    expect(await runPostingIdentityRepair(db, { scope: 'identity' })).toMatchObject({
+      duplicateGroups: 3,
+      eligibleDuplicateGroups: 3,
+      unresolvedDuplicateGroups: 0,
+      presentationDisagreements: [],
+    });
+    sqlite.close();
+  });
+
+  it('keeps genuinely different reviewed employer IDs as a presentation blocker', async () => {
+    const sqlite = database(); const db = sqliteD1(sqlite); const store = new D1InternshipStore(db);
+    const postingId = '910004'; const tenant = 'aquaticcapitalmanagement';
+    const sourceId = `greenhouse-${tenant}`;
+    const url = `https://job-boards.greenhouse.io/${tenant}/jobs/${postingId}`;
+    const evidence: ProviderPostingEvidence = { provider: 'greenhouse', tenant, postingId, sourceId, urls: [url] };
+    await store.putCheckpoint({ sourceId, successfulFetches: 10, activeExternalIds: [postingId] });
+    await store.putInternship(job('community-reviewed-conflict', url, '2026-08-01T00:00:00.000Z', [
+      occurrence('community-list', 'community-reviewed-conflict', url),
+    ], { employerId: 'same-legacy-id', admission: { canonicalEmployer: { id: 'reviewed-one', displayName: 'Reviewed One' } } }));
+    await store.putInternship(job('official-reviewed-conflict', url, '2026-08-02T00:00:00.000Z', [
+      { ...occurrence(sourceId, postingId, url, evidence), provenance: 'official-ats' },
+    ], { employerId: 'same-legacy-id', admission: { canonicalEmployer: { id: 'reviewed-two', displayName: 'Reviewed Two' } } }));
+
+    expect(await runPostingIdentityRepair(db, { scope: 'identity' })).toMatchObject({
+      eligibleDuplicateGroups: 0,
+      unresolvedDuplicateGroups: 1,
+      presentationDisagreements: [expect.objectContaining({ fields: ['employerIdentity'] })],
+    });
+    sqlite.close();
+  });
+
   it('refuses to apply an identity match whose presentation is unresolved', async () => {
     const { db } = await historicalDatabase();
     const dry = await runPostingIdentityRepair(db);
