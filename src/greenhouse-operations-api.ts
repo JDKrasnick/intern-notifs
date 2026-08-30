@@ -378,14 +378,16 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
       const actor = header(event, 'x-operations-actor')?.trim() || 'operations-owner';
       const changedAt = new Date(timestamp).toISOString();
       const previous = health.get(sourceId);
-      const base: SourceHealth = previous ?? {
-        sourceId,
+      const base: SourceHealth = {
+        ...(previous ?? {
+          sourceId,
+          state: 'never-succeeded',
+          lastAttemptAt: changedAt,
+          consecutiveFailures: 0,
+          durationMs: 0,
+        }),
         provider: source.provider,
         region: source.region,
-        state: 'never-succeeded',
-        lastAttemptAt: changedAt,
-        consecutiveFailures: 0,
-        durationMs: 0,
       };
       let updated = {
         ...base,

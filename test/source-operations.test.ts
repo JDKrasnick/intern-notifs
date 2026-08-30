@@ -229,6 +229,27 @@ describe('shared source operations', () => {
     });
   });
 
+  it('normalizes legacy active health to the current registry identity on mutation', async () => {
+    const store = new MemoryInternshipStore();
+    const source = reviewedGreenhouseSources.find((candidate) => candidate.status === 'published')!;
+    await store.putSourceHealth({
+      sourceId: source.id,
+      state: 'healthy',
+      lastAttemptAt: '2026-07-30T19:00:00.000Z',
+      consecutiveFailures: 0,
+      durationMs: 4,
+    });
+
+    const response = await createSourceOperationsHandler(dependencies(store).value)(event(
+      `/operations/sources/${source.id}/actions`, 'POST', { action: 'pause' },
+    ));
+
+    expect(response.statusCode).toBe(200);
+    expect(await store.getSourceHealth(source.id)).toMatchObject({
+      provider: 'greenhouse', region: 'unknown', sourceStatus: 'paused',
+    });
+  });
+
   it('records set-tier actions as operator overrides', async () => {
     const store = new MemoryInternshipStore();
     const setup = dependencies(store);

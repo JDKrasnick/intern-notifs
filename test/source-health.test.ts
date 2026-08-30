@@ -112,4 +112,35 @@ describe('source health', () => {
 
     expect(updated).toMatchObject({ pollTier: 'quiet', pollTierMode: 'operator' });
   });
+
+  it('lets current registry identity replace stale persisted identity', () => {
+    const previous = successfulSourceHealth({
+      sourceId: 'greenhouse-acme',
+      provider: 'retired-provider',
+      region: 'retired-region',
+      startedAt: '2026-07-29T12:00:00.000Z',
+      completedAt: '2026-07-29T12:00:01.000Z',
+    });
+
+    const successful = successfulSourceHealth({
+      sourceId: 'greenhouse-acme',
+      provider: 'greenhouse',
+      region: 'unknown',
+      previous,
+      startedAt: '2026-07-29T12:10:00.000Z',
+      completedAt: '2026-07-29T12:10:01.000Z',
+    });
+    const failed = failedSourceHealth({
+      sourceId: 'greenhouse-acme',
+      provider: 'greenhouse',
+      region: 'unknown',
+      previous,
+      startedAt: '2026-07-29T12:10:00.000Z',
+      completedAt: '2026-07-29T12:10:01.000Z',
+      error: new SourceFetchError('request timed out', 'transport'),
+    });
+
+    expect(successful).toMatchObject({ provider: 'greenhouse', region: 'unknown' });
+    expect(failed).toMatchObject({ provider: 'greenhouse', region: 'unknown' });
+  });
 });
