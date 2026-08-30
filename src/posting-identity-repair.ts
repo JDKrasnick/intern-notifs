@@ -7,6 +7,7 @@ import { fingerprint, normalizeUrl } from './core/normalize.js';
 import { canonicalizePostingUrl } from './identity/posting.js';
 import { postingIdentityStatusForOccurrences } from './identity/projection.js';
 import { resolvePostingIdentityDecision, type PostingIdentityRegistryResult } from './identity/registry.js';
+import { mergeSourceOccurrenceReferences, sourceOccurrenceKey } from './identity/source-occurrence.js';
 import {
   providerEvidenceForOccurrence,
   reviewedProviderEvidenceError,
@@ -54,6 +55,7 @@ export interface PostingIdentityRepairPlan {
     presentationBlockers: number;
     legacyOccurrences: number;
     projectionMismatches: number;
+    duplicateOccurrenceReferences: number;
   };
   providerGroups: number;
   duplicateGroups: number;
@@ -116,8 +118,6 @@ const parse = <T>(value: string): T => JSON.parse(value) as T;
 const earliest = (values: string[]) => [...values].sort()[0]!;
 const latest = (values: string[]) => [...values].sort().at(-1)!;
 const firstSeen = (job: Internship) => job.firstSeenAt || job.catalogVisibleAt || job.lastSeenAt;
-const occurrenceKey = (value: SourceOccurrence) => `${value.sourceId}\0${value.externalId ?? ''}\0${value.document ?? ''}\0${value.row ?? ''}`;
-
 function normalizedOccurrenceSeason(occurrence: SourceOccurrence): SourceOccurrence {
   const multiSeason = /\b(?:winter|spring|summer|fall)\s*[/-]\s*(?:winter|spring|summer|fall)\s*(?:intern(?:ship)?\s*)?20\d{2}\b/i.test(occurrence.title);
   return multiSeason
@@ -133,23 +133,7 @@ function withProviderEvidence(occurrence: SourceOccurrence): SourceOccurrence {
 }
 
 function mergedOccurrenceEvidence(values: SourceOccurrence[]): SourceOccurrence[] {
-  const merged = new Map<string, SourceOccurrence>();
-  for (const occurrence of values) {
-    const key = occurrenceKey(occurrence);
-    const previous = merged.get(key);
-    const providerEvidence = occurrence.providerEvidence && previous?.providerEvidence
-      ? { ...previous.providerEvidence, ...occurrence.providerEvidence,
-        urls: [...new Set([...previous.providerEvidence.urls, ...occurrence.providerEvidence.urls])].sort() }
-      : occurrence.providerEvidence ?? previous?.providerEvidence;
-    const provenance = occurrence.provenance ?? previous?.provenance;
-    merged.set(key, withProviderEvidence({
-      ...previous,
-      ...occurrence,
-      ...(provenance ? { provenance } : {}),
-      ...(providerEvidence ? { providerEvidence } : {}),
-    }));
-  }
-  return [...merged.values()];
+  return mergeSourceOccurrenceReferences(values).map(withProviderEvidence);
 }
 
 function jobColumns(job: Internship): Partial<CatalogRow> {
@@ -172,7 +156,7 @@ function mergeJob(
   official: SourceOccurrence | undefined,
   classify: (reference: SourceOccurrence, fallbackObservedAt: string) => SourceOccurrence,
 ): Internship {
-  const sourceReferences = [...new Map(members.flatMap((job) => job.sourceReferences).map((item) => [occurrenceKey(item), item])).values()]
+  const sourceReferences = mergedOccurrenceEvidence(members.flatMap((job) => job.sourceReferences))
     .map((reference) => classify(reference, canonical.firstSeenAt));
   const smsSentAt = members.map((job) => job.notification.smsSentAt).filter((value): value is string => Boolean(value)).sort().at(-1);
   const digestedAt = members.map((job) => job.notification.digestedAt).filter((value): value is string => Boolean(value)).sort().at(-1);
@@ -392,7 +376,7 @@ export function postingIdentityRepairPlan(
   for (const row of catalogRows.filter((item) => item.kind === 'source-occurrence')) {
     try {
       const state = parse<{ sourceId: string; externalId: string; occurrence: SourceOccurrence }>(row.value);
-      occurrenceDecisions.set(occurrenceKey(state.occurrence), state.occurrence.postingIdentityDecision);
+      occurrenceDecisions.set(sourceOccurrenceKey(state.occurrence), state.occurrence.postingIdentityDecision);
       if (state.occurrence.postingIdentityDecision?.status === 'quarantined') untrackedQuarantines += 1;
     } catch { /* The existing occurrence parser reports malformed rows below. */ }
   }
@@ -400,7 +384,7 @@ export function postingIdentityRepairPlan(
     try {
       const job = parse<Internship>(row.value);
       for (const occurrence of job.sourceReferences) {
-        occurrenceDecisions.set(occurrenceKey(occurrence), occurrenceDecisions.get(occurrenceKey(occurrence)) ?? occurrence.postingIdentityDecision);
+        occurrenceDecisions.set(sourceOccurrenceKey(occurrence), occurrenceDecisions.get(sourceOccurrenceKey(occurrence)) ?? occurrence.postingIdentityDecision);
       }
     } catch { /* The primary job scan reports malformed rows below. */ }
   }
@@ -411,10 +395,13 @@ export function postingIdentityRepairPlan(
   const legacyOccurrences = decisionValues.filter((decision) => !decision).length;
   const classifiedOccurrences = confirmedOccurrences + unconfirmedOccurrences;
   let projectionMismatches = 0;
+  let duplicateOccurrenceReferences = 0;
   for (const row of catalogRows.filter((item) => item.kind === 'internship')) {
     try {
       const job = parse<Internship>(row.value);
       if (job.postingIdentityStatus !== postingIdentityStatusForOccurrences(job.sourceReferences)) projectionMismatches += 1;
+      const occurrenceKeys = job.sourceReferences.map(sourceOccurrenceKey);
+      duplicateOccurrenceReferences += occurrenceKeys.length - new Set(occurrenceKeys).size;
     } catch { /* The primary job scan reports malformed rows below. */ }
   }
   const checkpoints = new Map(catalogRows.filter((row) => row.kind === 'checkpoint').flatMap((row) => {
@@ -435,7 +422,7 @@ export function postingIdentityRepairPlan(
   const catalogByKey = new Map(catalogRows.map((row) => [`${row.pk}\0${row.sk}`, row]));
   const classificationByOccurrence = new Map<string, { occurrence: SourceOccurrence; result: PostingIdentityRegistryResult; evidenceSourceId?: string }>();
   const classifyResult = (occurrence: SourceOccurrence, fallbackObservedAt: string) => {
-    const key = occurrenceKey(occurrence);
+    const key = sourceOccurrenceKey(occurrence);
     const existing = classificationByOccurrence.get(key);
     if (existing) return existing;
     const classified = historicalOccurrenceDecision(occurrence, checkpoints, fallbackObservedAt);
@@ -805,13 +792,14 @@ export function postingIdentityRepairPlan(
   const gate = {
     passed: eligibleDuplicateGroups === 0 && sortedConflicts.length === 0 && untrackedQuarantines === 0
       && presentationDisagreements.length === 0 && duplicateAlertGroups === 0 && legacyOccurrences === 0
-      && projectionMismatches === 0,
+      && projectionMismatches === 0 && duplicateOccurrenceReferences === 0,
     exactDuplicateGroups: eligibleDuplicateGroups,
     aliasConflicts: sortedConflicts.length,
     untrackedQuarantines,
     presentationBlockers: presentationDisagreements.length,
     legacyOccurrences,
     projectionMismatches,
+    duplicateOccurrenceReferences,
   };
   return {
     schemaVersion: 2, scope, snapshotDigest, repairToken,

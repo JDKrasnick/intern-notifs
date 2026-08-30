@@ -135,6 +135,42 @@ async function historicalDatabase(options: { presentationAgrees?: boolean; autho
 }
 
 describe('D1 posting identity repair', () => {
+  it('repairs duplicate durable source occurrences caused by document row movement', async () => {
+    const sqlite = database(); const db = sqliteD1(sqlite); const store = new D1InternshipStore(db);
+    const url = 'https://acme.wd1.myworkdayjobs.com/External/job/Remote/Software-Intern_REQ-1';
+    const original = {
+      ...occurrence('community-list', 'stable-role', url), document: 'README.md', row: 10,
+      firstAttachedAt: '2026-08-01T00:00:00.000Z', firstAttachedAtPrecision: 'exact' as const,
+    };
+    const moved = {
+      ...original, row: 18, firstAttachedAt: '2026-08-20T00:00:00.000Z', firstAttachedAtPrecision: 'unknown' as const,
+    };
+    await store.putInternship(job('row-moved', url, '2026-08-01T00:00:00.000Z', [original, moved]));
+    await store.putSourceOccurrence({
+      sourceId: moved.sourceId, externalId: moved.externalId!, jobId: 'row-moved', occurrence: moved,
+      present: true, consecutiveOmissions: 0, changedSnapshotHash: 'moved', changedAt: '2026-08-20T00:00:00.000Z',
+      firstObservedAt: '2026-08-01T00:00:00.000Z', firstObservedAtPrecision: 'exact',
+    });
+
+    const dry = await runPostingIdentityRepair(db, { scope: 'occurrences' });
+    expect(dry).toMatchObject({ gate: { passed: false, duplicateOccurrenceReferences: 1 } });
+    await runPostingIdentityRepair(db, {
+      apply: true, scope: 'occurrences', repairToken: dry.repairToken,
+      expectedChanges: dry.expectedChanges, expectedDuplicateJobs: dry.duplicateJobs,
+    });
+
+    expect(await store.getJob('row-moved')).toMatchObject({
+      sourceReferences: [{
+        sourceId: 'community-list', externalId: 'stable-role', document: 'README.md', row: 18,
+        firstAttachedAt: '2026-08-01T00:00:00.000Z', firstAttachedAtPrecision: 'exact',
+      }],
+    });
+    expect(await runPostingIdentityRepair(db, { scope: 'occurrences' })).toMatchObject({
+      expectedChanges: 0, gate: { duplicateOccurrenceReferences: 0 },
+    });
+    sqlite.close();
+  });
+
   it('uses a unique active reviewed checkpoint to scope legacy Greenhouse embed tokens', async () => {
     const sqlite = database(); const db = sqliteD1(sqlite); const store = new D1InternshipStore(db);
     const postingId = '8732364002';

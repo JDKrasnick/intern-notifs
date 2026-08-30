@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildPostingIdentity } from '../src/identity/posting.js';
+import { postingObservationProjection } from '../src/identity/projection.js';
+import { sourceOccurrenceKey } from '../src/identity/source-occurrence.js';
 import { MemoryInternshipStore } from '../src/store.js';
 import type { Internship, PostingIdentityDecision, SourceOccurrenceState } from '../src/types.js';
 
@@ -35,6 +37,52 @@ function observation(jobId: string, sourceId: string, externalId: string, identi
 }
 
 describe('atomic posting observation commit', () => {
+  it('keeps document coordinates as identity only for legacy references without external IDs', () => {
+    const base = observation('legacy', 'community-list', 'temporary', buildPostingIdentity({
+      applicationUrl: 'https://jobs.lever.co/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    })).occurrence.occurrence;
+    const first = { ...base, externalId: undefined, document: 'README.md', row: 10 };
+    const second = { ...base, externalId: undefined, document: 'README.md', row: 11 };
+
+    expect(sourceOccurrenceKey(first)).not.toBe(sourceOccurrenceKey(second));
+  });
+
+  it('updates one durable source occurrence when its document row moves', () => {
+    const identity = buildPostingIdentity({
+      applicationUrl: 'https://jobs.lever.co/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    });
+    const first = observation(identity.canonicalJobId, 'community-list', 'stable-role', identity);
+    first.job.sourceReferences = [{
+      ...first.job.sourceReferences[0]!, document: 'README.md', row: 42,
+      firstAttachedAt: '2026-08-01T00:00:00.000Z', firstAttachedAtPrecision: 'exact',
+      providerEvidence: {
+        provider: 'lever', tenant: 'acme', postingId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        sourceId: 'community-list', urls: ['https://jobs.lever.co/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'],
+      },
+    }];
+    const moved = observation(identity.canonicalJobId, 'community-list', 'stable-role', identity);
+    moved.job.sourceReferences = [{
+      ...moved.job.sourceReferences[0]!, document: 'README.md', row: 57,
+      firstAttachedAt: '2026-08-29T00:00:00.000Z', firstAttachedAtPrecision: 'unknown',
+      providerEvidence: {
+        provider: 'lever', tenant: 'acme', postingId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        sourceId: 'community-list', urls: ['https://jobs.lever.co/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/apply'],
+      },
+    }];
+    moved.occurrence.occurrence = moved.job.sourceReferences[0]!;
+
+    const projected = postingObservationProjection(first.job, moved.job, moved.occurrence);
+
+    expect(projected.sourceReferences).toEqual([expect.objectContaining({
+      sourceId: 'community-list', externalId: 'stable-role', document: 'README.md', row: 57,
+      firstAttachedAt: '2026-08-01T00:00:00.000Z', firstAttachedAtPrecision: 'exact',
+      providerEvidence: { urls: [
+        'https://jobs.lever.co/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        'https://jobs.lever.co/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/apply',
+      ], provider: 'lever', tenant: 'acme', postingId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', sourceId: 'community-list' },
+    })]);
+  });
+
   it('commits aliases, job, occurrence, and the canonical notification tombstone together', async () => {
     const store = new MemoryInternshipStore();
     const identity = buildPostingIdentity({
