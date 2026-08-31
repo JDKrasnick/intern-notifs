@@ -931,12 +931,29 @@ export class IngestionRunner {
         });
         const opportunisticMigrationCandidates = migrationLimit === undefined ? [] : batch.processed.listings.filter((sourceListing) =>
           !priorByExternalId.has(externalId(sourceListing)));
+        const selectedRequiredMigrations = migrationLimit === undefined
+          ? []
+          : requiredMigrationCandidates.slice(0, migrationLimit);
+        // Once the durable migration backlog is empty, finish one ordinary
+        // full-role pass before advancing the checkpoint. Until then, new rows
+        // may use only spare slice capacity and an overflow forces another
+        // unconditional fetch. This prevents a later GitHub 304 from stranding
+        // valid roles that were present in the migration snapshot but never
+        // resolved.
+        const opportunisticCapacity = migrationLimit === undefined
+          ? 0
+          : requiredMigrationCandidates.length === 0
+            ? opportunisticMigrationCandidates.length
+            : Math.max(0, migrationLimit - selectedRequiredMigrations.length);
+        const selectedOpportunisticMigrations = migrationLimit === undefined
+          ? []
+          : opportunisticMigrationCandidates.slice(0, opportunisticCapacity);
         const migrationCandidates = migrationLimit === undefined
           ? batch.processed.listings
-          : [...requiredMigrationCandidates, ...opportunisticMigrationCandidates];
+          : [...selectedRequiredMigrations, ...selectedOpportunisticMigrations];
         const listingsToResolve = migrationLimit === undefined
           ? (batch.unchanged ? [] : batch.processed.listings)
-          : migrationCandidates.slice(0, migrationLimit);
+          : migrationCandidates;
         const resolution = await this.resolveListings(
           listingsToResolve,
           report,
@@ -948,13 +965,10 @@ export class IngestionRunner {
         // Existing catalog decisions are the durable migration obligation.
         // Rows with no prior occurrence are evaluated with spare slice capacity
         // but fail closed and cannot hold the source checkpoint open forever.
-        const selectedRequiredMigrations = listingsToResolve.slice(
-          0,
-          Math.min(requiredMigrationCandidates.length, listingsToResolve.length),
-        );
         const admissionMigrationPending = migrationLimit !== undefined && (
           requiredMigrationCandidates.length > selectedRequiredMigrations.length
           || selectedRequiredMigrations.some((listing) => !resolution.handledExternalIds.has(externalId(listing)))
+          || opportunisticMigrationCandidates.length > selectedOpportunisticMigrations.length
         );
         if (admissionMigrationPending) report.continuationSources.push(connector.id);
         // Admission configuration migration is independent of source

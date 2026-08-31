@@ -163,6 +163,63 @@ describe('polling', () => {
     expect([...store.jobs.values()]).toHaveLength(5);
     expect([...store.jobs.values()].every((job) => job.open)).toBe(true);
   });
+  it('fetches and persists every new role before a migration checkpoint can produce a 304', async () => {
+    const store = new MemoryInternshipStore();
+    let configurationVersion = 'configuration-v1';
+    let fetches = 0;
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const rows = Array.from({ length: 6 }, (_, index) => ({
+      ...listing(`https://jobs.example.com/migration-new-${index}`),
+      row: index + 1,
+      title: `Software Engineering Intern ${index}`,
+    }));
+    const adapter: SourceAdapter = {
+      id: 'one',
+      async fetch(previous) {
+        fetches += 1;
+        const notModified = previous?.admissionConfigurationVersion === 'configuration-v2'
+          && previous.etag === 'roles-etag';
+        return {
+          sourceId: 'one',
+          listings: notModified ? [] : fetches === 1 ? rows.slice(0, 1) : rows,
+          notModified,
+          checkpoint: {
+            ...previous,
+            sourceId: 'one',
+            etag: 'roles-etag',
+            successfulFetches: (previous?.successfulFetches ?? 0) + (notModified ? 0 : 1),
+            lastRowCount: rows.length,
+          },
+        };
+      },
+    };
+    const run = () => new Poller(
+      [adapter], store, () => new Date('2026-08-10T12:00:00.000Z'),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll({ maxAdmissionMigrationListingsPerSourceRun: 2 });
+
+    await run();
+    configurationVersion = 'configuration-v2';
+
+    const first = await run();
+    expect(first.continuationSources).toEqual(['one']);
+    expect([...store.jobs.values()]).toHaveLength(2);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v1' });
+
+    const final = await run();
+    expect(final.unchangedSources).toEqual([]);
+    expect(final.continuationSources).toEqual([]);
+    expect([...store.jobs.values()]).toHaveLength(6);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+
+    const unchanged = await run();
+    expect(unchanged.unchangedSources).toEqual(['one']);
+    expect([...store.jobs.values()]).toHaveLength(6);
+  });
   it('defers inactive occurrence loading until the next ordinary poll', async () => {
     const store = new MemoryInternshipStore();
     let configurationVersion = 'configuration-v1';
@@ -299,7 +356,7 @@ describe('polling', () => {
       occurrence: { season: 'fall', admissionConfigurationVersion: 'configuration-v2' },
     });
   });
-  it('does not let untracked failures outnumber the slice and hold a migrated source open', async () => {
+  it('finishes the full-role pass when untracked failures outnumber the migration slice', async () => {
     const store = new MemoryInternshipStore();
     let configurationVersion = 'configuration-v1';
     const resolver = {
@@ -327,7 +384,8 @@ describe('polling', () => {
 
     const resumed = await run([original, ...invalidRows]);
 
-    expect(resumed.failures).toEqual([expect.stringContaining('Invalid URL')]);
+    expect(resumed.failures).toHaveLength(3);
+    expect(resumed.failures.every((failure) => failure.includes('Invalid URL'))).toBe(true);
     expect(resumed.continuationSources).toEqual([]);
     expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
   });
