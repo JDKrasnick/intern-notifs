@@ -919,16 +919,20 @@ export class IngestionRunner {
           ? options.maxAdmissionMigrationListingsPerSourceRun
           : undefined;
         const priorByExternalId = new Map(priorOccurrences.map((occurrence) => [occurrence.externalId, occurrence]));
-        const migrationCandidates = migrationLimit === undefined ? batch.processed.listings : batch.processed.listings.filter((sourceListing) => {
-          const id = externalId(sourceListing);
-          const prior = priorByExternalId.get(id);
+        const requiredMigrationCandidates = migrationLimit === undefined ? [] : batch.processed.listings.filter((sourceListing) => {
+          const prior = priorByExternalId.get(externalId(sourceListing));
           // The per-occurrence stamp is the durable migration cursor. Stored
           // occurrences can contain page-derived enrichment (for example a
           // verified season) that deliberately differs from the raw source;
           // reopening those rows by material comparison makes a completed
           // slice recur forever.
-          return !prior || prior.occurrence.admissionConfigurationVersion !== githubAdmissionConfigurationVersion;
+          return prior && prior.occurrence.admissionConfigurationVersion !== githubAdmissionConfigurationVersion;
         });
+        const opportunisticMigrationCandidates = migrationLimit === undefined ? [] : batch.processed.listings.filter((sourceListing) =>
+          !priorByExternalId.has(externalId(sourceListing)));
+        const migrationCandidates = migrationLimit === undefined
+          ? batch.processed.listings
+          : [...requiredMigrationCandidates, ...opportunisticMigrationCandidates];
         const listingsToResolve = migrationLimit === undefined
           ? (batch.unchanged ? [] : batch.processed.listings)
           : migrationCandidates.slice(0, migrationLimit);
@@ -940,9 +944,16 @@ export class IngestionRunner {
           Boolean(githubAdmissionConfigurationVersion
             && admissionConfigurationVersion === previous?.admissionConfigurationVersion),
         );
+        // Existing catalog decisions are the durable migration obligation.
+        // Rows with no prior occurrence are evaluated with spare slice capacity
+        // but fail closed and cannot hold the source checkpoint open forever.
+        const selectedRequiredMigrations = listingsToResolve.slice(
+          0,
+          Math.min(requiredMigrationCandidates.length, listingsToResolve.length),
+        );
         const admissionMigrationPending = migrationLimit !== undefined && (
-          migrationCandidates.length > listingsToResolve.length
-          || listingsToResolve.some((listing) => !resolution.handledExternalIds.has(externalId(listing)))
+          requiredMigrationCandidates.length > selectedRequiredMigrations.length
+          || selectedRequiredMigrations.some((listing) => !resolution.handledExternalIds.has(externalId(listing)))
         );
         if (admissionMigrationPending) report.continuationSources.push(connector.id);
         const closureCandidates = priorOccurrences.filter((prior) => !resolution.resolved.has(prior.externalId)
