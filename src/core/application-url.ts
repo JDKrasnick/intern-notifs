@@ -190,11 +190,12 @@ async function boundedResponseText(response: Response, maximumBytes = 512 * 1024
   const chunks: Uint8Array[] = [];
   let size = 0;
   let complete = false;
+  const deadline = Date.now() + 8_000;
   const readChunk = () => new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
     const timeout = setTimeout(() => {
       try { void reader.cancel().catch(() => undefined); } catch { /* best-effort cleanup */ }
       reject(new ApplicationUrlValidationError('Application page body timed out'));
-    }, 8_000);
+    }, Math.max(0, deadline - Date.now()));
     reader.read().then(resolve, reject).finally(() => clearTimeout(timeout));
   });
   try {

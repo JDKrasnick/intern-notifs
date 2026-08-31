@@ -92,6 +92,31 @@ describe('application URL validation', () => {
     }
   });
 
+  it('applies the body timeout to the complete stream rather than each chunk', async () => {
+    vi.useFakeTimers();
+    try {
+      const validation = inspectApplicationPage('https://careers.example.com/role', async () =>
+        new Response(new ReadableStream({
+          pull(controller) {
+            return new Promise<void>((resolve) => {
+              setTimeout(() => {
+                controller.enqueue(new TextEncoder().encode('<p>still loading</p>'));
+                resolve();
+              }, 3_000);
+            });
+          },
+        }), {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+        }));
+      const rejected = expect(validation).rejects.toThrow('body timed out');
+      await vi.advanceTimersByTimeAsync(8_001);
+      await rejected;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reads a rendered job page instead of accepting a generic 200 shell", async () => {
     const id = '7623166667125508357';
     const methods: string[] = [];
