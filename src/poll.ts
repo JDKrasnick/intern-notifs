@@ -40,6 +40,43 @@ import type { InternshipStore } from './store.js';
 
 const applicationPageMetadataVersion = 1;
 
+function stableSourceMaterial(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableSourceMaterial).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableSourceMaterial(item)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+function sourceOwnedMaterial(value: ProcessedListing | SourceOccurrence): string {
+  // GitHub row numbers and fetch timestamps move whenever a maintainer edits
+  // the Markdown around a role. Compare only facts the source owns so that
+  // layout churn does not force a catalog read/write cycle for every row.
+  return stableSourceMaterial({
+    provenance: value.provenance,
+    document: value.document,
+    sourceUrl: value.sourceUrl,
+    postedAt: value.postedAt,
+    providerTimestamp: value.providerTimestamp,
+    workMode: value.workMode,
+    company: value.company,
+    title: value.title,
+    location: value.location,
+    locations: value.locations,
+    season: value.season,
+    applyUrl: value.applyUrl,
+    compensation: value.compensation,
+    requirements: value.requirements,
+    technical: value.technical ?? true,
+    state: value.state,
+    providerEvidence: value.providerEvidence,
+  });
+}
+
 // Catalog rows written before posting identity v1 retained gh_src while
 // removing the older, general tracking parameters. Keep this lookup shape
 // only for adoption during the migration window; all new writes use the
@@ -468,7 +505,12 @@ export class IngestionRunner {
     return (await this.activePostingIds(sourceId)).has(reference.postingId) ? 'reviewed-board' : 'unattributed';
   }
 
-  private async resolveListings(listings: ProcessedListing[], report: PollReport, priorOccurrences: SourceOccurrenceState[] = []) {
+  private async resolveListings(
+    listings: ProcessedListing[],
+    report: PollReport,
+    priorOccurrences: SourceOccurrenceState[] = [],
+    reuseUnchangedOccurrences = false,
+  ) {
     const resolved = new Map<string, Internship | undefined>();
     const validatedAt = new Map<string, string>();
     const metadataValidated = new Map<string, number>();
@@ -500,6 +542,9 @@ export class IngestionRunner {
         technical: sourceListing.technical ?? true,
       };
       const id = listing.externalId;
+      const priorOccurrence = priorByExternalId.get(id);
+      if (reuseUnchangedOccurrences && priorOccurrence
+        && sourceOwnedMaterial(priorOccurrence.occurrence) === sourceOwnedMaterial(listing)) return;
       let existing: Internship | undefined;
       let identityMerged = false;
       try {
@@ -825,7 +870,14 @@ export class IngestionRunner {
         // An unchanged snapshot repeats postings the checkpoint already trusts, so
         // only omission progress is reconciled; re-resolving every row would cost a
         // full catalog rewrite on every poll for byte-identical source content.
-        const resolution = await this.resolveListings(batch.unchanged ? [] : batch.processed.listings, report, priorOccurrences);
+        const resolution = await this.resolveListings(
+          batch.unchanged ? [] : batch.processed.listings,
+          report,
+          priorOccurrences,
+          Boolean(providerFor(connector.id) === 'github'
+            && admissionConfigurationVersion
+            && admissionConfigurationVersion === previous?.admissionConfigurationVersion),
+        );
         const closureCandidates = priorOccurrences.filter((prior) => !resolution.resolved.has(prior.externalId)
           && !batch.activeExternalIds.has(prior.externalId)
           && prior.consecutiveOmissions >= 1);
