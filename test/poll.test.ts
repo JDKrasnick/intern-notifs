@@ -194,6 +194,8 @@ describe('polling', () => {
 
     expect(first.continuationSources).toEqual(['one']);
     expect(getJob).not.toHaveBeenCalledWith(inactive.jobId);
+    expect((await store.getSourceOccurrences('one')).find((occurrence) => occurrence.jobId === inactive.jobId))
+      .toMatchObject({ present: true, consecutiveOmissions: 0 });
   });
   it('preserves and stamps a failed legacy row so it cannot poison migration continuations', async () => {
     const store = new MemoryInternshipStore();

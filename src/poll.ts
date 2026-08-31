@@ -968,12 +968,18 @@ export class IngestionRunner {
         await forEachBounded(closureCandidates, async (prior) => {
           resolution.resolved.set(prior.externalId, await this.store.getJob(prior.jobId));
         });
+        const reconciliationPriorOccurrences = admissionMigrationPending
+          ? listingsToResolve.flatMap((listing) => {
+            const prior = priorByExternalId.get(externalId(listing));
+            return prior ? [prior] : [];
+          })
+          : priorOccurrences;
         const plan = this.reconciler.reconcile({
           sourceId: connector.id,
           snapshotHash: batch.snapshotHash,
           activeExternalIds: batch.activeExternalIds,
           listings: resolution.accepted,
-          priorOccurrences,
+          priorOccurrences: reconciliationPriorOccurrences,
           resolvedJobs: resolution.resolved,
           now,
           baseline,
