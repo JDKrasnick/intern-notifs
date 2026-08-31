@@ -1072,7 +1072,10 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
           enqueueDestinationVerification: (request) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(request)),
           catalogAdmissionResolver: admissionResolver,
           identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
-          maxAdmissionMigrationListingsPerSourceRun: 75,
+          // One row can perform several bounded HTTP probes. Keep migration
+          // slices small enough to make durable progress even when the tail is
+          // dominated by destinations that consume the six connection slots.
+          maxAdmissionMigrationListingsPerSourceRun: 20,
           config: { sesFrom: env.AUTH_FROM_EMAIL ?? '', sesTo: env.DIGEST_TO_EMAIL ?? '', ntfyTopic: env.NTFY_TOPIC, ntfyEndpoint: env.NTFY_ENDPOINT },
         });
         if (result.poll?.continuationSources.includes(source.id)) {
