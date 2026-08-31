@@ -982,25 +982,26 @@ export class IngestionRunner {
         const plannedJobs = new Map(plan.jobs.map((job) => [job.jobId, job]));
         const committedJobIds = new Set<string>();
         const blockedJobIds = new Set<string>();
+        const persistenceFailedJobIds = new Set<string>();
         const alertedJobIds = new Set<string>();
         const notificationErrors = new Array<unknown>(plan.notifications.length);
         const consumedEvents = new Set<string>();
         const classifiedEventIds = new Set<string>();
         await forEachBounded(plan.occurrences, async (occurrence) => {
-          const job = plannedJobs.get(occurrence.jobId);
-          const decision = occurrence.occurrence.postingIdentityDecision;
-          if (!job || !decision || decision.status === 'quarantined') {
-            await this.store.putSourceOccurrence(occurrence);
-            return;
-          }
-          const event = notificationByJobId.get(job.jobId);
-          // Every classified occurrence for the canonical job may carry the
-          // same deterministic event. The transaction/outbox uniqueness
-          // boundary chooses the inserter, so one failed sibling cannot leave
-          // a successfully committed job without its alert tombstone.
-          const includeEvent = event;
-          if (includeEvent) classifiedEventIds.add(includeEvent.eventId);
           try {
+            const job = plannedJobs.get(occurrence.jobId);
+            const decision = occurrence.occurrence.postingIdentityDecision;
+            if (!job || !decision || decision.status === 'quarantined') {
+              await this.store.putSourceOccurrence(occurrence);
+              return;
+            }
+            const event = notificationByJobId.get(job.jobId);
+            // Every classified occurrence for the canonical job may carry the
+            // same deterministic event. The transaction/outbox uniqueness
+            // boundary chooses the inserter, so one failed sibling cannot leave
+            // a successfully committed job without its alert tombstone.
+            const includeEvent = event;
+            if (includeEvent) classifiedEventIds.add(includeEvent.eventId);
             const result = await this.store.commitPostingObservation({
               decision,
               ...(job.postingIdentity ? { identity: job.postingIdentity } : {}),
@@ -1023,13 +1024,35 @@ export class IngestionRunner {
               if (result.notificationInserted) alertedJobIds.add(job.jobId);
             }
           } catch (error) {
-            if (includeEvent) notificationErrors[plan.notifications.indexOf(includeEvent)] = error;
-            else throw error;
+            const job = plannedJobs.get(occurrence.jobId);
+            const event = job ? notificationByJobId.get(job.jobId) : undefined;
+            if (event) notificationErrors[plan.notifications.indexOf(event)] = error;
+            if (migrationLimit === undefined || !githubAdmissionConfigurationVersion) throw error;
+            persistenceFailedJobIds.add(occurrence.jobId);
+            const prior = priorByExternalId.get(occurrence.externalId);
+            try {
+              if (prior && prior.occurrence.admissionConfigurationVersion !== githubAdmissionConfigurationVersion) {
+                await this.store.putSourceOccurrence({
+                  ...prior,
+                  occurrence: { ...prior.occurrence, admissionConfigurationVersion: githubAdmissionConfigurationVersion },
+                });
+              }
+              report.failures.push(`${occurrence.sourceId}: ${occurrence.externalId}: migration persistence failed; preserved prior decision: ${error instanceof Error ? error.message : String(error)}`);
+            } catch (preserveError) {
+              throw new Error(`${error instanceof Error ? error.message : String(error)}; failed to preserve migration decision: ${preserveError instanceof Error ? preserveError.message : String(preserveError)}`);
+            }
           }
         });
         await forEachBounded(
-          plan.jobs.filter((job) => !committedJobIds.has(job.jobId) && !blockedJobIds.has(job.jobId) && !notificationByJobId.has(job.jobId)),
-          (job) => this.store.putInternship(job),
+          plan.jobs.filter((job) => !committedJobIds.has(job.jobId) && !blockedJobIds.has(job.jobId)
+            && !persistenceFailedJobIds.has(job.jobId) && !notificationByJobId.has(job.jobId)),
+          async (job) => {
+            try { await this.store.putInternship(job); }
+            catch (error) {
+              if (migrationLimit === undefined) throw error;
+              report.failures.push(`${connector.id}: ${job.jobId}: migration job persistence failed; preserved prior decision: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          },
         );
         // Legacy-unclassified plans retain the compatible job+event operation.
         await forEachBounded(plan.notifications.filter((event) => !classifiedEventIds.has(event.eventId) && !consumedEvents.has(event.eventId) && !blockedJobIds.has(event.jobId)), async (event, index) => {
@@ -1042,7 +1065,10 @@ export class IngestionRunner {
           if (alertedJobIds.has(job.jobId)) report.newJobs.push(job);
         }
         const notificationError = notificationErrors.find((error) => error !== undefined);
-        if (notificationError) throw notificationError;
+        if (notificationError) {
+          if (migrationLimit === undefined) throw notificationError;
+          report.failures.push(`${connector.id}: migration notification persistence failed: ${notificationError instanceof Error ? notificationError.message : String(notificationError)}`);
+        }
         const provider = providerFor(connector.id);
         const unchanged304 = result.unchangedReason === 'not_modified';
         const metricCounts: ProcessedSnapshot['counts'] = unchanged304 ? {
