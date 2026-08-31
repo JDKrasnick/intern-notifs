@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { queueHasBacklog } from '../cloudflare/queue-backlog.js';
-import { cloudflareOperationsFleets, cloudflareOperationsQueueClient, documentContent, failedStructuredRecoveryHealth, readDocumentUpload, recoveredStructuredSourceHealth, runScheduledPostingIdentityAudit, structuredSourceRunBlocked, validBackfillProvider } from '../cloudflare/worker.js';
+import { cloudflareOperationsFleets, cloudflareOperationsQueueClient, documentContent, failedStructuredRecoveryHealth, readDocumentUpload, recoveredStructuredSourceHealth, runScheduledPostingIdentityAudit, sendQueueMessageWithin, structuredSourceRunBlocked, validBackfillProvider } from '../cloudflare/worker.js';
 import type { Environment } from '../cloudflare/worker.js';
 import type { PostingIdentityRepairPlan } from '../src/posting-identity-repair.js';
 import type { Queue } from '../cloudflare/types.js';
@@ -25,6 +25,21 @@ describe('Cloudflare scheduled dispatch cost guard', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await expect(queueHasBacklog(queue(async () => { throw new Error('metrics unavailable'); }), 'greenhouse')).resolves.toBe(false);
     vi.restoreAllMocks();
+  });
+});
+
+describe('Cloudflare queue continuation bounds', () => {
+  it('rejects a queue send that never settles so the source message can retry', async () => {
+    vi.useFakeTimers();
+    try {
+      const stalled = queue(async () => ({ backlogCount: 0, backlogBytes: 0 }));
+      stalled.send = () => new Promise<void>(() => undefined);
+      const sending = expect(sendQueueMessageWithin(stalled, { sourceId: 'source' }, 5_000)).rejects.toThrow('Queue send timed out');
+      await vi.advanceTimersByTimeAsync(5_001);
+      await sending;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -1088,7 +1088,7 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
           }));
         }
         if (result.poll?.continuationSources.includes(source.id)) {
-          await env.GITHUB_QUEUE.send({ sourceId: source.id });
+          await sendQueueMessageWithin(env.GITHUB_QUEUE, { sourceId: source.id });
         }
       } catch (error) {
         failed.add(record.messageId);
@@ -1121,6 +1121,20 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
   for (const message of batch.messages) {
     if (failed.has(message.id)) message.retry();
     else message.ack();
+  }
+}
+
+export async function sendQueueMessageWithin(queue: Queue, message: unknown, timeoutMs = 5_000): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      queue.send(message),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error('Queue send timed out')), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }
 
