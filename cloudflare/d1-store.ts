@@ -80,6 +80,25 @@ export class D1InternshipStore implements InternshipStore {
     return parse<T>(await this.db.prepare('SELECT value FROM catalog_items WHERE pk = ? AND sk = ?').bind(pk, sk).first<JsonRow>());
   }
 
+  private async getPostingObservationState(jobId: string, sourceId: string, externalId: string): Promise<{
+    stored?: Internship;
+    storedOccurrence?: SourceOccurrenceState;
+  }> {
+    const jobPk = `JOB#${jobId}`;
+    const occurrencePk = `SOURCE#${sourceId}`;
+    const occurrenceSk = `OCCURRENCE#${externalId}`;
+    const rows = await this.db.prepare(`SELECT pk, sk, value FROM catalog_items
+      WHERE (pk = ? AND sk = 'META') OR (pk = ? AND sk = ?)`)
+      .bind(jobPk, occurrencePk, occurrenceSk)
+      .all<{ pk: string; sk: string; value: string }>();
+    const job = rows.results.find((row) => row.pk === jobPk && row.sk === 'META');
+    const occurrence = rows.results.find((row) => row.pk === occurrencePk && row.sk === occurrenceSk);
+    return {
+      ...(job ? { stored: JSON.parse(job.value) as Internship } : {}),
+      ...(occurrence ? { storedOccurrence: JSON.parse(occurrence.value) as SourceOccurrenceState } : {}),
+    };
+  }
+
   private async put(pk: string, sk: string, kind: string, value: unknown, columns: Record<string, string | number | null> = {}): Promise<void> {
     const names = Object.keys(columns);
     const placeholders = Array.from({ length: 4 + names.length }, () => '?').join(', ');
@@ -259,10 +278,10 @@ export class D1InternshipStore implements InternshipStore {
     let notificationInserted = false;
     let projectionCommitted = false;
     for (let attempt = 0; attempt < 4; attempt += 1) {
-      const stored = await this.get<Internship>(`JOB#${input.job.jobId}`, 'META');
-      const storedOccurrence = await this.get<SourceOccurrenceState>(
-        `SOURCE#${input.occurrence.sourceId}`,
-        `OCCURRENCE#${input.occurrence.externalId}`,
+      const { stored, storedOccurrence } = await this.getPostingObservationState(
+        input.job.jobId,
+        input.occurrence.sourceId,
+        input.occurrence.externalId,
       );
       const occurrence = storedOccurrence
         ? { ...input.occurrence, occurrence: mergeSourceOccurrence(storedOccurrence.occurrence, input.occurrence.occurrence) }

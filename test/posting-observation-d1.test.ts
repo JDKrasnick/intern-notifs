@@ -6,11 +6,11 @@ import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 import { buildPostingIdentity } from '../src/identity/posting.js';
 import type { CatalogAdmission, Internship, PostingIdentityDecision, SourceOccurrenceState } from '../src/types.js';
 
-function sqliteD1(database: DatabaseSync, failBatchAfter?: number): D1Database {
+function sqliteD1(database: DatabaseSync, failBatchAfter?: number, onQuery?: (method: 'first' | 'all', query: string) => void): D1Database {
   const prepared = (query: string, values: SQLInputValue[] = []): D1PreparedStatement => ({
     bind(...next: unknown[]) { return prepared(query, next as SQLInputValue[]); },
-    async first<T>() { return (database.prepare(query).get(...values) as T | undefined) ?? null; },
-    async all<T>() { return { results: database.prepare(query).all(...values) as T[] }; },
+    async first<T>() { onQuery?.('first', query); return (database.prepare(query).get(...values) as T | undefined) ?? null; },
+    async all<T>() { onQuery?.('all', query); return { results: database.prepare(query).all(...values) as T[] }; },
     async run() { const result = database.prepare(query).run(...values); return { meta: { changes: Number(result.changes) } }; },
   });
   return {
@@ -33,11 +33,11 @@ function sqliteD1(database: DatabaseSync, failBatchAfter?: number): D1Database {
   };
 }
 
-function subject(failBatchAfter?: number) {
+function subject(failBatchAfter?: number, onQuery?: (method: 'first' | 'all', query: string) => void) {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec(readFileSync(new URL('../cloudflare/migrations/0001_initial.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../cloudflare/migrations/0010_posting_identity.sql', import.meta.url), 'utf8'));
-  return { sqlite, store: new D1InternshipStore(sqliteD1(sqlite, failBatchAfter)) };
+  return { sqlite, store: new D1InternshipStore(sqliteD1(sqlite, failBatchAfter, onQuery)) };
 }
 
 function input() {
@@ -92,6 +92,15 @@ describe('D1 atomic posting observation', () => {
       { kind: 'source-occurrence', count: 1 },
     ]));
     expect(sqlite.prepare("SELECT count(*) AS count FROM catalog_items WHERE kind = 'posting-alias'").get()).toMatchObject({ count: expect.any(Number) });
+  });
+
+  it('loads the current job and occurrence in one D1 request', async () => {
+    let stateReads = 0;
+    const { store } = subject(undefined, (method, query) => {
+      if (method === 'all' && query.includes('SELECT pk, sk, value FROM catalog_items')) stateReads += 1;
+    });
+    await store.commitPostingObservation(input());
+    expect(stateReads).toBe(1);
   });
 
   it('does not erase newer browser admission when a stale observation wins the write race', async () => {
