@@ -323,6 +323,44 @@ describe('polling', () => {
     });
     expect(await store.getJob(originalJob.jobId)).toEqual(originalJob);
   });
+  it('preserves a legacy decision when migration page inspection fails', async () => {
+    const store = new MemoryInternshipStore();
+    let configurationVersion = 'configuration-v1';
+    let failInspection = false;
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const run = () => new Poller(
+      [new Adapter('one', [listing('https://jobs.example.com/original')])],
+      store,
+      () => new Date('2026-08-10T12:00:00.000Z'),
+      undefined,
+      async () => {
+        if (failInspection) throw new Error('Application page exceeds the inspection size limit');
+        return 'Acme';
+      },
+      false, undefined, resolver,
+    ).poll({ maxAdmissionMigrationListingsPerSourceRun: 1 });
+
+    await run();
+    const seededJob = [...store.jobs.values()][0]!;
+    delete seededJob.applicationUrlValidatedAt;
+    await store.putInternship(seededJob);
+    const originalJob = structuredClone(seededJob);
+    configurationVersion = 'configuration-v2';
+    failInspection = true;
+    const migrated = await run();
+
+    expect(migrated.failures).toEqual([expect.stringContaining('inspection size limit')]);
+    expect(migrated.continuationSources).toEqual([]);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+    expect((await store.getSourceOccurrences('one'))[0]).toMatchObject({
+      occurrence: { admissionConfigurationVersion: 'configuration-v2' },
+    });
+    expect(await store.getJob(originalJob.jobId)).toEqual(originalJob);
+  });
   it('keeps a large quiet baseline behind a later normal role and out of new-since results', async () => {
     const store = new MemoryInternshipStore();
     const baseline = Array.from({ length: 60 }, (_, index) => ({

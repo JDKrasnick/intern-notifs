@@ -733,6 +733,7 @@ export class IngestionRunner {
             failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
             if (!admissionManaged) {
               if (existing?.open && reachability === 'gone') await this.quarantine(existing);
+              await completeFailedAdmissionMigration();
               return;
             }
           }
