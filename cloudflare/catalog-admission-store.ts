@@ -374,6 +374,13 @@ export class D1CatalogAdmissionStore {
     await this.db.batch(statements);
   }
 
+  async hasVerificationAttemptSince(jobId: string, sourceId: string, candidateUrl: string, since: string): Promise<boolean> {
+    return Boolean(await this.db.prepare(`SELECT id FROM destination_verification_attempts
+      WHERE job_id = ? AND source_id = ? AND candidate_url = ? AND completed_at >= ?
+      ORDER BY completed_at DESC LIMIT 1`)
+      .bind(jobId, sourceId, candidateUrl, since).first<{ id: string }>());
+  }
+
   async renderedEvidenceCollisionJobIds(jobId: string, renderedEvidenceHash: string, expectedPostingId: string): Promise<string[]> {
     const rows = await this.db.prepare(`SELECT DISTINCT job_id FROM destination_verification_evidence
       WHERE job_id <> ?

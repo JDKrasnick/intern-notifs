@@ -270,6 +270,21 @@ describe('D1 catalog admission operations', () => {
     await expect(store.hasRenderedEvidenceCollision('job-1', 'same-shell', '2222222')).resolves.toBe(false);
   });
 
+  it('finds recent verification attempts only for the same job, source, and URL', async () => {
+    const { admission: store } = subject();
+    await store.recordVerificationAttempt({ id: 'attempt-1', jobId: 'job-1', sourceId: 'community-list',
+      candidateUrl: 'https://careers.acme.test/role-1', state: 'failed', classification: 'unresolved',
+      error: 'Navigation timeout', attemptedAt: '2026-08-28T00:00:00Z', completedAt: '2026-08-28T00:00:20Z' });
+    await expect(store.hasVerificationAttemptSince('job-1', 'community-list', 'https://careers.acme.test/role-1',
+      '2026-08-27T00:00:00Z')).resolves.toBe(true);
+    await expect(store.hasVerificationAttemptSince('job-1', 'community-list', 'https://careers.acme.test/role-1',
+      '2026-08-28T00:00:21Z')).resolves.toBe(false);
+    await expect(store.hasVerificationAttemptSince('job-1', 'other-source', 'https://careers.acme.test/role-1',
+      '2026-08-27T00:00:00Z')).resolves.toBe(false);
+    await expect(store.hasVerificationAttemptSince('job-1', 'community-list', 'https://careers.acme.test/role-2',
+      '2026-08-27T00:00:00Z')).resolves.toBe(false);
+  });
+
   it('applies an exact staged repair silently and rolls back on a changed source row', async () => {
     const { database, admission: store, jobs } = subject();
     await jobs.putInternship(job());
