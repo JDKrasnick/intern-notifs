@@ -170,7 +170,10 @@ function structuredJobText(html: string): { text?: string; source?: 'json-ld' } 
 async function discardResponseBody(response: Response): Promise<void> {
   if (!response.body || response.bodyUsed) return;
   try {
-    await response.body.cancel();
+    // Calling cancel marks the body consumed and starts connection cleanup.
+    // Some remote stream sources do not settle the returned promise promptly,
+    // so cleanup must not become an unbounded part of URL validation.
+    void response.body.cancel().catch(() => undefined);
   } catch {
     // Cleanup is best-effort and must not replace the validation outcome.
   }
@@ -198,7 +201,7 @@ async function boundedResponseText(response: Response, maximumBytes = 512 * 1024
   } finally {
     if (!complete) {
       try {
-        await reader.cancel();
+        void reader.cancel().catch(() => undefined);
       } catch {
         // Preserve the read or validation error that caused cancellation.
       }

@@ -57,6 +57,25 @@ describe('application URL validation', () => {
     expect(responses.every((response) => response.bodyUsed)).toBe(true);
   });
 
+  it('does not wait for a remote response source to finish cancellation', async () => {
+    let cancellationStarted = false;
+    await expect(validateApplicationUrl('https://careers.example.com/role', async (_url, init) => {
+      if (init?.method === 'HEAD') {
+        return new Response(new ReadableStream({
+          cancel() {
+            cancellationStarted = true;
+            return new Promise<void>(() => undefined);
+          },
+        }), { status: 200 });
+      }
+      return new Response('<title>Software Engineer Intern</title>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      });
+    })).resolves.toBe('https://careers.example.com/role');
+    expect(cancellationStarted).toBe(true);
+  });
+
   it("reads a rendered job page instead of accepting a generic 200 shell", async () => {
     const id = '7623166667125508357';
     const methods: string[] = [];
