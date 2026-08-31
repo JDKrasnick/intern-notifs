@@ -120,6 +120,49 @@ describe('polling', () => {
     expect((await store.getSourceOccurrences('one'))[0]).toMatchObject({ occurrence: { row: 5 } });
     expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
   });
+  it('finishes a large admission migration through bounded successful continuations', async () => {
+    const store = new MemoryInternshipStore();
+    let configurationVersion = 'configuration-v1';
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const rows = Array.from({ length: 5 }, (_, index) => ({
+      ...listing(`https://jobs.example.com/migration-${index}`),
+      row: index + 1,
+      title: `Software Engineering Intern ${index}`,
+    }));
+    const run = (observedAt: string) => new Poller(
+      [new Adapter('one', rows)],
+      store,
+      () => new Date(observedAt),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll({ maxAdmissionMigrationListingsPerSourceRun: 2 });
+
+    await run('2026-08-09T12:00:00.000Z');
+    configurationVersion = 'configuration-v2';
+
+    const first = await run('2026-08-10T12:00:00.000Z');
+    expect(first.continuationSources).toEqual(['one']);
+    expect((await store.getSourceOccurrences('one')).filter((value) =>
+      value.occurrence.admissionConfigurationVersion === 'configuration-v2')).toHaveLength(2);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v1' });
+
+    const second = await run('2026-08-10T12:01:00.000Z');
+    expect(second.continuationSources).toEqual(['one']);
+    expect((await store.getSourceOccurrences('one')).filter((value) =>
+      value.occurrence.admissionConfigurationVersion === 'configuration-v2')).toHaveLength(4);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v1' });
+
+    const final = await run('2026-08-10T12:02:00.000Z');
+    expect(final.continuationSources).toEqual([]);
+    expect((await store.getSourceOccurrences('one')).filter((value) =>
+      value.occurrence.admissionConfigurationVersion === 'configuration-v2')).toHaveLength(5);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+    expect([...store.jobs.values()]).toHaveLength(5);
+    expect([...store.jobs.values()].every((job) => job.open)).toBe(true);
+  });
   it('keeps a large quiet baseline behind a later normal role and out of new-since results', async () => {
     const store = new MemoryInternshipStore();
     const baseline = Array.from({ length: 60 }, (_, index) => ({

@@ -1064,7 +1064,7 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
           continue;
         }
         if (!source) throw new Error(`Unknown reviewed source ${JSON.stringify(sourceId)}`);
-        await runRuntimeCommand('poll', {
+        const result = await runRuntimeCommand('poll', {
           store: new D1InternshipStore(env.DB),
           userStore: new D1UserStore(env.DB),
           sources: [source],
@@ -1072,8 +1072,12 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
           enqueueDestinationVerification: (request) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(request)),
           catalogAdmissionResolver: admissionResolver,
           identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
+          maxAdmissionMigrationListingsPerSourceRun: 75,
           config: { sesFrom: env.AUTH_FROM_EMAIL ?? '', sesTo: env.DIGEST_TO_EMAIL ?? '', ntfyTopic: env.NTFY_TOPIC, ntfyEndpoint: env.NTFY_ENDPOINT },
         });
+        if (result.poll?.continuationSources.includes(source.id)) {
+          await env.GITHUB_QUEUE.send({ sourceId: source.id });
+        }
       } catch (error) {
         failed.add(record.messageId);
         console.error(JSON.stringify({ command: 'github-poll', messageId: record.messageId, error: error instanceof Error ? error.message : String(error) }));

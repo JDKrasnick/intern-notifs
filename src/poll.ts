@@ -111,6 +111,7 @@ function quarantinedOccurrence(
     ...(listing.postedAt ? { postedAt: listing.postedAt } : {}),
     externalId,
     ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
+    ...(listing.admissionConfigurationVersion ? { admissionConfigurationVersion: listing.admissionConfigurationVersion } : {}),
     postingIdentityDecision: decision,
     company: listing.company,
     title: listing.title,
@@ -133,6 +134,7 @@ export interface PollReport {
   newJobs: Internship[];
   filteredJobs: Internship[];
   quarantinedListings: Array<{ sourceId: string; row: number; reason: string }>;
+  continuationSources: string[];
   failures: string[];
 }
 
@@ -516,6 +518,7 @@ export class IngestionRunner {
     const validatedAt = new Map<string, string>();
     const metadataValidated = new Map<string, number>();
     const alertEligible = new Set<string>();
+    const handledExternalIds = new Set<string>();
     // Slots keep the snapshot order stable so duplicate merging, alert order, and
     // reported failures do not depend on which worker finished first.
     const accepted = new Array<ProcessedListing | undefined>(listings.length);
@@ -548,7 +551,10 @@ export class IngestionRunner {
       const admissionAlreadyApplied = Boolean(admissionConfigurationVersion
         && priorOccurrence?.occurrence.admissionConfigurationVersion === admissionConfigurationVersion);
       if ((reuseUnchangedOccurrences || admissionAlreadyApplied) && priorOccurrence
-        && sourceOwnedMaterial(priorOccurrence.occurrence) === sourceOwnedMaterial(listing)) return;
+        && sourceOwnedMaterial(priorOccurrence.occurrence) === sourceOwnedMaterial(listing)) {
+        handledExternalIds.add(id);
+        return;
+      }
       let existing: Internship | undefined;
       let identityMerged = false;
       try {
@@ -577,6 +583,7 @@ export class IngestionRunner {
             row: listing.row,
             reason: `posting identity conflict (${identityResult.decision.reason})`,
           });
+          handledExternalIds.add(id);
           return;
         }
         const identity = identityResult.identity;
@@ -627,6 +634,7 @@ export class IngestionRunner {
               row: listing.row,
               reason: `posting identity conflict (${identityResolution.reason})`,
             });
+            handledExternalIds.add(id);
             return;
           }
           if (!existing || existing.jobId !== identityResolution.canonicalJobId) {
@@ -715,6 +723,7 @@ export class IngestionRunner {
           if (verification.alertEligible) alertEligible.add(id);
           resolved.set(id, existing);
           accepted[slot] = listing;
+          handledExternalIds.add(id);
           return;
         }
         const inspectedAt = this.now().toISOString();
@@ -768,6 +777,7 @@ export class IngestionRunner {
         if (admission.alertEligible) alertEligible.add(id);
         resolved.set(id, existing);
         accepted[slot] = listing;
+        handledExternalIds.add(id);
       } catch (error) {
         failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
       }
@@ -779,10 +789,16 @@ export class IngestionRunner {
       validatedAt,
       metadataValidated,
       alertEligible,
+      handledExternalIds,
     };
   }
 
-  async run(options: { seedOnly?: boolean; runId?: string; allowCompleteEmptySnapshot?: boolean } = {}): Promise<PollReport> {
+  async run(options: {
+    seedOnly?: boolean;
+    runId?: string;
+    allowCompleteEmptySnapshot?: boolean;
+    maxAdmissionMigrationListingsPerSourceRun?: number;
+  } = {}): Promise<PollReport> {
     const report: PollReport = {
       fetchedSources: 0,
       unchangedSources: [],
@@ -791,6 +807,7 @@ export class IngestionRunner {
       newJobs: [],
       filteredJobs: [],
       quarantinedListings: [],
+      continuationSources: [],
       failures: [],
     };
     const health: SourceHealth[] = [];
@@ -877,14 +894,43 @@ export class IngestionRunner {
         const githubAdmissionConfigurationVersion = providerFor(connector.id) === 'github'
           ? admissionConfigurationVersion
           : undefined;
+        const migrationLimit = admissionConfigurationChanged && githubAdmissionConfigurationVersion
+          ? options.maxAdmissionMigrationListingsPerSourceRun
+          : undefined;
+        const priorByExternalId = new Map(priorOccurrences.map((occurrence) => [occurrence.externalId, occurrence]));
+        const migrationCandidates = migrationLimit === undefined ? batch.processed.listings : batch.processed.listings.filter((sourceListing) => {
+          const id = externalId(sourceListing);
+          const prior = priorByExternalId.get(id);
+          if (!prior || prior.occurrence.admissionConfigurationVersion !== githubAdmissionConfigurationVersion) return true;
+          try {
+            const listing = {
+              ...sourceListing,
+              externalId: id,
+              applyUrl: canonicalApplicationUrl(sourceListing.applyUrl),
+              technical: sourceListing.technical ?? true,
+              admissionConfigurationVersion: githubAdmissionConfigurationVersion,
+            };
+            return sourceOwnedMaterial(prior.occurrence) !== sourceOwnedMaterial(listing);
+          } catch {
+            return true;
+          }
+        });
+        const listingsToResolve = migrationLimit === undefined
+          ? (batch.unchanged ? [] : batch.processed.listings)
+          : migrationCandidates.slice(0, migrationLimit);
         const resolution = await this.resolveListings(
-          batch.unchanged ? [] : batch.processed.listings,
+          listingsToResolve,
           report,
           priorOccurrences,
           githubAdmissionConfigurationVersion,
           Boolean(githubAdmissionConfigurationVersion
             && admissionConfigurationVersion === previous?.admissionConfigurationVersion),
         );
+        const admissionMigrationPending = migrationLimit !== undefined && (
+          migrationCandidates.length > listingsToResolve.length
+          || listingsToResolve.some((listing) => !resolution.handledExternalIds.has(externalId(listing)))
+        );
+        if (admissionMigrationPending) report.continuationSources.push(connector.id);
         const closureCandidates = priorOccurrences.filter((prior) => !resolution.resolved.has(prior.externalId)
           && !batch.activeExternalIds.has(prior.externalId)
           && prior.consecutiveOmissions >= 1);
@@ -1006,11 +1052,14 @@ export class IngestionRunner {
         };
         await this.store.putSourceHealth(successHealth);
         health.push(successHealth);
+        const checkpointAdmissionConfigurationVersion = admissionMigrationPending
+          ? previous?.admissionConfigurationVersion
+          : admissionConfigurationVersion;
         await this.store.putCheckpoint({
           ...result.checkpoint,
           contentHash: batch.snapshotHash,
           activeExternalIds: [...batch.activeExternalIds],
-          ...(admissionConfigurationVersion ? { admissionConfigurationVersion } : {}),
+          ...(checkpointAdmissionConfigurationVersion ? { admissionConfigurationVersion: checkpointAdmissionConfigurationVersion } : {}),
         });
         for (const job of plan.newJobs) {
           if (!alertedJobIds.has(job.jobId)) {
@@ -1067,7 +1116,12 @@ export class IngestionRunner {
 
 /** @deprecated Compatibility facade; new code should construct `IngestionRunner`. */
 export class Poller extends IngestionRunner {
-  poll(options: { seedOnly?: boolean; runId?: string; allowCompleteEmptySnapshot?: boolean } = {}) {
+  poll(options: {
+    seedOnly?: boolean;
+    runId?: string;
+    allowCompleteEmptySnapshot?: boolean;
+    maxAdmissionMigrationListingsPerSourceRun?: number;
+  } = {}) {
     return this.run(options);
   }
 }

@@ -48,6 +48,8 @@ export interface RuntimeDependencies {
   validateCatalogOnPoll?: boolean;
   /** Reviewed complete sources may close their final role with an explicit empty snapshot. */
   allowCompleteEmptySnapshot?: boolean;
+  /** Bounds resumable GitHub admission migration work in one queue delivery. */
+  maxAdmissionMigrationListingsPerSourceRun?: number;
   enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>;
   catalogAdmissionResolver?: CatalogAdmissionResolver;
   /** Defaults off in deployed runtimes until the compatible client is live. */
@@ -66,7 +68,10 @@ export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies
       dependencies.enqueueDestinationVerification,
       dependencies.catalogAdmissionResolver,
       dependencies.identityUnconfirmedPublicationEnabled ?? false,
-    ).poll({ allowCompleteEmptySnapshot: dependencies.allowCompleteEmptySnapshot });
+    ).poll({
+      allowCompleteEmptySnapshot: dependencies.allowCompleteEmptySnapshot,
+      maxAdmissionMigrationListingsPerSourceRun: dependencies.maxAdmissionMigrationListingsPerSourceRun,
+    });
     if (dependencies.userStore) {
       const publisher = dependencies.expoPublisher ?? new ExpoPushPublisher();
       const templates = { ...defaultPushTemplates, titleTemplate: dependencies.config.ntfyTitleTemplate ?? defaultPushTemplates.titleTemplate, descriptionTemplate: dependencies.config.ntfyDescriptionTemplate ?? defaultPushTemplates.descriptionTemplate };
