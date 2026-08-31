@@ -1078,6 +1078,15 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
           maxAdmissionMigrationListingsPerSourceRun: 20,
           config: { sesFrom: env.AUTH_FROM_EMAIL ?? '', sesTo: env.DIGEST_TO_EMAIL ?? '', ntfyTopic: env.NTFY_TOPIC, ntfyEndpoint: env.NTFY_ENDPOINT },
         });
+        if (result.poll && (result.poll.continuationSources.length || result.poll.failures.length)) {
+          console.log(JSON.stringify({
+            event: 'github_admission_migration_slice',
+            sourceId: source.id,
+            continuation: result.poll.continuationSources.includes(source.id),
+            failureCount: result.poll.failures.length,
+            failures: result.poll.failures.slice(0, 20),
+          }));
+        }
         if (result.poll?.continuationSources.includes(source.id)) {
           await env.GITHUB_QUEUE.send({ sourceId: source.id });
         }
