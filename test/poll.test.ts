@@ -90,6 +90,36 @@ describe('polling', () => {
     expect((await store.getSourceOccurrences('one')).find((occurrence) => occurrence.externalId.endsWith('/a')))
       .toMatchObject({ occurrence: { title: 'Platform Engineering Intern' } });
   });
+  it('resumes an interrupted admission configuration migration from per-row progress', async () => {
+    const store = new MemoryInternshipStore();
+    let configurationVersion = 'configuration-v1';
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const run = (observedAt: string, row = 5) => new Poller(
+      [new Adapter('one', [{ ...listing('https://jobs.example.com/a'), row }])],
+      store,
+      () => new Date(observedAt),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll();
+
+    await run('2026-08-09T12:00:00.000Z');
+    configurationVersion = 'configuration-v2';
+    const migratedAt = '2026-08-10T12:00:00.000Z';
+    await run(migratedAt);
+    expect((await store.getSourceOccurrences('one'))[0]).toMatchObject({
+      occurrence: { admissionConfigurationVersion: 'configuration-v2' },
+    });
+
+    const migratedCheckpoint = await store.getCheckpoint('one');
+    await store.putCheckpoint({ ...migratedCheckpoint!, admissionConfigurationVersion: 'configuration-v1' });
+    await run('2026-08-11T12:00:00.000Z', 99);
+    expect([...store.jobs.values()][0]).toMatchObject({ lastSeenAt: migratedAt });
+    expect((await store.getSourceOccurrences('one'))[0]).toMatchObject({ occurrence: { row: 5 } });
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+  });
   it('keeps a large quiet baseline behind a later normal role and out of new-since results', async () => {
     const store = new MemoryInternshipStore();
     const baseline = Array.from({ length: 60 }, (_, index) => ({

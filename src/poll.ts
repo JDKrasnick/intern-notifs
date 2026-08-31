@@ -509,6 +509,7 @@ export class IngestionRunner {
     listings: ProcessedListing[],
     report: PollReport,
     priorOccurrences: SourceOccurrenceState[] = [],
+    admissionConfigurationVersion?: string,
     reuseUnchangedOccurrences = false,
   ) {
     const resolved = new Map<string, Internship | undefined>();
@@ -540,10 +541,13 @@ export class IngestionRunner {
         externalId: externalId(sourceListing),
         applyUrl: canonicalUrl,
         technical: sourceListing.technical ?? true,
+        ...(admissionConfigurationVersion ? { admissionConfigurationVersion } : {}),
       };
       const id = listing.externalId;
       const priorOccurrence = priorByExternalId.get(id);
-      if (reuseUnchangedOccurrences && priorOccurrence
+      const admissionAlreadyApplied = Boolean(admissionConfigurationVersion
+        && priorOccurrence?.occurrence.admissionConfigurationVersion === admissionConfigurationVersion);
+      if ((reuseUnchangedOccurrences || admissionAlreadyApplied) && priorOccurrence
         && sourceOwnedMaterial(priorOccurrence.occurrence) === sourceOwnedMaterial(listing)) return;
       let existing: Internship | undefined;
       let identityMerged = false;
@@ -870,12 +874,15 @@ export class IngestionRunner {
         // An unchanged snapshot repeats postings the checkpoint already trusts, so
         // only omission progress is reconciled; re-resolving every row would cost a
         // full catalog rewrite on every poll for byte-identical source content.
+        const githubAdmissionConfigurationVersion = providerFor(connector.id) === 'github'
+          ? admissionConfigurationVersion
+          : undefined;
         const resolution = await this.resolveListings(
           batch.unchanged ? [] : batch.processed.listings,
           report,
           priorOccurrences,
-          Boolean(providerFor(connector.id) === 'github'
-            && admissionConfigurationVersion
+          githubAdmissionConfigurationVersion,
+          Boolean(githubAdmissionConfigurationVersion
             && admissionConfigurationVersion === previous?.admissionConfigurationVersion),
         );
         const closureCandidates = priorOccurrences.filter((prior) => !resolution.resolved.has(prior.externalId)
