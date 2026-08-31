@@ -163,7 +163,7 @@ describe('polling', () => {
     expect([...store.jobs.values()]).toHaveLength(5);
     expect([...store.jobs.values()].every((job) => job.open)).toBe(true);
   });
-  it('defers inactive occurrence loading until the final migration slice', async () => {
+  it('defers inactive occurrence loading until the next ordinary poll', async () => {
     const store = new MemoryInternshipStore();
     let configurationVersion = 'configuration-v1';
     let rows = [
@@ -196,6 +196,16 @@ describe('polling', () => {
     expect(getJob).not.toHaveBeenCalledWith(inactive.jobId);
     expect((await store.getSourceOccurrences('one')).find((occurrence) => occurrence.jobId === inactive.jobId))
       .toMatchObject({ present: true, consecutiveOmissions: 0 });
+
+    const final = await run();
+    expect(final.continuationSources).toEqual([]);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+    expect((await store.getSourceOccurrences('one')).find((occurrence) => occurrence.jobId === inactive.jobId))
+      .toMatchObject({ present: true, consecutiveOmissions: 0 });
+
+    await run();
+    expect((await store.getSourceOccurrences('one')).find((occurrence) => occurrence.jobId === inactive.jobId))
+      .toMatchObject({ present: false, consecutiveOmissions: 1 });
   });
   it('preserves and stamps a failed legacy row so it cannot poison migration continuations', async () => {
     const store = new MemoryInternshipStore();
