@@ -190,9 +190,16 @@ async function boundedResponseText(response: Response, maximumBytes = 512 * 1024
   const chunks: Uint8Array[] = [];
   let size = 0;
   let complete = false;
+  const readChunk = () => new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      try { void reader.cancel().catch(() => undefined); } catch { /* best-effort cleanup */ }
+      reject(new ApplicationUrlValidationError('Application page body timed out'));
+    }, 8_000);
+    reader.read().then(resolve, reject).finally(() => clearTimeout(timeout));
+  });
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readChunk();
       if (done) { complete = true; break; }
       size += value.byteLength;
       if (size > maximumBytes) throw new ApplicationUrlValidationError('Application page exceeds the inspection size limit');
@@ -206,7 +213,7 @@ async function boundedResponseText(response: Response, maximumBytes = 512 * 1024
         // Preserve the read or validation error that caused cancellation.
       }
     }
-    reader.releaseLock();
+    try { reader.releaseLock(); } catch { /* cancellation may still own the pending read */ }
   }
   const bytes = new Uint8Array(size);
   let offset = 0;

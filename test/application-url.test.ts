@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ApplicationUrlValidationError, assessApplicationPageForListing, canonicalApplicationUrl, inspectApplicationPage, validateApplicationUrl } from '../src/core/application-url.js';
 
 describe('application URL validation', () => {
@@ -74,6 +74,22 @@ describe('application URL validation', () => {
       });
     })).resolves.toBe('https://careers.example.com/role');
     expect(cancellationStarted).toBe(true);
+  });
+
+  it('times out when a response body stream never yields a chunk', async () => {
+    vi.useFakeTimers();
+    try {
+      const validation = inspectApplicationPage('https://careers.example.com/role', async () =>
+        new Response(new ReadableStream({ pull() { return new Promise<void>(() => undefined); } }), {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+        }));
+      const rejected = expect(validation).rejects.toThrow('body timed out');
+      await vi.advanceTimersByTimeAsync(8_001);
+      await rejected;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reads a rendered job page instead of accepting a generic 200 shell", async () => {
