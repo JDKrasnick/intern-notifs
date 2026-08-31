@@ -12,6 +12,8 @@ import type {
 const GENERIC_EMPLOYER = /\b(?:talent community|job board|open roles?|careers?|external|private|job wrapping|university jobs?|early career)\b/iu;
 const ELLIPSIS = /(?:\.{2,}|…)/u;
 const TRAILING_FRAGMENT = /[,/(&[{-]\s*$/u;
+const DESTINATION_EVIDENCE_TTL_MS = 7 * 86_400_000;
+const DESTINATION_CATALOG_GRACE_MS = 7 * 86_400_000;
 
 export function isGenericEmployerLabel(value: string): boolean {
   const normalized = value.replace(/\s+/gu, ' ').trim();
@@ -206,10 +208,19 @@ export function deriveCanonicalAdmission(references: readonly SourceOccurrence[]
 }
 
 function freshnessDeadlines(admission: CatalogAdmission): { freshUntil?: number; graceDeadline?: number } {
-  const freshUntil = admission.destination.freshUntil ? Date.parse(admission.destination.freshUntil) : Number.NaN;
-  if (!Number.isFinite(freshUntil)) return {};
+  const storedFreshUntil = admission.destination.freshUntil ? Date.parse(admission.destination.freshUntil) : Number.NaN;
+  const observedAt = [admission.destination.inspectedAt, admission.evidenceObservedAt]
+    .map((value) => Date.parse(value))
+    .find(Number.isFinite);
+  const freshUntil = Number.isFinite(storedFreshUntil)
+    ? storedFreshUntil
+    : observedAt === undefined ? undefined : observedAt + DESTINATION_EVIDENCE_TTL_MS;
+  // An admitted record with no trustworthy evidence timestamp must not become
+  // permanently eligible merely because it predates the freshUntil field.
+  if (freshUntil === undefined) return { freshUntil: 0, graceDeadline: 0 };
   const storedGrace = admission.graceDeadline ? Date.parse(admission.graceDeadline) : Number.NaN;
-  return { freshUntil, graceDeadline: Number.isFinite(storedGrace) ? storedGrace : freshUntil + 7 * 86_400_000 };
+  return { freshUntil, graceDeadline: Number.isFinite(storedGrace)
+    ? storedGrace : freshUntil + DESTINATION_CATALOG_GRACE_MS };
 }
 
 /** Stored decisions are bounded by evidence time even if the verifier or queue is unavailable. */

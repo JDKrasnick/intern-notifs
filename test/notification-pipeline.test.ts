@@ -86,9 +86,9 @@ describe('NotificationPipeline', () => {
   it('waits fifteen minutes before checking Expo receipts', () => {
     expect(EXPO_RECEIPT_DELAY_SECONDS).toBe(900);
   });
-  it('drops delayed candidates when destination evidence expires before aggregation or flush', () => {
+  it('drops delayed legacy-shaped candidates when destination evidence expires before aggregation or flush', () => {
     const job = { open: true, technical: true, admission: {
-      destination: { freshUntil: '2026-08-30T00:00:00Z' }, alertEligible: true,
+      destination: { inspectedAt: '2026-08-23T00:00:00Z' }, evidenceObservedAt: '2026-08-23T00:00:00Z', alertEligible: true,
     } } as Internship;
     expect(notificationCandidateEligible(job, new Date('2026-08-29T23:59:59Z'))).toBe(true);
     expect(notificationCandidateEligible(job, new Date('2026-08-30T00:00:00Z'))).toBe(false);

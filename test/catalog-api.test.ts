@@ -61,12 +61,12 @@ describe('grouped catalog API', () => {
     expect(projectionReads).toBe(1);
   });
 
-  it('hides expired roles from default, filtered, and detail projection paths', async () => {
+  it('hides expired legacy-shaped roles from default, filtered, and detail projection paths', async () => {
     const jobs = new MemoryInternshipStore();
     const admission: CatalogAdmission = {
       canonicalEmployer: { id: 'acme', displayName: 'Acme' }, employerResolution: 'resolved', postingAttribution: 'attributed',
       destination: { classification: 'posting-detail', candidateUrl: 'https://careers.example.test/stale', provider: 'unknown',
-        inspectedAt: '2020-01-01T00:00:00Z', freshUntil: '2020-01-08T00:00:00Z' },
+        inspectedAt: '2020-01-01T00:00:00Z' },
       metadata: { complete: true, title: 'complete', location: 'complete' }, catalogEligible: true, alertEligible: true,
       reasonCodes: [], evaluatedAt: '2020-01-01T00:00:00Z', evidenceObservedAt: '2020-01-01T00:00:00Z',
     };
