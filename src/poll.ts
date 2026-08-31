@@ -532,18 +532,24 @@ export class IngestionRunner {
       const supportsAdmission = Boolean(sourceListing.employerEvidence || sourceListing.providerIdentity);
       const id = externalId(sourceListing);
       const priorOccurrence = priorByExternalId.get(id);
-      const preserveFailedMigration = async () => {
-        if (!admissionConfigurationVersion || !priorOccurrence
-          || priorOccurrence.occurrence.admissionConfigurationVersion === admissionConfigurationVersion) return;
-        try {
-          await this.store.putSourceOccurrence({
-            ...priorOccurrence,
-            occurrence: { ...priorOccurrence.occurrence, admissionConfigurationVersion },
-          });
-          handledExternalIds.add(id);
-        } catch (error) {
-          failures[slot] = `${failures[slot]}; failed to preserve migration decision: ${error instanceof Error ? error.message : String(error)}`;
+      const completeFailedAdmissionMigration = async () => {
+        if (!admissionConfigurationVersion) return;
+        if (priorOccurrence
+          && priorOccurrence.occurrence.admissionConfigurationVersion !== admissionConfigurationVersion) {
+          try {
+            await this.store.putSourceOccurrence({
+              ...priorOccurrence,
+              occurrence: { ...priorOccurrence.occurrence, admissionConfigurationVersion },
+            });
+          } catch (error) {
+            failures[slot] = `${failures[slot]}; failed to preserve migration decision: ${error instanceof Error ? error.message : String(error)}`;
+            return;
+          }
         }
+        // A failed new row has no legacy occurrence to preserve. It still
+        // completes this configuration slice by failing closed; otherwise the
+        // same unpersistable row poisons every continuation forever.
+        handledExternalIds.add(id);
       };
       let legacyUrl: string;
       let canonicalUrl: string;
@@ -552,7 +558,7 @@ export class IngestionRunner {
         canonicalUrl = canonicalApplicationUrl(sourceListing.applyUrl);
       } catch (error) {
         failures[slot] = `${sourceListing.sourceId}: row ${sourceListing.row}: ${error instanceof Error ? error.message : String(error)}`;
-        await preserveFailedMigration();
+        await completeFailedAdmissionMigration();
         return;
       }
       let listing = {
@@ -794,7 +800,7 @@ export class IngestionRunner {
         handledExternalIds.add(id);
       } catch (error) {
         failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
-        await preserveFailedMigration();
+        await completeFailedAdmissionMigration();
       }
     });
     report.failures.push(...failures.filter((failure): failure is string => failure !== undefined));

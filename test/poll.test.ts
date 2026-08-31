@@ -191,6 +191,35 @@ describe('polling', () => {
     });
     expect(await store.getJob(originalJob.jobId)).toEqual(originalJob);
   });
+  it('fails a new unpersistable row closed without poisoning migration continuations', async () => {
+    const store = new MemoryInternshipStore();
+    let configurationVersion = 'configuration-v1';
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const run = (rows: RawListing[]) => new Poller(
+      [new Adapter('one', rows)],
+      store,
+      () => new Date('2026-08-10T12:00:00.000Z'),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll({ maxAdmissionMigrationListingsPerSourceRun: 2 });
+    const original = listing('https://jobs.example.com/original');
+
+    await run([original]);
+    configurationVersion = 'configuration-v2';
+    const migrated = await run([
+      original,
+      { ...listing('not-a-url'), externalId: 'README.md:new-invalid-row' },
+    ]);
+
+    expect(migrated.failures).toEqual([expect.stringContaining('Invalid URL')]);
+    expect(migrated.continuationSources).toEqual([]);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+    expect(await store.getSourceOccurrences('one')).toHaveLength(1);
+    expect([...store.jobs.values()]).toHaveLength(1);
+  });
   it('keeps a large quiet baseline behind a later normal role and out of new-since results', async () => {
     const store = new MemoryInternshipStore();
     const baseline = Array.from({ length: 60 }, (_, index) => ({
