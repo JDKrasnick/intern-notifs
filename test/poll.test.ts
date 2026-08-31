@@ -45,6 +45,51 @@ describe('polling', () => {
     expect([...store.jobs.values()].find((job) => job.title === 'Software Engineering Intern')).toMatchObject({ catalogRecency: 'baseline' });
     expect([...store.jobs.values()].find((job) => job.title === 'Systems Engineering Intern')).toMatchObject({ catalogRecency: 'normal' });
   });
+  it('reuses unchanged source rows when another row changes the snapshot', async () => {
+    const store = new MemoryInternshipStore();
+    const firstSeen = '2026-08-09T12:00:00.000Z';
+    const changedAt = '2026-08-10T12:00:00.000Z';
+    const resolver = {
+      async configurationVersion() { return 'configuration-v1'; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    await new Poller(
+      [new Adapter('one', [listing('https://jobs.example.com/a')])],
+      store,
+      () => new Date(firstSeen),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll();
+    await new Poller(
+      [new Adapter('one', [
+        { ...listing('https://jobs.example.com/a'), row: 50 },
+        { ...listing('https://jobs.example.com/b'), title: 'Systems Engineering Intern' },
+      ])],
+      store,
+      () => new Date(changedAt),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll();
+    const unchanged = [...store.jobs.values()].find((job) => job.title === 'Software Engineering Intern');
+    expect(unchanged).toMatchObject({ lastSeenAt: firstSeen, sourceReferences: [{ row: 5 }] });
+    expect(await store.getCheckpoint('one')).toMatchObject({ activeExternalIds: expect.arrayContaining([
+      'README.md:https://jobs.example.com/a', 'README.md:https://jobs.example.com/b',
+    ]) });
+
+    const updatedAt = '2026-08-11T12:00:00.000Z';
+    await new Poller(
+      [new Adapter('one', [
+        { ...listing('https://jobs.example.com/a'), title: 'Platform Engineering Intern' },
+        { ...listing('https://jobs.example.com/b'), title: 'Systems Engineering Intern' },
+      ])],
+      store,
+      () => new Date(updatedAt),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll();
+    expect([...store.jobs.values()].find((job) => job.applyUrl === 'https://jobs.example.com/a'))
+      .toMatchObject({ lastSeenAt: updatedAt });
+    expect((await store.getSourceOccurrences('one')).find((occurrence) => occurrence.externalId.endsWith('/a')))
+      .toMatchObject({ occurrence: { title: 'Platform Engineering Intern' } });
+  });
   it('keeps a large quiet baseline behind a later normal role and out of new-since results', async () => {
     const store = new MemoryInternshipStore();
     const baseline = Array.from({ length: 60 }, (_, index) => ({
