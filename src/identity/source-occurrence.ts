@@ -15,6 +15,25 @@ function earliest(values: Array<string | undefined>): string | undefined {
   return values.filter((value): value is string => Boolean(value)).sort()[0];
 }
 
+function admissionObservedAt(admission: SourceOccurrence['admission']): string {
+  if (!admission) return '';
+  return [admission.evaluatedAt, admission.evidenceObservedAt, admission.destination.inspectedAt].sort().at(-1) ?? '';
+}
+
+function latestAdmission(
+  previous: SourceOccurrence['admission'],
+  incoming: SourceOccurrence['admission'],
+): SourceOccurrence['admission'] {
+  if (!previous) return incoming;
+  if (!incoming) return previous;
+  const previousObservedAt = admissionObservedAt(previous);
+  const incomingObservedAt = admissionObservedAt(incoming);
+  if (previousObservedAt > incomingObservedAt) return previous;
+  if (incomingObservedAt > previousObservedAt) return incoming;
+  if (previous.destination.browserVisible === true && incoming.destination.browserVisible !== true) return previous;
+  return incoming;
+}
+
 export function mergeSourceOccurrence(
   previous: SourceOccurrence | undefined,
   incoming: SourceOccurrence,
@@ -28,11 +47,13 @@ export function mergeSourceOccurrence(
       }
     : incoming.providerEvidence ?? previous?.providerEvidence;
   const provenance = incoming.provenance ?? previous?.provenance;
+  const admission = latestAdmission(previous?.admission, incoming.admission);
   return {
     ...previous,
     ...incoming,
     ...(provenance ? { provenance } : {}),
     ...(providerEvidence ? { providerEvidence } : {}),
+    ...(admission ? { admission } : {}),
     ...(firstAttachedAt ? { firstAttachedAt } : {}),
     ...(previous?.firstAttachedAtPrecision === 'exact' || incoming.firstAttachedAtPrecision === 'exact'
       ? { firstAttachedAtPrecision: 'exact' as const }
