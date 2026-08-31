@@ -163,6 +163,34 @@ describe('polling', () => {
     expect([...store.jobs.values()]).toHaveLength(5);
     expect([...store.jobs.values()].every((job) => job.open)).toBe(true);
   });
+  it('preserves and stamps a failed legacy row so it cannot poison migration continuations', async () => {
+    const store = new MemoryInternshipStore();
+    let configurationVersion = 'configuration-v1';
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const run = (row: RawListing) => new Poller(
+      [new Adapter('one', [row])],
+      store,
+      () => new Date('2026-08-10T12:00:00.000Z'),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll({ maxAdmissionMigrationListingsPerSourceRun: 1 });
+
+    await run(listing('https://jobs.example.com/original'));
+    const originalJob = [...store.jobs.values()][0]!;
+    configurationVersion = 'configuration-v2';
+    const migrated = await run({ ...listing('not-a-url'), externalId: 'README.md:https://jobs.example.com/original' });
+
+    expect(migrated.failures).toEqual([expect.stringContaining('Invalid URL')]);
+    expect(migrated.continuationSources).toEqual([]);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+    expect((await store.getSourceOccurrences('one'))[0]).toMatchObject({
+      occurrence: { applyUrl: 'https://jobs.example.com/original', admissionConfigurationVersion: 'configuration-v2' },
+    });
+    expect(await store.getJob(originalJob.jobId)).toEqual(originalJob);
+  });
   it('keeps a large quiet baseline behind a later normal role and out of new-since results', async () => {
     const store = new MemoryInternshipStore();
     const baseline = Array.from({ length: 60 }, (_, index) => ({

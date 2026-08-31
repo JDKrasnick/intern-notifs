@@ -530,6 +530,21 @@ export class IngestionRunner {
       // by record-level admission; legacy rows retain their rollout behavior
       // until the reviewed backfill classifies them.
       const supportsAdmission = Boolean(sourceListing.employerEvidence || sourceListing.providerIdentity);
+      const id = externalId(sourceListing);
+      const priorOccurrence = priorByExternalId.get(id);
+      const preserveFailedMigration = async () => {
+        if (!admissionConfigurationVersion || !priorOccurrence
+          || priorOccurrence.occurrence.admissionConfigurationVersion === admissionConfigurationVersion) return;
+        try {
+          await this.store.putSourceOccurrence({
+            ...priorOccurrence,
+            occurrence: { ...priorOccurrence.occurrence, admissionConfigurationVersion },
+          });
+          handledExternalIds.add(id);
+        } catch (error) {
+          failures[slot] = `${failures[slot]}; failed to preserve migration decision: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      };
       let legacyUrl: string;
       let canonicalUrl: string;
       try {
@@ -537,6 +552,7 @@ export class IngestionRunner {
         canonicalUrl = canonicalApplicationUrl(sourceListing.applyUrl);
       } catch (error) {
         failures[slot] = `${sourceListing.sourceId}: row ${sourceListing.row}: ${error instanceof Error ? error.message : String(error)}`;
+        await preserveFailedMigration();
         return;
       }
       let listing = {
@@ -546,8 +562,6 @@ export class IngestionRunner {
         technical: sourceListing.technical ?? true,
         ...(admissionConfigurationVersion ? { admissionConfigurationVersion } : {}),
       };
-      const id = listing.externalId;
-      const priorOccurrence = priorByExternalId.get(id);
       const admissionAlreadyApplied = Boolean(admissionConfigurationVersion
         && priorOccurrence?.occurrence.admissionConfigurationVersion === admissionConfigurationVersion);
       if ((reuseUnchangedOccurrences || admissionAlreadyApplied) && priorOccurrence
@@ -780,6 +794,7 @@ export class IngestionRunner {
         handledExternalIds.add(id);
       } catch (error) {
         failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
+        await preserveFailedMigration();
       }
     });
     report.failures.push(...failures.filter((failure): failure is string => failure !== undefined));
@@ -912,7 +927,9 @@ export class IngestionRunner {
             };
             return sourceOwnedMaterial(prior.occurrence) !== sourceOwnedMaterial(listing);
           } catch {
-            return true;
+            // A failed row that preserved the prior decision is complete for
+            // this configuration and must not poison every continuation.
+            return false;
           }
         });
         const listingsToResolve = migrationLimit === undefined
