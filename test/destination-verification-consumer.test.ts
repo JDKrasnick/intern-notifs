@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
-import { processDestinationVerificationBatch, type DestinationVerificationEnvironment,
+import { enqueueDueDestinationVerifications, processDestinationVerificationBatch, sendAdmissionOperationalAlert,
+  type DestinationVerificationEnvironment,
   type DestinationVerificationMessage } from '../cloudflare/destination-verification.js';
 import type { D1Database, D1PreparedStatement, MessageBatch, QueueMessage } from '../cloudflare/types.js';
 import type { Internship, SourceOccurrence } from '../src/types.js';
@@ -167,20 +168,60 @@ describe('destination verification queue consumer', () => {
   });
 
   it('retries a transient browser failure for platform retry and eventual DLQ handling', async () => {
-    const { db, jobs } = subject();
+    const { db, operations, jobs } = subject();
     const { job, reference } = role();
-    await jobs.putInternship(job);
+    const priorAdmission = {
+      canonicalEmployer: { id: 'acme', displayName: 'Acme' }, employerResolution: 'resolved' as const,
+      postingAttribution: 'attributed' as const,
+      destination: { classification: 'posting-detail' as const, candidateUrl: reference.applyUrl,
+        provider: 'greenhouse' as const, tenant: 'acme', expectedPostingId: reference.externalId,
+        inspectedAt: '2026-08-24T00:00:00Z', freshUntil: '2026-08-31T00:00:00Z', nextCheckAt: '2026-08-30T00:00:00Z' },
+      metadata: { complete: true, title: 'complete' as const, location: 'complete' as const },
+      catalogEligible: true, alertEligible: true, reasonCodes: [], evaluatedAt: '2026-08-24T00:00:00Z',
+      evidenceObservedAt: '2026-08-24T00:00:00Z',
+    };
+    reference.admission = priorAdmission;
+    job.admission = priorAdmission;
+    await jobs.putInternship({ ...job, sourceReferences: [reference] });
+    await operations.syncVerificationSchedule('2026-08-30T00:00:00Z');
+    const [scheduled] = await operations.leaseDueVerifications('2026-08-30T00:00:00Z');
+    expect(scheduled).toBeDefined();
     launch.mockResolvedValue({ newPage: vi.fn().mockResolvedValue({
       goto: vi.fn().mockRejectedValue(new Error('timeout')), frames: () => [], close: vi.fn(),
     }), close: vi.fn() });
     const queued = queueMessage({ version: 1, jobId: job.jobId, sourceId: reference.sourceId,
-      externalId: reference.externalId!, candidateUrl: reference.applyUrl, providerIdentity: {
-        provider: 'greenhouse', sourceId: reference.sourceId, sourceUrl: reference.sourceUrl,
-        tenant: 'acme', postingId: reference.externalId,
-      }, reason: 'daily-retry', queuedAt: '2026-08-30T00:00:00Z' });
+      externalId: reference.externalId!, candidateUrl: reference.applyUrl, providerIdentity: scheduled!.providerIdentity,
+      reason: 'daily-retry', queuedAt: '2026-08-30T00:00:00Z', occurrenceKey: scheduled!.occurrenceKey,
+      leaseToken: scheduled!.leaseToken, idempotencyKey: 'scheduled-generation' });
     await processDestinationVerificationBatch({ queue: 'destination-verification', messages: [queued] }, environment(db),
       () => new Date('2026-08-30T00:01:00Z'));
     expect(queued.retry).toHaveBeenCalledWith({ delaySeconds: 86_400 });
     expect(queued.ack).not.toHaveBeenCalled();
+
+    const queue = { send: vi.fn(), sendBatch: vi.fn() };
+    await expect(enqueueDueDestinationVerifications({ ...environment(db), DESTINATION_VERIFICATION_QUEUE: queue },
+      new Date('2026-08-31T00:01:00Z'), { syncSchedule: false })).resolves.toBe(0);
+    expect(queue.send).not.toHaveBeenCalled();
+    await expect(enqueueDueDestinationVerifications({ ...environment(db), DESTINATION_VERIFICATION_QUEUE: queue },
+      new Date('2026-08-31T01:02:00Z'), { syncSchedule: false })).resolves.toBe(1);
+    expect(queue.send).toHaveBeenCalledOnce();
+  });
+
+  it('uses the configured verified sender for operational alerts', async () => {
+    const { operations } = subject();
+    const send = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
+    vi.stubGlobal('fetch', send);
+    const sent = await sendAdmissionOperationalAlert(operations, {
+      RESEND_API_KEY: 'resend-key', ADMISSION_SUPPORT_RECIPIENT: 'support@example.test',
+      AUTH_FROM_EMAIL: 'InternNotifs <notifications@send.internnotifs.app>',
+    }, { signals: ['destination-verification-dlq'], details: 'One message is waiting.', observedAt: '2026-08-30T12:00:00Z' });
+    expect(sent).toBe(true);
+    expect(send).toHaveBeenCalledOnce();
+    const init = send.mock.calls[0]![1] as RequestInit;
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      from: 'InternNotifs <notifications@send.internnotifs.app>',
+      to: ['support@example.test'],
+    });
+    vi.unstubAllGlobals();
   });
 });

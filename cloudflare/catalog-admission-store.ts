@@ -537,6 +537,17 @@ export class D1CatalogAdmissionStore {
       WHERE occurrence_key = ? AND lease_token = ?`).bind(enqueuedAt, enqueuedAt, occurrenceKey, leaseToken).run();
   }
 
+  async deferScheduledVerificationRetry(input: {
+    occurrenceKey: string;
+    leaseToken: string;
+    deferredUntil: string;
+    updatedAt: string;
+  }): Promise<void> {
+    await this.db.prepare(`UPDATE destination_verification_schedule SET lease_until = ?, updated_at = ?
+      WHERE occurrence_key = ? AND lease_token = ?`)
+      .bind(input.deferredUntil, input.updatedAt, input.occurrenceKey, input.leaseToken).run();
+  }
+
   async completeScheduledVerification(input: { occurrenceKey: string; leaseToken?: string; completedAt: string;
     classification: string; nextCheckAt: string }): Promise<void> {
     await this.db.prepare(`UPDATE destination_verification_schedule SET next_check_at = ?, lease_token = NULL, lease_until = NULL,

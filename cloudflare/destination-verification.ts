@@ -33,7 +33,11 @@ export interface DestinationVerificationEnvironment {
   DESTINATION_VERIFICATION_QUEUE: Queue;
   RESEND_API_KEY?: string;
   ADMISSION_SUPPORT_RECIPIENT?: string;
+  AUTH_FROM_EMAIL?: string;
 }
+
+const DESTINATION_RETRY_DELAY_SECONDS = 86_400;
+const DESTINATION_RETRY_LEASE_MARGIN_MS = 60 * 60_000;
 
 export function destinationVerificationMessage(request: DestinationVerificationRequest, queuedAt = new Date().toISOString()): DestinationVerificationMessage {
   return { version: 1, ...request, queuedAt };
@@ -163,12 +167,12 @@ export async function persistDestinationAdmission(input: {
 
 async function sendIncidentEmail(
   store: D1CatalogAdmissionStore,
-  env: Pick<DestinationVerificationEnvironment, 'RESEND_API_KEY' | 'ADMISSION_SUPPORT_RECIPIENT'>,
+  env: Pick<DestinationVerificationEnvironment, 'RESEND_API_KEY' | 'ADMISSION_SUPPORT_RECIPIENT' | 'AUTH_FROM_EMAIL'>,
   group: { sourceId: string; host: string; reason: string; incidents: string[] },
   messageType: 'incident-opened' | 'grace-warning' | 'quarantine',
   sentAt: string,
 ): Promise<boolean> {
-  if (!env.RESEND_API_KEY || !env.ADMISSION_SUPPORT_RECIPIENT) return false;
+  if (!env.RESEND_API_KEY || !env.ADMISSION_SUPPORT_RECIPIENT || !env.AUTH_FROM_EMAIL) return false;
   const incidentIds = [...group.incidents].sort();
   const dedupeKey = createHash('sha256').update(`${messageType}\0${group.sourceId}\0${group.host}\0${group.reason}\0${incidentIds.join(',')}`).digest('hex');
   if (await store.emailDeliveryExists(dedupeKey)) return true;
@@ -180,7 +184,7 @@ async function sendIncidentEmail(
       'Idempotency-Key': dedupeKey,
     },
     body: JSON.stringify({
-      from: 'InternNotifs Operations <operations@internnotifs.dev>',
+      from: env.AUTH_FROM_EMAIL,
       to: [env.ADMISSION_SUPPORT_RECIPIENT],
       subject: `[InternNotifs] ${messageType}: ${group.host}`,
       text: `${group.incidents.length} catalog admission incident(s) for ${group.sourceId} on ${group.host}. Reason: ${group.reason}.`,
@@ -193,10 +197,10 @@ async function sendIncidentEmail(
 
 export async function sendAdmissionOperationalAlert(
   store: D1CatalogAdmissionStore,
-  env: Pick<DestinationVerificationEnvironment, 'RESEND_API_KEY' | 'ADMISSION_SUPPORT_RECIPIENT'>,
+  env: Pick<DestinationVerificationEnvironment, 'RESEND_API_KEY' | 'ADMISSION_SUPPORT_RECIPIENT' | 'AUTH_FROM_EMAIL'>,
   input: { signals: string[]; details: string; observedAt: string },
 ): Promise<boolean> {
-  if (!input.signals.length || !env.RESEND_API_KEY || !env.ADMISSION_SUPPORT_RECIPIENT) return false;
+  if (!input.signals.length || !env.RESEND_API_KEY || !env.ADMISSION_SUPPORT_RECIPIENT || !env.AUTH_FROM_EMAIL) return false;
   const signals = [...new Set(input.signals)].sort();
   const day = input.observedAt.slice(0, 10);
   const dedupeKey = createHash('sha256').update(`operational-health\0${day}\0${signals.join(',')}`).digest('hex');
@@ -205,7 +209,7 @@ export async function sendAdmissionOperationalAlert(
     method: 'POST',
     headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json', 'Idempotency-Key': dedupeKey },
     body: JSON.stringify({
-      from: 'InternNotifs Operations <operations@internnotifs.dev>',
+      from: env.AUTH_FROM_EMAIL,
       to: [env.ADMISSION_SUPPORT_RECIPIENT],
       subject: `[InternNotifs] catalog admission health: ${signals.join(', ')}`,
       text: input.details,
@@ -447,12 +451,22 @@ export async function processDestinationVerificationBatch(
             evidenceHash: result.destination.evidenceHash ?? createHash('sha256').update(JSON.stringify(result.destination)).digest('hex'),
             classification: result.destination.classification, value: result.destination, observedAt: inspectedAt });
         }
+        const retryTransientFailure = Boolean(browserError && reachability !== 'gone');
         if (!candidateOnly && message.occurrenceKey) {
-          await operations.completeScheduledVerification({ occurrenceKey: message.occurrenceKey, leaseToken: message.leaseToken,
-            completedAt: inspectedAt, classification: result.destination.classification,
-            nextCheckAt: result.destination.nextCheckAt ?? new Date(Date.parse(inspectedAt) + 6 * 86_400_000).toISOString() });
+          if (retryTransientFailure) {
+            if (message.leaseToken) {
+              await operations.deferScheduledVerificationRetry({ occurrenceKey: message.occurrenceKey,
+                leaseToken: message.leaseToken, updatedAt: inspectedAt,
+                deferredUntil: new Date(Date.parse(inspectedAt) + DESTINATION_RETRY_DELAY_SECONDS * 1_000
+                  + DESTINATION_RETRY_LEASE_MARGIN_MS).toISOString() });
+            }
+          } else {
+            await operations.completeScheduledVerification({ occurrenceKey: message.occurrenceKey, leaseToken: message.leaseToken,
+              completedAt: inspectedAt, classification: result.destination.classification,
+              nextCheckAt: result.destination.nextCheckAt ?? new Date(Date.parse(inspectedAt) + 6 * 86_400_000).toISOString() });
+          }
         }
-        if (browserError && reachability !== 'gone') queued.retry({ delaySeconds: 86_400 });
+        if (retryTransientFailure) queued.retry({ delaySeconds: DESTINATION_RETRY_DELAY_SECONDS });
         else {
           if (message.idempotencyKey) await operations.recordVerificationCompletion(message.idempotencyKey, inspectedAt);
           queued.ack();
@@ -481,7 +495,7 @@ export async function processDestinationVerificationBatch(
 }
 
 export async function enqueueDueDestinationVerifications(
-  env: Pick<DestinationVerificationEnvironment, 'DB' | 'DESTINATION_VERIFICATION_QUEUE' | 'RESEND_API_KEY' | 'ADMISSION_SUPPORT_RECIPIENT'>,
+  env: Pick<DestinationVerificationEnvironment, 'DB' | 'DESTINATION_VERIFICATION_QUEUE' | 'RESEND_API_KEY' | 'ADMISSION_SUPPORT_RECIPIENT' | 'AUTH_FROM_EMAIL'>,
   now = new Date(),
   options: { syncSchedule?: boolean } = { syncSchedule: true },
 ): Promise<number> {
