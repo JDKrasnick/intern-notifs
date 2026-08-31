@@ -11,6 +11,7 @@ import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken,
 import type { D1Database, D1PreparedStatement } from './types.js';
 import { alertEligible, catalogEligible } from '../src/catalog-admission.js';
 import { postingObservationProjection } from '../src/identity/projection.js';
+import { mergeSourceOccurrence } from '../src/identity/source-occurrence.js';
 
 type JsonRow = { value: string };
 const deliveryReceiptLifetimeSeconds = 90 * 24 * 60 * 60;
@@ -259,6 +260,13 @@ export class D1InternshipStore implements InternshipStore {
     let projectionCommitted = false;
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const stored = await this.get<Internship>(`JOB#${input.job.jobId}`, 'META');
+      const storedOccurrence = await this.get<SourceOccurrenceState>(
+        `SOURCE#${input.occurrence.sourceId}`,
+        `OCCURRENCE#${input.occurrence.externalId}`,
+      );
+      const occurrence = storedOccurrence
+        ? { ...input.occurrence, occurrence: mergeSourceOccurrence(storedOccurrence.occurrence, input.occurrence.occurrence) }
+        : input.occurrence;
       if (input.identity && preferredJobIdentityConflicts(input.identity, stored)) {
         const decision: Extract<PostingIdentityDecision, { status: 'quarantined' }> = {
           status: 'quarantined', reason: 'aliases-resolve-to-different-jobs',
@@ -271,7 +279,7 @@ export class D1InternshipStore implements InternshipStore {
           occurrence: input.occurrence.occurrence,
         });
       }
-      const canonical = postingObservationProjection(stored, input.job, input.occurrence);
+      const canonical = postingObservationProjection(stored, input.job, occurrence);
       const canonicalJson = JSON.stringify(canonical);
       const expectedJson = stored ? JSON.stringify(stored) : '__posting_observation_absent__';
       const projectionGuard = "EXISTS (SELECT 1 FROM catalog_items WHERE pk = ? AND sk = 'META' AND value = ?)";
@@ -312,7 +320,7 @@ export class D1InternshipStore implements InternshipStore {
           source_id = excluded.source_id, external_id = excluded.external_id
       `).bind(
         `SOURCE#${input.occurrence.sourceId}`, `OCCURRENCE#${input.occurrence.externalId}`,
-        JSON.stringify(input.occurrence), input.occurrence.sourceId, input.occurrence.externalId,
+        JSON.stringify(occurrence), input.occurrence.sourceId, input.occurrence.externalId,
         ...guardValues, `JOB#${canonical.jobId}`, canonicalJson,
       ));
       if (input.decision.status === 'unconfirmed') {

@@ -3,7 +3,7 @@ import { buildPostingIdentity } from '../src/identity/posting.js';
 import { postingObservationProjection } from '../src/identity/projection.js';
 import { sourceOccurrenceKey } from '../src/identity/source-occurrence.js';
 import { MemoryInternshipStore } from '../src/store.js';
-import type { Internship, PostingIdentityDecision, SourceOccurrenceState } from '../src/types.js';
+import type { CatalogAdmission, Internship, PostingIdentityDecision, SourceOccurrenceState } from '../src/types.js';
 
 const at = '2026-08-29T12:00:00.000Z';
 
@@ -12,6 +12,19 @@ function decision(exactKey: string): Extract<PostingIdentityDecision, { status: 
     status: 'confirmed', exactKey, evidenceKind: 'immutable-provider-id', provider: 'ashby', tenant: 'acme',
     contractId: 'posting-provider-ashby', contractVersion: 1, approvalReference: 'registry:ashby:v1',
     evidenceHash: exactKey, observedAt: at,
+  };
+}
+
+function admission(evaluatedAt: string, browserVisible?: boolean): CatalogAdmission {
+  return {
+    employerResolution: 'resolved', postingAttribution: 'attributed',
+    destination: {
+      classification: 'application-form', candidateUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/application',
+      provider: 'ashby', tenant: 'acme', expectedPostingId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      inspectedAt: evaluatedAt, ...(browserVisible === undefined ? {} : { browserVisible }),
+    },
+    metadata: { complete: true, title: 'complete', location: 'complete' },
+    catalogEligible: true, alertEligible: true, reasonCodes: [], evaluatedAt, evidenceObservedAt: evaluatedAt,
   };
 }
 
@@ -81,6 +94,24 @@ describe('atomic posting observation commit', () => {
         'https://jobs.lever.co/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/apply',
       ], provider: 'lever', tenant: 'acme', postingId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', sourceId: 'community-list' },
     })]);
+  });
+
+  it('preserves newer browser admission when a stale source observation commits later', () => {
+    const identity = buildPostingIdentity({
+      applicationUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    });
+    const verified = observation(identity.canonicalJobId, 'community-list', 'stable-role', identity);
+    const browserAdmission = admission('2026-08-29T12:00:47.000Z', true);
+    verified.job.sourceReferences[0] = { ...verified.job.sourceReferences[0]!, admission: browserAdmission };
+
+    const stale = observation(identity.canonicalJobId, 'community-list', 'stable-role', identity);
+    const staleAdmission = admission('2026-08-29T12:00:28.000Z');
+    stale.job.sourceReferences[0] = { ...stale.job.sourceReferences[0]!, admission: staleAdmission };
+    stale.occurrence.occurrence = stale.job.sourceReferences[0]!;
+
+    const projected = postingObservationProjection(verified.job, stale.job, stale.occurrence);
+
+    expect(projected.sourceReferences[0]?.admission).toEqual(browserAdmission);
   });
 
   it('commits aliases, job, occurrence, and the canonical notification tombstone together', async () => {

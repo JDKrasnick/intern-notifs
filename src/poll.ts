@@ -700,8 +700,10 @@ export class IngestionRunner {
           && destination.classification === 'posting-detail'
           && admission.reasonCodes.length === 1 && admission.reasonCodes[0] === 'posting-unattributed');
         if (!preserveLegacyWhileAttributionPending) listing = { ...listing, admission };
+        const needsPostingAttributionVerification = admission.reasonCodes.includes('posting-unattributed')
+          && ['posting-detail', 'application-form'].includes(destination.classification);
         if (!browserDestination && this.enqueueDestinationVerification && listing.providerIdentity
-          && (requiresBrowserVerification(destination) || admission.reasonCodes.includes('posting-unattributed'))) {
+          && (requiresBrowserVerification(destination) || needsPostingAttributionVerification)) {
           await this.enqueueDestinationVerification({
             jobId: listing.postingIdentity?.canonicalJobId ?? stableSourceOccurrenceJobId(listing.sourceId, id),
             sourceId: listing.sourceId,
