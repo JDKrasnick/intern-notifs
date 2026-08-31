@@ -220,6 +220,41 @@ describe('polling', () => {
     expect(await store.getSourceOccurrences('one')).toHaveLength(1);
     expect([...store.jobs.values()]).toHaveLength(1);
   });
+  it('does not reopen a stamped migration row when stored enrichment differs from its source', async () => {
+    const store = new MemoryInternshipStore();
+    let configurationVersion = 'configuration-v1';
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const row = listing('https://jobs.example.com/original');
+    const run = () => new Poller(
+      [new Adapter('one', [row])],
+      store,
+      () => new Date('2026-08-10T12:00:00.000Z'),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll({ maxAdmissionMigrationListingsPerSourceRun: 1 });
+
+    await run();
+    configurationVersion = 'configuration-v2';
+    await run();
+    const occurrence = (await store.getSourceOccurrences('one'))[0]!;
+    await store.putSourceOccurrence({
+      ...occurrence,
+      occurrence: { ...occurrence.occurrence, season: 'fall' },
+    });
+    const checkpoint = await store.getCheckpoint('one');
+    await store.putCheckpoint({ ...checkpoint!, admissionConfigurationVersion: 'configuration-v1' });
+
+    const resumed = await run();
+
+    expect(resumed.continuationSources).toEqual([]);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+    expect((await store.getSourceOccurrences('one'))[0]).toMatchObject({
+      occurrence: { season: 'fall', admissionConfigurationVersion: 'configuration-v2' },
+    });
+  });
   it('keeps a large quiet baseline behind a later normal role and out of new-since results', async () => {
     const store = new MemoryInternshipStore();
     const baseline = Array.from({ length: 60 }, (_, index) => ({

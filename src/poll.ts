@@ -922,21 +922,12 @@ export class IngestionRunner {
         const migrationCandidates = migrationLimit === undefined ? batch.processed.listings : batch.processed.listings.filter((sourceListing) => {
           const id = externalId(sourceListing);
           const prior = priorByExternalId.get(id);
-          if (!prior || prior.occurrence.admissionConfigurationVersion !== githubAdmissionConfigurationVersion) return true;
-          try {
-            const listing = {
-              ...sourceListing,
-              externalId: id,
-              applyUrl: canonicalApplicationUrl(sourceListing.applyUrl),
-              technical: sourceListing.technical ?? true,
-              admissionConfigurationVersion: githubAdmissionConfigurationVersion,
-            };
-            return sourceOwnedMaterial(prior.occurrence) !== sourceOwnedMaterial(listing);
-          } catch {
-            // A failed row that preserved the prior decision is complete for
-            // this configuration and must not poison every continuation.
-            return false;
-          }
+          // The per-occurrence stamp is the durable migration cursor. Stored
+          // occurrences can contain page-derived enrichment (for example a
+          // verified season) that deliberately differs from the raw source;
+          // reopening those rows by material comparison makes a completed
+          // slice recur forever.
+          return !prior || prior.occurrence.admissionConfigurationVersion !== githubAdmissionConfigurationVersion;
         });
         const listingsToResolve = migrationLimit === undefined
           ? (batch.unchanged ? [] : batch.processed.listings)
