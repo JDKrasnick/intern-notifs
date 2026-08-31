@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 import { buildPostingIdentity } from '../src/identity/posting.js';
-import type { Internship, PostingIdentityDecision, SourceOccurrenceState } from '../src/types.js';
+import type { CatalogAdmission, Internship, PostingIdentityDecision, SourceOccurrenceState } from '../src/types.js';
 
 function sqliteD1(database: DatabaseSync, failBatchAfter?: number): D1Database {
   const prepared = (query: string, values: SQLInputValue[] = []): D1PreparedStatement => ({
@@ -70,6 +70,19 @@ function input() {
   } };
 }
 
+function admission(evaluatedAt: string, browserVisible?: boolean): CatalogAdmission {
+  return {
+    employerResolution: 'resolved', postingAttribution: 'attributed',
+    destination: {
+      classification: 'application-form', candidateUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/application',
+      provider: 'ashby', tenant: 'acme', expectedPostingId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      inspectedAt: evaluatedAt, ...(browserVisible === undefined ? {} : { browserVisible }),
+    },
+    metadata: { complete: true, title: 'complete', location: 'complete' },
+    catalogEligible: true, alertEligible: true, reasonCodes: [], evaluatedAt, evidenceObservedAt: evaluatedAt,
+  };
+}
+
 describe('D1 atomic posting observation', () => {
   it('writes the complete observation in one D1 transaction', async () => {
     const { sqlite, store } = subject();
@@ -79,6 +92,40 @@ describe('D1 atomic posting observation', () => {
       { kind: 'source-occurrence', count: 1 },
     ]));
     expect(sqlite.prepare("SELECT count(*) AS count FROM catalog_items WHERE kind = 'posting-alias'").get()).toMatchObject({ count: expect.any(Number) });
+  });
+
+  it('does not erase newer browser admission when a stale observation wins the write race', async () => {
+    const { store } = subject();
+    const original = input();
+    await store.commitPostingObservation(original);
+
+    const verifiedAt = '2026-08-29T12:00:47.000Z';
+    const browserAdmission = admission(verifiedAt, true);
+    const stored = await store.getJob(original.job.jobId);
+    const storedOccurrence = (await store.getSourceOccurrences(original.occurrence.sourceId))[0];
+    expect(stored).toBeDefined();
+    expect(storedOccurrence).toBeDefined();
+    await store.putAdmissionState({
+      ...stored!, sourceReferences: [{ ...stored!.sourceReferences[0]!, admission: browserAdmission }],
+    }, {
+      ...storedOccurrence!, occurrence: { ...storedOccurrence!.occurrence, admission: browserAdmission },
+    });
+
+    const staleAdmission = admission('2026-08-29T12:00:28.000Z');
+    await store.commitPostingObservation({
+      ...original,
+      job: { ...original.job, sourceReferences: [{ ...original.job.sourceReferences[0]!, admission: staleAdmission }] },
+      occurrence: {
+        ...original.occurrence,
+        occurrence: { ...original.occurrence.occurrence, admission: staleAdmission },
+      },
+      notificationEvent: undefined,
+    });
+
+    const projected = await store.getJob(original.job.jobId);
+    const projectedOccurrence = (await store.getSourceOccurrences(original.occurrence.sourceId))[0];
+    expect(projected?.sourceReferences[0]?.admission).toEqual(browserAdmission);
+    expect(projectedOccurrence?.occurrence.admission).toEqual(browserAdmission);
   });
 
   it('rolls back every public write when a failure is injected mid-commit', async () => {
