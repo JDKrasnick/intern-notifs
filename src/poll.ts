@@ -957,7 +957,12 @@ export class IngestionRunner {
           || selectedRequiredMigrations.some((listing) => !resolution.handledExternalIds.has(externalId(listing)))
         );
         if (admissionMigrationPending) report.continuationSources.push(connector.id);
-        const closureCandidates = priorOccurrences.filter((prior) => !resolution.resolved.has(prior.externalId)
+        // Admission migration continuations must stay proportional to their
+        // configured slice. Replaying every inactive historical occurrence on
+        // each slice defeats that bound; the final slice performs the normal
+        // omission/closure reconciliation once all active rows are migrated.
+        const closureCandidates = admissionMigrationPending ? [] : priorOccurrences.filter((prior) =>
+          !resolution.resolved.has(prior.externalId)
           && !batch.activeExternalIds.has(prior.externalId)
           && prior.consecutiveOmissions >= 1);
         await forEachBounded(closureCandidates, async (prior) => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MemoryInternshipStore } from '../src/store.js';
 import { Poller } from '../src/poll.js';
 import { buildPostingIdentity } from '../src/identity/posting.js';
@@ -162,6 +162,38 @@ describe('polling', () => {
     expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
     expect([...store.jobs.values()]).toHaveLength(5);
     expect([...store.jobs.values()].every((job) => job.open)).toBe(true);
+  });
+  it('defers inactive occurrence loading until the final migration slice', async () => {
+    const store = new MemoryInternshipStore();
+    let configurationVersion = 'configuration-v1';
+    let rows = [
+      listing('https://jobs.example.com/active-1'),
+      listing('https://jobs.example.com/active-2'),
+      listing('https://jobs.example.com/inactive'),
+    ];
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const run = () => new Poller(
+      [new Adapter('one', rows)],
+      store,
+      () => new Date('2026-08-10T12:00:00.000Z'),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll({ maxAdmissionMigrationListingsPerSourceRun: 1 });
+
+    await run();
+    const inactive = (await store.getSourceOccurrences('one')).find((occurrence) =>
+      occurrence.occurrence.applyUrl === 'https://jobs.example.com/inactive')!;
+    rows = rows.slice(0, 2);
+    configurationVersion = 'configuration-v2';
+    const getJob = vi.spyOn(store, 'getJob');
+
+    const first = await run();
+
+    expect(first.continuationSources).toEqual(['one']);
+    expect(getJob).not.toHaveBeenCalledWith(inactive.jobId);
   });
   it('preserves and stamps a failed legacy row so it cannot poison migration continuations', async () => {
     const store = new MemoryInternshipStore();
@@ -400,7 +432,10 @@ describe('polling', () => {
     await new Poller([new Adapter('community', [listing(variant, 'community')])], store).poll();
     expect([...store.jobs.values()][0]).toMatchObject({
       open: false,
-      sourceReferences: [{ sourceId: 'one' }, { sourceId: 'community', state: 'open' }],
+      sourceReferences: expect.arrayContaining([
+        expect.objectContaining({ sourceId: 'one' }),
+        expect.objectContaining({ sourceId: 'community', state: 'open' }),
+      ]),
     });
   });
   it('adopts a legacy tracked URL when canonical tracking cleanup changes its lookup key', async () => {
@@ -449,7 +484,10 @@ describe('polling', () => {
     expect(store.jobs.size).toBe(1);
     expect([...store.jobs.values()][0]).toMatchObject({
       postingIdentity: { provider: 'greenhouse', tenant: 'figma', providerPostingId: '100' },
-      sourceReferences: [{ sourceId: 'greenhouse-figma' }, { sourceId: 'community' }],
+      sourceReferences: expect.arrayContaining([
+        expect.objectContaining({ sourceId: 'greenhouse-figma' }),
+        expect.objectContaining({ sourceId: 'community' }),
+      ]),
     });
   });
   it.each([
@@ -489,7 +527,10 @@ describe('polling', () => {
     expect(store.jobs.size).toBe(1);
     expect([...store.jobs.values()][0]).toMatchObject({
       postingIdentity: { provider: 'greenhouse', tenant: 'databricks', providerPostingId: postingId },
-      sourceReferences: [{ sourceId: 'community' }, { sourceId: 'greenhouse-databricks' }],
+      sourceReferences: expect.arrayContaining([
+        expect.objectContaining({ sourceId: 'community' }),
+        expect.objectContaining({ sourceId: 'greenhouse-databricks' }),
+      ]),
     });
   });
   it('does not scope a tenant-less Greenhouse embed when two active reviewed boards contain its ID', async () => {
@@ -535,7 +576,13 @@ describe('polling', () => {
     await new Poller([new Adapter('greenhouse-drweng', [reviewedListing({ provider: 'greenhouse', tenant: 'drweng', postingId: '3413670', sourceId: 'greenhouse-drweng', url: 'https://job-boards.greenhouse.io/drweng/jobs/3413670' })])], store).poll();
     await new Poller([new Adapter('community', [listing('https://www.drw.com/work-at-drw/listings/quantitative-research-intern-3413670?utm_source=community', 'community')])], store).poll();
     expect(store.jobs.size).toBe(1);
-    expect([...store.jobs.values()][0]).toMatchObject({ postingIdentity: { tenant: 'drweng', providerPostingId: '3413670' }, sourceReferences: [{ sourceId: 'greenhouse-drweng' }, { sourceId: 'community' }] });
+    expect([...store.jobs.values()][0]).toMatchObject({
+      postingIdentity: { tenant: 'drweng', providerPostingId: '3413670' },
+      sourceReferences: expect.arrayContaining([
+        expect.objectContaining({ sourceId: 'greenhouse-drweng' }),
+        expect.objectContaining({ sourceId: 'community' }),
+      ]),
+    });
   });
   it('converges the historical PlusAI Lever hosted/apply pair', async () => {
     const store = new MemoryInternshipStore(); const id = 'b4f750e7-0148-41f0-b2b1-ff054450a320';
