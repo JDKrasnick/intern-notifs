@@ -614,6 +614,8 @@ export interface JobRequirements {
 
 export interface SourceOccurrence extends SourceReference {
   externalId?: string;
+  /** Admission rules applied to this row, so interrupted source migrations can resume safely. */
+  admissionConfigurationVersion?: string;
   /** Reviewed provider facts retained for identity repair and audit. */
   providerEvidence?: ProviderPostingEvidence;
   /** Durable identity decision for this occurrence. Missing means legacy-unclassified. */
