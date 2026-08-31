@@ -157,13 +157,21 @@ export async function processDestinationVerificationBatch(
   const operations = new D1CatalogAdmissionStore(env.DB);
   const opened: Array<{ sourceId: string; host: string; reason: string; incidentId: string; messageType: 'incident-opened' | 'quarantine' }> = [];
   const pending: Array<{ queued: MessageBatch<unknown>['messages'][number]; message: DestinationVerificationMessage }> = [];
+  const pendingAttemptKeys = new Set<string>();
+  const recentAttemptCutoff = new Date(now().getTime() - 24 * 60 * 60_000).toISOString();
   for (const queued of batch.messages) {
     try {
       const message = parseMessage(queued.body);
       const job = await jobs.getJob(message.jobId);
       if (!job) { queued.ack(); continue; }
       const reference = job.sourceReferences.find((item) => item.sourceId === message.sourceId && item.externalId === message.externalId);
-      if (!reference || matchingBrowserDestination(job, message, message.queuedAt)) { queued.ack(); continue; }
+      const attemptKey = `${message.jobId}\0${message.sourceId}\0${message.candidateUrl}`;
+      if (!reference || matchingBrowserDestination(job, message, message.queuedAt)
+        || pendingAttemptKeys.has(attemptKey)
+        || await operations.hasVerificationAttemptSince(message.jobId, message.sourceId, message.candidateUrl, recentAttemptCutoff)) {
+        queued.ack(); continue;
+      }
+      pendingAttemptKeys.add(attemptKey);
       pending.push({ queued, message });
     } catch {
       queued.retry({ delaySeconds: 300 });
