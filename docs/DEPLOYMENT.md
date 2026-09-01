@@ -24,6 +24,60 @@ InternNotifs is an Expo mobile app with a serverless AWS backend.
 
 The catalog is public. Accounts, preferences, device tokens, profiles, documents, and application tracking are private to the verified user identity.
 
+## OpenTofu state adoption
+
+The production Cloudflare stack uses the private
+`intern-notifs-opentofu-state` R2 bucket and the
+`production/cloudflare.tfstate` object. The bucket is intentionally outside the
+managed stack so destroying or replacing application resources cannot destroy
+their state backend. Bootstrap it once with Wrangler or the Cloudflare API, then
+create an R2 token scoped only to that bucket with Object Read & Write access.
+Do not put the R2 access key, secret key, backend endpoint, state, or saved plan
+in Git.
+
+Supply the S3-compatible endpoint and bucket-scoped credentials through the
+operator environment. Use a dedicated shell so these R2 credentials cannot be
+mistaken for credentials to the retained AWS account:
+
+```bash
+export AWS_ACCESS_KEY_ID='bucket-scoped R2 access key ID'
+export AWS_SECRET_ACCESS_KEY='bucket-scoped R2 secret access key'
+export AWS_ENDPOINT_URL_S3='https://CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com'
+export AWS_REGION='auto'
+tofu -chdir=infra/cloudflare init -reconfigure
+```
+
+Before the first plan, import every existing production resource. This includes
+`cloudflare_d1_database.application`, `cloudflare_r2_bucket.documents`,
+`cloudflare_workers_script.application`,
+`cloudflare_workers_script_subdomain.application`,
+`cloudflare_workers_custom_domain.api[0]` when configured,
+`cloudflare_workers_cron_trigger.application`, and all keys in each of
+`cloudflare_queue.work`, `cloudflare_queue.dead_letter`, and
+`cloudflare_queue_consumer.application`: `greenhouse`, `lever`, `ashby`,
+`github`, `gmail`, and `destination-verification`. Resolve import IDs from the
+live Cloudflare account and provider-v5 import contract; never guess an ID or
+allow a failed import to turn into a create. Import one address at a time and
+inspect it with `tofu state show ADDRESS` before continuing.
+
+Create a dated directory outside the repository and save `tofu state pull`
+there before imports, after all imports, and after every apply. The import
+baseline plan must contain no creates, deletes, replacements, secret removals,
+identity-setting changes, or GitHub concurrency increase. Supply the live
+identity values on every plan and apply:
+
+```bash
+export TF_VAR_identity_unconfirmed_publication_enabled='true'
+export TF_VAR_identity_confirmed_coverage_floor='0.7130649137222679'
+```
+
+Build the Worker before the final plan. Save that plan outside the repository,
+review its complete machine-readable and human-readable output, and apply the
+exact saved plan rather than planning again. A final pre-#120 plan may contain
+only the reviewed destination queue/DLQ, seven-day retention, 20-message and
+60-second consumer settings, Browser binding, queue ID, admission-alert
+bindings, and the intentional Worker artifact.
+
 ## Gmail application detection rollout
 
 Gmail detection is optional, account-gated, Apply-triggered, and disabled by default. It requests
@@ -141,10 +195,15 @@ Create the `intern-notifs-destination-verification` queue and its
 `-dlq`, enable the `DESTINATION_BROWSER` Browser Rendering binding, and set
 `RESEND_API_KEY` plus `ADMISSION_SUPPORT_RECIPIENT` as Worker secrets. The
 checked-in consumer processes at most 20 URLs per batch, retries twice before
-the DLQ, rechecks open incidents daily, and samples reviewed host rules weekly.
-Apply `0007_catalog_admission.sql` before deploying the Worker because managed
+the DLQ, leases due rechecks every ten minutes, synchronizes the schedule daily,
+and samples reviewed host rules weekly.
+Apply `0007_catalog_admission.sql` through
+`0012_destination_verification_schedule.sql` before deploying the Worker because managed
 ingestion immediately queries the new review tables. The additive migration is
-safe for the currently deployed Worker; after deployment, legacy rows without
+ordered after the already-deployed
+`0011_issue_50_reviewed_employer_identity.sql` migration and is safe for the
+currently deployed Worker. Never rename, replay, or replace deployed migration
+`0011`; after deployment, legacy rows without
 an admission record remain eligible until the guarded repair is approved.
 
 Apply the migration and deploy only after reviewing the generated resource diff:
@@ -185,7 +244,94 @@ Operational alerts should cover destination-verification queue age and depth,
 any DLQ message, active/quarantined incident counts by reason, grace deadlines,
 and Resend failures. Immediate aggregate/gone quarantines, incident openings,
 and grace-deadline warnings are grouped by source, host, and reason and deduped
-through the D1 delivery ledger.
+through the D1 delivery ledger. The Worker also sends daily-deduplicated health
+alerts for a non-empty DLQ, a work item older than
+`ADMISSION_QUEUE_AGE_ALERT_HOURS`, stale evidence at or above
+`ADMISSION_STALE_ALERT_THRESHOLD`, and active admission incidents. These
+threshold bindings are managed consistently in Wrangler and OpenTofu.
+
+Open `GET /internal/admission/health` after deployment to verify the live work
+queue and DLQ backlog, stale-evidence coverage, active incidents, scheduled
+leases, and backfill/repair state in one response. Wrangler and OpenTofu both
+manage the destination queue, DLQ, 20-message/60-second consumer, two retries,
+and `DESTINATION_BROWSER` binding. OpenTofu retains destination work for seven
+days so a one-day delayed transient retry cannot expire before delivery, and supplies
+`DESTINATION_VERIFICATION_QUEUE_ID` to the billing-shutdown path. A non-empty
+DLQ, an oldest work item approaching the evidence deadline, any unexpectedly
+stale eligible record, or an active quarantine is an admission incident.
+
+Destination evidence expires after seven days and is scheduled for recheck one
+day before expiry. A transient early recheck retains the current alert standing
+until expiry; after expiry alerts pause and the existing seven-day catalog grace
+begins. HTTP 404/410, explicit posting closure language, past structured
+`JobPosting.validThrough`, and reviewed aggregate-board decisions bypass grace.
+Authoritative closure clears URL validation and closes only the canonical role;
+source occurrences and user history remain intact for a later verified reopen.
+
+Historical backfill is resumable and candidate-only:
+
+1. `POST /internal/admission/backfill` with `{"action":"preview"}` freezes an
+   exact generation and count.
+2. Repeatedly call the same endpoint with `action: "enqueue"`, the generation
+   ID, cursor, and a page size no larger than 500. Check progress with
+   `GET /internal/admission/backfill?generationId=...`.
+   If a bounded page reaches the DLQ, repeat that exact cursor with
+   `retryQueued: true`; message idempotency prevents a completed candidate from
+   being evaluated twice.
+3. Review completed candidate evidence, then call `action: "stage"` with the
+   generation ID, one `sourceId`, cursor, and a record limit below 900. Save the
+   returned repair token and exact job/occurrence counts.
+4. Apply through `/internal/admission/repair` only after owner approval. The
+   transaction rejects concurrent JSON changes and verifies every written job
+   and occurrence at zero mismatches before refreshing projections. Re-run the
+   source-scoped stage; it must report zero changes.
+
+### Guarded production execution
+
+Merging the code does not complete issue #120. Before any migration, import,
+plan, apply, backfill, or repair, complete issue #151's due post-#143
+observation and record the passing identity gate, active publication flag,
+exact coverage floor, alias behavior, queue/DLQ health, and unchanged outbox
+baseline.
+
+1. Export production D1 to an absolute path outside the repository. Record
+   counts for jobs, source occurrences, Saved/applications, receipts, releases,
+   notifications, and pending outbox rows.
+2. Apply only `0012_destination_verification_schedule.sql`. Build the Worker,
+   review the saved OpenTofu plan described above, apply that exact plan, and
+   verify the intentional Worker version reaches 100%.
+3. Before backfill, require `/internal/admission/health`, the admission audit,
+   and the posting-identity gate to pass. Record work queue/DLQ depth and age,
+   leases, freshness coverage, incidents, and operation state.
+4. Freeze one historical generation. Enqueue pages of at most 500 until it is
+   complete; retry only an exact failed cursor and require an empty DLQ.
+5. Review candidate evidence by source, host, employer, classification, and
+   notification history. Stage source-scoped batches below 900 records. Pause
+   for owner approval of every exact repair token and job/occurrence count.
+6. Apply only approved batches. Require zero verification mismatches, no new
+   notification or outbox rows, and a zero-change restage after every source.
+7. Finish with zero legacy-unclassified occurrences and no unresolved employer,
+   metadata, destination, projection, or schedule drift. Sample public
+   catalog/group/detail, Saved, release, aliases, and official handoff while
+   confirming durable IDs, timestamps, source references, posting identities,
+   receipts, and notification state remain preserved.
+
+On failure, keep the additive schema and evidence history. Revert the Worker
+and configuration through OpenTofu, then use superseding review decisions and
+a new guarded repair. Do not delete operational records or deploy retained AWS
+stacks.
+
+Keep issue #120 and its production roadmap items open after merge and rollout.
+The final gate requires physical iOS, physical Android, and production web
+acceptance for browse, detail, Saved/unavailable behavior, grouped results, and
+official handoff at accessibility text sizes and both device appearance
+settings. It also requires a real eligible custom-route role to cross freshness
+expiry: alerts stop at `freshUntil`, catalog visibility remains for the actual
+seven-day grace period, and unresolved verification removes the role after
+grace. Do not fabricate a production role or waive this observation. Close
+#120 only after that transition, three-client acceptance, an empty DLQ,
+acceptable queue age, verified alert delivery, passing identity enforcement,
+and no unexpected stale-eligible or quarantined incidents are recorded.
 
 Greenhouse, Lever, and Ashby use dedicated half-hour EventBridge schedules,
 dispatcher Lambdas, FIFO work queues, two-minute workers, and dead-letter
@@ -423,7 +569,7 @@ discovery-latency metrics remain part of issue #40.
 Keep the checked-in Terraform and Wrangler defaults at `false` throughout this
 procedure. Store exports, full audit reports, manifests, and secrets outside
 Git. Do not close issue #50 or its product-roadmap checkbox until the final
-24-hour acceptance window passes.
+12-hour acceptance window passes.
 
 1. Export production D1 to an absolute path outside the repository with
    `npx wrangler d1 export intern-notifs-db --remote --output ABSOLUTE_PATH`.
@@ -468,7 +614,7 @@ Git. Do not close issue #50 or its product-roadmap checkbox until the final
     pass. Then review and apply a separate plan setting
     `identity_unconfirmed_publication_enabled=true`. Keep the checked-in
     publication default `false` and coverage floor `1` as fail-safes.
-12. Observe at least one complete 24-hour source cycle and one successful daily
+12. Observe at least one complete 12-hour source cycle and one successful daily
     posting-identity audit. On any regression, disable the flag first and do not
     attempt another repair until a fresh guarded preview passes.
 13. Only after those checks pass, update issue #50 and
@@ -485,7 +631,7 @@ canonical role behavior matched, and the outbox remained at 384 rows. Production
 set the coverage floor to that exact value before enabling unconfirmed
 publication. The owner explicitly waived step 12 as an acceptance gate; the
 post-activation scheduled audit passed with enforcement active, and non-gating
-follow-up issue #151 remains due at or after `2026-09-02T04:18:01Z`.
+follow-up issue #151 remains due at or after `2026-09-01T16:18:01Z`.
 
 For eligible groups whose presentation already agrees, the repair preserves the
 oldest catalog job, merges source references,

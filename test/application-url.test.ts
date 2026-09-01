@@ -161,6 +161,53 @@ describe('application URL validation', () => {
       new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
     )).resolves.toMatchObject({ contentExcerpt: expect.stringContaining('Responsibilities include testing'), contentSource: 'json-ld', confidence: { signals: expect.arrayContaining(['substantive page content', 'job-description language']) } });
   });
+  it('extracts authoritative closure language and structured validThrough before accepting a 200 page', async () => {
+    const explicit = await inspectApplicationPage('https://careers.example.com/jobs/123456', async () =>
+      new Response('<title>Software Engineering Intern</title><main>This position is no longer accepting applications.</main>',
+        { status: 200, headers: { 'content-type': 'text/html' } }));
+    expect(explicit).toMatchObject({ closureState: 'gone', closureSignal: 'explicit-language' });
+
+    const structured = await inspectApplicationPage('https://careers.example.com/jobs/123456', async () =>
+      new Response(`<script type="application/ld+json">${JSON.stringify({ '@type': 'JobPosting',
+        description: 'Software Engineering Intern', validThrough: '2020-01-01' })}</script>`,
+      { status: 200, headers: { 'content-type': 'text/html' } }));
+    expect(structured).toMatchObject({ validThrough: '2020-01-01T00:00:00.000Z', closureState: 'gone',
+      closureSignal: 'valid-through-expired' });
+  });
+  it('uses validThrough only from the requested structured posting', async () => {
+    const html = `<script type="application/ld+json">${JSON.stringify([
+      { '@type': 'JobPosting', identifier: '999999', description: 'Related expired role', validThrough: '2020-01-01' },
+      { '@type': 'JobPosting', identifier: '123456', description: 'Requested open role', validThrough: '2030-01-01' },
+    ])}</script>`;
+    await expect(inspectApplicationPage('https://careers.example.com/jobs/123456', async () =>
+      new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+    )).resolves.toMatchObject({ validThrough: '2030-01-01T00:00:00.000Z', closureState: 'open' });
+  });
+  it('ignores a sole structured posting when its identity does not match the requested role', async () => {
+    const html = `<main>Requested role details and qualifications.</main><script type="application/ld+json">${JSON.stringify({
+      '@type': 'JobPosting', identifier: '999999', description: 'Related expired role', validThrough: '2020-01-01',
+    })}</script>`;
+    const evidence = await inspectApplicationPage('https://careers.example.com/jobs/123456', async () =>
+      new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+    );
+    expect(evidence).toMatchObject({ expectedPostingId: '123456', postingIdPresent: false, closureState: 'open',
+      contentExcerpt: 'Requested role details and qualifications.', contentSource: 'main' });
+    expect(evidence).not.toHaveProperty('validThrough');
+  });
+  it('recognizes common explicit closure artifacts with surrounding copy', async () => {
+    for (const closure of ['This job has expired.', 'No longer accepting applications. View similar roles.']) {
+      await expect(inspectApplicationPage('https://careers.example.com/jobs/123456', async () =>
+        new Response(`<title>Software Engineering Intern</title><main>${closure}</main>`,
+          { status: 200, headers: { 'content-type': 'text/html' } }),
+      )).resolves.toMatchObject({ closureState: 'gone', closureSignal: 'explicit-language' });
+    }
+  });
+  it('does not mistake generic careers policy copy for posting closure', async () => {
+    const evidence = await inspectApplicationPage('https://careers.example.com/jobs/123456', async () =>
+      new Response('<title>Software Engineering Intern</title><main>Benefits may change after positions are no longer available. Apply now.</main>',
+        { status: 200, headers: { 'content-type': 'text/html' } }));
+    expect(evidence).toMatchObject({ closureState: 'open' });
+  });
   it('caps a generic career shell at catalog-only even when its metadata is present', async () => {
     await expect(inspectApplicationPage('https://careers.example.com/jobs/123456', async () =>
       new Response('<title>JPMC Candidate Experience page</title><meta name="description" content="Search opportunities.">', { status: 200, headers: { 'content-type': 'text/html' } }),

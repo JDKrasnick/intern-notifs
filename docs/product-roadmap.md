@@ -52,9 +52,10 @@
 - [ ] Complete issue #120's catalog-admission rollout.
   - [x] Add the provider-neutral employer, posting-attribution, destination, and metadata admission record; derive canonical eligibility from source occurrences; and gate catalog indexes and alert outbox writes.
   - [x] Add reviewed D1 employer mappings and destination rules, browser-verification queue/DLQ processing, evidence and incident history, grouped support email states, guarded silent repair, and the Saved unavailable state.
-  - [ ] Deploy migration `0007_catalog_admission.sql`, configure the Browser Rendering and Resend bindings, and verify queue/DLQ health plus the admission audit in production.
+  - [x] Add authoritative closure/`validThrough` detection, seven-day evidence scheduling and grace, tenant-safe Markdown continuations, frozen candidate-only backfills, source-scoped guarded staging, and unified admission health/audit reporting.
+  - [ ] Bootstrap and import the production OpenTofu R2 backend, apply only migration `0012_destination_verification_schedule.sql`, configure the Browser Rendering and Resend bindings, and verify queue/DLQ health plus the admission and posting-identity audits in production.
   - [ ] Review the production candidate set, approve the exact guarded repair token/count, apply it, and verify unchanged job IDs, first-seen timestamps, recency, source references, and notification state.
-  - [ ] Verify representative iOS/Android Saved rendering and the seven-day custom-route grace transition on physical devices.
+  - [ ] Verify browse, detail, Saved/unavailable behavior, grouped results, and official handoff on physical iOS, physical Android, and production web, then observe a real seven-day custom-route grace transition before closing #120.
 - [x] Add internal source-aware filtering (FAANG, verified startups/YC, normal, U.S.-citizenship requirement, advanced-degree requirement, and open/closed status) to catalog ingestion, alerts, and mobile discovery.
 - [x] Add the signed-in “new since last open” inbox with a calm first-open baseline, saved-filter matching, and count-led mobile launch screen.
 - [x] Add signed-in swipe-left save for later, synced to the responsive web Saved queue and official-form handoff.
@@ -71,7 +72,7 @@
   - [x] Replace live alias/job/occurrence/outbox sequencing with an atomic memory, DynamoDB, and D1 posting-observation commit and deterministic occurrence projection, including concurrency, rollback, and one-alert regression coverage.
   - [x] Add the immutable D1 review ledger, sanitized unknown-family queue, versioned audit/gate, notification-tombstone repair, shadow publication flag, and accessible unconfirmed status across catalog, detail, Saved, grouped results, push, and email.
   - [x] Deploy migrations `0010_posting_identity.sql` and `0011_issue_50_reviewed_employer_identity.sql` with unconfirmed publication disabled, verify the recurring audit, archive a passing production shadow audit, validate the compatible client contract and all affected roles, then obtain owner approval before enabling publication. Physical-device release acceptance remains in the release checklist rather than this backend rollout.
-  - [x] Apply the combined reviewed repair with exact token/count guards, then verify zero remaining approved candidates, legacy links, projections, saved applications, and unchanged notification/outbox counts. Production completed on 2026-09-01 with 4,339 confirmed and 1,746 unconfirmed occurrences, 71.30649137222679% confirmed coverage, zero gate violations, all 12 official destinations healthy, and 384 outbox rows unchanged. The owner waived the gating 24-hour observation; non-gating follow-up issue #151 remains due after 2026-09-02T04:18:01Z.
+  - [x] Apply the combined reviewed repair with exact token/count guards, then verify zero remaining approved candidates, legacy links, projections, saved applications, and unchanged notification/outbox counts. Production completed on 2026-09-01 with 4,339 confirmed and 1,746 unconfirmed occurrences, 71.30649137222679% confirmed coverage, zero gate violations, all 12 official destinations healthy, and 384 outbox rows unchanged. The owner waived the gating observation; non-gating 12-hour follow-up issue #151 remains due after 2026-09-01T16:18:01Z.
 - [ ] Complete issue #124's high-priority normalized display contract across catalog cards, grouped results, role detail, saved roles, and notification previews without company-specific mappings.
 - [ ] Complete issue #99 catalog quality hardening and backfill.
   - [x] Add shared catalog normalization, structured locations/pay, defensive mobile presentation, and the guarded D1 repair workflow.
@@ -151,7 +152,7 @@
 
 | Date | Decision | Reason |
 | --- | --- | --- |
-| 2026-09-01 | Enable unconfirmed posting-identity publication at the exact passing 71.30649137222679% confirmed-coverage floor and waive the final 24-hour acceptance gate while retaining a non-gating follow-up | The guarded production repair converged, every integrity blocker was zero, the enforced scheduled audit passed, all affected aliases and official destinations were verified, and publication status remains explicit to users |
+| 2026-09-01 | Enable unconfirmed posting-identity publication at the exact passing 71.30649137222679% confirmed-coverage floor and waive the final acceptance gate while retaining a non-gating 12-hour follow-up | The guarded production repair converged, every integrity blocker was zero, the enforced scheduled audit passed, all affected aliases and official destinations were verified, and publication status remains explicit to users |
 | 2026-07-19 | Initial audience is international undergraduate/graduate students | Broader early-career reach; filters must support work authorization and location needs |
 | 2026-07-19 | Initial roles are technical | Focus increases catalog quality and relevance |
 | 2026-08-09 | Initial lifecycle scope includes internships, co-ops, apprenticeships, new-grad programs, and explicitly entry-level roles | Matches how employers label student and first-role hiring while excluding generic or merely junior titles |

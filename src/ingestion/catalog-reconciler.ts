@@ -67,6 +67,8 @@ function occurrence(listing: ProcessedListing, externalId: string): SourceOccurr
     technical: listing.technical ?? true,
     state: listing.state,
     ...(listing.admission ? { admission: listing.admission } : {}),
+    ...(listing.employerLabelOrigin ? { employerLabelOrigin: listing.employerLabelOrigin } : {}),
+    ...(listing.employerInheritance ? { employerInheritance: listing.employerInheritance } : {}),
   };
 }
 
@@ -148,10 +150,14 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
     : [...existing.sourceReferences, { ...reference, firstAttachedAt: now, firstAttachedAtPrecision: 'exact' as const }];
   const admission = deriveCanonicalAdmission(sourceReferences, now);
   const listingNormalizedUrl = normalizeUrl(listing.applyUrl);
-  const keepQuarantined = existing.invalidApplicationUrl === listingNormalizedUrl;
+  const verifiedReopen = Boolean(admission?.catalogEligible
+    && ['posting-detail', 'application-form'].includes(admission.destination.classification));
+  const authoritativeClosure = admission?.destination.classification === 'gone';
+  const keepQuarantined = existing.invalidApplicationUrl === listingNormalizedUrl && !verifiedReopen;
   const replaceStoredUrl = Boolean(applicationUrlValidatedAt && (!existing.applicationUrlValidatedAt || existing.normalizedUrl !== listingNormalizedUrl));
   const base = { ...existing };
   if (!keepQuarantined) delete base.invalidApplicationUrl;
+  if (authoritativeClosure) delete base.applicationUrlValidatedAt;
   const internshipIdentity = listing.internshipIdentity ?? existing.internshipIdentity;
   const canonicalCompany = admission?.canonicalEmployer?.displayName;
   const season = preferIncoming || Boolean(applicationUrlValidatedAt) || (match >= 0 && existing.sourceReferences.length === 1)
@@ -179,8 +185,11 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
     employerCategory: employerCategory(company),
     sourceReferences,
     ...(admission ? { admission } : {}),
+    ...(authoritativeClosure ? { invalidApplicationUrl: listingNormalizedUrl,
+      notification: { ...existing.notification, smsPending: false, digestPending: false } } : {}),
     technical: canRevive ? anyOpenTechnicalOccurrence(sourceReferences) : existing.technical,
-    open: keepQuarantined ? false : canRevive && sourceReferences.some((item) => item.state === 'open') && seasonAllowsOpen(season, internshipIdentity, sourceReferences, now),
+    open: authoritativeClosure || keepQuarantined ? false
+      : canRevive && sourceReferences.some((item) => item.state === 'open') && seasonAllowsOpen(season, internshipIdentity, sourceReferences, now),
     lastSeenAt: now,
     ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}),
     ...(metadataVersion ? { applicationPageMetadataVersion: metadataVersion } : {}),
@@ -193,6 +202,7 @@ function create(listing: ProcessedListing, externalId: string, now: string, base
   const key = fingerprint(listing.company, listing.title, listing.location, listing.season);
   const reference = { ...occurrence(listing, externalId), firstAttachedAt: now, firstAttachedAtPrecision: 'exact' as const };
   const admission = deriveCanonicalAdmission([reference], now);
+  const authoritativeClosure = admission?.destination.classification === 'gone';
   return {
     jobId: listing.postingIdentity?.canonicalJobId
       ?? (listing.postingIdentityDecision?.status === 'unconfirmed'
@@ -217,8 +227,9 @@ function create(listing: ProcessedListing, externalId: string, now: string, base
     employerCategory: employerCategory(listing.company),
     sourceReferences: [reference],
     ...(admission ? { admission } : {}),
+    ...(authoritativeClosure ? { invalidApplicationUrl: normalizedUrl } : {}),
     technical: listing.technical ?? isTechnicalJob(listing),
-    open: listing.state === 'open' && seasonAllowsOpen(listing.season, listing.internshipIdentity, [reference], now),
+    open: !authoritativeClosure && listing.state === 'open' && seasonAllowsOpen(listing.season, listing.internshipIdentity, [reference], now),
     firstSeenAt: now,
     catalogVisibleAt: now,
     catalogRecency: baseline ? 'baseline' : 'normal',

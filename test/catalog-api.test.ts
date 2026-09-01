@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createApiHandler } from '../src/api.js';
 import { MemoryInternshipStore, MemoryReleaseStore, MemoryUserStore } from '../src/store.js';
 import { catalogGroupDetails, groupCatalogJobs } from '../src/catalog-groups.js';
-import type { Internship, InternshipIdentity } from '../src/types.js';
+import type { CatalogAdmission, Internship, InternshipIdentity } from '../src/types.js';
 
 function job(id: string, seconds: number, title = `Software Intern ${id}`): Internship {
   const observed = `2026-08-23T12:00:${String(seconds).padStart(2, '0')}.000Z`;
@@ -47,19 +47,41 @@ describe('grouped catalog API', () => {
     expect(invalidDetail.statusCode).toBe(400);
   });
 
-  it('uses the backing store filtered projection path without sequential scans', async () => {
+  it('filters projection pages in the API so dynamic admission remains authoritative', async () => {
     const jobs = new MemoryInternshipStore();
     await jobs.putInternship({ ...job('software', 0), internshipIdentity: identity('Software Intern', 'software') });
     await jobs.putInternship({ ...job('ml', 10, 'Machine Learning Intern'), internshipIdentity: identity('Machine Learning Intern', 'ai-ml') });
     await jobs.putCatalogProjection(groupCatalogJobs(await jobs.listCatalog()).map(catalogGroupDetails), new Date().toISOString());
-    let filteredReads = 0;
-    const filtered = jobs.listCatalogProjectionFiltered.bind(jobs);
-    jobs.listCatalogProjectionFiltered = async (...args) => { filteredReads += 1; return filtered(...args); };
-    jobs.listCatalogProjection = async () => { throw new Error('filtered requests should not scan projection pages'); };
+    let projectionReads = 0;
+    const projected = jobs.listCatalogProjection.bind(jobs);
+    jobs.listCatalogProjection = async (...args) => { projectionReads += 1; return projected(...args); };
     const response = await createApiHandler({ jobs, users: new MemoryUserStore() })(event('GET', '/catalog', { q: 'machine' }));
     expect(response.statusCode).toBe(200);
     expect(body<{ groups: Array<{ titles: string[] }> }>(response).groups).toMatchObject([{ titles: ['Machine Learning Intern'] }]);
-    expect(filteredReads).toBe(1);
+    expect(projectionReads).toBe(1);
+  });
+
+  it('hides expired legacy-shaped roles from default, filtered, and detail projection paths', async () => {
+    const jobs = new MemoryInternshipStore();
+    const admission: CatalogAdmission = {
+      canonicalEmployer: { id: 'acme', displayName: 'Acme' }, employerResolution: 'resolved', postingAttribution: 'attributed',
+      destination: { classification: 'posting-detail', candidateUrl: 'https://careers.example.test/stale', provider: 'unknown',
+        inspectedAt: '2020-01-01T00:00:00Z' },
+      metadata: { complete: true, title: 'complete', location: 'complete' }, catalogEligible: true, alertEligible: true,
+      reasonCodes: [], evaluatedAt: '2020-01-01T00:00:00Z', evidenceObservedAt: '2020-01-01T00:00:00Z',
+    };
+    const stale = job('stale', 0);
+    stale.admission = admission;
+    stale.sourceReferences = [{ sourceId: 'community', provenance: 'reviewed-community', externalId: 'stale', document: 'README.md',
+      sourceUrl: 'https://github.com/example/jobs', row: 1, company: stale.company, title: stale.title,
+      location: stale.location, season: stale.season, applyUrl: stale.applyUrl, compensation: stale.compensation,
+      state: 'open', admission }];
+    const [details] = groupCatalogJobs([stale]).map(catalogGroupDetails);
+    await jobs.putCatalogProjection([details!], new Date().toISOString());
+    const handler = createApiHandler({ jobs, users: new MemoryUserStore() });
+    expect(body<{ groups: unknown[] }>(await handler(event('GET', '/catalog'))).groups).toEqual([]);
+    expect(body<{ groups: unknown[] }>(await handler(event('GET', '/catalog', { q: 'software' }))).groups).toEqual([]);
+    expect((await handler(event('GET', `/catalog/groups/${details!.group.groupId}`))).statusCode).toBe(404);
   });
 
   it('lists public rows, recomputes filtered summaries, and opens complete group details', async () => {

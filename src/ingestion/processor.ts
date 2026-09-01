@@ -137,7 +137,8 @@ export function processPosting(
                 : posting.provenance === 'employer-submitted' ? 'employer-submission' : 'github'),
       sourceId: posting.sourceId,
       sourceUrl: posting.sourceUrl,
-      employerScope: `employer:${canonicalCompanyKey(company)}`,
+      ...(posting.employer.labelOrigin !== 'inherited' || posting.employer.inheritance === 'same-tenant'
+        ? { employerScope: `employer:${canonicalCompanyKey(company)}` } : {}),
       ...(posting.providerIdentity?.tenant ? { tenant: posting.providerIdentity.tenant }
         : destinationReference.tenant ? { tenant: destinationReference.tenant } : {}),
       postingId: destinationReference.postingId ?? posting.externalId,
@@ -150,6 +151,8 @@ export function processPosting(
       locations: sourceLocations,
       titleRepaired: title !== sourceTitle,
     }),
+    ...(posting.employer.labelOrigin ? { employerLabelOrigin: posting.employer.labelOrigin } : {}),
+    ...(posting.employer.inheritance ? { employerInheritance: posting.employer.inheritance } : {}),
   });
   // A non-technical early-career role is still worth keeping: it is persisted,
   // stays out of every catalog index and alert, and remains available if the

@@ -7,7 +7,7 @@ import type { ApplicationSession } from '../src/application-automation.js';
 import { preferredJobIdentityConflicts, resolvePostingAliases, type AliasResolution } from '../src/identity/posting.js';
 import { deletedUserTombstoneKey, type InternshipStore, type LeverAdmission, type PostingObservationCommit, type PostingObservationCommitResult, type ReleaseStore, type UserStore, type CatalogQuery } from '../src/store.js';
 import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from '../src/catalog-groups.js';
-import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, PostingIdentityDecision, PostingIdentityIncident, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from '../src/types.js';
+import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, PostingIdentityDecision, PostingIdentityIncident, SourceCheckpoint, SourceHealth, SourceOccurrence, SourceOccurrenceState, UserDocument, UserPreferences } from '../src/types.js';
 import type { D1Database, D1PreparedStatement } from './types.js';
 import { alertEligible, catalogEligible } from '../src/catalog-admission.js';
 import { postingObservationProjection } from '../src/identity/projection.js';
@@ -428,8 +428,55 @@ export class D1InternshipStore implements InternshipStore {
   putSourceOccurrence(occurrence: SourceOccurrenceState) {
     return this.sourceOccurrenceStatement(occurrence).run().then(() => undefined);
   }
-  async putAdmissionState(job: Internship, occurrence?: SourceOccurrenceState): Promise<void> {
-    await this.db.batch([this.internshipStatement(job), ...(occurrence ? [this.sourceOccurrenceStatement(occurrence)] : [])]);
+  async putAdmissionState(
+    job: Internship,
+    expectedReference: SourceOccurrence,
+    occurrence?: SourceOccurrenceState,
+    expectedOccurrence?: SourceOccurrenceState,
+  ): Promise<boolean> {
+    const canonical = canonicalCatalogRecency(job);
+    const canonicalJson = JSON.stringify(canonical);
+    const jobUpdate = this.db.prepare(`UPDATE catalog_items SET kind = 'internship', value = ?, url_key = ?, fingerprint_key = ?,
+      sms_pending = ?, digest_pending = ?, catalog_state = ?, catalog_sort_key = ?, search_text = ?, source_classes = ?
+      WHERE pk = ? AND sk = 'META' AND kind = 'internship' AND EXISTS (
+        SELECT 1 FROM json_each(catalog_items.value, '$.sourceReferences') AS reference
+        WHERE json_extract(reference.value, '$.sourceId') = ?
+          AND json_extract(reference.value, '$.externalId') = ?
+          AND json(reference.value) = json(?)
+      ) AND (? IS NULL OR EXISTS (
+        SELECT 1 FROM catalog_items AS expected_occurrence
+        WHERE expected_occurrence.pk = ? AND expected_occurrence.sk = ? AND expected_occurrence.value = ?
+      ))`).bind(
+      canonicalJson,
+      canonical.normalizedUrl,
+      canonical.fingerprint,
+      canonical.notification.smsPending && alertEligible(canonical) ? 1 : 0,
+      canonical.notification.digestPending && alertEligible(canonical) ? 1 : 0,
+      canonical.technical === false || !catalogEligible(canonical) ? null : canonical.open ? 'OPEN' : 'CLOSED',
+      canonical.technical === false || !catalogEligible(canonical) ? null
+        : canonical.open ? openCatalogSortKey(canonical) : `${canonical.lastSeenAt}#${canonical.jobId}`,
+      canonical.technical === false || !catalogEligible(canonical) ? null : catalogSearchText(canonical),
+      canonical.technical === false || !catalogEligible(canonical) ? null : JSON.stringify(catalogSourceClasses(canonical)),
+      `JOB#${canonical.jobId}`,
+      expectedReference.sourceId,
+      expectedReference.externalId ?? null,
+      JSON.stringify(expectedReference),
+      expectedOccurrence ? JSON.stringify(expectedOccurrence) : null,
+      expectedOccurrence ? `SOURCE#${expectedOccurrence.sourceId}` : '',
+      expectedOccurrence ? `OCCURRENCE#${expectedOccurrence.externalId}` : '',
+      expectedOccurrence ? JSON.stringify(expectedOccurrence) : '',
+    );
+    const statements = [jobUpdate];
+    if (occurrence && expectedOccurrence) {
+      statements.push(this.db.prepare(`UPDATE catalog_items SET kind = 'source-occurrence', value = ?, source_id = ?, external_id = ?
+        WHERE pk = ? AND sk = ? AND kind = 'source-occurrence' AND value = ?
+          AND EXISTS (SELECT 1 FROM catalog_items AS job WHERE job.pk = ? AND job.sk = 'META' AND job.value = ?)`)
+        .bind(JSON.stringify(occurrence), occurrence.sourceId, occurrence.externalId,
+          `SOURCE#${occurrence.sourceId}`, `OCCURRENCE#${occurrence.externalId}`, JSON.stringify(expectedOccurrence),
+          `JOB#${canonical.jobId}`, canonicalJson));
+    }
+    const [result] = await this.db.batch(statements);
+    return result?.meta.changes === 1;
   }
   async putInternshipWithNotificationEvent(job: Internship, event: NotificationEvent): Promise<boolean> {
     const eventStatement = this.db.prepare("INSERT INTO catalog_items (pk, sk, kind, value) VALUES (?, 'EVENT', 'notification-event', ?) ON CONFLICT(pk, sk) DO NOTHING")
@@ -439,7 +486,7 @@ export class D1InternshipStore implements InternshipStore {
   }
   private async pending(column: 'sms_pending' | 'digest_pending'): Promise<Internship[]> {
     const result = await this.db.prepare(`SELECT value FROM catalog_items WHERE ${column} = 1 AND catalog_state = 'OPEN'`).all<JsonRow>();
-    return result.results.map((row) => JSON.parse(row.value) as Internship);
+    return result.results.map((row) => JSON.parse(row.value) as Internship).filter((job) => alertEligible(job));
   }
   pendingSms() { return this.pending('sms_pending'); }
   pendingDigest() { return this.pending('digest_pending'); }
@@ -532,7 +579,7 @@ export class D1InternshipStore implements InternshipStore {
         const rowOffset = scanned;
         scanned += 1;
         const job = withEmployerCategory(JSON.parse(row.value) as Internship);
-        if (isPastSeason(job.season)) continue;
+        if (!catalogEligible(job) || isPastSeason(job.season)) continue;
         if (jobs.length === limit) return { jobs, cursor: String(rowOffset) };
         jobs.push(job);
       }
@@ -543,7 +590,8 @@ export class D1InternshipStore implements InternshipStore {
     const result = await this.db.prepare("SELECT value FROM catalog_items WHERE catalog_state = 'OPEN' AND catalog_sort_key > ? AND catalog_sort_key <= ? ORDER BY catalog_sort_key DESC")
       .bind(`3#${after}`, `3#${before}\uffff`).all<JsonRow>();
     return result.results.map((row) => JSON.parse(row.value) as Internship)
-      .filter((job) => catalogRecency(job) === 'normal' && catalogVisibleAt(job) > after && catalogVisibleAt(job) <= before && !isPastSeason(job.season))
+      .filter((job) => catalogEligible(job) && catalogRecency(job) === 'normal'
+        && catalogVisibleAt(job) > after && catalogVisibleAt(job) <= before && !isPastSeason(job.season))
       .sort(compareCatalogRecency).map(withEmployerCategory);
   }
   async listCatalog(): Promise<Internship[]> {
