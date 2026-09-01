@@ -116,9 +116,9 @@ describe('D1 atomic posting observation', () => {
     expect(storedOccurrence).toBeDefined();
     await store.putAdmissionState({
       ...stored!, sourceReferences: [{ ...stored!.sourceReferences[0]!, admission: browserAdmission }],
-    }, {
+    }, stored!.sourceReferences[0]!, {
       ...storedOccurrence!, occurrence: { ...storedOccurrence!.occurrence, admission: browserAdmission },
-    });
+    }, storedOccurrence!);
 
     const staleAdmission = admission('2026-08-29T12:00:28.000Z');
     await store.commitPostingObservation({

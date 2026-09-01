@@ -242,7 +242,9 @@ export async function processDestinationVerificationBatch(
   const opened: Array<{ sourceId: string; host: string; reason: string; incidentId: string; messageType: 'incident-opened' | 'quarantine' }> = [];
   const pending: Array<{ queued: MessageBatch<unknown>['messages'][number]; message: DestinationVerificationMessage }> = [];
   const pendingAttemptKeys = new Set<string>();
-  const recentAttemptCutoff = new Date(now().getTime() - 24 * 60 * 60_000).toISOString();
+  const batchStartedAt = now();
+  const recentAttemptCutoff = new Date(batchStartedAt.getTime() - 24 * 60 * 60_000).toISOString();
+  const nextAttemptAfterRecentDuplicate = new Date(batchStartedAt.getTime() + 24 * 60 * 60_000).toISOString();
   for (const queued of batch.messages) {
     try {
       const message = parseMessage(queued.body);
@@ -264,10 +266,15 @@ export async function processDestinationVerificationBatch(
         await settleWithoutVerification(queued, message, now().toISOString(), existing.classification, existing.nextCheckAt);
         continue;
       }
-      const attemptKey = `${message.jobId}\0${message.sourceId}\0${message.candidateUrl}`;
-      if (pendingAttemptKeys.has(attemptKey)
-        || await operations.hasVerificationAttemptSince(message.jobId, message.sourceId, message.candidateUrl, recentAttemptCutoff)) {
+      const attemptKey = `${candidateOnly ? `backfill:${message.generationId ?? ''}:${message.occurrenceKey ?? ''}` : 'live'}\0${message.jobId}\0${message.sourceId}\0${message.candidateUrl}`;
+      if (pendingAttemptKeys.has(attemptKey)) {
         queued.ack(); continue;
+      }
+      if (!candidateOnly
+        && await operations.hasVerificationAttemptSince(message.jobId, message.sourceId, message.candidateUrl, recentAttemptCutoff)) {
+        await settleWithoutVerification(queued, message, now().toISOString(),
+          reference.admission?.destination.classification ?? 'recent-attempt', nextAttemptAfterRecentDuplicate);
+        continue;
       }
       pendingAttemptKeys.add(attemptKey);
       pending.push({ queued, message });
@@ -441,7 +448,10 @@ export async function processDestinationVerificationBatch(
           continue;
         }
         if ('incident' in result && result.incident) opened.push(result.incident);
-        await operations.recordVerificationAttempt({ id: crypto.randomUUID(), jobId: message.jobId, sourceId: message.sourceId,
+        const attemptId = candidateOnly
+          ? `historical-backfill:${message.generationId ?? 'unknown'}:${crypto.randomUUID()}`
+          : crypto.randomUUID();
+        await operations.recordVerificationAttempt({ id: attemptId, jobId: message.jobId, sourceId: message.sourceId,
           candidateUrl: message.candidateUrl, state: browserError ? 'failed' : 'succeeded', classification: result.destination.classification,
           ...(browserError ? { error: browserError instanceof Error ? browserError.message.slice(0, 500) : String(browserError).slice(0, 500) } : {}),
           attemptedAt, completedAt: inspectedAt }, !candidateOnly && result.destination.evidenceHash ? { hash: result.destination.evidenceHash,

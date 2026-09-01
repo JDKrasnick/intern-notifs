@@ -50,7 +50,7 @@ function subject() {
   const database = new DatabaseSync(':memory:');
   for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0008_catalog_admission_occurrence_repair.sql',
     '0010_posting_identity.sql',
-    '0011_destination_verification_schedule.sql']) {
+    '0012_destination_verification_schedule.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   const db = sqliteD1(database);

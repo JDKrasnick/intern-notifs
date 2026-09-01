@@ -33,7 +33,7 @@ function subject() {
   const database = new DatabaseSync(':memory:');
   for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0008_catalog_admission_occurrence_repair.sql',
     '0010_posting_identity.sql',
-    '0011_destination_verification_schedule.sql']) {
+    '0012_destination_verification_schedule.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   const db = sqliteD1(database);
@@ -107,6 +107,43 @@ describe('destination verification queue consumer', () => {
       sourceReferences: [{ applyUrl: currentReference.applyUrl }] });
   });
 
+  it('settles a scheduled check when the same destination was attempted recently', async () => {
+    const { db, operations, jobs } = subject();
+    const { job, reference } = role();
+    const priorAdmission = {
+      canonicalEmployer: { id: 'acme', displayName: 'Acme' }, employerResolution: 'resolved' as const,
+      postingAttribution: 'attributed' as const,
+      destination: { classification: 'posting-detail' as const, candidateUrl: reference.applyUrl,
+        provider: 'greenhouse' as const, tenant: 'acme', expectedPostingId: reference.externalId,
+        inspectedAt: '2026-08-24T00:00:00Z', freshUntil: '2026-08-31T00:00:00Z', nextCheckAt: '2026-08-30T00:00:00Z' },
+      metadata: { complete: true, title: 'complete' as const, location: 'complete' as const },
+      catalogEligible: true, alertEligible: true, reasonCodes: [], evaluatedAt: '2026-08-24T00:00:00Z',
+      evidenceObservedAt: '2026-08-24T00:00:00Z',
+    };
+    reference.admission = priorAdmission;
+    job.admission = priorAdmission;
+    await jobs.putInternship({ ...job, sourceReferences: [reference] });
+    await operations.syncVerificationSchedule('2026-08-30T00:00:00Z');
+    const [scheduled] = await operations.leaseDueVerifications('2026-08-30T00:00:00Z');
+    await operations.recordVerificationAttempt({ id: 'recent-attempt', jobId: job.jobId, sourceId: reference.sourceId,
+      candidateUrl: reference.applyUrl, state: 'failed', error: 'Navigation timeout',
+      attemptedAt: '2026-08-30T00:00:20Z', completedAt: '2026-08-30T00:00:30Z' });
+    const queued = queueMessage({ version: 1, jobId: job.jobId, sourceId: reference.sourceId,
+      externalId: reference.externalId!, candidateUrl: reference.applyUrl, providerIdentity: scheduled!.providerIdentity,
+      reason: 'daily-retry', queuedAt: '2026-08-30T00:00:00Z', occurrenceKey: scheduled!.occurrenceKey,
+      leaseToken: scheduled!.leaseToken, idempotencyKey: 'recent-scheduled-generation' });
+
+    await processDestinationVerificationBatch({ queue: 'destination-verification', messages: [queued] }, environment(db),
+      () => new Date('2026-08-30T00:01:00Z'));
+
+    expect(queued.ack).toHaveBeenCalledOnce();
+    expect(queued.retry).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
+    await expect(operations.verificationCompleted('recent-scheduled-generation')).resolves.toBe(true);
+    await expect(operations.leaseDueVerifications('2026-08-30T00:16:00Z')).resolves.toEqual([]);
+    await expect(operations.leaseDueVerifications('2026-08-31T00:01:00Z')).resolves.toHaveLength(1);
+  });
+
   it('does not persist evidence when the occurrence changes while the browser is running', async () => {
     const { database, db, jobs } = subject();
     const { job, reference } = role();
@@ -148,6 +185,9 @@ describe('destination verification queue consumer', () => {
     const generation = await operations.previewBackfill('2026-08-30T00:00:00Z');
     const [candidate] = await operations.backfillPage(generation.id);
     await operations.markBackfillQueued(generation.id, [candidate!.occurrenceKey], '2026-08-30T00:01:00Z');
+    await operations.recordVerificationAttempt({ id: 'recent-live-attempt', jobId: job.jobId, sourceId: reference.sourceId,
+      candidateUrl: reference.applyUrl, state: 'failed', error: 'Navigation timeout',
+      attemptedAt: '2026-08-30T00:00:20Z', completedAt: '2026-08-30T00:00:30Z' });
     const frame = { evaluate: vi.fn().mockResolvedValue({ url: reference.applyUrl, title: reference.title,
       visibleText: `${reference.externalId} Responsibilities and qualifications. ${'Build reliable systems. '.repeat(30)}`,
       structuredJobText: JSON.stringify({ '@type': 'JobPosting', identifier: reference.externalId, description: reference.title }),
@@ -165,6 +205,11 @@ describe('destination verification queue consumer', () => {
     expect(await jobs.getJob(job.jobId)).toEqual(before);
     expect(database.prepare('SELECT count(*) AS count FROM admission_backfill_evidence').get()).toEqual({ count: 1 });
     expect(database.prepare('SELECT count(*) AS count FROM destination_verification_evidence').get()).toEqual({ count: 0 });
+    await expect(operations.hasVerificationAttemptSince(job.jobId, reference.sourceId, reference.applyUrl,
+      '2026-08-29T00:00:00Z')).resolves.toBe(true);
+    database.prepare("DELETE FROM destination_verification_attempts WHERE id = 'recent-live-attempt'").run();
+    await expect(operations.hasVerificationAttemptSince(job.jobId, reference.sourceId, reference.applyUrl,
+      '2026-08-29T00:00:00Z')).resolves.toBe(false);
   });
 
   it('retries a transient browser failure for platform retry and eventual DLQ handling', async () => {

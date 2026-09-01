@@ -745,6 +745,7 @@ export class D1CatalogAdmissionStore {
   async hasVerificationAttemptSince(jobId: string, sourceId: string, candidateUrl: string, since: string): Promise<boolean> {
     return Boolean(await this.db.prepare(`SELECT id FROM destination_verification_attempts
       WHERE job_id = ? AND source_id = ? AND candidate_url = ? AND completed_at >= ?
+        AND id NOT LIKE 'historical-backfill:%'
       ORDER BY completed_at DESC LIMIT 1`)
       .bind(jobId, sourceId, candidateUrl, since).first<{ id: string }>());
   }
