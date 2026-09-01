@@ -8,7 +8,7 @@ import { postingIdentityRepairQueryCount, runPostingIdentityRepair } from '../sr
 import type { Internship, ProviderPostingEvidence, SourceOccurrence } from '../src/types.js';
 
 type SqliteValue = string | number | bigint | null | Uint8Array;
-type QueryMetrics = { statements: number; calls: number; maxBoundParameters: number; inBatch: boolean };
+type QueryMetrics = { statements: number; calls: number; maxBoundParameters: number; maxBatchStatements: number; inBatch: boolean };
 function sqliteD1(database: DatabaseSync, metrics?: QueryMetrics): D1Database {
   const prepared = (query: string, values: unknown[] = []): D1PreparedStatement => {
     const statement: StatementSync = database.prepare(query); const bound = values as SqliteValue[];
@@ -34,7 +34,10 @@ function sqliteD1(database: DatabaseSync, metrics?: QueryMetrics): D1Database {
   return {
     prepare(query) { return prepared(query); },
     async batch(statements) {
-      if (metrics) { metrics.statements += statements.length; metrics.calls += 1; metrics.inBatch = true; }
+      if (metrics) {
+        metrics.statements += statements.length; metrics.calls += 1; metrics.inBatch = true;
+        metrics.maxBatchStatements = Math.max(metrics.maxBatchStatements, statements.length);
+      }
       database.exec('BEGIN');
       try { const result = []; for (const statement of statements) result.push(await statement.run()); database.exec('COMMIT'); return result; }
       catch (error) { database.exec('ROLLBACK'); throw error; }
@@ -617,7 +620,7 @@ describe('D1 posting identity repair', () => {
 
   it('keeps a production-sized guarded apply under the paid D1 query budget', async () => {
     const sqlite = database();
-    const metrics: QueryMetrics = { statements: 0, calls: 0, maxBoundParameters: 0, inBatch: false };
+    const metrics: QueryMetrics = { statements: 0, calls: 0, maxBoundParameters: 0, maxBatchStatements: 0, inBatch: false };
     const db = sqliteD1(sqlite, metrics);
     const insert = sqlite.prepare('INSERT INTO catalog_items (pk, sk, kind, value, source_id, external_id) VALUES (?, ?, ?, ?, ?, ?)');
     // This executable fixture exceeds the old 900-statement ceiling; the
@@ -657,6 +660,7 @@ describe('D1 posting identity repair', () => {
     expect(metrics.statements).toBe(128);
     expect(metrics.statements).toBeLessThanOrEqual(900);
     expect(metrics.maxBoundParameters).toBeLessThanOrEqual(100);
+    expect(metrics.maxBatchStatements).toBeLessThanOrEqual(25);
     const occurrences = await runPostingIdentityRepair(db, { scope: 'occurrences' });
     expect(occurrences).toMatchObject({ expectedChanges: corpusSize * 2, aliasWrites: 0, conflicts: [] });
     await runPostingIdentityRepair(db, {

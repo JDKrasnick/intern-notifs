@@ -968,6 +968,7 @@ export function postingIdentityRepairPlan(
 
 const STAGE_KIND = 'posting-identity-repair-stage';
 const STAGE_ROWS_PER_STATEMENT = 20;
+const STAGE_STATEMENTS_PER_BATCH = 25;
 const D1_PAID_QUERY_LIMIT = 1_000;
 const POST_REPAIR_QUERY_RESERVE = 100;
 function operationId(value: unknown) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
@@ -1022,7 +1023,9 @@ async function stage(db: D1Database, plan: InternalPlan) {
       `INSERT INTO catalog_items (pk, sk, kind, value, source_id, external_id) VALUES ${placeholders}`,
     ).bind(...chunk.flatMap((item) => [pk, operationId(item), JSON.stringify(item), item.key1, item.key2])));
   }
-  for (let offset = 0; offset < statements.length; offset += 50) await db.batch(statements.slice(offset, offset + 50));
+  for (let offset = 0; offset < statements.length; offset += STAGE_STATEMENTS_PER_BATCH) {
+    await db.batch(statements.slice(offset, offset + STAGE_STATEMENTS_PER_BATCH));
+  }
   return pk;
 }
 
