@@ -569,7 +569,7 @@ discovery-latency metrics remain part of issue #40.
 Keep the checked-in Terraform and Wrangler defaults at `false` throughout this
 procedure. Store exports, full audit reports, manifests, and secrets outside
 Git. Do not close issue #50 or its product-roadmap checkbox until the final
-24-hour acceptance window passes.
+12-hour acceptance window passes.
 
 1. Export production D1 to an absolute path outside the repository with
    `npx wrangler d1 export intern-notifs-db --remote --output ABSOLUTE_PATH`.
@@ -614,7 +614,7 @@ Git. Do not close issue #50 or its product-roadmap checkbox until the final
     pass. Then review and apply a separate plan setting
     `identity_unconfirmed_publication_enabled=true`. Keep the checked-in
     publication default `false` and coverage floor `1` as fail-safes.
-12. Observe at least one complete 24-hour source cycle and one successful daily
+12. Observe at least one complete 12-hour source cycle and one successful daily
     posting-identity audit. On any regression, disable the flag first and do not
     attempt another repair until a fresh guarded preview passes.
 13. Only after those checks pass, update issue #50 and
@@ -631,7 +631,7 @@ canonical role behavior matched, and the outbox remained at 384 rows. Production
 set the coverage floor to that exact value before enabling unconfirmed
 publication. The owner explicitly waived step 12 as an acceptance gate; the
 post-activation scheduled audit passed with enforcement active, and non-gating
-follow-up issue #151 remains due at or after `2026-09-02T04:18:01Z`.
+follow-up issue #151 remains due at or after `2026-09-01T16:18:01Z`.
 
 For eligible groups whose presentation already agrees, the repair preserves the
 oldest catalog job, merges source references,
