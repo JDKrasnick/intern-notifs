@@ -542,7 +542,7 @@ export function postingIdentityRepairPlan(
     const classified = classifyResult(occurrence, fallbackObservedAt);
     return { ...classified.occurrence, postingIdentityDecision: classified.result.decision };
   };
-  const groups = new Map<string, Array<{ row: CatalogRow; job: Internship; evidence: HistoricalProviderEvidence }>>();
+  const groups = new Map<string, Array<{ row: CatalogRow; evidence: HistoricalProviderEvidence }>>();
   for (const row of jobRows) {
     let job: Internship;
     try {
@@ -578,7 +578,17 @@ export function postingIdentityRepairPlan(
     if (uniqueEvidence.length > 1) { conflicts.push(`${job.jobId}: reviewed provider evidence disagrees (${uniqueEvidence.map(providerKey).sort().join(', ')})`); continue; }
     if (!uniqueEvidence.length) continue;
     const key = providerKey(uniqueEvidence[0]!);
-    groups.set(key, [...(groups.get(key) ?? []), { row, job, evidence: uniqueEvidence[0]! }]);
+    groups.set(key, [...(groups.get(key) ?? []), { row, evidence: uniqueEvidence[0]! }]);
+  }
+
+  const postingAliasesByCanonicalJobId = new Map<string, Array<{ row: CatalogRow; claim: { alias: string; canonicalJobId: string } }>>();
+  for (const row of catalogRows.filter((item) => item.kind === 'posting-alias')) {
+    try {
+      const claim = parse<{ alias: string; canonicalJobId: string }>(row.value);
+      postingAliasesByCanonicalJobId.set(claim.canonicalJobId, [
+        ...(postingAliasesByCanonicalJobId.get(claim.canonicalJobId) ?? []), { row, claim },
+      ]);
+    } catch { conflicts.push(`${row.pk}:${row.sk}: malformed posting alias JSON`); }
   }
 
   const canonicalByJobId = new Map(existingCanonicalByJobId);
@@ -593,7 +603,16 @@ export function postingIdentityRepairPlan(
   let eligibleDuplicateGroups = 0;
   let eligibleDuplicateJobs = 0;
   for (const [key, values] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
-    const ordered = [...values].sort((a, b) => firstSeen(a.job).localeCompare(firstSeen(b.job)) || a.job.jobId.localeCompare(b.job.jobId));
+    const hydrated = values.flatMap((item) => {
+      try {
+        const stored = parse<Internship>(item.row.value);
+        return [{ ...item, job: { ...stored, sourceReferences: mergedOccurrenceEvidence([
+          ...stored.sourceReferences, ...(occurrencesByJob.get(stored.jobId) ?? []),
+        ]) } }];
+      } catch { return []; }
+    });
+    const ordered = hydrated.sort((a, b) => firstSeen(a.job).localeCompare(firstSeen(b.job)) || a.job.jobId.localeCompare(b.job.jobId));
+    if (!ordered.length) continue;
     const canonical = ordered[0]!;
     const official = officialPresentation(ordered.map((item) => item.job), canonical.evidence);
     const disagreement = ordered.length > 1
@@ -652,14 +671,12 @@ export function postingIdentityRepairPlan(
     catalogDeletes.push(...ordered.slice(1).map((item) => item.row));
     const duplicateIds = new Set(ordered.slice(1).map((item) => item.job.jobId));
     const remappedAliasKeys = new Set<string>();
-    for (const row of catalogRows.filter((item) => item.kind === 'posting-alias')) {
-      try {
-        const claim = parse<{ alias: string; canonicalJobId: string }>(row.value);
-        if (!duplicateIds.has(claim.canonicalJobId)) continue;
+    for (const duplicateId of duplicateIds) {
+      for (const { row, claim } of postingAliasesByCanonicalJobId.get(duplicateId) ?? []) {
         remappedAliasKeys.add(`${row.pk}\0${row.sk}`);
         catalogWrites.push({ before: row, pk: row.pk, sk: row.sk, kind: row.kind,
           value: JSON.stringify({ ...claim, canonicalJobId: canonical.job.jobId }) });
-      } catch { conflicts.push(`${row.pk}:${row.sk}: malformed posting alias JSON`); }
+      }
     }
     const aliasValues = new Set(identity.aliases.filter((item) => item.value.startsWith('provider:')).map((item) => item.value));
     aliasValues.add(`provider:${key}`);
