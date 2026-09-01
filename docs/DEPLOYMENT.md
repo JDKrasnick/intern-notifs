@@ -491,13 +491,19 @@ canonical role behavior matched, and the outbox remained at 384 rows. Production
 set the coverage floor to that exact value before enabling unconfirmed
 publication. The owner explicitly waived step 12 as an acceptance gate; the
 post-activation scheduled audit passed with enforcement active, and non-gating
-follow-up issue #151 remains due at or after `2026-09-02T04:18:01Z`.
+follow-up issue #151 was initially scheduled for `2026-09-02T04:18:01Z` before
+the owner requested the analysis early.
 
 Early follow-up (2026-09-01): normal reviewed-community ingestion moved exact
 coverage below the snapshot-pinned floor even though every structural blocker
-remained zero. Publication was disabled first. Issue #151 now tracks the
-convergence repair and a buffered `0.70` production policy floor; checked-in
-Wrangler and Terraform defaults remain `false` and `1`.
+remained zero. Publication was disabled first. PR #153 made immutable decisions,
+durable attachment facts, and presentation ownership converge, then a guarded
+repair applied one identity normalization and 360 occurrence normalizations.
+The final audit reported 4,480 confirmed and 1,873 unconfirmed occurrences,
+coverage `0.7051786557531875`, zero planned changes, and every structural blocker
+at zero. Worker version `588233d1-5230-4af7-b8f3-70d725ba9392` runs at 100% with
+publication enabled and a buffered `0.70` policy floor; the enforced scheduled
+audit passed. Checked-in Wrangler and Terraform defaults remain `false` and `1`.
 
 For eligible groups whose presentation already agrees, the repair preserves the
 oldest catalog job, merges source references,
