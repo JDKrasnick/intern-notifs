@@ -412,8 +412,13 @@ legacy-occurrence, projection, and duplicate-reference counts. Its
 `IDENTITY_CONFIRMED_COVERAGE_FLOOR` is an owner-reviewed decimal from zero to
 one; a missing/invalid floor, unavailable coverage, or coverage below that
 floor is not passing evidence. The checked-in floor is `1` as a fail-safe.
-While
-`IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED=false`, a failed gate is logged but
+Treat the production value as a policy threshold with explicit headroom, not
+the exact coverage from one audit. Normal growth from reviewed community
+sources changes the confirmed/unconfirmed source mix without indicating
+identity corruption. Record both the activation snapshot and the lower policy
+floor, and review the floor separately whenever the expected source mix
+changes. While `IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED=false`, a failed gate
+is logged but
 does not fail the invocation. Once publication enforcement is active, a failed
 or unavailable audit fails the invocation. Broader dashboards and source
 discovery-latency metrics remain part of issue #40.
@@ -449,8 +454,9 @@ Git. Do not close issue #50 or its product-roadmap checkbox until the final
    conflicts or presentation disagreements.
 7. Preview the occurrence scope, obtain its independent token/count guards,
    apply it, then run the final all-scope audit. Require a passing gate and every
-   mutation count at zero. Record its exact `confirmedCoverage` as the proposed
-   production coverage floor.
+   mutation count at zero. Record its exact `confirmedCoverage` as the
+   activation baseline, then propose a lower owner-reviewed production floor
+   with enough headroom for expected source-mix changes.
 8. Confirm notification-event, notification-tombstone, pending-notification,
    and outbox counts match the baseline. Test all eight affected legacy job IDs
    and their canonical aliases, representative catalog/group endpoints, saved
@@ -486,6 +492,12 @@ set the coverage floor to that exact value before enabling unconfirmed
 publication. The owner explicitly waived step 12 as an acceptance gate; the
 post-activation scheduled audit passed with enforcement active, and non-gating
 follow-up issue #151 remains due at or after `2026-09-02T04:18:01Z`.
+
+Early follow-up (2026-09-01): normal reviewed-community ingestion moved exact
+coverage below the snapshot-pinned floor even though every structural blocker
+remained zero. Publication was disabled first. Issue #151 now tracks the
+convergence repair and a buffered `0.70` production policy floor; checked-in
+Wrangler and Terraform defaults remain `false` and `1`.
 
 For eligible groups whose presentation already agrees, the repair preserves the
 oldest catalog job, merges source references,

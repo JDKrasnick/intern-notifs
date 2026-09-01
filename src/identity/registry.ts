@@ -138,6 +138,20 @@ function stale(expiresAt: string | undefined, observedAt: string) {
   return Boolean(expiresAt && Date.parse(expiresAt) <= Date.parse(observedAt));
 }
 
+function previousProviderReference(
+  decision: PostingIdentityDecision | undefined,
+  urls: string[],
+): ProviderPostingReference | undefined {
+  if (decision?.status !== 'confirmed' || decision.evidenceKind !== 'immutable-provider-id') return undefined;
+  for (const url of urls) {
+    try {
+      const reference = providerPostingReference(url);
+      if (providerPostingAlias(reference) === decision.exactKey) return reference;
+    } catch { /* An invalid alias cannot preserve a confirmed provider identity. */ }
+  }
+  return undefined;
+}
+
 /**
  * Provider-neutral exact-identity registry. Syntactic URL normalization is not
  * evidence: only checked provider routes, authoritative requisitions, or an
@@ -192,12 +206,12 @@ export function resolvePostingIdentityDecision(input: PostingIdentityRegistryInp
   const reference = exactReferences[0];
   if (reference) {
     const exactKey = providerPostingAlias(reference)!;
+    if (input.previousDecision?.status === 'confirmed' && input.previousDecision.exactKey === exactKey) {
+      const identity = buildPostingIdentity({ ...input, reviewedProviderReferences: [reference] });
+      return { decision: input.previousDecision, identity: claimableIdentity(identity, exactKey, input.previousDecision.evidenceKind) };
+    }
     const evidenceExpiresAt = input.providerEvidence?.expiresAt;
     if (stale(evidenceExpiresAt, input.observedAt)) {
-      if (input.previousDecision?.status === 'confirmed' && input.previousDecision.exactKey === exactKey) {
-        const identity = buildPostingIdentity({ ...input, reviewedProviderReferences: [reference] });
-        return { decision: input.previousDecision, identity: claimableIdentity(identity, exactKey, input.previousDecision.evidenceKind) };
-      }
       return unconfirmed(input, 'stale-evidence');
     }
     const contract = contractFor(reference.provider);
@@ -245,6 +259,15 @@ export function resolvePostingIdentityDecision(input: PostingIdentityRegistryInp
       contractId: reviewedUrl.contractId, contractVersion: reviewedUrl.contractVersion,
       approvalReference: reviewedUrl.approvalReference, evidenceHash: reviewedUrl.evidenceHash,
     }, buildPostingIdentity({ ...input, finalOfficialUrl: expectedUrl }));
+  }
+
+  const retainedReference = previousProviderReference(input.previousDecision, urls);
+  if (retainedReference && input.previousDecision?.status === 'confirmed') {
+    const identity = buildPostingIdentity({ ...input, reviewedProviderReferences: [retainedReference] });
+    return {
+      decision: input.previousDecision,
+      identity: claimableIdentity(identity, input.previousDecision.exactKey, input.previousDecision.evidenceKind),
+    };
   }
 
   if (urls.some((url) => unscopedGreenhouseEmbedPostingId(url))) return unconfirmed(input, 'under-scoped-id');

@@ -317,22 +317,26 @@ export class CatalogReconciler {
         legacyByUrl.set(listingUrl, job);
       }
       if (listing.postingIdentity) byPostingIdentity.set(listing.postingIdentity.canonicalJobId, job);
+      const prior = priorById.get(externalId);
+      const firstAttachedAt = prior?.occurrence.firstAttachedAt ?? prior?.firstObservedAt ?? prior?.changedAt ?? input.now;
+      const firstAttachedAtPrecision = prior?.occurrence.firstAttachedAtPrecision
+        ?? (prior?.firstObservedAt ? prior.firstObservedAtPrecision ?? 'exact' as const : prior ? 'unknown' as const : 'exact' as const);
       const next: SourceOccurrenceState = {
         sourceId: input.sourceId,
         externalId,
         jobId: job.jobId,
-        occurrence: occurrence(listing, externalId),
+        occurrence: { ...occurrence(listing, externalId), firstAttachedAt, firstAttachedAtPrecision },
         present: true,
         consecutiveOmissions: 0,
         changedSnapshotHash: input.snapshotHash,
         changedAt: input.now,
-        ...(priorById.get(externalId)?.firstObservedAt
-          ? { firstObservedAt: priorById.get(externalId)!.firstObservedAt }
-          : priorById.has(externalId)
+        ...(prior?.firstObservedAt
+          ? { firstObservedAt: prior.firstObservedAt }
+          : prior
             ? { firstObservedAtPrecision: 'unknown' as const }
             : { firstObservedAt: input.now, firstObservedAtPrecision: 'exact' as const }),
-        ...(priorById.get(externalId)?.firstObservedAtPrecision
-          ? { firstObservedAtPrecision: priorById.get(externalId)!.firstObservedAtPrecision }
+        ...(prior?.firstObservedAtPrecision
+          ? { firstObservedAtPrecision: prior.firstObservedAtPrecision }
           : {}),
       };
       if (occurrenceChanged(priorById.get(externalId), next)) occurrences.push(next);
