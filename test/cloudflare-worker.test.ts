@@ -51,6 +51,7 @@ describe('Cloudflare scheduled posting identity audit', () => {
     gate: {
       passed: false, exactDuplicateGroups: 1, aliasConflicts: 2, untrackedQuarantines: 1,
       presentationBlockers: 3, legacyOccurrences: 2, projectionMismatches: 4, duplicateOccurrenceReferences: 5,
+      danglingOccurrenceReferences: 6,
     },
   } as PostingIdentityRepairPlan;
 
@@ -62,6 +63,7 @@ describe('Cloudflare scheduled posting identity audit', () => {
     gate: {
       passed: true, exactDuplicateGroups: 0, aliasConflicts: 0, untrackedQuarantines: 0,
       presentationBlockers: 0, legacyOccurrences: 0, projectionMismatches: 0, duplicateOccurrenceReferences: 0,
+      danglingOccurrenceReferences: 0,
     },
   } as PostingIdentityRepairPlan;
 
@@ -72,7 +74,7 @@ describe('Cloudflare scheduled posting identity audit', () => {
     }, { audit: async () => failedPlan, log: (event) => disabledLogs.push(event) })).resolves.toMatchObject({
       status: 'failed', enforcementActive: false, exactDuplicateGroups: 1, aliasConflicts: 2,
       quarantinedOccurrences: 1, presentationBlockers: 3, legacyOccurrences: 2,
-      projectionMismatches: 4, duplicateOccurrenceReferences: 5,
+      projectionMismatches: 4, duplicateOccurrenceReferences: 5, danglingOccurrenceReferences: 6,
     });
     expect(disabledLogs).toHaveLength(1);
     expect(disabledLogs[0]).not.toContain('repairToken');

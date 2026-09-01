@@ -865,6 +865,7 @@ export type PostingIdentityAuditEvent = {
   legacyOccurrences: number | null;
   projectionMismatches: number | null;
   duplicateOccurrenceReferences: number | null;
+  danglingOccurrenceReferences: number | null;
 };
 
 function postingIdentityAuditEvent(
@@ -893,6 +894,7 @@ function postingIdentityAuditEvent(
     legacyOccurrences: plan.gate.legacyOccurrences,
     projectionMismatches: plan.gate.projectionMismatches,
     duplicateOccurrenceReferences: plan.gate.duplicateOccurrenceReferences,
+    danglingOccurrenceReferences: plan.gate.danglingOccurrenceReferences,
   };
 }
 
@@ -930,6 +932,7 @@ export async function runScheduledPostingIdentityAudit(
       exactDuplicateGroups: null, duplicateJobs: null, duplicateAlertGroups: null, aliasConflicts: null,
       quarantinedOccurrences: null, untrackedQuarantines: null, presentationBlockers: null,
       legacyOccurrences: null, projectionMismatches: null, duplicateOccurrenceReferences: null,
+      danglingOccurrenceReferences: null,
     };
   }
   const serialized = JSON.stringify(event);

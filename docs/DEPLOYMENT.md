@@ -367,9 +367,11 @@ duplicate, duplicate alert, alias conflict, untracked quarantine, presentation
 blocker, occurrence-coverage regression, or job/occurrence identity-projection
 mismatch that must be resolved before activation. The gate also requires zero
 `duplicateOccurrenceReferences`, keyed by the durable `(sourceId, externalId)`
-identity rather than an upstream document row. `unknownUrlFamilyCandidates` is
-computed from the dry run's planned classifications, so repeated unknown or
-custom URL families are available for review before any write:
+identity rather than an upstream document row, and zero
+`danglingOccurrenceReferences` to deleted jobs even when a permanent alias can
+resolve them. `unknownUrlFamilyCandidates` is computed from the dry run's
+planned classifications, so repeated unknown or custom URL families are
+available for review before any write:
 
 ```bash
 npm run audit:posting-identity
@@ -399,7 +401,9 @@ replay notification/outbox work. Both phases stage exact before-images and use
 guarded set-based writes, keeping a production-sized invocation below D1's
 query limit. Finally run the default `all` dry run and require zero changes,
 zero legacy occurrences, zero `projectionMismatches`, zero
-`duplicateOccurrenceReferences`, and a passing gate.
+`duplicateOccurrenceReferences`, zero `danglingOccurrenceReferences`, and a
+passing gate. A durable occurrence must reference its current internship row
+directly; a legacy job-ID alias does not satisfy this invariant.
 
 The dedicated `17 9 * * *` Cloudflare cron runs the same all-scope audit once
 per day and emits one aggregate `posting_identity_integrity_audit` event. The

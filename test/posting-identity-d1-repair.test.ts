@@ -387,6 +387,26 @@ describe('D1 posting identity repair', () => {
         company: value.displayName,
         admission,
       }));
+      await store.putSourceOccurrence({
+        sourceId: legacyReference.sourceId,
+        externalId: legacyReference.externalId!,
+        jobId: value.legacyJobId,
+        occurrence: legacyReference,
+        present: true,
+        consecutiveOmissions: 0,
+        changedSnapshotHash: 'reviewed-production-regression',
+        changedAt: reviewedAt,
+      });
+      await store.putSourceOccurrence({
+        sourceId: officialReference.sourceId,
+        externalId: officialReference.externalId!,
+        jobId: value.officialJobId,
+        occurrence: officialReference,
+        present: true,
+        consecutiveOmissions: 0,
+        changedSnapshotHash: 'reviewed-production-regression',
+        changedAt: reviewedAt,
+      });
       await store.claimPostingIdentity(buildPostingIdentity({ applicationUrl: officialUrl }), value.officialJobId);
     }
 
@@ -401,6 +421,7 @@ describe('D1 posting identity repair', () => {
     });
     expect(await runPostingIdentityRepair(db, { scope: 'identity' })).toMatchObject({
       duplicateGroups: 0, duplicateJobs: 0, expectedChanges: 0,
+      gate: { passed: false, danglingOccurrenceReferences: 4 },
     });
     for (const value of cases) {
       const legacy = await store.getJob(value.legacyJobId);
@@ -408,6 +429,29 @@ describe('D1 posting identity repair', () => {
       expect(legacy?.jobId).toBe(official?.jobId);
       expect(legacy).toMatchObject({ admission: { canonicalEmployer: { id: value.canonicalEmployerId } } });
     }
+    const occurrenceDryRun = await runPostingIdentityRepair(db, { scope: 'occurrences' });
+    expect(occurrenceDryRun).toMatchObject({
+      occurrenceRemaps: 4,
+      applicationRemaps: 0,
+      receiptRemaps: 0,
+      releaseRemaps: 0,
+      proposalRemaps: 0,
+      gate: { passed: false, danglingOccurrenceReferences: 4 },
+    });
+    await runPostingIdentityRepair(db, {
+      scope: 'occurrences', apply: true, repairToken: occurrenceDryRun.repairToken,
+      expectedChanges: occurrenceDryRun.expectedChanges, expectedDuplicateJobs: occurrenceDryRun.duplicateJobs,
+    });
+    expect(await runPostingIdentityRepair(db)).toMatchObject({
+      expectedChanges: 0,
+      conflicts: [],
+      gate: { passed: true, danglingOccurrenceReferences: 0 },
+    });
+    expect(sqlite.prepare(`SELECT COUNT(*) AS count FROM catalog_items AS occurrence
+      WHERE occurrence.kind = 'source-occurrence'
+        AND NOT EXISTS (SELECT 1 FROM catalog_items AS job
+          WHERE job.pk = 'JOB#' || json_extract(occurrence.value, '$.jobId')
+            AND job.sk = 'META' AND job.kind = 'internship')`).get()).toEqual({ count: 0 });
     sqlite.close();
   });
 
