@@ -484,8 +484,8 @@ violations. All 12 affected official destinations returned HTTP 200, legacy and
 canonical role behavior matched, and the outbox remained at 384 rows. Production
 set the coverage floor to that exact value before enabling unconfirmed
 publication. The owner explicitly waived step 12 as an acceptance gate; the
-post-activation scheduled audit passed with enforcement active, and a non-gating
-follow-up remains due at or after `2026-09-02T04:18:01Z`.
+post-activation scheduled audit passed with enforcement active, and non-gating
+follow-up issue #151 remains due at or after `2026-09-02T04:18:01Z`.
 
 For eligible groups whose presentation already agrees, the repair preserves the
 oldest catalog job, merges source references,
