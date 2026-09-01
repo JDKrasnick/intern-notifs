@@ -114,6 +114,22 @@ describe('atomic posting observation commit', () => {
     expect(projected.sourceReferences[0]?.admission).toEqual(browserAdmission);
   });
 
+  it('keeps the official presentation season when a community observation commits later', () => {
+    const identity = buildPostingIdentity({
+      applicationUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    });
+    const official = observation(identity.canonicalJobId, 'ashby-acme', 'official', identity);
+    official.job.season = 'summer-2027';
+    official.job.sourceReferences[0] = { ...official.job.sourceReferences[0]!, provenance: 'official-ats', season: 'summer-2027' };
+    official.occurrence.occurrence = official.job.sourceReferences[0]!;
+    const community = observation(identity.canonicalJobId, 'community-list', 'community', identity);
+    community.job.season = '2027';
+    community.job.sourceReferences[0] = { ...community.job.sourceReferences[0]!, provenance: 'reviewed-community', season: '2027' };
+    community.occurrence.occurrence = community.job.sourceReferences[0]!;
+
+    expect(postingObservationProjection(official.job, community.job, community.occurrence).season).toBe('summer-2027');
+  });
+
   it('commits aliases, job, occurrence, and the canonical notification tombstone together', async () => {
     const store = new MemoryInternshipStore();
     const identity = buildPostingIdentity({

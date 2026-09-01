@@ -40,6 +40,59 @@ describe('posting identity', () => {
     expect(historical.identity?.aliases.map((alias) => alias.value)).toEqual(['provider:greenhouse:figma:100']);
   });
 
+  it('keeps an immutable provider decision byte-stable as observed URL evidence changes', () => {
+    const initial = resolvePostingIdentityDecision({
+      sourceId: 'greenhouse-figma', externalId: '100',
+      applicationUrl: 'https://job-boards.greenhouse.io/figma/jobs/100',
+      observedAt: '2026-08-29T12:00:00.000Z',
+      providerEvidence: {
+        provider: 'greenhouse', tenant: 'figma', postingId: '100', sourceId: 'greenhouse-figma',
+        urls: ['https://boards.greenhouse.io/embed/job_app?token=100'],
+      },
+    });
+    const replay = resolvePostingIdentityDecision({
+      sourceId: 'greenhouse-figma', externalId: '100',
+      applicationUrl: 'https://job-boards.greenhouse.io/figma/jobs/100',
+      observedAt: '2026-08-30T12:00:00.000Z',
+      providerEvidence: {
+        provider: 'greenhouse', tenant: 'figma', postingId: '100', sourceId: 'greenhouse-figma',
+        urls: ['https://job-boards.greenhouse.io/figma/jobs/100'],
+      },
+      previousDecision: initial.decision,
+    });
+    expect(replay.decision).toEqual(initial.decision);
+  });
+
+  it('retains a confirmed provider route after its active checkpoint evidence expires', () => {
+    const initial = resolvePostingIdentityDecision({
+      sourceId: 'community', externalId: 'role',
+      applicationUrl: 'https://job-boards.greenhouse.io/figma/jobs/100',
+      observedAt: '2026-08-29T12:00:00.000Z',
+      reviewedProviderReferences: [{ provider: 'greenhouse', tenant: 'figma', postingId: '100' }],
+    });
+    const historical = resolvePostingIdentityDecision({
+      sourceId: 'community', externalId: 'role',
+      applicationUrl: 'https://job-boards.greenhouse.io/figma/jobs/100',
+      observedAt: '2026-08-30T12:00:00.000Z', previousDecision: initial.decision,
+    });
+    expect(historical.decision).toEqual(initial.decision);
+    expect(historical.identity?.aliases.map((alias) => alias.value)).toEqual(['provider:greenhouse:figma:100']);
+  });
+
+  it('does not retain a confirmed decision after the provider posting route changes', () => {
+    const initial = resolvePostingIdentityDecision({
+      sourceId: 'community', externalId: 'role',
+      applicationUrl: 'https://job-boards.greenhouse.io/figma/jobs/100',
+      observedAt: '2026-08-29T12:00:00.000Z',
+      reviewedProviderReferences: [{ provider: 'greenhouse', tenant: 'figma', postingId: '100' }],
+    });
+    expect(resolvePostingIdentityDecision({
+      sourceId: 'community', externalId: 'role',
+      applicationUrl: 'https://job-boards.greenhouse.io/figma/jobs/101',
+      observedAt: '2026-08-30T12:00:00.000Z', previousDecision: initial.decision,
+    })).toMatchObject({ decision: { status: 'unconfirmed', reason: 'insufficient-exact-evidence' } });
+  });
+
   it('sanitizes URL-family candidates without retaining query values', () => {
     expect(postingReviewFamily('https://Careers.Example.test/jobs/123?token=secret&ref=email'))
       .toBe('careers.example.test/jobs/:number?ref&token');

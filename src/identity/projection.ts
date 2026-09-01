@@ -38,8 +38,10 @@ function presentationOwner(current: Internship | undefined, proposed: Internship
   if (currentOfficial || proposedOfficial) {
     if (!currentOfficial) return proposed;
     if (!proposedOfficial) return current;
-    return proposedOfficial.localeCompare(currentOfficial) < 0 ? proposed : current;
+    return proposedOfficial.localeCompare(currentOfficial) <= 0 ? proposed : current;
   }
+  const currentReferences = new Set(current.sourceReferences.map(sourceOccurrenceKey));
+  if (proposed.sourceReferences.some((reference) => currentReferences.has(sourceOccurrenceKey(reference)))) return proposed;
   const currentFirst = current.catalogVisibleAt ?? current.firstSeenAt;
   const proposedFirst = proposed.catalogVisibleAt ?? proposed.firstSeenAt;
   return proposedFirst.localeCompare(currentFirst) < 0 ? proposed : current;
@@ -62,7 +64,7 @@ export function postingObservationProjection(
   const digestedAt = latest([current?.notification.digestedAt, proposed.notification.digestedAt]);
   const postingIdentityStatus = postingIdentityStatusForOccurrences(sourceReferences);
   const anyOpen = sourceReferences.some((reference) => reference.state === 'open');
-  const season = proposed.season;
+  const season = presentation.season;
   const seasonEvidence = (proposed.internshipIdentity ?? current?.internshipIdentity) as { season?: { evidenceStatus?: string } } | undefined;
   const seasonAllowsOpen = !isPastSeason(season, new Date(proposed.lastSeenAt))
     || (seasonEvidence?.season?.evidenceStatus === 'explicit'
@@ -76,6 +78,7 @@ export function postingObservationProjection(
     applyUrl: presentation.applyUrl,
     normalizedUrl: presentation.normalizedUrl,
     fingerprint: presentation.fingerprint,
+    season,
     sourceReferences,
     ...(admission ? { admission } : {}),
     ...(postingIdentityStatus ? { postingIdentityStatus } : {}),

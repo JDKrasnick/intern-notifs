@@ -115,6 +115,10 @@ describe('snapshot reconciliation', () => {
     const repeated = (await store.getSourceOccurrences('source-a'))[0]!;
     expect(repeated.firstObservedAt).toBe(first.firstObservedAt);
     expect(repeated.firstObservedAtPrecision).toBe('exact');
+    expect(repeated.occurrence).toMatchObject({
+      firstAttachedAt: first.firstObservedAt,
+      firstAttachedAtPrecision: 'exact',
+    });
     expect([...store.jobs.values()][0]!.sourceReferences[0]).toMatchObject({
       firstAttachedAt: firstReference.firstAttachedAt,
       firstAttachedAtPrecision: 'exact',
