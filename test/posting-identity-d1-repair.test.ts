@@ -250,6 +250,20 @@ describe('D1 posting identity repair', () => {
     });
   });
 
+  it('does not load unrelated large catalog or user row classes into the repair snapshot', async () => {
+    const sqlite = database(); const db = sqliteD1(sqlite);
+    const before = await runPostingIdentityRepair(db);
+    sqlite.prepare("INSERT INTO catalog_items (pk, sk, kind, value) VALUES (?, ?, 'catalog-projection', ?)")
+      .run('CATALOG_PROJECTION#test', 'PAGE#1', JSON.stringify({ jobs: ['x'.repeat(250_000)] }));
+    sqlite.prepare("INSERT INTO user_items (user_id, item_key, kind, value) VALUES (?, ?, 'preferences', ?)")
+      .run('user-test', 'PREFERENCES', JSON.stringify({ ignored: 'x'.repeat(250_000) }));
+
+    const after = await runPostingIdentityRepair(db);
+    expect(after.snapshotDigest).toBe(before.snapshotDigest);
+    expect(after.repairToken).toBe(before.repairToken);
+    sqlite.close();
+  });
+
   it('uses an exact official connector occurrence to resolve duplicate presentation safely', async () => {
     const { db, store } = await historicalDatabase({ authoritativePresentation: true });
     const dry = await runPostingIdentityRepair(db);

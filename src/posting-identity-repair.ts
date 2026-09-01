@@ -297,6 +297,19 @@ function stable(value: unknown): unknown {
   return value;
 }
 
+function structuredDigest(sections: Array<[string, unknown[]]>): string {
+  const hash = createHash('sha256');
+  for (const [name, values] of sections) {
+    hash.update(`${name.length}:${name}:${values.length}:`);
+    for (const value of values) {
+      const encoded = JSON.stringify(stable(value));
+      hash.update(`${encoded.length}:`);
+      hash.update(encoded);
+    }
+  }
+  return hash.digest('hex');
+}
+
 type FutureAdmissionJob = Internship & {
   employerId?: string;
   admissionState?: unknown;
@@ -419,15 +432,15 @@ export function postingIdentityRepairPlan(
     }
     employerMappings.set(key, mapping.canonical_employer_id);
   }
-  const snapshotDigest = createHash('sha256').update(JSON.stringify(stable({
-    catalog: catalogRows.map((row) => [row.pk, row.sk, row.kind, row.value])
-      .sort((left, right) => String(left[0]).localeCompare(String(right[0])) || String(left[1]).localeCompare(String(right[1]))),
-    users: userRows.map((row) => [row.user_id, row.item_key, row.kind, row.value])
-      .sort((left, right) => String(left[0]).localeCompare(String(right[0])) || String(left[1]).localeCompare(String(right[1]))),
-    proposals: proposalRows.map((row) => [row.id, row.job_id])
-      .sort((left, right) => left[0].localeCompare(right[0])),
-    employerMappings: [...employerMappings.entries()].sort(([left], [right]) => left.localeCompare(right)),
-  }))).digest('hex');
+  const snapshotDigest = structuredDigest([
+    ['catalog', catalogRows.map((row) => [row.pk, row.sk, row.kind, row.value])
+      .sort((left, right) => String(left[0]).localeCompare(String(right[0])) || String(left[1]).localeCompare(String(right[1])))],
+    ['users', userRows.map((row) => [row.user_id, row.item_key, row.kind, row.value])
+      .sort((left, right) => String(left[0]).localeCompare(String(right[0])) || String(left[1]).localeCompare(String(right[1])))],
+    ['proposals', proposalRows.map((row) => [row.id, row.job_id])
+      .sort((left, right) => left[0].localeCompare(right[0]))],
+    ['employerMappings', [...employerMappings.entries()].sort(([left], [right]) => left.localeCompare(right))],
+  ]);
   const occurrenceDecisions = new Map<string, SourceOccurrence['postingIdentityDecision']>();
   const jobRows = catalogRows.filter((row) => row.kind === 'internship');
   const catalogByKey = new Map(catalogRows.map((row) => [`${row.pk}\0${row.sk}`, row]));
@@ -864,16 +877,21 @@ export function postingIdentityRepairPlan(
   }
   catalogWrites.splice(0, catalogWrites.length, ...uniqueCatalogWrites.values());
   const expectedChanges = catalogWrites.length + catalogDeletes.length + userWrites.length + userDeletes.length + proposalUpdates.length;
-  const facts = stable({
-    catalogWrites: catalogWrites.map((item) => [item.pk, item.sk, item.before?.value ?? null, item.value]),
-    catalogDeletes: catalogDeletes.map((item) => [item.pk, item.sk, item.value]),
-    userWrites: userWrites.map((item) => [item.userId, item.itemKey, item.before?.value ?? null, item.value]),
-    userDeletes: userDeletes.map((item) => [item.user_id, item.item_key, item.value]),
-    proposals: proposalUpdates.map((item) => [item.id, item.job_id, identityCanonicalByJobId.get(item.job_id)]),
-    presentationDisagreements,
-    conflicts: [...conflicts].sort(),
-  });
-  const repairToken = createHash('sha256').update(JSON.stringify(facts)).digest('hex');
+  const repairToken = structuredDigest([
+    ['catalogWrites', catalogWrites.map((item) => [item.pk, item.sk, item.before?.value ?? null, item.value])
+      .sort((left, right) => String(left[0]).localeCompare(String(right[0])) || String(left[1]).localeCompare(String(right[1])))],
+    ['catalogDeletes', catalogDeletes.map((item) => [item.pk, item.sk, item.value])
+      .sort((left, right) => String(left[0]).localeCompare(String(right[0])) || String(left[1]).localeCompare(String(right[1])))],
+    ['userWrites', userWrites.map((item) => [item.userId, item.itemKey, item.before?.value ?? null, item.value])
+      .sort((left, right) => String(left[0]).localeCompare(String(right[0])) || String(left[1]).localeCompare(String(right[1])))],
+    ['userDeletes', userDeletes.map((item) => [item.user_id, item.item_key, item.value])
+      .sort((left, right) => String(left[0]).localeCompare(String(right[0])) || String(left[1]).localeCompare(String(right[1])))],
+    ['proposals', proposalUpdates.map((item) => [item.id, item.job_id, identityCanonicalByJobId.get(item.job_id)])
+      .sort((left, right) => String(left[0]).localeCompare(String(right[0])))],
+    ['presentationDisagreements', [...presentationDisagreements]
+      .sort((left, right) => left.providerIdentity.localeCompare(right.providerIdentity) || left.canonicalJobId.localeCompare(right.canonicalJobId))],
+    ['conflicts', [...conflicts].sort()],
+  ]);
   const notificationGroups = new Map<string, number>();
   for (const row of catalogRows.filter((item) => item.kind === 'notification-event')) {
     try {
@@ -1020,8 +1038,13 @@ export async function runPostingIdentityRepair(db: D1Database, options: {
   scope?: PostingIdentityRepairScope;
 } = {}): Promise<PostingIdentityRepairPlan> {
   const [catalog, users, proposals, employerMappings] = await Promise.all([
-    db.prepare('SELECT * FROM catalog_items ORDER BY pk, sk').all<CatalogRow>(),
-    db.prepare('SELECT * FROM user_items ORDER BY user_id, item_key').all<UserRow>(),
+    db.prepare(`SELECT * FROM catalog_items
+      WHERE kind IN ('internship', 'job-id-alias', 'source-occurrence', 'posting-identity-incident',
+        'checkpoint', 'posting-alias', 'notification-tombstone', 'notification-event')
+      ORDER BY pk, sk`).all<CatalogRow>(),
+    db.prepare(`SELECT * FROM user_items
+      WHERE kind IN ('application', 'application-session', 'receipt', 'catalog-release')
+      ORDER BY user_id, item_key`).all<UserRow>(),
     db.prepare('SELECT id, job_id FROM employer_field_proposals ORDER BY id').all<ProposalRow>(),
     db.prepare(`SELECT provider, scope, canonical_employer_id FROM employer_mappings
       WHERE superseded_at IS NULL ORDER BY provider, scope`).all<EmployerMappingRow>(),
