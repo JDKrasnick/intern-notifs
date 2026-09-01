@@ -503,7 +503,18 @@ export interface InternshipIdentity {
   locations: InternshipLocation[];
 }
 
-export type PostingProvider = 'greenhouse' | 'lever' | 'ashby' | 'workday' | 'bytedance' | 'unknown';
+export type PostingProvider =
+  | 'greenhouse'
+  | 'lever'
+  | 'ashby'
+  | 'workday'
+  | 'bytedance'
+  | 'tesla'
+  | 'meta'
+  | 'janestreet'
+  | 'goldman-sachs'
+  | 'imc'
+  | 'unknown';
 export type PostingAliasKind = 'provider-posting' | 'employer-requisition' | 'provider-route' | 'official-url' | 'application-url';
 
 export interface PostingAlias {
