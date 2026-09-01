@@ -3,7 +3,8 @@ import type { ApplicationSession } from './application-automation.js';
 import { catalogSearchText, catalogSourceClasses } from './catalog-fields.js';
 import { openCatalogSortKey } from './catalog-recency.js';
 import { inferSeason } from './core/early-career.js';
-import { fingerprint, normalizeUrl } from './core/normalize.js';
+import { canonicalCompanyKey, fingerprint, normalizeUrl } from './core/normalize.js';
+import { deriveCanonicalAdmission } from './catalog-admission.js';
 import { canonicalizePostingUrl } from './identity/posting.js';
 import { postingIdentityStatusForOccurrences } from './identity/projection.js';
 import { resolvePostingIdentityDecision, type PostingIdentityRegistryResult } from './identity/registry.js';
@@ -29,6 +30,7 @@ type CatalogRow = {
 };
 type UserRow = { user_id: string; item_key: string; kind: string; value: string; session_id?: string | null; receipt_state?: string | null; expires_at?: number | null };
 type ProposalRow = { id: string; job_id: string };
+type EmployerMappingRow = { provider: string; scope: string; canonical_employer_id: string };
 type CatalogWrite = { before?: CatalogRow; pk: string; sk: string; kind: string; value: string; columns?: Partial<CatalogRow> };
 type UserWrite = { before?: UserRow; userId: string; itemKey: string; kind: string; value: string; columns?: Partial<UserRow> };
 
@@ -114,6 +116,12 @@ type InternalPlan = PostingIdentityRepairPlan & {
   userWrites: UserWrite[]; userDeletes: UserRow[]; proposalUpdates: ProposalRow[];
 };
 
+export type PostingIdentityRepairReviewContext = {
+  /** Active, immutable reviewer mappings. They are part of the guarded repair
+   * facts so historical jobs can use the same employer decision as ingestion. */
+  employerMappings?: EmployerMappingRow[];
+};
+
 const parse = <T>(value: string): T => JSON.parse(value) as T;
 const earliest = (values: string[]) => [...values].sort()[0]!;
 const latest = (values: string[]) => [...values].sort().at(-1)!;
@@ -173,6 +181,8 @@ function mergeJob(
       - (a.compensation.maxHourlyUSD ?? a.compensation.minHourlyUSD ?? 0))
     .find((job) => job.compensation.raw || job.compensation.maxHourlyUSD || job.compensation.minHourlyUSD)?.compensation
     ?? canonical.compensation;
+  const lastSeenAt = latest(members.map((job) => job.lastSeenAt));
+  const admission = deriveCanonicalAdmission(sourceReferences, lastSeenAt);
   return {
     ...canonical,
     company,
@@ -191,11 +201,12 @@ function mergeJob(
     postingIdentity: identity,
     postingIdentityStatus: 'confirmed',
     sourceReferences,
+    ...(admission ? { admission } : {}),
     open: members.some((job) => job.open),
     technical: members.some((job) => job.technical !== false),
     firstSeenAt: earliest(members.map(firstSeen)),
     catalogVisibleAt: earliest(members.map((job) => job.catalogVisibleAt ?? firstSeen(job))),
-    lastSeenAt: latest(members.map((job) => job.lastSeenAt)),
+    lastSeenAt,
     notification: {
       smsPending: !smsSentAt && members.some((job) => job.notification.smsPending),
       digestPending: !digestedAt && members.some((job) => job.notification.digestPending),
@@ -293,11 +304,43 @@ type FutureAdmissionJob = Internship & {
   catalogAdmission?: { state?: unknown; reasons?: unknown };
 };
 
-function presentation(job: Internship): Record<PresentationField, unknown> {
+function reviewedEmployerIdentity(
+  job: Internship,
+  mappings: Map<string, string>,
+): string | string[] | undefined {
+  if (job.admission?.canonicalEmployer?.id) return job.admission.canonicalEmployer.id;
+  const identities = new Set<string>();
+  for (const reference of job.sourceReferences) {
+    const provider = reference.provenance === 'reviewed-community'
+      ? 'github'
+      : reference.providerEvidence?.provider
+        ?? (reference.sourceId.startsWith('greenhouse-') ? 'greenhouse'
+          : reference.sourceId.startsWith('lever-') ? 'lever'
+            : reference.sourceId.startsWith('ashby-') ? 'ashby' : undefined);
+    if (!provider) continue;
+    const employerScope = `employer:${canonicalCompanyKey(reference.company)}`;
+    const scopes = provider === 'github'
+      ? [employerScope]
+      : [reference.sourceId, reference.providerEvidence?.tenant, employerScope];
+    for (const scope of scopes.filter((value): value is string => Boolean(value))) {
+      const variants = scope.startsWith('employer:')
+        ? [scope, `employer:${scope.slice('employer:'.length).replace(/[\s_]+/gu, '-')}`]
+        : [scope];
+      for (const variant of variants) {
+        const canonicalEmployerId = mappings.get(`${provider}\0${variant}`);
+        if (canonicalEmployerId) identities.add(canonicalEmployerId);
+      }
+    }
+  }
+  const values = [...identities].sort();
+  return values.length <= 1 ? values[0] : values;
+}
+
+function presentation(job: Internship, employerMappings: Map<string, string>): Record<PresentationField, unknown> {
   const future = job as FutureAdmissionJob;
   const identity = (job.internshipIdentity as { company?: { canonicalId?: string } } | undefined)?.company?.canonicalId;
   return {
-    employerIdentity: job.admission?.canonicalEmployer?.id ?? future.employerId ?? identity,
+    employerIdentity: reviewedEmployerIdentity(job, employerMappings) ?? future.employerId ?? identity,
     employerName: job.company,
     title: job.title,
     location: { location: job.location, locations: job.locations ?? [] },
@@ -316,13 +359,14 @@ function presentationDisagreement(
   providerIdentity: string,
   canonicalJobId: string,
   members: Internship[],
+  employerMappings: Map<string, string>,
   official?: SourceOccurrence,
 ): PresentationDisagreement | undefined {
   const values = {} as PresentationDisagreement['values'];
   const fields: PresentationField[] = [];
-  for (const field of Object.keys(presentation(members[0]!)) as PresentationField[]) {
+  for (const field of Object.keys(presentation(members[0]!, employerMappings)) as PresentationField[]) {
     if (official && ['employerName', 'title', 'location', 'destinationUrl'].includes(field)) continue;
-    const observed = members.map((job) => ({ jobId: job.jobId, value: presentation(job)[field] }));
+    const observed = members.map((job) => ({ jobId: job.jobId, value: presentation(job, employerMappings)[field] }));
     if (new Set(observed.map((item) => JSON.stringify(stable(comparablePresentationValue(field, item.value))))).size <= 1) continue;
     fields.push(field);
     values[field] = observed;
@@ -361,8 +405,19 @@ export function postingIdentityRepairPlan(
   userRows: UserRow[],
   proposalRows: ProposalRow[] = [],
   scope: PostingIdentityRepairScope = 'all',
+  reviewContext: PostingIdentityRepairReviewContext = {},
 ): InternalPlan {
   const conflicts: string[] = [];
+  const employerMappings = new Map<string, string>();
+  for (const mapping of reviewContext.employerMappings ?? []) {
+    const key = `${mapping.provider}\0${mapping.scope}`;
+    const existing = employerMappings.get(key);
+    if (existing && existing !== mapping.canonical_employer_id) {
+      conflicts.push(`reviewed employer mapping ${mapping.provider}:${mapping.scope} resolves to multiple canonical employers`);
+      continue;
+    }
+    employerMappings.set(key, mapping.canonical_employer_id);
+  }
   const snapshotDigest = createHash('sha256').update(JSON.stringify(stable({
     catalog: catalogRows.map((row) => [row.pk, row.sk, row.kind, row.value])
       .sort((left, right) => String(left[0]).localeCompare(String(right[0])) || String(left[1]).localeCompare(String(right[1]))),
@@ -370,6 +425,7 @@ export function postingIdentityRepairPlan(
       .sort((left, right) => String(left[0]).localeCompare(String(right[0])) || String(left[1]).localeCompare(String(right[1]))),
     proposals: proposalRows.map((row) => [row.id, row.job_id])
       .sort((left, right) => left[0].localeCompare(right[0])),
+    employerMappings: [...employerMappings.entries()].sort(([left], [right]) => left.localeCompare(right)),
   }))).digest('hex');
   const occurrenceDecisions = new Map<string, SourceOccurrence['postingIdentityDecision']>();
   let untrackedQuarantines = 0;
@@ -487,7 +543,7 @@ export function postingIdentityRepairPlan(
     const canonical = ordered[0]!;
     const official = officialPresentation(ordered.map((item) => item.job), canonical.evidence);
     const disagreement = ordered.length > 1
-      ? presentationDisagreement(key, canonical.job.jobId, ordered.map((item) => item.job), official)
+      ? presentationDisagreement(key, canonical.job.jobId, ordered.map((item) => item.job), employerMappings, official)
       : undefined;
     if (ordered.length > 1) {
       duplicateGroups += 1;
@@ -593,6 +649,7 @@ export function postingIdentityRepairPlan(
       .flatMap((jobId) => occurrencesByJob.get(jobId) ?? []);
     const sourceReferences = mergedOccurrenceEvidence([...base.sourceReferences, ...occurrenceReferences])
       .map((reference) => classifiedOccurrence(reference, base.firstSeenAt));
+    const synchronizedAdmission = deriveCanonicalAdmission(sourceReferences, base.lastSeenAt);
     const officialSeason = sourceReferences.find((reference) => isOfficialOccurrence(reference)
       && /\b(?:winter|spring|summer|fall)\s*[/-]\s*(?:winter|spring|summer|fall)\s*(?:intern(?:ship)?\s*)?20\d{2}\b/i.test(reference.title))?.season;
     const season = officialSeason ?? base.season;
@@ -600,6 +657,7 @@ export function postingIdentityRepairPlan(
       ...base,
       sourceReferences,
       postingIdentityStatus: postingIdentityStatusForOccurrences(sourceReferences),
+      ...(synchronizedAdmission ? { admission: synchronizedAdmission } : {}),
       season,
       fingerprint: fingerprint(base.company, base.title, base.location, season),
     };
@@ -915,14 +973,18 @@ export async function runPostingIdentityRepair(db: D1Database, options: {
   expectedDuplicateJobs?: number;
   scope?: PostingIdentityRepairScope;
 } = {}): Promise<PostingIdentityRepairPlan> {
-  const [catalog, users, proposals] = await Promise.all([
+  const [catalog, users, proposals, employerMappings] = await Promise.all([
     db.prepare('SELECT * FROM catalog_items ORDER BY pk, sk').all<CatalogRow>(),
     db.prepare('SELECT * FROM user_items ORDER BY user_id, item_key').all<UserRow>(),
     db.prepare('SELECT id, job_id FROM employer_field_proposals ORDER BY id').all<ProposalRow>(),
+    db.prepare(`SELECT provider, scope, canonical_employer_id FROM employer_mappings
+      WHERE superseded_at IS NULL ORDER BY provider, scope`).all<EmployerMappingRow>(),
   ]);
   const scope = options.scope ?? 'all';
   if (!['all', 'identity', 'occurrences'].includes(scope)) throw new Error('Posting identity repair scope must be all, identity, or occurrences');
-  const plan = postingIdentityRepairPlan(catalog.results, users.results, proposals.results, scope);
+  const plan = postingIdentityRepairPlan(catalog.results, users.results, proposals.results, scope, {
+    employerMappings: employerMappings.results,
+  });
   const report = repairReport(plan);
   if (scope === 'occurrences' && plan.duplicateJobs > 0) {
     return { ...report, conflicts: [...report.conflicts, 'Apply and verify the identity scope before occurrence synchronization'] };

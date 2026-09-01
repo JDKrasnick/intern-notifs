@@ -45,7 +45,7 @@ function sqliteD1(database: DatabaseSync, metrics?: QueryMetrics): D1Database {
 
 function database() {
   const value = new DatabaseSync(':memory:');
-  for (const name of ['0001_initial.sql', '0002_cost_guards.sql', '0003_billing_shutdown.sql', '0004_auth_rate_limits.sql', '0005_auth_consent.sql', '0006_employer_channel.sql']) {
+  for (const name of ['0001_initial.sql', '0002_cost_guards.sql', '0003_billing_shutdown.sql', '0004_auth_rate_limits.sql', '0005_auth_consent.sql', '0006_employer_channel.sql', '0007_catalog_admission.sql']) {
     value.exec(readFileSync(new URL(`../cloudflare/migrations/${name}`, import.meta.url), 'utf8'));
   }
   return value;
@@ -305,6 +305,112 @@ describe('D1 posting identity repair', () => {
     sqlite.close();
   });
 
+  it('uses reviewed employer mappings to consolidate the four production identities and preserve all eight job IDs', async () => {
+    const sqlite = database(); const db = sqliteD1(sqlite); const store = new D1InternshipStore(db);
+    const reviewedAt = '2026-08-30T00:00:00Z';
+    const cases = [
+      {
+        legacyJobId: 'c8d3d73432eaca4efda52fadca9c6e89', officialJobId: '204c426162f787d321bb70d16d8c9869',
+        postingId: '8489233002', tenant: 'aquaticcapitalmanagement', legacyCompany: 'Aquatic Capital',
+        canonicalEmployerId: 'aquatic-capital-management', displayName: 'Aquatic Capital Management',
+        communitySourceId: 'vanshb03-summer-2027', document: 'README.md',
+      },
+      {
+        legacyJobId: 'a47889f285f1a75bc0e1c48c029039b1', officialJobId: '6350e03733cfa06af80a53e0f047f875',
+        postingId: '7974391', tenant: 'jumptrading', legacyCompany: 'Jump Trading',
+        canonicalEmployerId: 'jump-trading', displayName: 'Jump Trading',
+        communitySourceId: 'simplify-summer-2026', document: 'README-Off-Season.md',
+      },
+      {
+        legacyJobId: 'c6971cd99866453066fb82819cc71c04', officialJobId: '09aa30ca48a977db7d27cd240617f7ef',
+        postingId: '7974837', tenant: 'jumptrading', legacyCompany: 'Jump Trading',
+        canonicalEmployerId: 'jump-trading', displayName: 'Jump Trading',
+        communitySourceId: 'simplify-summer-2026', document: 'README-Off-Season.md',
+      },
+      {
+        legacyJobId: 'ae5b63865b09c95352429982e82a406b', officialJobId: '164db6d239c0e1145cc82d824ee5706d',
+        postingId: '243853', tenant: 'squarepointcapital', legacyCompany: 'Squarepoint Capital',
+        canonicalEmployerId: 'squarepoint-capital', displayName: 'Squarepoint Capital',
+        communitySourceId: 'simplify-summer-2026', document: 'README-Off-Season.md',
+      },
+    ] as const;
+    for (const value of new Map(cases.map((item) => [item.canonicalEmployerId, item])).values()) {
+      sqlite.prepare(`INSERT INTO canonical_employers
+        (id, display_name, reviewed_at, reviewed_by, created_at, updated_at) VALUES (?, ?, ?, 'issue-50-review', ?, ?)`)
+        .run(value.canonicalEmployerId, value.displayName, reviewedAt, reviewedAt, reviewedAt);
+    }
+    const casesByTenant = new Map<string, typeof cases[number][]>();
+    for (const value of cases) casesByTenant.set(value.tenant, [...(casesByTenant.get(value.tenant) ?? []), value]);
+    for (const [tenant, values] of casesByTenant) {
+      await store.putCheckpoint({
+        sourceId: `greenhouse-${tenant}`, successfulFetches: 10,
+        activeExternalIds: values.map((item) => item.postingId),
+      });
+    }
+    for (const [index, value] of cases.entries()) {
+      const sourceId = `greenhouse-${value.tenant}`;
+      const officialUrl = `https://job-boards.greenhouse.io/${value.tenant}/jobs/${value.postingId}`;
+      const communityUrl = value.tenant === 'aquaticcapitalmanagement'
+        ? `https://job-boards.greenhouse.io/embed/job_app?for=${value.tenant}&jr_id=reviewed-role&token=${value.postingId}`
+        : `https://boards.greenhouse.io/embed/job_app?token=${value.postingId}`;
+      const evidence: ProviderPostingEvidence = {
+        provider: 'greenhouse', tenant: value.tenant, postingId: value.postingId, sourceId, urls: [officialUrl],
+      };
+      const admission = {
+        canonicalEmployer: { id: value.canonicalEmployerId, displayName: value.displayName },
+        employerResolution: 'resolved' as const,
+        postingAttribution: 'attributed' as const,
+        destination: {
+          candidateUrl: officialUrl, provider: 'greenhouse' as const, tenant: value.tenant,
+          expectedPostingId: value.postingId, inspectedAt: reviewedAt, classification: 'posting-detail' as const,
+        },
+        metadata: { complete: true, title: 'complete' as const, location: 'complete' as const },
+        catalogEligible: true, alertEligible: true, reasonCodes: [], evaluatedAt: reviewedAt, evidenceObservedAt: reviewedAt,
+      };
+      const scope = `employer:${value.legacyCompany.toLowerCase().replace(/\s+/gu, '-')}`;
+      sqlite.prepare(`INSERT OR IGNORE INTO employer_mappings
+        (id, provider, scope, canonical_employer_id, reviewed_at, reviewed_by, created_at)
+        VALUES (?, 'github', ?, ?, ?, 'issue-50-review', ?)`)
+        .run(`mapping-${index}`, scope, value.canonicalEmployerId, reviewedAt, reviewedAt);
+      const legacyReference = {
+        ...occurrence(value.communitySourceId, `${value.document}:${communityUrl}`, communityUrl),
+        provenance: 'reviewed-community' as const, document: value.document, company: value.legacyCompany,
+      };
+      const officialReference = {
+        ...occurrence(sourceId, value.postingId, officialUrl, evidence),
+        provenance: 'official-ats' as const, company: value.displayName, admission,
+      };
+      await store.putInternship(job(value.legacyJobId, communityUrl, '2026-08-01T00:00:00.000Z', [legacyReference], {
+        company: value.legacyCompany,
+      }));
+      await store.putInternship(job(value.officialJobId, officialUrl, '2026-08-02T00:00:00.000Z', [officialReference], {
+        company: value.displayName,
+        admission,
+      }));
+      await store.claimPostingIdentity(buildPostingIdentity({ applicationUrl: officialUrl }), value.officialJobId);
+    }
+
+    const dry = await runPostingIdentityRepair(db, { scope: 'identity' });
+    expect(dry).toMatchObject({
+      duplicateGroups: 4, duplicateJobs: 4, eligibleDuplicateGroups: 4,
+      unresolvedDuplicateGroups: 0, presentationDisagreements: [],
+    });
+    await runPostingIdentityRepair(db, {
+      scope: 'identity', apply: true, repairToken: dry.repairToken,
+      expectedChanges: dry.expectedChanges, expectedDuplicateJobs: dry.duplicateJobs,
+    });
+    expect(await runPostingIdentityRepair(db, { scope: 'identity' })).toMatchObject({
+      duplicateGroups: 0, duplicateJobs: 0, expectedChanges: 0,
+    });
+    for (const value of cases) {
+      const legacy = await store.getJob(value.legacyJobId);
+      const official = await store.getJob(value.officialJobId);
+      expect(legacy?.jobId).toBe(official?.jobId);
+      expect(legacy).toMatchObject({ admission: { canonicalEmployer: { id: value.canonicalEmployerId } } });
+    }
+    sqlite.close();
+  });
+
   it('keeps genuinely different reviewed employer IDs as a presentation blocker', async () => {
     const sqlite = database(); const db = sqliteD1(sqlite); const store = new D1InternshipStore(db);
     const postingId = '910004'; const tenant = 'aquaticcapitalmanagement';
@@ -490,7 +596,7 @@ describe('D1 posting identity repair', () => {
     expect(verification).toMatchObject({ expectedChanges: 0, conflicts: [] });
     expect(postingIdentityRepairQueryCount(dry.expectedChanges)).toBe(123);
     expect(postingIdentityRepairQueryCount(4_250 * 2)).toBe(438);
-    expect(metrics.statements).toBe(126);
+    expect(metrics.statements).toBe(128);
     expect(metrics.statements).toBeLessThanOrEqual(900);
     expect(metrics.maxBoundParameters).toBeLessThanOrEqual(100);
     const occurrences = await runPostingIdentityRepair(db, { scope: 'occurrences' });

@@ -481,6 +481,14 @@ changes. No notification/outbox row is inserted or rewritten. A successful
 apply rebuilds the grouped catalog projection and returns a verification dry
 run.
 
+The guarded preview reads active reviewed employer mappings directly. This lets
+historical community spellings resolve to the same canonical employer as the
+official connector even when the legacy job predates per-occurrence admission
+stamps. Those mappings are included in the snapshot digest; conflicting active
+mappings remain a hard blocker. Consolidation also derives the retained job's
+canonical admission from its merged occurrence evidence before legacy job-ID
+aliases become visible.
+
 After #120 provides a reviewed employer/metadata/destination/admission decision,
 run the combined reviewed repair and quarantine any group it leaves unresolved.
 Run the standalone dry run again and require `eligibleDuplicateJobs: 0`,
