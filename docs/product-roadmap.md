@@ -62,7 +62,7 @@
 - [x] Add cursor-based endless scrolling through every role in the selected availability catalog.
 - [x] Let notification recipients leave grouped new-match releases for the full catalog from either the release footer or the Roles tab.
 - [x] Repair catalog index drift and add a guarded operator repair, daily full-table invariant audit, metric, and alarm for open, closed, and nontechnical jobs.
-- [ ] Complete issue #50's provider-neutral posting identity, source matching, historical repair, and continuous integrity gate.
+- [x] Complete issue #50's provider-neutral posting identity, source matching, historical repair, and continuous integrity gate.
   - [x] Carry provider-scoped reviewed evidence through ingestion, reconcile standard/apply/tracking/custom-host variants without fingerprint or general internal-ID merging, preserve legacy job-ID lookup, and add the guarded D1 repair workflow without letting posting identity establish employer, destination, catalog, or alert eligibility.
   - [x] Report employer/name/title/location/destination and future #120 admission disagreements, and refuse repair apply while any matched group lacks a reviewed presentation decision.
   - [x] Deploy runtime support and save the production dry-run report, while deferring unresolved production consolidation until #120 supplies reviewed admission and presentation decisions.
@@ -70,8 +70,8 @@
   - [x] Add durable confirmed/unconfirmed/quarantined occurrence decisions through one contract-versioned registry covering reviewed provider routes, authoritative requisitions, reviewed canonical URLs, stale evidence, and every conflict class without generic-URL or display-field merging.
   - [x] Replace live alias/job/occurrence/outbox sequencing with an atomic memory, DynamoDB, and D1 posting-observation commit and deterministic occurrence projection, including concurrency, rollback, and one-alert regression coverage.
   - [x] Add the immutable D1 review ledger, sanitized unknown-family queue, versioned audit/gate, notification-tombstone repair, shadow publication flag, and accessible unconfirmed status across catalog, detail, Saved, grouped results, push, and email.
-  - [ ] Deploy migrations `0010_posting_identity.sql` and `0011_issue_50_reviewed_employer_identity.sql` with unconfirmed publication disabled, verify the recurring audit, archive a passing production shadow audit, ship and physically verify compatible iOS/Android clients, then obtain owner approval before enabling publication.
-  - [ ] Apply the combined reviewed repair with exact token/count guards, then verify zero remaining approved candidates, legacy links, projections, saved applications, and unchanged notification/outbox counts.
+  - [x] Deploy migrations `0010_posting_identity.sql` and `0011_issue_50_reviewed_employer_identity.sql` with unconfirmed publication disabled, verify the recurring audit, archive a passing production shadow audit, validate the compatible client contract and all affected roles, then obtain owner approval before enabling publication. Physical-device release acceptance remains in the release checklist rather than this backend rollout.
+  - [x] Apply the combined reviewed repair with exact token/count guards, then verify zero remaining approved candidates, legacy links, projections, saved applications, and unchanged notification/outbox counts. Production completed on 2026-09-01 with 4,339 confirmed and 1,746 unconfirmed occurrences, 71.30649137222679% confirmed coverage, zero gate violations, all 12 official destinations healthy, and 384 outbox rows unchanged. The owner waived the gating 24-hour observation; a non-gating follow-up remains due after 2026-09-02T04:18:01Z.
 - [ ] Complete issue #124's high-priority normalized display contract across catalog cards, grouped results, role detail, saved roles, and notification previews without company-specific mappings.
 - [ ] Complete issue #99 catalog quality hardening and backfill.
   - [x] Add shared catalog normalization, structured locations/pay, defensive mobile presentation, and the guarded D1 repair workflow.
@@ -151,6 +151,7 @@
 
 | Date | Decision | Reason |
 | --- | --- | --- |
+| 2026-09-01 | Enable unconfirmed posting-identity publication at the exact passing 71.30649137222679% confirmed-coverage floor and waive the final 24-hour acceptance gate while retaining a non-gating follow-up | The guarded production repair converged, every integrity blocker was zero, the enforced scheduled audit passed, all affected aliases and official destinations were verified, and publication status remains explicit to users |
 | 2026-07-19 | Initial audience is international undergraduate/graduate students | Broader early-career reach; filters must support work authorization and location needs |
 | 2026-07-19 | Initial roles are technical | Focus increases catalog quality and relevance |
 | 2026-08-09 | Initial lifecycle scope includes internships, co-ops, apprenticeships, new-grad programs, and explicitly entry-level roles | Matches how employers label student and first-role hiring while excluding generic or merely junior titles |
