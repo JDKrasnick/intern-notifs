@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ApplicationUrlValidationError, assessApplicationPageForListing, canonicalApplicationUrl, inspectApplicationPage, validateApplicationUrl } from '../src/core/application-url.js';
 
 describe('application URL validation', () => {
@@ -38,6 +38,83 @@ describe('application URL validation', () => {
       return new Response('', { status: methods.length === 1 ? 405 : 200 });
     })).resolves.toBe('https://careers.example.com/role');
     expect(methods).toEqual(['HEAD', 'GET', 'GET']);
+  });
+
+  it('releases every response while validating more than six application URLs', async () => {
+    const responses: Response[] = [];
+    const validate = (index: number) => validateApplicationUrl(`https://careers.example.com/role-${index}`, async (_url, init) => {
+      const response = init?.method === 'HEAD'
+        ? new Response('HEAD not supported', { status: 405 })
+        : new Headers(init?.headers).has('Range')
+          ? new Response('range probe', { status: 200 })
+          : new Response(`<title>Software Engineer Intern ${index}</title>`, { status: 200, headers: { 'content-type': 'text/html' } });
+      responses.push(response);
+      return response;
+    });
+
+    await expect(Promise.all(Array.from({ length: 8 }, (_, index) => validate(index)))).resolves.toHaveLength(8);
+    expect(responses).toHaveLength(24);
+    expect(responses.every((response) => response.bodyUsed)).toBe(true);
+  });
+
+  it('does not wait for a remote response source to finish cancellation', async () => {
+    let cancellationStarted = false;
+    await expect(validateApplicationUrl('https://careers.example.com/role', async (_url, init) => {
+      if (init?.method === 'HEAD') {
+        return new Response(new ReadableStream({
+          cancel() {
+            cancellationStarted = true;
+            return new Promise<void>(() => undefined);
+          },
+        }), { status: 200 });
+      }
+      return new Response('<title>Software Engineer Intern</title>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      });
+    })).resolves.toBe('https://careers.example.com/role');
+    expect(cancellationStarted).toBe(true);
+  });
+
+  it('times out when a response body stream never yields a chunk', async () => {
+    vi.useFakeTimers();
+    try {
+      const validation = inspectApplicationPage('https://careers.example.com/role', async () =>
+        new Response(new ReadableStream({ pull() { return new Promise<void>(() => undefined); } }), {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+        }));
+      const rejected = expect(validation).rejects.toThrow('body timed out');
+      await vi.advanceTimersByTimeAsync(8_001);
+      await rejected;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('applies the body timeout to the complete stream rather than each chunk', async () => {
+    vi.useFakeTimers();
+    try {
+      const validation = inspectApplicationPage('https://careers.example.com/role', async () =>
+        new Response(new ReadableStream({
+          pull(controller) {
+            return new Promise<void>((resolve) => {
+              setTimeout(() => {
+                controller.enqueue(new TextEncoder().encode('<p>still loading</p>'));
+                resolve();
+              }, 3_000);
+            });
+          },
+        }), {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+        }));
+      const rejected = expect(validation).rejects.toThrow('body timed out');
+      await vi.advanceTimersByTimeAsync(8_001);
+      await rejected;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reads a rendered job page instead of accepting a generic 200 shell", async () => {

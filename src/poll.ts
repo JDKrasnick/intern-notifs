@@ -111,6 +111,7 @@ function quarantinedOccurrence(
     ...(listing.postedAt ? { postedAt: listing.postedAt } : {}),
     externalId,
     ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
+    ...(listing.admissionConfigurationVersion ? { admissionConfigurationVersion: listing.admissionConfigurationVersion } : {}),
     postingIdentityDecision: decision,
     company: listing.company,
     title: listing.title,
@@ -133,6 +134,7 @@ export interface PollReport {
   newJobs: Internship[];
   filteredJobs: Internship[];
   quarantinedListings: Array<{ sourceId: string; row: number; reason: string }>;
+  continuationSources: string[];
   failures: string[];
 }
 
@@ -516,6 +518,7 @@ export class IngestionRunner {
     const validatedAt = new Map<string, string>();
     const metadataValidated = new Map<string, number>();
     const alertEligible = new Set<string>();
+    const handledExternalIds = new Set<string>();
     // Slots keep the snapshot order stable so duplicate merging, alert order, and
     // reported failures do not depend on which worker finished first.
     const accepted = new Array<ProcessedListing | undefined>(listings.length);
@@ -527,6 +530,27 @@ export class IngestionRunner {
       // by record-level admission; legacy rows retain their rollout behavior
       // until the reviewed backfill classifies them.
       const supportsAdmission = Boolean(sourceListing.employerEvidence || sourceListing.providerIdentity);
+      const id = externalId(sourceListing);
+      const priorOccurrence = priorByExternalId.get(id);
+      const completeFailedAdmissionMigration = async () => {
+        if (!admissionConfigurationVersion) return;
+        if (priorOccurrence
+          && priorOccurrence.occurrence.admissionConfigurationVersion !== admissionConfigurationVersion) {
+          try {
+            await this.store.putSourceOccurrence({
+              ...priorOccurrence,
+              occurrence: { ...priorOccurrence.occurrence, admissionConfigurationVersion },
+            });
+          } catch (error) {
+            failures[slot] = `${failures[slot]}; failed to preserve migration decision: ${error instanceof Error ? error.message : String(error)}`;
+            return;
+          }
+        }
+        // A failed new row has no legacy occurrence to preserve. It still
+        // completes this configuration slice by failing closed; otherwise the
+        // same unpersistable row poisons every continuation forever.
+        handledExternalIds.add(id);
+      };
       let legacyUrl: string;
       let canonicalUrl: string;
       try {
@@ -534,6 +558,7 @@ export class IngestionRunner {
         canonicalUrl = canonicalApplicationUrl(sourceListing.applyUrl);
       } catch (error) {
         failures[slot] = `${sourceListing.sourceId}: row ${sourceListing.row}: ${error instanceof Error ? error.message : String(error)}`;
+        await completeFailedAdmissionMigration();
         return;
       }
       let listing = {
@@ -543,12 +568,13 @@ export class IngestionRunner {
         technical: sourceListing.technical ?? true,
         ...(admissionConfigurationVersion ? { admissionConfigurationVersion } : {}),
       };
-      const id = listing.externalId;
-      const priorOccurrence = priorByExternalId.get(id);
       const admissionAlreadyApplied = Boolean(admissionConfigurationVersion
         && priorOccurrence?.occurrence.admissionConfigurationVersion === admissionConfigurationVersion);
       if ((reuseUnchangedOccurrences || admissionAlreadyApplied) && priorOccurrence
-        && sourceOwnedMaterial(priorOccurrence.occurrence) === sourceOwnedMaterial(listing)) return;
+        && sourceOwnedMaterial(priorOccurrence.occurrence) === sourceOwnedMaterial(listing)) {
+        handledExternalIds.add(id);
+        return;
+      }
       let existing: Internship | undefined;
       let identityMerged = false;
       try {
@@ -577,6 +603,7 @@ export class IngestionRunner {
             row: listing.row,
             reason: `posting identity conflict (${identityResult.decision.reason})`,
           });
+          handledExternalIds.add(id);
           return;
         }
         const identity = identityResult.identity;
@@ -627,6 +654,7 @@ export class IngestionRunner {
               row: listing.row,
               reason: `posting identity conflict (${identityResolution.reason})`,
             });
+            handledExternalIds.add(id);
             return;
           }
           if (!existing || existing.jobId !== identityResolution.canonicalJobId) {
@@ -705,6 +733,7 @@ export class IngestionRunner {
             failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
             if (!admissionManaged) {
               if (existing?.open && reachability === 'gone') await this.quarantine(existing);
+              await completeFailedAdmissionMigration();
               return;
             }
           }
@@ -715,6 +744,7 @@ export class IngestionRunner {
           if (verification.alertEligible) alertEligible.add(id);
           resolved.set(id, existing);
           accepted[slot] = listing;
+          handledExternalIds.add(id);
           return;
         }
         const inspectedAt = this.now().toISOString();
@@ -768,8 +798,10 @@ export class IngestionRunner {
         if (admission.alertEligible) alertEligible.add(id);
         resolved.set(id, existing);
         accepted[slot] = listing;
+        handledExternalIds.add(id);
       } catch (error) {
         failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
+        await completeFailedAdmissionMigration();
       }
     });
     report.failures.push(...failures.filter((failure): failure is string => failure !== undefined));
@@ -779,10 +811,16 @@ export class IngestionRunner {
       validatedAt,
       metadataValidated,
       alertEligible,
+      handledExternalIds,
     };
   }
 
-  async run(options: { seedOnly?: boolean; runId?: string; allowCompleteEmptySnapshot?: boolean } = {}): Promise<PollReport> {
+  async run(options: {
+    seedOnly?: boolean;
+    runId?: string;
+    allowCompleteEmptySnapshot?: boolean;
+    maxAdmissionMigrationListingsPerSourceRun?: number;
+  } = {}): Promise<PollReport> {
     const report: PollReport = {
       fetchedSources: 0,
       unchangedSources: [],
@@ -791,6 +829,7 @@ export class IngestionRunner {
       newJobs: [],
       filteredJobs: [],
       quarantinedListings: [],
+      continuationSources: [],
       failures: [],
     };
     const health: SourceHealth[] = [];
@@ -877,26 +916,83 @@ export class IngestionRunner {
         const githubAdmissionConfigurationVersion = providerFor(connector.id) === 'github'
           ? admissionConfigurationVersion
           : undefined;
+        const migrationLimit = admissionConfigurationChanged && githubAdmissionConfigurationVersion
+          ? options.maxAdmissionMigrationListingsPerSourceRun
+          : undefined;
+        const priorByExternalId = new Map(priorOccurrences.map((occurrence) => [occurrence.externalId, occurrence]));
+        const requiredMigrationCandidates = migrationLimit === undefined ? [] : batch.processed.listings.filter((sourceListing) => {
+          const prior = priorByExternalId.get(externalId(sourceListing));
+          // The per-occurrence stamp is the durable migration cursor. Stored
+          // occurrences can contain page-derived enrichment (for example a
+          // verified season) that deliberately differs from the raw source;
+          // reopening those rows by material comparison makes a completed
+          // slice recur forever.
+          return prior && prior.occurrence.admissionConfigurationVersion !== githubAdmissionConfigurationVersion;
+        });
+        const opportunisticMigrationCandidates = migrationLimit === undefined ? [] : batch.processed.listings.filter((sourceListing) =>
+          !priorByExternalId.has(externalId(sourceListing)));
+        const selectedRequiredMigrations = migrationLimit === undefined
+          ? []
+          : requiredMigrationCandidates.slice(0, migrationLimit);
+        // Once the durable migration backlog is empty, finish one ordinary
+        // full-role pass before advancing the checkpoint. Until then, new rows
+        // may use only spare slice capacity and an overflow forces another
+        // unconditional fetch. This prevents a later GitHub 304 from stranding
+        // valid roles that were present in the migration snapshot but never
+        // resolved.
+        const opportunisticCapacity = migrationLimit === undefined
+          ? 0
+          : requiredMigrationCandidates.length === 0
+            ? opportunisticMigrationCandidates.length
+            : Math.max(0, migrationLimit - selectedRequiredMigrations.length);
+        const selectedOpportunisticMigrations = migrationLimit === undefined
+          ? []
+          : opportunisticMigrationCandidates.slice(0, opportunisticCapacity);
+        const migrationCandidates = migrationLimit === undefined
+          ? batch.processed.listings
+          : [...selectedRequiredMigrations, ...selectedOpportunisticMigrations];
+        const listingsToResolve = migrationLimit === undefined
+          ? (batch.unchanged ? [] : batch.processed.listings)
+          : migrationCandidates;
         const resolution = await this.resolveListings(
-          batch.unchanged ? [] : batch.processed.listings,
+          listingsToResolve,
           report,
           priorOccurrences,
           githubAdmissionConfigurationVersion,
           Boolean(githubAdmissionConfigurationVersion
             && admissionConfigurationVersion === previous?.admissionConfigurationVersion),
         );
-        const closureCandidates = priorOccurrences.filter((prior) => !resolution.resolved.has(prior.externalId)
+        // Existing catalog decisions are the durable migration obligation.
+        // Rows with no prior occurrence are evaluated with spare slice capacity
+        // but fail closed and cannot hold the source checkpoint open forever.
+        const admissionMigrationPending = migrationLimit !== undefined && (
+          requiredMigrationCandidates.length > selectedRequiredMigrations.length
+          || selectedRequiredMigrations.some((listing) => !resolution.handledExternalIds.has(externalId(listing)))
+          || opportunisticMigrationCandidates.length > selectedOpportunisticMigrations.length
+        );
+        if (admissionMigrationPending) report.continuationSources.push(connector.id);
+        // Admission configuration migration is independent of source
+        // lifecycle reconciliation. Replaying inactive historical occurrences
+        // defeats the slice bound; the next ordinary poll handles omissions.
+        const closureCandidates = migrationLimit !== undefined ? [] : priorOccurrences.filter((prior) =>
+          !resolution.resolved.has(prior.externalId)
           && !batch.activeExternalIds.has(prior.externalId)
           && prior.consecutiveOmissions >= 1);
         await forEachBounded(closureCandidates, async (prior) => {
           resolution.resolved.set(prior.externalId, await this.store.getJob(prior.jobId));
         });
+        const reconciliationPriorOccurrences = migrationLimit !== undefined
+          ? listingsToResolve.flatMap((listing) => {
+            const prior = priorByExternalId.get(externalId(listing));
+            return prior ? [prior] : [];
+          })
+          : priorOccurrences;
         const plan = this.reconciler.reconcile({
           sourceId: connector.id,
           snapshotHash: batch.snapshotHash,
           activeExternalIds: batch.activeExternalIds,
           listings: resolution.accepted,
-          priorOccurrences,
+          priorOccurrences: reconciliationPriorOccurrences,
           resolvedJobs: resolution.resolved,
           now,
           baseline,
@@ -911,25 +1007,26 @@ export class IngestionRunner {
         const plannedJobs = new Map(plan.jobs.map((job) => [job.jobId, job]));
         const committedJobIds = new Set<string>();
         const blockedJobIds = new Set<string>();
+        const persistenceFailedJobIds = new Set<string>();
         const alertedJobIds = new Set<string>();
         const notificationErrors = new Array<unknown>(plan.notifications.length);
         const consumedEvents = new Set<string>();
         const classifiedEventIds = new Set<string>();
         await forEachBounded(plan.occurrences, async (occurrence) => {
-          const job = plannedJobs.get(occurrence.jobId);
-          const decision = occurrence.occurrence.postingIdentityDecision;
-          if (!job || !decision || decision.status === 'quarantined') {
-            await this.store.putSourceOccurrence(occurrence);
-            return;
-          }
-          const event = notificationByJobId.get(job.jobId);
-          // Every classified occurrence for the canonical job may carry the
-          // same deterministic event. The transaction/outbox uniqueness
-          // boundary chooses the inserter, so one failed sibling cannot leave
-          // a successfully committed job without its alert tombstone.
-          const includeEvent = event;
-          if (includeEvent) classifiedEventIds.add(includeEvent.eventId);
           try {
+            const job = plannedJobs.get(occurrence.jobId);
+            const decision = occurrence.occurrence.postingIdentityDecision;
+            if (!job || !decision || decision.status === 'quarantined') {
+              await this.store.putSourceOccurrence(occurrence);
+              return;
+            }
+            const event = notificationByJobId.get(job.jobId);
+            // Every classified occurrence for the canonical job may carry the
+            // same deterministic event. The transaction/outbox uniqueness
+            // boundary chooses the inserter, so one failed sibling cannot leave
+            // a successfully committed job without its alert tombstone.
+            const includeEvent = event;
+            if (includeEvent) classifiedEventIds.add(includeEvent.eventId);
             const result = await this.store.commitPostingObservation({
               decision,
               ...(job.postingIdentity ? { identity: job.postingIdentity } : {}),
@@ -952,13 +1049,35 @@ export class IngestionRunner {
               if (result.notificationInserted) alertedJobIds.add(job.jobId);
             }
           } catch (error) {
-            if (includeEvent) notificationErrors[plan.notifications.indexOf(includeEvent)] = error;
-            else throw error;
+            const job = plannedJobs.get(occurrence.jobId);
+            const event = job ? notificationByJobId.get(job.jobId) : undefined;
+            if (event) notificationErrors[plan.notifications.indexOf(event)] = error;
+            if (migrationLimit === undefined || !githubAdmissionConfigurationVersion) throw error;
+            persistenceFailedJobIds.add(occurrence.jobId);
+            const prior = priorByExternalId.get(occurrence.externalId);
+            try {
+              if (prior && prior.occurrence.admissionConfigurationVersion !== githubAdmissionConfigurationVersion) {
+                await this.store.putSourceOccurrence({
+                  ...prior,
+                  occurrence: { ...prior.occurrence, admissionConfigurationVersion: githubAdmissionConfigurationVersion },
+                });
+              }
+              report.failures.push(`${occurrence.sourceId}: ${occurrence.externalId}: migration persistence failed; preserved prior decision: ${error instanceof Error ? error.message : String(error)}`);
+            } catch (preserveError) {
+              throw new Error(`${error instanceof Error ? error.message : String(error)}; failed to preserve migration decision: ${preserveError instanceof Error ? preserveError.message : String(preserveError)}`);
+            }
           }
         });
         await forEachBounded(
-          plan.jobs.filter((job) => !committedJobIds.has(job.jobId) && !blockedJobIds.has(job.jobId) && !notificationByJobId.has(job.jobId)),
-          (job) => this.store.putInternship(job),
+          plan.jobs.filter((job) => !committedJobIds.has(job.jobId) && !blockedJobIds.has(job.jobId)
+            && !persistenceFailedJobIds.has(job.jobId) && !notificationByJobId.has(job.jobId)),
+          async (job) => {
+            try { await this.store.putInternship(job); }
+            catch (error) {
+              if (migrationLimit === undefined) throw error;
+              report.failures.push(`${connector.id}: ${job.jobId}: migration job persistence failed; preserved prior decision: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          },
         );
         // Legacy-unclassified plans retain the compatible job+event operation.
         await forEachBounded(plan.notifications.filter((event) => !classifiedEventIds.has(event.eventId) && !consumedEvents.has(event.eventId) && !blockedJobIds.has(event.jobId)), async (event, index) => {
@@ -971,7 +1090,10 @@ export class IngestionRunner {
           if (alertedJobIds.has(job.jobId)) report.newJobs.push(job);
         }
         const notificationError = notificationErrors.find((error) => error !== undefined);
-        if (notificationError) throw notificationError;
+        if (notificationError) {
+          if (migrationLimit === undefined) throw notificationError;
+          report.failures.push(`${connector.id}: migration notification persistence failed: ${notificationError instanceof Error ? notificationError.message : String(notificationError)}`);
+        }
         const provider = providerFor(connector.id);
         const unchanged304 = result.unchangedReason === 'not_modified';
         const metricCounts: ProcessedSnapshot['counts'] = unchanged304 ? {
@@ -1006,11 +1128,14 @@ export class IngestionRunner {
         };
         await this.store.putSourceHealth(successHealth);
         health.push(successHealth);
+        const checkpointAdmissionConfigurationVersion = admissionMigrationPending
+          ? previous?.admissionConfigurationVersion
+          : admissionConfigurationVersion;
         await this.store.putCheckpoint({
           ...result.checkpoint,
           contentHash: batch.snapshotHash,
           activeExternalIds: [...batch.activeExternalIds],
-          ...(admissionConfigurationVersion ? { admissionConfigurationVersion } : {}),
+          ...(checkpointAdmissionConfigurationVersion ? { admissionConfigurationVersion: checkpointAdmissionConfigurationVersion } : {}),
         });
         for (const job of plan.newJobs) {
           if (!alertedJobIds.has(job.jobId)) {
@@ -1067,7 +1192,12 @@ export class IngestionRunner {
 
 /** @deprecated Compatibility facade; new code should construct `IngestionRunner`. */
 export class Poller extends IngestionRunner {
-  poll(options: { seedOnly?: boolean; runId?: string; allowCompleteEmptySnapshot?: boolean } = {}) {
+  poll(options: {
+    seedOnly?: boolean;
+    runId?: string;
+    allowCompleteEmptySnapshot?: boolean;
+    maxAdmissionMigrationListingsPerSourceRun?: number;
+  } = {}) {
     return this.run(options);
   }
 }

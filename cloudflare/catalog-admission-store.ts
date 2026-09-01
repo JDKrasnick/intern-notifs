@@ -173,10 +173,16 @@ export class D1CatalogAdmissionStore {
     // A GitHub document contains many employers, so its source ID can never be
     // an employer identity. Official single-employer feeds retain their broad
     // source/tenant mappings and can fall back to the row's employer scope.
-    const scopes = [...new Set((identity.provider === 'github'
+    const rawScopes = (identity.provider === 'github'
       ? [identity.employerScope]
       : [identity.sourceId, identity.tenant, identity.employerScope])
-      .filter((value): value is string => Boolean(value)))];
+      .filter((value): value is string => Boolean(value));
+    // Community ingestion historically encoded the same conservative company
+    // key with either spaces or hyphens. Try only that representation variant;
+    // the reviewed mapping still defines every accepted employer identity.
+    const scopes = [...new Set(rawScopes.flatMap((scope) => scope.startsWith('employer:')
+      ? [scope, `employer:${scope.slice('employer:'.length).replace(/[\s_]+/gu, '-')}`]
+      : [scope]))];
     for (const scope of scopes) {
       const row = await this.db.prepare(`SELECT employer.id, employer.display_name
         FROM employer_mappings AS mapping

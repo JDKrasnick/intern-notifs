@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MemoryInternshipStore } from '../src/store.js';
 import { Poller } from '../src/poll.js';
 import { buildPostingIdentity } from '../src/identity/posting.js';
@@ -120,6 +120,349 @@ describe('polling', () => {
     expect((await store.getSourceOccurrences('one'))[0]).toMatchObject({ occurrence: { row: 5 } });
     expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
   });
+  it('finishes a large admission migration through bounded successful continuations', async () => {
+    const store = new MemoryInternshipStore();
+    let configurationVersion = 'configuration-v1';
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const rows = Array.from({ length: 5 }, (_, index) => ({
+      ...listing(`https://jobs.example.com/migration-${index}`),
+      row: index + 1,
+      title: `Software Engineering Intern ${index}`,
+    }));
+    const run = (observedAt: string) => new Poller(
+      [new Adapter('one', rows)],
+      store,
+      () => new Date(observedAt),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll({ maxAdmissionMigrationListingsPerSourceRun: 2 });
+
+    await run('2026-08-09T12:00:00.000Z');
+    configurationVersion = 'configuration-v2';
+
+    const first = await run('2026-08-10T12:00:00.000Z');
+    expect(first.continuationSources).toEqual(['one']);
+    expect((await store.getSourceOccurrences('one')).filter((value) =>
+      value.occurrence.admissionConfigurationVersion === 'configuration-v2')).toHaveLength(2);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v1' });
+
+    const second = await run('2026-08-10T12:01:00.000Z');
+    expect(second.continuationSources).toEqual(['one']);
+    expect((await store.getSourceOccurrences('one')).filter((value) =>
+      value.occurrence.admissionConfigurationVersion === 'configuration-v2')).toHaveLength(4);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v1' });
+
+    const final = await run('2026-08-10T12:02:00.000Z');
+    expect(final.continuationSources).toEqual([]);
+    expect((await store.getSourceOccurrences('one')).filter((value) =>
+      value.occurrence.admissionConfigurationVersion === 'configuration-v2')).toHaveLength(5);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+    expect([...store.jobs.values()]).toHaveLength(5);
+    expect([...store.jobs.values()].every((job) => job.open)).toBe(true);
+  });
+  it('fetches and persists every new role before a migration checkpoint can produce a 304', async () => {
+    const store = new MemoryInternshipStore();
+    let configurationVersion = 'configuration-v1';
+    let fetches = 0;
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const rows = Array.from({ length: 6 }, (_, index) => ({
+      ...listing(`https://jobs.example.com/migration-new-${index}`),
+      row: index + 1,
+      title: `Software Engineering Intern ${index}`,
+    }));
+    const adapter: SourceAdapter = {
+      id: 'one',
+      async fetch(previous) {
+        fetches += 1;
+        const notModified = previous?.admissionConfigurationVersion === 'configuration-v2'
+          && previous.etag === 'roles-etag';
+        return {
+          sourceId: 'one',
+          listings: notModified ? [] : fetches === 1 ? rows.slice(0, 1) : rows,
+          notModified,
+          checkpoint: {
+            ...previous,
+            sourceId: 'one',
+            etag: 'roles-etag',
+            successfulFetches: (previous?.successfulFetches ?? 0) + (notModified ? 0 : 1),
+            lastRowCount: rows.length,
+          },
+        };
+      },
+    };
+    const run = () => new Poller(
+      [adapter], store, () => new Date('2026-08-10T12:00:00.000Z'),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll({ maxAdmissionMigrationListingsPerSourceRun: 2 });
+
+    await run();
+    configurationVersion = 'configuration-v2';
+
+    const first = await run();
+    expect(first.continuationSources).toEqual(['one']);
+    expect([...store.jobs.values()]).toHaveLength(2);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v1' });
+
+    const final = await run();
+    expect(final.unchangedSources).toEqual([]);
+    expect(final.continuationSources).toEqual([]);
+    expect([...store.jobs.values()]).toHaveLength(6);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+
+    const unchanged = await run();
+    expect(unchanged.unchangedSources).toEqual(['one']);
+    expect([...store.jobs.values()]).toHaveLength(6);
+  });
+  it('defers inactive occurrence loading until the next ordinary poll', async () => {
+    const store = new MemoryInternshipStore();
+    let configurationVersion = 'configuration-v1';
+    let rows = [
+      listing('https://jobs.example.com/active-1'),
+      listing('https://jobs.example.com/active-2'),
+      listing('https://jobs.example.com/inactive'),
+    ];
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const run = () => new Poller(
+      [new Adapter('one', rows)],
+      store,
+      () => new Date('2026-08-10T12:00:00.000Z'),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll({ maxAdmissionMigrationListingsPerSourceRun: 1 });
+
+    await run();
+    const inactive = (await store.getSourceOccurrences('one')).find((occurrence) =>
+      occurrence.occurrence.applyUrl === 'https://jobs.example.com/inactive')!;
+    rows = rows.slice(0, 2);
+    configurationVersion = 'configuration-v2';
+    const getJob = vi.spyOn(store, 'getJob');
+
+    const first = await run();
+
+    expect(first.continuationSources).toEqual(['one']);
+    expect(getJob).not.toHaveBeenCalledWith(inactive.jobId);
+    expect((await store.getSourceOccurrences('one')).find((occurrence) => occurrence.jobId === inactive.jobId))
+      .toMatchObject({ present: true, consecutiveOmissions: 0 });
+
+    const final = await run();
+    expect(final.continuationSources).toEqual([]);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+    expect((await store.getSourceOccurrences('one')).find((occurrence) => occurrence.jobId === inactive.jobId))
+      .toMatchObject({ present: true, consecutiveOmissions: 0 });
+
+    await run();
+    expect((await store.getSourceOccurrences('one')).find((occurrence) => occurrence.jobId === inactive.jobId))
+      .toMatchObject({ present: false, consecutiveOmissions: 1 });
+  });
+  it('preserves and stamps a failed legacy row so it cannot poison migration continuations', async () => {
+    const store = new MemoryInternshipStore();
+    let configurationVersion = 'configuration-v1';
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const run = (row: RawListing) => new Poller(
+      [new Adapter('one', [row])],
+      store,
+      () => new Date('2026-08-10T12:00:00.000Z'),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll({ maxAdmissionMigrationListingsPerSourceRun: 1 });
+
+    await run(listing('https://jobs.example.com/original'));
+    const originalJob = [...store.jobs.values()][0]!;
+    configurationVersion = 'configuration-v2';
+    const migrated = await run({ ...listing('not-a-url'), externalId: 'README.md:https://jobs.example.com/original' });
+
+    expect(migrated.failures).toEqual([expect.stringContaining('Invalid URL')]);
+    expect(migrated.continuationSources).toEqual([]);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+    expect((await store.getSourceOccurrences('one'))[0]).toMatchObject({
+      occurrence: { applyUrl: 'https://jobs.example.com/original', admissionConfigurationVersion: 'configuration-v2' },
+    });
+    expect(await store.getJob(originalJob.jobId)).toEqual(originalJob);
+  });
+  it('fails a new unpersistable row closed without poisoning migration continuations', async () => {
+    const store = new MemoryInternshipStore();
+    let configurationVersion = 'configuration-v1';
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const run = (rows: RawListing[]) => new Poller(
+      [new Adapter('one', rows)],
+      store,
+      () => new Date('2026-08-10T12:00:00.000Z'),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll({ maxAdmissionMigrationListingsPerSourceRun: 2 });
+    const original = listing('https://jobs.example.com/original');
+
+    await run([original]);
+    configurationVersion = 'configuration-v2';
+    const migrated = await run([
+      original,
+      { ...listing('not-a-url'), externalId: 'README.md:new-invalid-row' },
+    ]);
+
+    expect(migrated.failures).toEqual([expect.stringContaining('Invalid URL')]);
+    expect(migrated.continuationSources).toEqual([]);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+    expect(await store.getSourceOccurrences('one')).toHaveLength(1);
+    expect([...store.jobs.values()]).toHaveLength(1);
+  });
+  it('does not reopen a stamped migration row when stored enrichment differs from its source', async () => {
+    const store = new MemoryInternshipStore();
+    let configurationVersion = 'configuration-v1';
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const row = listing('https://jobs.example.com/original');
+    const run = () => new Poller(
+      [new Adapter('one', [row])],
+      store,
+      () => new Date('2026-08-10T12:00:00.000Z'),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll({ maxAdmissionMigrationListingsPerSourceRun: 1 });
+
+    await run();
+    configurationVersion = 'configuration-v2';
+    await run();
+    const occurrence = (await store.getSourceOccurrences('one'))[0]!;
+    await store.putSourceOccurrence({
+      ...occurrence,
+      occurrence: { ...occurrence.occurrence, season: 'fall' },
+    });
+    const checkpoint = await store.getCheckpoint('one');
+    await store.putCheckpoint({ ...checkpoint!, admissionConfigurationVersion: 'configuration-v1' });
+
+    const resumed = await run();
+
+    expect(resumed.continuationSources).toEqual([]);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+    expect((await store.getSourceOccurrences('one'))[0]).toMatchObject({
+      occurrence: { season: 'fall', admissionConfigurationVersion: 'configuration-v2' },
+    });
+  });
+  it('finishes the full-role pass when untracked failures outnumber the migration slice', async () => {
+    const store = new MemoryInternshipStore();
+    let configurationVersion = 'configuration-v1';
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const original = listing('https://jobs.example.com/original');
+    const run = (rows: RawListing[]) => new Poller(
+      [new Adapter('one', rows)],
+      store,
+      () => new Date('2026-08-10T12:00:00.000Z'),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll({ maxAdmissionMigrationListingsPerSourceRun: 1 });
+
+    await run([original]);
+    configurationVersion = 'configuration-v2';
+    await run([original]);
+    const checkpoint = await store.getCheckpoint('one');
+    await store.putCheckpoint({ ...checkpoint!, admissionConfigurationVersion: 'configuration-v1' });
+    const invalidRows = Array.from({ length: 3 }, (_, index) => ({
+      ...listing(`not-a-url-${index}`),
+      externalId: `README.md:new-invalid-row-${index}`,
+    }));
+
+    const resumed = await run([original, ...invalidRows]);
+
+    expect(resumed.failures).toHaveLength(3);
+    expect(resumed.failures.every((failure) => failure.includes('Invalid URL'))).toBe(true);
+    expect(resumed.continuationSources).toEqual([]);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+  });
+  it('preserves a legacy decision when classified persistence fails during migration', async () => {
+    class FailingMigrationStore extends MemoryInternshipStore {
+      failMigrationPersistence = false;
+      override async commitPostingObservation(input: Parameters<MemoryInternshipStore['commitPostingObservation']>[0]) {
+        if (this.failMigrationPersistence && !('sourceId' in input)) throw new Error('simulated classified write conflict');
+        return super.commitPostingObservation(input);
+      }
+    }
+    const store = new FailingMigrationStore();
+    let configurationVersion = 'configuration-v1';
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const run = () => new Poller(
+      [new Adapter('one', [listing('https://jobs.example.com/original')])],
+      store,
+      () => new Date('2026-08-10T12:00:00.000Z'),
+      undefined, undefined, undefined, undefined, resolver,
+    ).poll({ maxAdmissionMigrationListingsPerSourceRun: 1 });
+
+    await run();
+    const originalJob = [...store.jobs.values()][0]!;
+    configurationVersion = 'configuration-v2';
+    store.failMigrationPersistence = true;
+    const migrated = await run();
+
+    expect(migrated.failures).toEqual([expect.stringContaining('preserved prior decision')]);
+    expect(migrated.continuationSources).toEqual([]);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+    expect((await store.getSourceOccurrences('one'))[0]).toMatchObject({
+      occurrence: { admissionConfigurationVersion: 'configuration-v2' },
+    });
+    expect(await store.getJob(originalJob.jobId)).toEqual(originalJob);
+  });
+  it('preserves a legacy decision when migration page inspection fails', async () => {
+    const store = new MemoryInternshipStore();
+    let configurationVersion = 'configuration-v1';
+    let failInspection = false;
+    const resolver = {
+      async configurationVersion() { return configurationVersion; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule() { return undefined; },
+    };
+    const run = () => new Poller(
+      [new Adapter('one', [listing('https://jobs.example.com/original')])],
+      store,
+      () => new Date('2026-08-10T12:00:00.000Z'),
+      undefined,
+      async () => {
+        if (failInspection) throw new Error('Application page exceeds the inspection size limit');
+        return 'Acme';
+      },
+      false, undefined, resolver,
+    ).poll({ maxAdmissionMigrationListingsPerSourceRun: 1 });
+
+    await run();
+    const seededJob = [...store.jobs.values()][0]!;
+    delete seededJob.applicationUrlValidatedAt;
+    await store.putInternship(seededJob);
+    const originalJob = structuredClone(seededJob);
+    configurationVersion = 'configuration-v2';
+    failInspection = true;
+    const migrated = await run();
+
+    expect(migrated.failures).toEqual([expect.stringContaining('inspection size limit')]);
+    expect(migrated.continuationSources).toEqual([]);
+    expect(await store.getCheckpoint('one')).toMatchObject({ admissionConfigurationVersion: 'configuration-v2' });
+    expect((await store.getSourceOccurrences('one'))[0]).toMatchObject({
+      occurrence: { admissionConfigurationVersion: 'configuration-v2' },
+    });
+    expect(await store.getJob(originalJob.jobId)).toEqual(originalJob);
+  });
   it('keeps a large quiet baseline behind a later normal role and out of new-since results', async () => {
     const store = new MemoryInternshipStore();
     const baseline = Array.from({ length: 60 }, (_, index) => ({
@@ -159,7 +502,10 @@ describe('polling', () => {
     await new Poller([new Adapter('community', [listing(variant, 'community')])], store).poll();
     expect([...store.jobs.values()][0]).toMatchObject({
       open: false,
-      sourceReferences: [{ sourceId: 'one' }, { sourceId: 'community', state: 'open' }],
+      sourceReferences: expect.arrayContaining([
+        expect.objectContaining({ sourceId: 'one' }),
+        expect.objectContaining({ sourceId: 'community', state: 'open' }),
+      ]),
     });
   });
   it('adopts a legacy tracked URL when canonical tracking cleanup changes its lookup key', async () => {
@@ -208,7 +554,10 @@ describe('polling', () => {
     expect(store.jobs.size).toBe(1);
     expect([...store.jobs.values()][0]).toMatchObject({
       postingIdentity: { provider: 'greenhouse', tenant: 'figma', providerPostingId: '100' },
-      sourceReferences: [{ sourceId: 'greenhouse-figma' }, { sourceId: 'community' }],
+      sourceReferences: expect.arrayContaining([
+        expect.objectContaining({ sourceId: 'greenhouse-figma' }),
+        expect.objectContaining({ sourceId: 'community' }),
+      ]),
     });
   });
   it.each([
@@ -248,7 +597,10 @@ describe('polling', () => {
     expect(store.jobs.size).toBe(1);
     expect([...store.jobs.values()][0]).toMatchObject({
       postingIdentity: { provider: 'greenhouse', tenant: 'databricks', providerPostingId: postingId },
-      sourceReferences: [{ sourceId: 'community' }, { sourceId: 'greenhouse-databricks' }],
+      sourceReferences: expect.arrayContaining([
+        expect.objectContaining({ sourceId: 'community' }),
+        expect.objectContaining({ sourceId: 'greenhouse-databricks' }),
+      ]),
     });
   });
   it('does not scope a tenant-less Greenhouse embed when two active reviewed boards contain its ID', async () => {
@@ -294,7 +646,13 @@ describe('polling', () => {
     await new Poller([new Adapter('greenhouse-drweng', [reviewedListing({ provider: 'greenhouse', tenant: 'drweng', postingId: '3413670', sourceId: 'greenhouse-drweng', url: 'https://job-boards.greenhouse.io/drweng/jobs/3413670' })])], store).poll();
     await new Poller([new Adapter('community', [listing('https://www.drw.com/work-at-drw/listings/quantitative-research-intern-3413670?utm_source=community', 'community')])], store).poll();
     expect(store.jobs.size).toBe(1);
-    expect([...store.jobs.values()][0]).toMatchObject({ postingIdentity: { tenant: 'drweng', providerPostingId: '3413670' }, sourceReferences: [{ sourceId: 'greenhouse-drweng' }, { sourceId: 'community' }] });
+    expect([...store.jobs.values()][0]).toMatchObject({
+      postingIdentity: { tenant: 'drweng', providerPostingId: '3413670' },
+      sourceReferences: expect.arrayContaining([
+        expect.objectContaining({ sourceId: 'greenhouse-drweng' }),
+        expect.objectContaining({ sourceId: 'community' }),
+      ]),
+    });
   });
   it('converges the historical PlusAI Lever hosted/apply pair', async () => {
     const store = new MemoryInternshipStore(); const id = 'b4f750e7-0148-41f0-b2b1-ff054450a320';

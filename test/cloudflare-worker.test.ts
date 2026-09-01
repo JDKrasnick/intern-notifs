@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { queueHasBacklog } from '../cloudflare/queue-backlog.js';
-import { cloudflareOperationsFleets, cloudflareOperationsQueueClient, documentContent, failedStructuredRecoveryHealth, readDocumentUpload, recoveredStructuredSourceHealth, structuredSourceRunBlocked, validBackfillProvider } from '../cloudflare/worker.js';
+import { cloudflareOperationsFleets, cloudflareOperationsQueueClient, documentContent, failedStructuredRecoveryHealth, readDocumentUpload, recoveredStructuredSourceHealth, runScheduledPostingIdentityAudit, sendQueueMessageWithin, structuredSourceRunBlocked, validBackfillProvider } from '../cloudflare/worker.js';
 import type { Environment } from '../cloudflare/worker.js';
+import type { PostingIdentityRepairPlan } from '../src/posting-identity-repair.js';
 import type { Queue } from '../cloudflare/types.js';
 import { catalogProviderIds, integrationRegistry } from '../src/integration-registry.js';
 
@@ -24,6 +25,100 @@ describe('Cloudflare scheduled dispatch cost guard', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await expect(queueHasBacklog(queue(async () => { throw new Error('metrics unavailable'); }), 'greenhouse')).resolves.toBe(false);
     vi.restoreAllMocks();
+  });
+});
+
+describe('Cloudflare queue continuation bounds', () => {
+  it('rejects a queue send that never settles so the source message can retry', async () => {
+    vi.useFakeTimers();
+    try {
+      const stalled = queue(async () => ({ backlogCount: 0, backlogBytes: 0 }));
+      stalled.send = () => new Promise<void>(() => undefined);
+      const sending = expect(sendQueueMessageWithin(stalled, { sourceId: 'source' }, 5_000)).rejects.toThrow('Queue send timed out');
+      await vi.advanceTimersByTimeAsync(5_001);
+      await sending;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('Cloudflare scheduled posting identity audit', () => {
+  const failedPlan = {
+    occurrenceCounts: { confirmed: 4_200, unconfirmed: 68, legacy: 2, quarantined: 1, confirmedCoverage: 4_200 / 4_268 },
+    duplicateAlertGroups: 1,
+    duplicateJobs: 2,
+    gate: {
+      passed: false, exactDuplicateGroups: 1, aliasConflicts: 2, untrackedQuarantines: 1,
+      presentationBlockers: 3, legacyOccurrences: 2, projectionMismatches: 4, duplicateOccurrenceReferences: 5,
+      danglingOccurrenceReferences: 6,
+    },
+  } as PostingIdentityRepairPlan;
+
+  const coverageRegressionPlan = {
+    ...failedPlan,
+    occurrenceCounts: { confirmed: 3, unconfirmed: 2, legacy: 0, quarantined: 0, confirmedCoverage: 0.6 },
+    duplicateAlertGroups: 0,
+    duplicateJobs: 0,
+    gate: {
+      passed: true, exactDuplicateGroups: 0, aliasConflicts: 0, untrackedQuarantines: 0,
+      presentationBlockers: 0, legacyOccurrences: 0, projectionMismatches: 0, duplicateOccurrenceReferences: 0,
+      danglingOccurrenceReferences: 0,
+    },
+  } as PostingIdentityRepairPlan;
+
+  it('logs a sanitized failed gate while disabled and throws after logging when enforcement is active', async () => {
+    const disabledLogs: string[] = [];
+    await expect(runScheduledPostingIdentityAudit({
+      DB: {} as Environment['DB'], IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED: 'false', IDENTITY_CONFIRMED_COVERAGE_FLOOR: '0.98',
+    }, { audit: async () => failedPlan, log: (event) => disabledLogs.push(event) })).resolves.toMatchObject({
+      status: 'failed', enforcementActive: false, exactDuplicateGroups: 1, aliasConflicts: 2,
+      quarantinedOccurrences: 1, presentationBlockers: 3, legacyOccurrences: 2,
+      projectionMismatches: 4, duplicateOccurrenceReferences: 5, danglingOccurrenceReferences: 6,
+    });
+    expect(disabledLogs).toHaveLength(1);
+    expect(disabledLogs[0]).not.toContain('repairToken');
+    expect(disabledLogs[0]).not.toContain('jobId');
+
+    const enabledLogs: string[] = [];
+    await expect(runScheduledPostingIdentityAudit({
+      DB: {} as Environment['DB'], IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED: 'true', IDENTITY_CONFIRMED_COVERAGE_FLOOR: '0.98',
+    }, { audit: async () => failedPlan, log: (event) => enabledLogs.push(event) }))
+      .rejects.toThrow('integrity gate failed');
+    expect(enabledLogs).toHaveLength(1);
+    expect(JSON.parse(enabledLogs[0]!)).toMatchObject({ status: 'failed', enforcementActive: true });
+  });
+
+  it('fails an enforced coverage regression even when the structural gate passes', async () => {
+    const shadowLogs: string[] = [];
+    await expect(runScheduledPostingIdentityAudit({
+      DB: {} as Environment['DB'], IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED: 'false', IDENTITY_CONFIRMED_COVERAGE_FLOOR: '0.9',
+    }, { audit: async () => coverageRegressionPlan, log: (event) => shadowLogs.push(event) })).resolves.toMatchObject({
+      status: 'failed', enforcementActive: false, confirmedCoverage: 0.6,
+      confirmedCoverageFloor: 0.9, coverageRegression: true,
+    });
+
+    await expect(runScheduledPostingIdentityAudit({
+      DB: {} as Environment['DB'], IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED: 'true', IDENTITY_CONFIRMED_COVERAGE_FLOOR: '0.9',
+    }, { audit: async () => coverageRegressionPlan, log: () => undefined })).rejects.toThrow('integrity gate failed');
+
+    await expect(runScheduledPostingIdentityAudit({
+      DB: {} as Environment['DB'], IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED: 'true', IDENTITY_CONFIRMED_COVERAGE_FLOOR: '0.5',
+    }, { audit: async () => coverageRegressionPlan, log: () => undefined })).resolves.toMatchObject({
+      status: 'passed', confirmedCoverageFloor: 0.5, coverageRegression: false,
+    });
+  });
+
+  it('treats a missing or invalid coverage floor as unavailable gate evidence', async () => {
+    const logs: string[] = [];
+    await expect(runScheduledPostingIdentityAudit({
+      DB: {} as Environment['DB'], IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED: 'false',
+    }, { audit: async () => coverageRegressionPlan, log: (event) => logs.push(event) })).resolves.toMatchObject({
+      status: 'error', confirmedCoverageFloor: null, coverageRegression: null,
+    });
+    await expect(runScheduledPostingIdentityAudit({
+      DB: {} as Environment['DB'], IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED: 'true', IDENTITY_CONFIRMED_COVERAGE_FLOOR: 'not-a-number',
+    }, { audit: async () => coverageRegressionPlan, log: () => undefined })).rejects.toThrow('integrity gate failed');
   });
 });
 

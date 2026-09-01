@@ -17,10 +17,10 @@ import { defaultSources } from '../src/sources/index.js';
 import type { SourceCheckpoint, SourceHealth } from '../src/types.js';
 import { authenticatedInstallation, authenticatedUser, cleanupExpiredAuth, consumeAuthRateLimit, createInstallation, deleteAuthUser, handleAuthRequest, type AuthEnvironment } from './auth.js';
 import { runCatalogQualityBackfill } from '../src/catalog-quality-backfill.js';
-import { runPostingIdentityRepair } from '../src/posting-identity-repair.js';
+import { runPostingIdentityRepair, type PostingIdentityRepairPlan } from '../src/posting-identity-repair.js';
 import { cleanupExpiredUserData, D1InternshipStore, D1ReleaseStore, D1UserStore } from './d1-store.js';
 import { queueHasBacklog } from './queue-backlog.js';
-import type { MessageBatch, Queue, R2Bucket, ScheduledController } from './types.js';
+import type { D1Database, MessageBatch, Queue, R2Bucket, ScheduledController } from './types.js';
 import { disconnectGmail, gmailApi, gmailCallback, GmailStore, processGmailWork, recordGmailFailure, type GmailWorkMessage } from './gmail.js';
 import { D1EmployerStore } from './employer-store.js';
 import { D1CatalogAdmissionStore } from './catalog-admission-store.js';
@@ -71,6 +71,7 @@ export interface Environment extends AuthEnvironment {
   OPERATIONS_SHARED_SECRET: string;
   EMPLOYER_PORTAL_ENABLED?: string;
   IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED?: string;
+  IDENTITY_CONFIRMED_COVERAGE_FLOOR?: string;
   BILLING_WEBHOOK_SECRET?: string;
   CLOUDFLARE_SHUTDOWN_TOKEN?: string;
   CLOUDFLARE_ACCOUNT_ID: string;
@@ -845,9 +846,112 @@ async function refreshCatalogProjection(store: D1InternshipStore) {
   };
 }
 
+export type PostingIdentityAuditEvent = {
+  event: 'posting_identity_integrity_audit';
+  enforcementActive: boolean;
+  status: 'passed' | 'failed' | 'error';
+  confirmedOccurrences: number | null;
+  unconfirmedOccurrences: number | null;
+  confirmedCoverage: number | null;
+  confirmedCoverageFloor: number | null;
+  coverageRegression: boolean | null;
+  exactDuplicateGroups: number | null;
+  duplicateJobs: number | null;
+  duplicateAlertGroups: number | null;
+  aliasConflicts: number | null;
+  quarantinedOccurrences: number | null;
+  untrackedQuarantines: number | null;
+  presentationBlockers: number | null;
+  legacyOccurrences: number | null;
+  projectionMismatches: number | null;
+  duplicateOccurrenceReferences: number | null;
+  danglingOccurrenceReferences: number | null;
+};
+
+function postingIdentityAuditEvent(
+  plan: PostingIdentityRepairPlan,
+  enforcementActive: boolean,
+  confirmedCoverageFloor: number,
+): PostingIdentityAuditEvent {
+  const coverageRegression = plan.occurrenceCounts.confirmedCoverage === null
+    || plan.occurrenceCounts.confirmedCoverage < confirmedCoverageFloor;
+  return {
+    event: 'posting_identity_integrity_audit',
+    enforcementActive,
+    status: plan.gate.passed && !coverageRegression ? 'passed' : 'failed',
+    confirmedOccurrences: plan.occurrenceCounts.confirmed,
+    unconfirmedOccurrences: plan.occurrenceCounts.unconfirmed,
+    confirmedCoverage: plan.occurrenceCounts.confirmedCoverage,
+    confirmedCoverageFloor,
+    coverageRegression,
+    exactDuplicateGroups: plan.gate.exactDuplicateGroups,
+    duplicateJobs: plan.duplicateJobs,
+    duplicateAlertGroups: plan.duplicateAlertGroups,
+    aliasConflicts: plan.gate.aliasConflicts,
+    quarantinedOccurrences: plan.occurrenceCounts.quarantined,
+    untrackedQuarantines: plan.gate.untrackedQuarantines,
+    presentationBlockers: plan.gate.presentationBlockers,
+    legacyOccurrences: plan.gate.legacyOccurrences,
+    projectionMismatches: plan.gate.projectionMismatches,
+    duplicateOccurrenceReferences: plan.gate.duplicateOccurrenceReferences,
+    danglingOccurrenceReferences: plan.gate.danglingOccurrenceReferences,
+  };
+}
+
+/** Emit only aggregate integrity counts. Repair tokens, job IDs, URLs, and
+ * review samples stay out of production logs. Disabled rollout reports a
+ * failed gate without failing the cron; enabled publication makes it fatal. */
+export async function runScheduledPostingIdentityAudit(
+  env: Pick<Environment, 'DB' | 'IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED' | 'IDENTITY_CONFIRMED_COVERAGE_FLOOR'>,
+  dependencies: {
+    audit?: (db: D1Database) => Promise<PostingIdentityRepairPlan>;
+    log?: (event: string) => void;
+  } = {},
+): Promise<PostingIdentityAuditEvent> {
+  const enforcementActive = env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true';
+  const parsedCoverageFloor = Number(env.IDENTITY_CONFIRMED_COVERAGE_FLOOR);
+  const confirmedCoverageFloor = env.IDENTITY_CONFIRMED_COVERAGE_FLOOR?.trim()
+    && Number.isFinite(parsedCoverageFloor) && parsedCoverageFloor >= 0 && parsedCoverageFloor <= 1
+    ? parsedCoverageFloor
+    : undefined;
+  const audit = dependencies.audit ?? ((db: D1Database) => runPostingIdentityRepair(db));
+  let event: PostingIdentityAuditEvent;
+  try {
+    const plan = await audit(env.DB);
+    event = confirmedCoverageFloor === undefined
+      ? {
+        ...postingIdentityAuditEvent(plan, enforcementActive, 1),
+        status: 'error', confirmedCoverageFloor: null, coverageRegression: null,
+      }
+      : postingIdentityAuditEvent(plan, enforcementActive, confirmedCoverageFloor);
+  } catch {
+    event = {
+      event: 'posting_identity_integrity_audit', enforcementActive, status: 'error',
+      confirmedOccurrences: null, unconfirmedOccurrences: null, confirmedCoverage: null,
+      confirmedCoverageFloor: confirmedCoverageFloor ?? null, coverageRegression: null,
+      exactDuplicateGroups: null, duplicateJobs: null, duplicateAlertGroups: null, aliasConflicts: null,
+      quarantinedOccurrences: null, untrackedQuarantines: null, presentationBlockers: null,
+      legacyOccurrences: null, projectionMismatches: null, duplicateOccurrenceReferences: null,
+      danglingOccurrenceReferences: null,
+    };
+  }
+  const serialized = JSON.stringify(event);
+  if (dependencies.log) dependencies.log(serialized);
+  else if (event.status === 'passed') console.log(serialized);
+  else console.error(serialized);
+  if (enforcementActive && event.status !== 'passed') {
+    throw new Error('Posting identity integrity gate failed while publication enforcement is active');
+  }
+  return event;
+}
+
 async function scheduledHandler(event: ScheduledController, env: Environment): Promise<void> {
   if (await isShutdown(env)) return;
   const store = new D1InternshipStore(env.DB);
+  if (event.cron === '17 9 * * *') {
+    await runScheduledPostingIdentityAudit(env);
+    return;
+  }
   const scheduledProvider = providerForCloudflareCron(event.cron);
   if (scheduledProvider === 'github') {
     if (await queueHasBacklog(env.GITHUB_QUEUE, 'github')) return;
@@ -963,7 +1067,7 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
           continue;
         }
         if (!source) throw new Error(`Unknown reviewed source ${JSON.stringify(sourceId)}`);
-        await runRuntimeCommand('poll', {
+        const result = await runRuntimeCommand('poll', {
           store: new D1InternshipStore(env.DB),
           userStore: new D1UserStore(env.DB),
           sources: [source],
@@ -971,8 +1075,24 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
           enqueueDestinationVerification: (request) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(request)),
           catalogAdmissionResolver: admissionResolver,
           identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
+          // One row can perform several bounded HTTP probes. Keep migration
+          // slices small enough to make durable progress even when the tail is
+          // dominated by destinations that consume the six connection slots.
+          maxAdmissionMigrationListingsPerSourceRun: 20,
           config: { sesFrom: env.AUTH_FROM_EMAIL ?? '', sesTo: env.DIGEST_TO_EMAIL ?? '', ntfyTopic: env.NTFY_TOPIC, ntfyEndpoint: env.NTFY_ENDPOINT },
         });
+        if (result.poll && (result.poll.continuationSources.length || result.poll.failures.length)) {
+          console.log(JSON.stringify({
+            event: 'github_admission_migration_slice',
+            sourceId: source.id,
+            continuation: result.poll.continuationSources.includes(source.id),
+            failureCount: result.poll.failures.length,
+            failures: result.poll.failures.slice(0, 20),
+          }));
+        }
+        if (result.poll?.continuationSources.includes(source.id)) {
+          await sendQueueMessageWithin(env.GITHUB_QUEUE, { sourceId: source.id });
+        }
       } catch (error) {
         failed.add(record.messageId);
         console.error(JSON.stringify({ command: 'github-poll', messageId: record.messageId, error: error instanceof Error ? error.message : String(error) }));
@@ -1004,6 +1124,20 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
   for (const message of batch.messages) {
     if (failed.has(message.id)) message.retry();
     else message.ack();
+  }
+}
+
+export async function sendQueueMessageWithin(queue: Queue, message: unknown, timeoutMs = 5_000): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      queue.send(message),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error('Queue send timed out')), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }
 
