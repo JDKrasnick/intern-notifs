@@ -475,6 +475,18 @@ Git. Do not close issue #50 or its product-roadmap checkbox until the final
     `docs/product-roadmap.md` as complete with sanitized rollout counts and links
     to the production checks.
 
+Production record (2026-09-01): PR #143 merged as `1117624` and deployed at
+100% as Worker version `68e4e374-693c-4ab6-a9b1-e302953c91df`. The final audit
+classified 4,339 confirmed and 1,746 unconfirmed occurrences, for exact coverage
+`0.7130649137222679`, with zero duplicate, conflict, quarantine, presentation,
+legacy-occurrence, projection, duplicate-reference, or dangling-reference gate
+violations. All 12 affected official destinations returned HTTP 200, legacy and
+canonical role behavior matched, and the outbox remained at 384 rows. Production
+set the coverage floor to that exact value before enabling unconfirmed
+publication. The owner explicitly waived step 12 as an acceptance gate; the
+post-activation scheduled audit passed with enforcement active, and non-gating
+follow-up issue #151 remains due at or after `2026-09-02T04:18:01Z`.
+
 For eligible groups whose presentation already agrees, the repair preserves the
 oldest catalog job, merges source references,
 visibility/observation dates, open and notification state, remaps source
