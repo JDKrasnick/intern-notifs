@@ -21,12 +21,17 @@ const migrations = new URL('../cloudflare/migrations/', import.meta.url);
 const through0010 = readdirSync(migrations)
   .filter((name) => name.endsWith('.sql') && name.localeCompare('0011') < 0)
   .sort();
+const migration = readFileSync(new URL('0011_issue_50_reviewed_employer_identity.sql', migrations), 'utf8');
+
+function databaseThrough0010(): DatabaseSync {
+  const database = new DatabaseSync(':memory:');
+  for (const name of through0010) database.exec(readFileSync(new URL(name, migrations), 'utf8'));
+  return database;
+}
 
 describe('issue #50 reviewed employer identity migration', () => {
   it('upgrades a database through 0010, is idempotent, and resolves every reviewed scope', async () => {
-    const database = new DatabaseSync(':memory:');
-    for (const name of through0010) database.exec(readFileSync(new URL(name, migrations), 'utf8'));
-    const migration = readFileSync(new URL('0011_issue_50_reviewed_employer_identity.sql', migrations), 'utf8');
+    const database = databaseThrough0010();
     database.exec(migration);
     database.exec(migration);
 
@@ -63,6 +68,34 @@ describe('issue #50 reviewed employer identity migration', () => {
       .toThrow('admission reviewer decisions are immutable');
     expect(() => database.prepare("DELETE FROM admission_reviewer_decisions WHERE id = 'issue-50-canonical-jump-trading'").run())
       .toThrow('admission reviewer decisions are immutable');
+    database.close();
+  });
+
+  it.each([
+    ['canonical employer', (database: DatabaseSync) => database.prepare(`INSERT INTO canonical_employers
+      (id, display_name, reviewed_at, reviewed_by, created_at, updated_at)
+      VALUES ('jump-trading', 'Wrong Existing Name', '2026-01-01T00:00:00Z', 'older-review', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`).run()],
+    ['employer mapping', (database: DatabaseSync) => database.exec(`
+      INSERT INTO canonical_employers
+        (id, display_name, reviewed_at, reviewed_by, created_at, updated_at)
+        VALUES ('jump-trading', 'Jump Trading', '2026-08-30T00:00:00Z', 'issue-50-production-review',
+          '2026-08-30T00:00:00Z', '2026-08-30T00:00:00Z');
+      INSERT INTO employer_mappings
+        (id, provider, scope, canonical_employer_id, reviewed_at, reviewed_by, created_at)
+        VALUES ('issue-50-github-employer-jump-trading', 'github', 'employer:wrong', 'jump-trading',
+          '2026-01-01T00:00:00Z', 'older-review', '2026-01-01T00:00:00Z');
+    `)],
+    ['reviewer decision', (database: DatabaseSync) => database.prepare(`INSERT INTO admission_reviewer_decisions
+      (id, subject_type, subject_id, decision, reason, reviewed_at, reviewed_by)
+      VALUES ('issue-50-canonical-jump-trading', 'canonical-employer', 'jump-trading', 'rejected', 'Older decision',
+        '2026-01-01T00:00:00Z', 'older-review')`).run()],
+  ])('fails instead of approving a conflicting existing %s', (_label, seedConflict) => {
+    const database = databaseThrough0010();
+    seedConflict(database);
+
+    expect(() => database.exec(migration)).toThrow('issue_50_reviewed_identity_rows_must_match');
+    expect(database.prepare("SELECT COUNT(*) AS count FROM admission_reviewer_decisions WHERE reviewed_by = 'issue-50-production-review'").get())
+      .toEqual({ count: 0 });
     database.close();
   });
 });
