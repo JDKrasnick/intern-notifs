@@ -5,7 +5,7 @@ import { openCatalogSortKey } from './catalog-recency.js';
 import { inferSeason } from './core/early-career.js';
 import { canonicalCompanyKey, fingerprint, normalizeUrl } from './core/normalize.js';
 import { deriveCanonicalAdmission } from './catalog-admission.js';
-import { canonicalizePostingUrl } from './identity/posting.js';
+import { canonicalizePostingUrl, providerPostingReference } from './identity/posting.js';
 import { postingIdentityStatusForOccurrences } from './identity/projection.js';
 import { resolvePostingIdentityDecision, type PostingIdentityRegistryResult } from './identity/registry.js';
 import { mergeSourceOccurrenceReferences, sourceOccurrenceKey } from './identity/source-occurrence.js';
@@ -31,6 +31,12 @@ type CatalogRow = {
 type UserRow = { user_id: string; item_key: string; kind: string; value: string; session_id?: string | null; receipt_state?: string | null; expires_at?: number | null };
 type ProposalRow = { id: string; job_id: string };
 type EmployerMappingRow = { provider: string; scope: string; canonical_employer_id: string };
+type PresentationReviewRow = {
+  id: string; provider: string; tenant: string; posting_id: string;
+  company: string; title: string; location: string; locations_json: string;
+  apply_url: string; evidence_url: string; evidence_hash: string;
+  reviewed_at: string; reviewed_by: string;
+};
 type CatalogWrite = { before?: CatalogRow; pk: string; sk: string; kind: string; value: string; columns?: Partial<CatalogRow> };
 type UserWrite = { before?: UserRow; userId: string; itemKey: string; kind: string; value: string; columns?: Partial<UserRow> };
 
@@ -121,6 +127,8 @@ export type PostingIdentityRepairReviewContext = {
   /** Active, immutable reviewer mappings. They are part of the guarded repair
    * facts so historical jobs can use the same employer decision as ingestion. */
   employerMappings?: EmployerMappingRow[];
+  /** Append-only reviewer choices from employer-owned posting pages. */
+  presentationReviews?: PresentationReviewRow[];
 };
 
 const parse = <T>(value: string): T => JSON.parse(value) as T;
@@ -162,7 +170,7 @@ function mergeJob(
   canonical: Internship,
   members: Internship[],
   identity: PostingIdentity,
-  official: SourceOccurrence | undefined,
+  official: (SourceOccurrence & { preserveCanonicalSeason?: boolean }) | undefined,
   classify: (reference: SourceOccurrence, fallbackObservedAt: string) => SourceOccurrence,
 ): Internship {
   const sourceReferences = mergedOccurrenceEvidence(members.flatMap((job) => job.sourceReferences))
@@ -175,7 +183,9 @@ function mergeJob(
   const evidenceDateValue = official?.providerTimestamp?.value ?? canonical.lastSeenAt;
   const parsedEvidenceDate = Date.parse(evidenceDateValue);
   const evidenceDate = new Date(Number.isNaN(parsedEvidenceDate) ? 0 : parsedEvidenceDate);
-  const season = official ? inferSeason(official.title, '', evidenceDate) : canonical.season;
+  const season = official && !official.preserveCanonicalSeason
+    ? inferSeason(official.title, '', evidenceDate)
+    : canonical.season;
   const applyUrl = official ? canonicalizePostingUrl(official.applyUrl) : canonical.applyUrl;
   const compensation = [...members]
     .sort((a, b) => (b.compensation.maxHourlyUSD ?? b.compensation.minHourlyUSD ?? 0)
@@ -243,6 +253,63 @@ type HistoricalProviderEvidence = {
 
 function providerKey(evidence: Pick<HistoricalProviderEvidence, 'provider' | 'tenant' | 'postingId'>) {
   return `${evidence.provider}:${evidence.tenant?.toLowerCase() ?? '-'}:${evidence.postingId.toLowerCase()}`;
+}
+
+function presentationReviewEvidenceHash(row: PresentationReviewRow, locations: string[]): string {
+  return createHash('sha256').update(JSON.stringify({
+    provider: row.provider,
+    tenant: row.tenant,
+    postingId: row.posting_id,
+    company: row.company,
+    title: row.title,
+    location: row.location,
+    locations,
+    applyUrl: row.apply_url,
+    evidenceUrl: row.evidence_url,
+    reviewedAt: row.reviewed_at,
+    reviewedBy: row.reviewed_by,
+  })).digest('hex');
+}
+
+function reviewedPresentation(
+  row: PresentationReviewRow,
+): { key: string; occurrence: SourceOccurrence & { preserveCanonicalSeason: true } } {
+  const locations = parse<unknown>(row.locations_json);
+  if (!Array.isArray(locations) || !locations.length || locations.some((value) => typeof value !== 'string' || !value.trim())) {
+    throw new Error(`${row.id}: reviewed presentation locations are invalid`);
+  }
+  const reference = providerPostingReference(row.apply_url);
+  const evidenceReference = providerPostingReference(row.evidence_url);
+  if (reference.provider === 'unknown' || !reference.postingId
+    || reference.provider !== row.provider || reference.tenant !== row.tenant || reference.postingId !== row.posting_id
+    || evidenceReference.provider !== row.provider || evidenceReference.tenant !== row.tenant
+    || evidenceReference.postingId !== row.posting_id) {
+    throw new Error(`${row.id}: reviewed presentation URL does not match its exact provider identity`);
+  }
+  if (presentationReviewEvidenceHash(row, locations) !== row.evidence_hash) {
+    throw new Error(`${row.id}: reviewed presentation evidence hash does not match`);
+  }
+  return {
+    key: providerKey({ provider: reference.provider as Exclude<PostingProvider, 'unknown'>,
+      tenant: reference.tenant, postingId: reference.postingId }),
+    occurrence: {
+      sourceId: `presentation-review:${row.id}`,
+      externalId: row.posting_id,
+      provenance: 'official-ats',
+      document: 'official-page-review',
+      sourceUrl: row.evidence_url,
+      row: 0,
+      company: row.company,
+      title: row.title,
+      location: row.location,
+      locations,
+      season: 'reviewed-presentation',
+      applyUrl: row.apply_url,
+      compensation: { raw: '' },
+      state: 'open',
+      preserveCanonicalSeason: true,
+    },
+  };
 }
 
 function checkpointEvidenceForUnscopedGreenhouseEmbed(
@@ -432,6 +499,17 @@ export function postingIdentityRepairPlan(
     }
     employerMappings.set(key, mapping.canonical_employer_id);
   }
+  const presentationReviews = new Map<string, SourceOccurrence & { preserveCanonicalSeason: true }>();
+  for (const row of reviewContext.presentationReviews ?? []) {
+    try {
+      const reviewed = reviewedPresentation(row);
+      if (presentationReviews.has(reviewed.key)) {
+        conflicts.push(`${reviewed.key}: multiple reviewed presentation decisions`);
+      } else presentationReviews.set(reviewed.key, reviewed.occurrence);
+    } catch (error) {
+      conflicts.push(error instanceof Error ? error.message : String(error));
+    }
+  }
   const snapshotDigest = structuredDigest([
     ['catalog', catalogRows.map((row) => [row.pk, row.sk, row.kind, row.value])
       .sort((left, right) => String(left[0]).localeCompare(String(right[0])) || String(left[1]).localeCompare(String(right[1])))],
@@ -440,6 +518,8 @@ export function postingIdentityRepairPlan(
     ['proposals', proposalRows.map((row) => [row.id, row.job_id])
       .sort((left, right) => left[0].localeCompare(right[0]))],
     ['employerMappings', [...employerMappings.entries()].sort(([left], [right]) => left.localeCompare(right))],
+    ['presentationReviews', [...(reviewContext.presentationReviews ?? [])]
+      .sort((left, right) => left.id.localeCompare(right.id))],
   ]);
   const occurrenceDecisions = new Map<string, SourceOccurrence['postingIdentityDecision']>();
   const jobRows = catalogRows.filter((row) => row.kind === 'internship');
@@ -614,7 +694,8 @@ export function postingIdentityRepairPlan(
     const ordered = hydrated.sort((a, b) => firstSeen(a.job).localeCompare(firstSeen(b.job)) || a.job.jobId.localeCompare(b.job.jobId));
     if (!ordered.length) continue;
     const canonical = ordered[0]!;
-    const official = officialPresentation(ordered.map((item) => item.job), canonical.evidence);
+    const official = officialPresentation(ordered.map((item) => item.job), canonical.evidence)
+      ?? presentationReviews.get(key);
     const disagreement = ordered.length > 1
       ? presentationDisagreement(key, canonical.job.jobId, ordered.map((item) => item.job), employerMappings, official)
       : undefined;
@@ -979,7 +1060,7 @@ function operationId(value: unknown) { return createHash('sha256').update(JSON.s
  * seven guarded set-based statements rather than one statement per row.
  */
 export function postingIdentityRepairQueryCount(expectedChanges: number) {
-  return Math.ceil(expectedChanges / STAGE_ROWS_PER_STATEMENT) + 13;
+  return Math.ceil(expectedChanges / STAGE_ROWS_PER_STATEMENT) + 14;
 }
 
 async function stage(db: D1Database, plan: InternalPlan) {
@@ -1057,7 +1138,7 @@ export async function runPostingIdentityRepair(db: D1Database, options: {
   expectedDuplicateJobs?: number;
   scope?: PostingIdentityRepairScope;
 } = {}): Promise<PostingIdentityRepairPlan> {
-  const [catalog, users, proposals, employerMappings] = await Promise.all([
+  const [catalog, users, proposals, employerMappings, presentationReviews] = await Promise.all([
     db.prepare(`SELECT * FROM catalog_items
       WHERE kind IN ('internship', 'job-id-alias', 'source-occurrence', 'posting-identity-incident',
         'checkpoint', 'posting-alias', 'notification-tombstone', 'notification-event')
@@ -1068,11 +1149,15 @@ export async function runPostingIdentityRepair(db: D1Database, options: {
     db.prepare('SELECT id, job_id FROM employer_field_proposals ORDER BY id').all<ProposalRow>(),
     db.prepare(`SELECT provider, scope, canonical_employer_id FROM employer_mappings
       WHERE superseded_at IS NULL ORDER BY provider, scope`).all<EmployerMappingRow>(),
+    db.prepare(`SELECT id, provider, tenant, posting_id, company, title, location,
+        locations_json, apply_url, evidence_url, evidence_hash, reviewed_at, reviewed_by
+      FROM posting_identity_presentation_reviews ORDER BY id`).all<PresentationReviewRow>(),
   ]);
   const scope = options.scope ?? 'all';
   if (!['all', 'identity', 'occurrences'].includes(scope)) throw new Error('Posting identity repair scope must be all, identity, or occurrences');
   const plan = postingIdentityRepairPlan(catalog.results, users.results, proposals.results, scope, {
     employerMappings: employerMappings.results,
+    presentationReviews: presentationReviews.results,
   });
   const report = repairReport(plan);
   if (scope === 'occurrences' && plan.duplicateJobs > 0) {
