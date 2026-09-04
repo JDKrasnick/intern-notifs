@@ -334,6 +334,62 @@ describe('D1 posting identity repair', () => {
     sqlite.close();
   });
 
+  it('uses a confirmed employer-owned provider mapping for reviewed community presentation', async () => {
+    const sqlite = database(); const db = sqliteD1(sqlite); const store = new D1InternshipStore(db);
+    sqlite.prepare(`INSERT INTO canonical_employers
+      (id, display_name, reviewed_at, reviewed_by, created_at, updated_at)
+      VALUES ('goldman-sachs', 'Goldman Sachs', '2026-09-01', 'official-route-review', '2026-09-01', '2026-09-01')`).run();
+    sqlite.prepare(`INSERT INTO employer_mappings
+      (id, provider, scope, canonical_employer_id, reviewed_at, reviewed_by, created_at)
+      VALUES ('goldman-provider', 'goldman-sachs', 'goldman-sachs', 'goldman-sachs',
+        '2026-09-01', 'official-route-review', '2026-09-01')`).run();
+    const url = 'https://higher.gs.com/roles/171567';
+    const older = job('goldman-older', url, '2026-08-25T00:00:00.000Z', [
+      { ...occurrence('canadian-tech-2027', 'goldman-a', url), provenance: 'reviewed-community',
+        company: 'Goldman Sachs', title: 'Summer Analyst, Engineering', location: 'Toronto, ON' },
+    ], {
+      company: 'Goldman Sachs', title: 'Summer Analyst, Engineering', location: 'Toronto, ON',
+      admission: { canonicalEmployer: { id: 'goldman-sachs', displayName: 'Goldman Sachs' } },
+      internshipIdentity: { company: { canonicalId: 'goldman sachs' } },
+    });
+    const newer = job('goldman-newer', `${url}?type=students&utm_source=Simplify`, '2026-09-03T00:00:00.000Z', [
+      { ...occurrence('simplify-summer-2026', 'goldman-b', `${url}?type=students&utm_source=Simplify`),
+        provenance: 'reviewed-community', company: 'Goldman Sachs',
+        title: 'Summer Analyst Intern - Americas - Engineering', location: 'Toronto, ON, Canada' },
+    ], {
+      company: 'Goldman Sachs', title: 'Summer Analyst Intern - Americas - Engineering',
+      location: 'Toronto, ON, Canada', internshipIdentity: { company: { canonicalId: 'goldman sachs' } },
+    });
+    await store.putInternship(older);
+    await store.putInternship(newer);
+
+    const dry = await runPostingIdentityRepair(db, { scope: 'identity' });
+    expect(dry).toMatchObject({
+      duplicateGroups: 1,
+      eligibleDuplicateGroups: 1,
+      unresolvedDuplicateGroups: 0,
+      presentationDisagreements: [],
+      conflicts: [],
+    });
+    await runPostingIdentityRepair(db, {
+      apply: true,
+      repairToken: dry.repairToken,
+      expectedChanges: dry.expectedChanges,
+      expectedDuplicateJobs: dry.duplicateJobs,
+      scope: 'identity',
+    });
+    expect(await store.getJob('goldman-older')).toMatchObject({
+      company: 'Goldman Sachs',
+      title: '2027 | Americas | Toronto | Engineering | Summer Analyst',
+      location: 'Toronto, ON, Canada',
+      locations: ['Toronto, ON, Canada'],
+      applyUrl: url,
+      postingIdentity: { provider: 'goldman-sachs', tenant: 'goldman-sachs', providerPostingId: '171567' },
+    });
+    expect(await store.getJob('goldman-newer')).toMatchObject({ jobId: 'goldman-older' });
+    sqlite.close();
+  });
+
   it('fails closed when an official-page review evidence hash is invalid', async () => {
     const sqlite = database(); const db = sqliteD1(sqlite);
     sqlite.prepare(`INSERT INTO posting_identity_presentation_reviews
