@@ -673,6 +673,52 @@ describe('D1 posting identity repair', () => {
     expect(verification).toMatchObject({ duplicateJobs: 0, expectedChanges: 0, conflicts: [] });
   });
 
+  it('keeps repaired jobs out of browse and delivery indexes when admission is ineligible', async () => {
+    const { sqlite, db, store } = await historicalDatabase({ presentationAgrees: true });
+    const rejectedAdmission = {
+      employerResolution: 'unresolved' as const,
+      postingAttribution: 'attributed' as const,
+      destination: {
+        candidateUrl: `https://jobs.lever.co/plus-2/${plusId}`,
+        provider: 'lever' as const,
+        classification: 'aggregate-board' as const,
+        inspectedAt: '2026-08-03T00:00:00.000Z',
+      },
+      metadata: { complete: true, title: 'complete' as const, location: 'complete' as const },
+      catalogEligible: false,
+      alertEligible: false,
+      reasonCodes: ['employer-unresolved' as const, 'destination-aggregate-board' as const],
+      evaluatedAt: '2026-08-03T00:00:00.000Z',
+      evidenceObservedAt: '2026-08-03T00:00:00.000Z',
+    };
+    for (const jobId of ['plus-old', 'plus-duplicate']) {
+      const current = await store.getJob(jobId);
+      expect(current).toBeDefined();
+      await store.putInternship({
+        ...current!,
+        admission: rejectedAdmission,
+        notification: { ...current!.notification, smsPending: true, digestPending: true },
+        sourceReferences: current!.sourceReferences.map((reference) => ({ ...reference, admission: rejectedAdmission })),
+      });
+    }
+
+    const preview = await runPostingIdentityRepair(db, { scope: 'identity' });
+    await runPostingIdentityRepair(db, {
+      scope: 'identity', apply: true, repairToken: preview.repairToken,
+      expectedChanges: preview.expectedChanges, expectedDuplicateJobs: preview.duplicateJobs,
+    });
+
+    expect(sqlite.prepare(`SELECT catalog_state, catalog_sort_key, search_text, source_classes, sms_pending, digest_pending
+      FROM catalog_items WHERE pk = 'JOB#plus-old' AND sk = 'META'`).get()).toEqual({
+      catalog_state: null,
+      catalog_sort_key: null,
+      search_text: null,
+      source_classes: null,
+      sms_pending: 0,
+      digest_pending: 0,
+    });
+  });
+
   it('refuses stale guards and existing alias conflicts', async () => {
     const stale = await historicalDatabase({ presentationAgrees: true }); const dry = await runPostingIdentityRepair(stale.db);
     await expect(runPostingIdentityRepair(stale.db, { apply: true, repairToken: dry.repairToken, expectedChanges: dry.expectedChanges + 1, expectedDuplicateJobs: dry.duplicateJobs })).rejects.toThrow('Catalog changed after dry run');
