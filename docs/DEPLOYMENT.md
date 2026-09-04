@@ -204,6 +204,36 @@ GitHub-feed objective is ten minutes, and shadow discovery is intentionally
 bounded at three hours. Queue delay, retries, provider backoff, and upstream
 timestamp semantics are measured separately from these scheduler objectives.
 
+## DLQ inspection and disposition
+
+Apply additive migration `0015_dlq_recovery.sql` before deploying the Worker.
+The protected `POST /internal/operations/dlq` endpoint uses the existing Worker-held
+Cloudflare credential to resolve exact allowlisted queue names; never expose that
+credential to an operator client. Configure the CLI locally and inspect without
+consuming messages:
+
+```bash
+export OPERATIONS_API_URL=https://intern-notifs.jdkrasnick.workers.dev
+export OPERATIONS_API_KEY='use-the-deployed-operations-secret'
+npm run dlq -- inspect lever 25
+```
+
+Stage a selective replay or irreversible discard with `DLQ_ACTION=replay` or
+`DLQ_ACTION=discard`, a comma-separated list of message IDs, and a reason. Apply
+the returned one-use plan within 15 minutes by passing its plan ID, repair token,
+and exact expected count. Catalog replay produces one fresh message per source;
+destination-verification replay stays disabled until issue #120 lands.
+
+```bash
+DLQ_ACTION=replay npm run dlq -- plan lever message-id-1,message-id-2 'Upstream fix verified'
+npm run dlq -- apply PLAN_ID REPAIR_TOKEN 2
+```
+
+After deployment, compare all six DLQ depths before and after `inspect` to confirm
+it is non-consuming. Recover quarantined catalog sources through source controls,
+verify healthy-but-paused state, resume them explicitly, and only then discard
+superseded DLQ messages. Retain disposition and queue-failure metadata for 30 days.
+
 ## Safe operational identifiers
 
 - GitHub: `JDKrasnick/intern-notifs`
