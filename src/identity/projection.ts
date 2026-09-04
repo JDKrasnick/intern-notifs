@@ -64,6 +64,8 @@ export function postingObservationProjection(
   const digestedAt = latest([current?.notification.digestedAt, proposed.notification.digestedAt]);
   const postingIdentityStatus = postingIdentityStatusForOccurrences(sourceReferences);
   const anyOpen = sourceReferences.some((reference) => reference.state === 'open');
+  const becomingCatalogVisible = current?.admission?.catalogEligible === false
+    && proposed.admission?.catalogEligible === true;
   const season = presentation.season;
   const seasonEvidence = (proposed.internshipIdentity ?? current?.internshipIdentity) as { season?: { evidenceStatus?: string } } | undefined;
   const seasonAllowsOpen = !isPastSeason(season, new Date(proposed.lastSeenAt))
@@ -85,10 +87,13 @@ export function postingObservationProjection(
     technical: sourceReferences.some((reference) => (!anyOpen || reference.state === 'open') && reference.technical !== false),
     open: !proposed.invalidApplicationUrl && anyOpen && seasonAllowsOpen && Boolean(current?.open || proposed.open),
     firstSeenAt: earliest([current?.firstSeenAt, proposed.firstSeenAt]) ?? proposed.firstSeenAt,
-    catalogVisibleAt: earliest([
-      current?.catalogVisibleAt ?? current?.firstSeenAt,
-      proposed.catalogVisibleAt ?? proposed.firstSeenAt,
-    ]),
+    ...(becomingCatalogVisible
+      ? { catalogVisibleAt: proposed.catalogVisibleAt ?? proposed.lastSeenAt, catalogRecency: proposed.catalogRecency ?? 'normal' as const }
+      : current?.catalogVisibleAt || proposed.catalogVisibleAt
+        ? { catalogVisibleAt: earliest([current?.catalogVisibleAt, proposed.catalogVisibleAt]) }
+        : admission?.catalogEligible === false
+          ? {}
+          : { catalogVisibleAt: earliest([current?.firstSeenAt, proposed.firstSeenAt]) }),
     lastSeenAt: latest([current?.lastSeenAt, proposed.lastSeenAt]) ?? proposed.lastSeenAt,
     notification: {
       smsPending: !smsSentAt && Boolean(current?.notification.smsPending || proposed.notification.smsPending),

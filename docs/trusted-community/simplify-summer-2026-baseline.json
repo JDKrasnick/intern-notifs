@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "sourceId": "simplify-summer-2026",
+  "generatedAt": "2026-09-04T16:23:28.787Z",
+  "sourcePolicyVersion": "simplify-trusted-community-v1",
+  "counts": {
+    "rawRows": 2074,
+    "technicallyEligibleRows": 1738,
+    "rejectedAggregatorRows": 0,
+    "survivingAggregatorRows": 0,
+    "duplicateOccurrenceIds": 0,
+    "exactRouteShapes": 1299,
+    "browserInspectionCandidates": 439
+  },
+  "rates": {
+    "technicalYield": 0.8379942140790743,
+    "rejectedAggregatorRate": 0,
+    "exactRouteShare": 0.7474108170310702,
+    "browserInspectionShare": 0.2525891829689298
+  },
+  "thresholds": {
+    "minimumRawRows": 1452,
+    "minimumEligibleRows": 1217,
+    "minimumInspectedCandidates": 100,
+    "minimumInspectionCoverage": 0.9,
+    "maximumDestinationFailureRate": 0.05,
+    "maximumBrowserInspectionShare": 0.3525891829689298,
+    "minimumCatalogYield": 0.7379942140790743,
+    "minimumAlertYield": 0.6474108170310702
+  },
+  "thresholdPolicy": {
+    "rowCountFloor": "70% of this trustworthy baseline",
+    "rateGateMinimumInspectedCandidates": 100,
+    "rateGateMinimumInspectionCoverage": 0.9,
+    "destinationFailureCeiling": "min(20%, baseline + 5 percentage points)",
+    "browserInspectionCeiling": "min(50%, baseline + 10 percentage points)",
+    "catalogYieldFloor": "baseline - 10 percentage points",
+    "alertYieldFloor": "baseline - 10 percentage points"
+  }
+}

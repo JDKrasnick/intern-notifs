@@ -71,6 +71,7 @@ export interface Environment extends AuthEnvironment {
   OPERATIONS_SHARED_SECRET: string;
   EMPLOYER_PORTAL_ENABLED?: string;
   IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED?: string;
+  TRUSTED_COMMUNITY_CATALOG_ENABLED?: string;
   IDENTITY_CONFIRMED_COVERAGE_FLOOR?: string;
   BILLING_WEBHOOK_SECRET?: string;
   CLOUDFLARE_SHUTDOWN_TOKEN?: string;
@@ -228,6 +229,7 @@ async function runStructuredSource(source: ReviewedStructuredSource, env: Enviro
     enqueueDestinationVerification: (request) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(request)),
     catalogAdmissionResolver: catalogAdmissionResolver(env),
     identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
+    trustedCommunityCatalogEnabled: env.TRUSTED_COMMUNITY_CATALOG_ENABLED === 'true',
     allowCompleteEmptySnapshot: true,
     config: { sesFrom: env.AUTH_FROM_EMAIL ?? '', sesTo: env.DIGEST_TO_EMAIL ?? '', ntfyTopic: env.NTFY_TOPIC, ntfyEndpoint: env.NTFY_ENDPOINT } });
   if ('poll' in result && result.poll?.failures.length) throw new Error(result.poll.failures.join('; '));
@@ -1075,6 +1077,7 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
           enqueueDestinationVerification: (request) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(request)),
           catalogAdmissionResolver: admissionResolver,
           identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
+          trustedCommunityCatalogEnabled: env.TRUSTED_COMMUNITY_CATALOG_ENABLED === 'true',
           // One row can perform several bounded HTTP probes. Keep migration
           // slices small enough to make durable progress even when the tail is
           // dominated by destinations that consume the six connection slots.

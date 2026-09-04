@@ -74,6 +74,12 @@ variable "identity_unconfirmed_publication_enabled" {
   default     = false
 }
 
+variable "trusted_community_catalog_enabled" {
+  description = "Publishes admission-valid roles from explicitly trusted community sources. Alerts remain controlled by reviewed source policy."
+  type        = bool
+  default     = false
+}
+
 variable "identity_confirmed_coverage_floor" {
   description = "Minimum reviewed exact posting-identity coverage required by the recurring integrity gate."
   type        = number

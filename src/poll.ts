@@ -22,6 +22,14 @@ import { evaluateCatalogAdmission } from './catalog-admission.js';
 import { classifyDestination, matchingBrowserDestination, requiresBrowserVerification, type CatalogAdmissionResolver, type DestinationVerificationRequest } from './destination-verification.js';
 import { reviewedBoardIndex } from './sources/index.js';
 import { sourceQualityFailures } from './sources/quality.js';
+import {
+  activeTrustedCommunityPolicy,
+  advanceTrustedCommunityQualification,
+  effectiveAdmissionConfigurationVersion,
+  postingSpecificDestination,
+  sourceAdmissionPolicy,
+} from './sources/trust-policy.js';
+import { trustedCommunityCircuitBreaches, trustedCommunityMetrics } from './sources/trusted-community-health.js';
 import { SourceFetchError } from './sources/source-error.js';
 import { failedSourceHealth, sourceFailureOutcome, successfulSourceHealth } from './source-health.js';
 import type {
@@ -264,6 +272,42 @@ function emitFreshnessMetric(records: SourceHealth[], now: Date) {
   }
 }
 
+function emitTrustedCommunityMetric(sourceId: string, metrics: NonNullable<SourceHealth['trustedCommunity']>, runId?: string) {
+  console.log(JSON.stringify({
+    _aws: {
+      Timestamp: Date.now(),
+      CloudWatchMetrics: [{
+        Namespace: 'InternNotifs/Ingestion',
+        Dimensions: [['sourceId']],
+        Metrics: [
+          { Name: 'TrustedRawRows', Unit: 'Count' },
+          { Name: 'TrustedEligibleRows', Unit: 'Count' },
+          { Name: 'TrustedRejectedAggregators', Unit: 'Count' },
+          { Name: 'TrustedSurvivingAggregators', Unit: 'Count' },
+          { Name: 'TrustedDuplicateOccurrences', Unit: 'Count' },
+          { Name: 'TrustedDestinationFailures', Unit: 'Count' },
+          { Name: 'TrustedBrowserInspectionShare', Unit: 'Percent' },
+          { Name: 'TrustedCatalogYield', Unit: 'Percent' },
+          { Name: 'TrustedAlertYield', Unit: 'Percent' },
+        ],
+      }],
+    },
+    event: 'trusted_community_source_evaluated',
+    runId,
+    sourceId,
+    TrustedRawRows: metrics.rawRows,
+    TrustedEligibleRows: metrics.eligibleRows,
+    TrustedRejectedAggregators: metrics.rejectedAggregatorRows,
+    TrustedSurvivingAggregators: metrics.survivingAggregatorRows,
+    TrustedDuplicateOccurrences: metrics.duplicateOccurrenceIds,
+    TrustedDestinationFailures: metrics.destinationFailures,
+    TrustedBrowserInspectionShare: metrics.browserInspectionShare * 100,
+    TrustedCatalogYield: metrics.catalogYield * 100,
+    TrustedAlertYield: metrics.alertYield * 100,
+    metrics,
+  }));
+}
+
 function emitFailureMetric(
   sourceId: string,
   provider: SourceHealth['provider'],
@@ -390,6 +434,7 @@ export class IngestionRunner {
     private readonly enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>,
     private readonly catalogAdmissionResolver?: CatalogAdmissionResolver,
     private readonly publishUnconfirmedIdentities = true,
+    private readonly trustedCommunityCatalogEnabled = false,
   ) {}
 
   private async quarantine(job: Internship) {
@@ -427,6 +472,52 @@ export class IngestionRunner {
         while (nextJob < jobs.length) await validateJob();
       }));
     } while (cursor);
+  }
+
+  /** A source-level breaker blocks the batch, but a newly proven unsafe
+   * destination must still disappear from the existing catalog immediately.
+   * Reuse the normal projection and atomic occurrence write; never close or
+   * otherwise rewrite unaffected backlog rows. */
+  private async hideUnsafeTrustedCommunityListings(input: {
+    sourceId: string;
+    snapshotHash: string;
+    listings: ProcessedListing[];
+    priorOccurrences: SourceOccurrenceState[];
+    resolvedJobs: Map<string, Internship | undefined>;
+    now: string;
+  }): Promise<void> {
+    const unsafeListings = input.listings.filter((listing) => {
+      const existing = input.resolvedJobs.get(externalId(listing));
+      return Boolean(existing && existing.admission?.catalogEligible !== false && listing.admission?.catalogEligible === false);
+    });
+    if (!unsafeListings.length) return;
+    const unsafeIds = new Set(unsafeListings.map(externalId));
+    const plan = this.reconciler.reconcile({
+      sourceId: input.sourceId,
+      snapshotHash: input.snapshotHash,
+      activeExternalIds: unsafeIds,
+      listings: unsafeListings,
+      priorOccurrences: input.priorOccurrences.filter((occurrence) => unsafeIds.has(occurrence.externalId)),
+      resolvedJobs: input.resolvedJobs,
+      now: input.now,
+      baseline: true,
+      publishUnconfirmedIdentities: true,
+    });
+    const jobs = new Map(plan.jobs.map((job) => [job.jobId, job]));
+    for (const occurrence of plan.occurrences) {
+      const job = jobs.get(occurrence.jobId);
+      const decision = occurrence.occurrence.postingIdentityDecision;
+      if (!job || !decision || decision.status === 'quarantined') continue;
+      const hidden = job.admission?.catalogEligible === false
+        ? { ...job, notification: { ...job.notification, smsPending: false, digestPending: false } }
+        : job;
+      await this.store.commitPostingObservation({
+        decision,
+        ...(hidden.postingIdentity ? { identity: hidden.postingIdentity } : {}),
+        job: hidden,
+        occurrence,
+      });
+    }
   }
 
   private readonly boardIndex = reviewedBoardIndex();
@@ -513,6 +604,7 @@ export class IngestionRunner {
     priorOccurrences: SourceOccurrenceState[] = [],
     admissionConfigurationVersion?: string,
     reuseUnchangedOccurrences = false,
+    completeFetchSequence?: number,
   ) {
     const resolved = new Map<string, Internship | undefined>();
     const validatedAt = new Map<string, string>();
@@ -532,6 +624,10 @@ export class IngestionRunner {
       const supportsAdmission = Boolean(sourceListing.employerEvidence || sourceListing.providerIdentity);
       const id = externalId(sourceListing);
       const priorOccurrence = priorByExternalId.get(id);
+      const trustedCommunityPolicy = activeTrustedCommunityPolicy(
+        sourceListing.sourceId,
+        this.trustedCommunityCatalogEnabled,
+      );
       const completeFailedAdmissionMigration = async () => {
         if (!admissionConfigurationVersion) return;
         if (priorOccurrence
@@ -566,11 +662,24 @@ export class IngestionRunner {
         externalId: externalId(sourceListing),
         applyUrl: canonicalUrl,
         technical: sourceListing.technical ?? true,
+        ...(priorOccurrence?.occurrence.trustedCommunityAlertQualification
+          ? { trustedCommunityAlertQualification: priorOccurrence.occurrence.trustedCommunityAlertQualification }
+          : {}),
         ...(admissionConfigurationVersion ? { admissionConfigurationVersion } : {}),
       };
       const admissionAlreadyApplied = Boolean(admissionConfigurationVersion
         && priorOccurrence?.occurrence.admissionConfigurationVersion === admissionConfigurationVersion);
-      if ((reuseUnchangedOccurrences || admissionAlreadyApplied) && priorOccurrence
+      if (!trustedCommunityPolicy && (reuseUnchangedOccurrences || admissionAlreadyApplied) && priorOccurrence
+        && sourceOwnedMaterial(priorOccurrence.occurrence) === sourceOwnedMaterial(listing)) {
+        handledExternalIds.add(id);
+        return;
+      }
+      const priorTrustedQualification = priorOccurrence?.occurrence.trustedCommunityAlertQualification;
+      if (trustedCommunityPolicy && admissionAlreadyApplied && priorOccurrence
+        && priorTrustedQualification?.basis
+        && priorTrustedQualification.catalogPublicationSuppressed !== true
+        && priorOccurrence.occurrence.admission
+        && postingSpecificDestination(priorOccurrence.occurrence.admission.destination)
         && sourceOwnedMaterial(priorOccurrence.occurrence) === sourceOwnedMaterial(listing)) {
         handledExternalIds.add(id);
         return;
@@ -759,7 +868,29 @@ export class IngestionRunner {
             sourceId: listing.sourceId, externalId: id, providerIdentity: listing.providerIdentity, candidateUrl: listing.applyUrl,
           })
           : undefined;
-        const destination = browserDestination ?? observedDestination;
+        const priorDestination = priorOccurrence?.occurrence.admission?.destination;
+        const reusableTrustedDestination = trustedCommunityPolicy
+          && priorDestination
+          && postingSpecificDestination(priorDestination)
+          && sameApplicationUrl(priorDestination.candidateUrl, normalizedUrl)
+          ? priorDestination
+          : undefined;
+        const destination = browserDestination ?? reusableTrustedDestination ?? observedDestination;
+        const trustedCommunityAlertQualification = trustedCommunityPolicy
+          ? advanceTrustedCommunityQualification({
+            previous: priorOccurrence?.occurrence.trustedCommunityAlertQualification,
+            destination,
+            postingIdentityDecision: listing.postingIdentityDecision,
+            alertMode: trustedCommunityPolicy.alertMode,
+            completeFetchSequence,
+            // Every occurrence observed while alerts are disabled belongs to
+            // the quiet baseline, including roles added during a multi-run
+            // catalog migration.
+            baselineSuppressed: trustedCommunityPolicy.alertMode === 'disabled'
+              || Boolean(priorOccurrence && !priorOccurrence.occurrence.trustedCommunityAlertQualification),
+            catalogPublicationSuppressed: false,
+          })
+          : undefined;
         const admission = evaluateCatalogAdmission({
           listing,
           destination,
@@ -767,7 +898,10 @@ export class IngestionRunner {
             || existing?.sourceReferences.some((reference) => reference.sourceId === listing.sourceId && reference.externalId === id
               && reference.admission?.postingAttribution === 'attributed') === true,
           evaluatedAt: inspectedAt,
-          previous: existing?.admission,
+          previous: priorOccurrence?.occurrence.admission ?? existing?.admission,
+          ...(trustedCommunityPolicy && trustedCommunityAlertQualification
+            ? { trustedCommunity: { policy: trustedCommunityPolicy, qualification: trustedCommunityAlertQualification } }
+            : {}),
         });
         // Activating reviewed employer mappings must not hide a previously
         // visible exact-URL role merely because its per-posting browser check
@@ -778,7 +912,11 @@ export class IngestionRunner {
           && knownLegacyDestination && listing.provenance === 'reviewed-community'
           && destination.classification === 'posting-detail'
           && admission.reasonCodes.length === 1 && admission.reasonCodes[0] === 'posting-unattributed');
-        if (!preserveLegacyWhileAttributionPending) listing = { ...listing, admission };
+        if (!preserveLegacyWhileAttributionPending) listing = {
+          ...listing,
+          admission,
+          ...(trustedCommunityAlertQualification ? { trustedCommunityAlertQualification } : {}),
+        };
         const needsPostingAttributionVerification = admission.reasonCodes.includes('posting-unattributed')
           && ['posting-detail', 'application-form'].includes(destination.classification);
         if (!browserDestination && this.enqueueDestinationVerification && listing.providerIdentity
@@ -851,7 +989,11 @@ export class IngestionRunner {
       prefetchedBoards.set(connector.id, prefetched);
       try {
         prefetched.previous = await this.store.getCheckpoint(connector.id);
-        prefetched.admissionConfigurationVersion = await this.catalogAdmissionResolver?.configurationVersion?.();
+        prefetched.admissionConfigurationVersion = effectiveAdmissionConfigurationVersion({
+          sourceId: connector.id,
+          resolverVersion: await this.catalogAdmissionResolver?.configurationVersion?.(),
+          trustedCommunityCatalogEnabled: this.trustedCommunityCatalogEnabled,
+        });
         const configurationChanged = Boolean(prefetched.admissionConfigurationVersion
           && prefetched.previous?.admissionConfigurationVersion
           && prefetched.admissionConfigurationVersion !== prefetched.previous.admissionConfigurationVersion);
@@ -882,11 +1024,16 @@ export class IngestionRunner {
       const previous = prefetched ? prefetched.previous : await this.store.getCheckpoint(connector.id);
       const previousHealth = await this.store.getSourceHealth(connector.id);
       let failureCategory: NonNullable<SourceHealth['diagnosticCategory']> = 'transport';
+      let trustedMetrics: SourceHealth['trustedCommunity'];
       try {
         if (prefetched?.error) throw prefetched.error;
         const admissionConfigurationVersion = prefetched
           ? prefetched.admissionConfigurationVersion
-          : await this.catalogAdmissionResolver?.configurationVersion?.();
+          : effectiveAdmissionConfigurationVersion({
+            sourceId: connector.id,
+            resolverVersion: await this.catalogAdmissionResolver?.configurationVersion?.(),
+            trustedCommunityCatalogEnabled: this.trustedCommunityCatalogEnabled,
+          });
         const admissionConfigurationChanged = Boolean(admissionConfigurationVersion
           && previous?.admissionConfigurationVersion
           && admissionConfigurationVersion !== previous.admissionConfigurationVersion);
@@ -948,11 +1095,17 @@ export class IngestionRunner {
         const selectedOpportunisticMigrations = migrationLimit === undefined
           ? []
           : opportunisticMigrationCandidates.slice(0, opportunisticCapacity);
-        const migrationCandidates = migrationLimit === undefined
+        const trustedPolicy = activeTrustedCommunityPolicy(connector.id, this.trustedCommunityCatalogEnabled);
+        const finishingTrustedMigration = Boolean(trustedPolicy && migrationLimit !== undefined
+          && requiredMigrationCandidates.length <= migrationLimit);
+        const migrationCandidates = migrationLimit === undefined || finishingTrustedMigration
           ? batch.processed.listings
           : [...selectedRequiredMigrations, ...selectedOpportunisticMigrations];
+        const trustedFullBody = sourceAdmissionPolicy(connector.id).trust === 'trusted-community'
+          && this.trustedCommunityCatalogEnabled
+          && result.unchangedReason !== 'not_modified';
         const listingsToResolve = migrationLimit === undefined
-          ? (batch.unchanged ? [] : batch.processed.listings)
+          ? (batch.unchanged && !trustedFullBody ? [] : batch.processed.listings)
           : migrationCandidates;
         const resolution = await this.resolveListings(
           listingsToResolve,
@@ -961,16 +1114,62 @@ export class IngestionRunner {
           githubAdmissionConfigurationVersion,
           Boolean(githubAdmissionConfigurationVersion
             && admissionConfigurationVersion === previous?.admissionConfigurationVersion),
+          result.unchangedReason === 'not_modified' ? undefined : result.checkpoint.successfulFetches,
         );
         // Existing catalog decisions are the durable migration obligation.
         // Rows with no prior occurrence are evaluated with spare slice capacity
         // but fail closed and cannot hold the source checkpoint open forever.
-        const admissionMigrationPending = migrationLimit !== undefined && (
+        const admissionMigrationPending = !finishingTrustedMigration && migrationLimit !== undefined && (
           requiredMigrationCandidates.length > selectedRequiredMigrations.length
           || selectedRequiredMigrations.some((listing) => !resolution.handledExternalIds.has(externalId(listing)))
           || opportunisticMigrationCandidates.length > selectedOpportunisticMigrations.length
         );
         if (admissionMigrationPending) report.continuationSources.push(connector.id);
+        if (trustedPolicy && result.unchangedReason !== 'not_modified') {
+          const diagnostics = result.trustedCommunityDiagnostics ?? {
+            rejectedAggregatorRows: result.rejectedApplicationUrls?.filter((item) => item.reason.includes('aggregator')).length ?? 0,
+            survivingAggregatorRows: 0,
+            duplicateOccurrenceIds: 0,
+          };
+          trustedMetrics = trustedCommunityMetrics({
+            rawRows: batch.processed.counts.raw,
+            eligibleRows: batch.processed.counts.eligible,
+            listings: resolution.accepted,
+            priorOccurrences,
+            admissionConfigurationVersion: githubAdmissionConfigurationVersion,
+            ...diagnostics,
+          });
+          emitTrustedCommunityMetric(connector.id, trustedMetrics, options.runId);
+          const breaches = trustedCommunityCircuitBreaches({
+            metrics: trustedMetrics,
+            alertMode: trustedPolicy.alertMode,
+          });
+          if (breaches.length) {
+            await this.hideUnsafeTrustedCommunityListings({
+              sourceId: connector.id,
+              snapshotHash: batch.snapshotHash,
+              listings: resolution.accepted,
+              priorOccurrences,
+              resolvedJobs: resolution.resolved,
+              now,
+            });
+            throw new SourceFetchError(`${connector.id}: trusted-community circuit breaker: ${breaches.join('; ')}`, 'quality', undefined, undefined, true);
+          }
+        }
+        // A bounded policy migration stores evidence but exposes none of its
+        // newly admitted rows until one complete healthy evaluation can pass.
+        if (trustedPolicy && admissionMigrationPending) {
+          for (const listing of resolution.accepted) {
+            if (listing.trustedCommunityAlertQualification) {
+              listing.trustedCommunityAlertQualification = {
+                ...listing.trustedCommunityAlertQualification,
+                catalogPublicationSuppressed: true,
+              };
+            }
+            if (listing.admission) listing.admission = { ...listing.admission, catalogEligible: false, alertEligible: false };
+          }
+          resolution.alertEligible.clear();
+        }
         // Admission configuration migration is independent of source
         // lifecycle reconciliation. Replaying inactive historical occurrences
         // defeats the slice bound; the next ordinary poll handles omissions.
@@ -1125,6 +1324,9 @@ export class IngestionRunner {
             withheldRows: metricCounts.withheld,
           }),
           counts: metricCounts,
+          ...(trustedMetrics ?? previousHealth?.trustedCommunity
+            ? { trustedCommunity: trustedMetrics ?? previousHealth!.trustedCommunity }
+            : {}),
         };
         await this.store.putSourceHealth(successHealth);
         health.push(successHealth);
@@ -1169,6 +1371,9 @@ export class IngestionRunner {
             error,
           }),
           diagnosticCategory: category,
+          ...(trustedMetrics ?? previousHealth?.trustedCommunity
+            ? { trustedCommunity: trustedMetrics ?? previousHealth!.trustedCommunity }
+            : {}),
         };
         health.push(failureHealth);
         try { await this.store.putSourceHealth(failureHealth); }

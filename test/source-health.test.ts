@@ -38,6 +38,16 @@ describe('source health', () => {
     expect(health.quarantineReason).toContain('shape');
   });
 
+  it('quarantines an explicit trusted-source circuit breach immediately', () => {
+    const health = failedSourceHealth({
+      sourceId: 'simplify-summer-2026',
+      startedAt: '2026-09-04T12:00:00.000Z',
+      completedAt: '2026-09-04T12:00:01.000Z',
+      error: new SourceFetchError('trusted-community circuit breaker', 'quality', undefined, undefined, true),
+    });
+    expect(health).toMatchObject({ state: 'quarantined', consecutiveFailures: 1, incidentSeverity: 'high' });
+  });
+
   it('requires repeated link-health failures before source quarantine', () => {
     const first = failedSourceHealth({
       sourceId: 'greenhouse-acme',

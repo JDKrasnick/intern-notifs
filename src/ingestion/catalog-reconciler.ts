@@ -50,6 +50,9 @@ function occurrence(listing: ProcessedListing, externalId: string): SourceOccurr
       : {}),
     ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
     ...(listing.postingIdentityDecision ? { postingIdentityDecision: listing.postingIdentityDecision } : {}),
+    ...(listing.trustedCommunityAlertQualification
+      ? { trustedCommunityAlertQualification: listing.trustedCommunityAlertQualification }
+      : {}),
     document: listing.document,
     sourceUrl: listing.sourceUrl,
     row: listing.row,
@@ -126,6 +129,7 @@ function seasonAllowsOpen(season: string, identity: Internship['internshipIdenti
 }
 
 function merge(existing: Internship, listing: ProcessedListing, externalId: string, now: string, applicationUrlValidatedAt?: string, metadataVersion?: number): Internship {
+  const becomingCatalogVisible = existing.admission?.catalogEligible === false && listing.admission?.catalogEligible === true;
   existing = normalizeInternship(existing);
   listing = normalizeListing(listing);
   const reference = occurrence(listing, externalId);
@@ -181,6 +185,10 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
     ...(admission ? { admission } : {}),
     technical: canRevive ? anyOpenTechnicalOccurrence(sourceReferences) : existing.technical,
     open: keepQuarantined ? false : canRevive && sourceReferences.some((item) => item.state === 'open') && seasonAllowsOpen(season, internshipIdentity, sourceReferences, now),
+    ...(becomingCatalogVisible ? {
+      catalogVisibleAt: now,
+      catalogRecency: listing.trustedCommunityAlertQualification?.baselineSuppressed ? 'baseline' as const : 'normal' as const,
+    } : {}),
     lastSeenAt: now,
     ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}),
     ...(metadataVersion ? { applicationPageMetadataVersion: metadataVersion } : {}),
@@ -220,14 +228,16 @@ function create(listing: ProcessedListing, externalId: string, now: string, base
     technical: listing.technical ?? isTechnicalJob(listing),
     open: listing.state === 'open' && seasonAllowsOpen(listing.season, listing.internshipIdentity, [reference], now),
     firstSeenAt: now,
-    catalogVisibleAt: now,
-    catalogRecency: baseline ? 'baseline' : 'normal',
+    ...(admission?.catalogEligible === false ? {} : {
+      catalogVisibleAt: now,
+      catalogRecency: baseline ? 'baseline' as const : 'normal' as const,
+    }),
     lastSeenAt: now,
     notification: { smsPending: true, digestPending: true },
   };
 }
 
-function notificationEvent(sourceId: string, externalId: string, job: Internship, now: string): NotificationEvent {
+export function newJobNotificationEvent(sourceId: string, externalId: string, job: Internship, now: string): NotificationEvent {
   return {
     // The canonical job identity, not arrival source, owns the one-time alert.
     // This makes official/community races converge on one outbox tombstone.
@@ -299,6 +309,10 @@ export class CatalogReconciler {
         && stored.sourceReferences.length === 1
         && stored.sourceReferences[0]?.sourceId === input.sourceId
         && stored.sourceReferences[0]?.externalId === externalId);
+      const delayedPromotion = Boolean(existing
+        && priorById.get(externalId)?.occurrence.admission?.alertEligible !== true
+        && listing.admission?.alertEligible === true
+        && listing.trustedCommunityAlertQualification?.baselineSuppressed !== true);
       if (!existing || retryingUncommittedCreate) {
         if (input.baseline || !job.open || !job.technical || !matchesJobFilter(job, input.filter)
           || job.admission?.alertEligible === false
@@ -308,8 +322,12 @@ export class CatalogReconciler {
           filteredJobs.push(job);
         } else {
           newJobs.push(job);
-          notifications.push(notificationEvent(input.sourceId, externalId, job, input.now));
+          notifications.push(newJobNotificationEvent(input.sourceId, externalId, job, input.now));
         }
+      } else if (delayedPromotion) {
+        job.notification = { ...job.notification, smsPending: true, digestPending: true };
+        newJobs.push(job);
+        notifications.push(newJobNotificationEvent(input.sourceId, externalId, job, input.now));
       }
       jobs.set(job.jobId, job);
       if (!listing.postingIdentityDecision) {
