@@ -5,7 +5,7 @@ import { isPastSeason } from './core/early-career.js';
 import { employerCategory } from './core/employers.js';
 import { canonicalCatalogRecency, catalogRecency, catalogVisibleAt, compareCatalogRecency, openCatalogSortKey } from './catalog-recency.js';
 import { catalogSearchText, catalogSourceClasses, type CatalogSource } from './catalog-fields.js';
-import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, PostingIdentityDecision, PostingIdentityIncident, SourceCheckpoint, SourceHealth, SourceOccurrence, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
+import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MetadataConflict, MonitoringChecklist, NotificationEvent, PostingIdentity, PostingIdentityDecision, PostingIdentityIncident, RoleMetadataEvidence, SourceCheckpoint, SourceHealth, SourceOccurrence, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
 import { preferredJobIdentityConflicts, resolvePostingAliases, type AliasResolution } from './identity/posting.js';
 import type { ApplicationSession } from './application-automation.js';
 import type { ReviewedLeverSource } from './sources/lever-config.js';
@@ -81,6 +81,8 @@ export interface InternshipStore {
   getJob(jobId: string): Promise<Internship | undefined>;
   getSourceOccurrences(sourceId: string): Promise<SourceOccurrenceState[]>;
   putSourceOccurrence(occurrence: SourceOccurrenceState): Promise<void>;
+  /** Append-only audit history; current evidence is selected by source/artifact slot. */
+  recordRoleMetadataEvidence?(jobId: string, evidence: readonly RoleMetadataEvidence[], conflicts: readonly MetadataConflict[], recordedAt: string): Promise<void>;
   /** Atomically exposes a notification-pending job and records its deterministic outbox event. */
   putInternshipWithNotificationEvent(job: Internship, event: NotificationEvent): Promise<boolean>;
   pendingSms(): Promise<Internship[]>;
@@ -114,6 +116,8 @@ export class MemoryInternshipStore implements InternshipStore {
   readonly postingIdentityReviewCandidates = new Map<string, {
     reviewFamilyKey: string; occurrenceKeys: Set<string>; firstObservedAt: string; lastObservedAt: string;
   }>();
+  readonly roleMetadataEvidence = new Map<string, RoleMetadataEvidence>();
+  readonly roleMetadataConflicts = new Map<string, MetadataConflict[]>();
   catalogProjection?: { generatedAt: string; groups: CatalogGroupDetails[] };
   async getCheckpoint(sourceId: string) { return this.checkpoints.get(sourceId); }
   async getCheckpointsMany(sourceIds: string[]) { return sourceIds.map((id) => this.checkpoints.get(id)).filter((value): value is SourceCheckpoint => Boolean(value)); }
@@ -196,6 +200,10 @@ export class MemoryInternshipStore implements InternshipStore {
   async putInternship(job: Internship) { const canonical = canonicalCatalogRecency(job); this.jobs.set(canonical.jobId, structuredClone(canonical)); }
   async getSourceOccurrences(sourceId: string) { return [...this.occurrences.values()].filter((value) => value.sourceId === sourceId).map((value) => structuredClone(value)); }
   async putSourceOccurrence(occurrence: SourceOccurrenceState) { this.occurrences.set(`${occurrence.sourceId}#${occurrence.externalId}`, structuredClone(occurrence)); }
+  async recordRoleMetadataEvidence(jobId: string, evidence: readonly RoleMetadataEvidence[], conflicts: readonly MetadataConflict[]) {
+    for (const item of evidence) this.roleMetadataEvidence.set(`${jobId}\0${item.sourceClass}\0${item.sourceId}\0${item.sourceUrl}\0${item.artifactHash}`, structuredClone(item));
+    this.roleMetadataConflicts.set(jobId, structuredClone([...conflicts]));
+  }
   async putInternshipWithNotificationEvent(job: Internship, event: NotificationEvent) {
     if (this.notificationEvents.has(event.eventId)) return false;
     const canonical = canonicalCatalogRecency(job);

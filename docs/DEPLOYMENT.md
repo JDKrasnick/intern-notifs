@@ -135,6 +135,47 @@ summaries, structured `locations`, bounded compensation, and unchanged
 notification flags. Never store the operations secret in shell history, Git, or
 documentation.
 
+## Employer metadata enrichment (#134)
+
+Apply `0015_role_metadata_enrichment.sql` before deploying the enrichment
+Worker. The migration is additive: it stores compact versioned field evidence,
+historical artifact versions, extraction outcomes, conflicts, and guarded repair
+staging. Full job descriptions are never written to these tables.
+
+After deployment, use the existing destination-verification queue and Browser
+Rendering binding to collect historical exact-posting evidence. Collection is
+staging-only and does not rewrite public jobs:
+
+```bash
+export CATALOG_API_URL=https://intern-notifs.jdkrasnick.workers.dev
+export OPERATIONS_SHARED_SECRET='use-the-deployed-operations-secret'
+npm run migrate:role-metadata -- collect --limit 100
+npm run migrate:role-metadata -- audit
+npm run migrate:role-metadata -- dry-run
+```
+
+Archive the complete collection and dry-run reports. Review fills and
+corrections by field/source class, every conflict, unsupported currencies/pay periods, and
+blocked/inconclusive/aggregate outcomes. Unknown values must remain unknown.
+Apply only after owner approval, copying all three guards from the same dry run:
+
+```bash
+npm run migrate:role-metadata -- apply \
+  --repair-token EXACT_TOKEN \
+  --expected-jobs EXACT_JOB_COUNT \
+  --expected-occurrences EXACT_OCCURRENCE_COUNT
+```
+
+The transaction compares every original job JSON value, emits no outbox event,
+and refuses stale counts or any open metadata conflict. A conflict-free apply
+refreshes grouped projections and returns a verification audit. Run `audit` and
+`dry-run` again; `supportedRoleSpecificDisclosedMetadataMisses` and
+`projectionOnlyOmissions` must both be zero. Sample `/jobs`, `/catalog`, and
+group detail results to confirm unchanged job IDs, occurrences, saves,
+applications, receipts, notification flags/tombstones, visibility timestamps,
+and lifecycle state. Roll back exposure with a new reviewed repair; retain the
+evidence and conflict history.
+
 ## Catalog admission rollout (#120)
 
 Create the `intern-notifs-destination-verification` queue and its

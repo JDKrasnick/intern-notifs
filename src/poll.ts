@@ -23,6 +23,7 @@ import { classifyDestination, matchingBrowserDestination, requiresBrowserVerific
 import { reviewedBoardIndex } from './sources/index.js';
 import { sourceQualityFailures } from './sources/quality.js';
 import { SourceFetchError } from './sources/source-error.js';
+import { extractVerifiedPageMetadataEvidence, mergeRoleMetadataEvidence, projectRoleMetadata, ROLE_METADATA_EXTRACTION_VERSION } from './role-metadata.js';
 import { failedSourceHealth, sourceFailureOutcome, successfulSourceHealth } from './source-health.js';
 import type {
   Internship,
@@ -38,7 +39,7 @@ import type {
 } from './types.js';
 import type { InternshipStore } from './store.js';
 
-const applicationPageMetadataVersion = 1;
+const applicationPageMetadataVersion = ROLE_METADATA_EXTRACTION_VERSION + 1;
 
 function stableSourceMaterial(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableSourceMaterial).join(',')}]`;
@@ -63,6 +64,10 @@ function sourceOwnedMaterial(value: ProcessedListing | SourceOccurrence): string
     postedAt: value.postedAt,
     providerTimestamp: value.providerTimestamp,
     workMode: value.workMode,
+    // Destination verification can append page/browser evidence to a durable
+    // occurrence. Exclude it from the source comparison so an unchanged ATS
+    // row can still take the fast path on its next poll.
+    metadataEvidence: value.metadataEvidence?.filter((item) => item.sourceUrl === value.sourceUrl),
     company: value.company,
     title: value.title,
     location: value.location,
@@ -111,6 +116,8 @@ function quarantinedOccurrence(
     ...(listing.postedAt ? { postedAt: listing.postedAt } : {}),
     externalId,
     ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
+    ...(listing.metadataEvidence?.length ? { metadataEvidence: listing.metadataEvidence } : {}),
+    ...(listing.metadataExtraction ? { metadataExtraction: listing.metadataExtraction } : {}),
     ...(listing.admissionConfigurationVersion ? { admissionConfigurationVersion: listing.admissionConfigurationVersion } : {}),
     postingIdentityDecision: decision,
     company: listing.company,
@@ -760,6 +767,32 @@ export class IngestionRunner {
           })
           : undefined;
         const destination = browserDestination ?? observedDestination;
+        if (!browserDestination && pageEvidence && ['posting-detail', 'application-form'].includes(destination.classification)) {
+          const pageMetadata = extractVerifiedPageMetadataEvidence({
+            expectedTitle: listing.title,
+            expectedPostingId: listing.providerIdentity?.postingId,
+            page: {
+              title: pageEvidence.title ?? listing.title,
+              text: pageEvidence.contentExcerpt,
+            },
+            jsonLdArtifacts: pageEvidence.metadataArtifacts,
+            sourceId: listing.sourceId,
+            sourceUrl: pageEvidence.url,
+            observedAt: inspectedAt,
+            exactPosting: true,
+          });
+          listing = {
+            ...listing,
+            metadataEvidence: mergeRoleMetadataEvidence(listing.metadataEvidence, pageMetadata),
+            metadataExtraction: {
+              version: ROLE_METADATA_EXTRACTION_VERSION,
+              artifactHash: pageEvidence.contentHash ?? pageEvidence.renderedEvidenceHash ?? createHash('sha256').update(JSON.stringify({ url: pageEvidence.url, title: pageEvidence.title, description: pageEvidence.description })).digest('hex'),
+              observedAt: inspectedAt,
+              outcome: pageMetadata.length ? 'extracted' : 'no-explicit-metadata',
+            },
+          };
+          metadataValidated.set(id, applicationPageMetadataVersion);
+        }
         const admission = evaluateCatalogAdmission({
           listing,
           destination,
@@ -790,6 +823,7 @@ export class IngestionRunner {
             providerIdentity: listing.providerIdentity,
             candidateUrl: listing.applyUrl,
             reason: existing?.normalizedUrl && existing.normalizedUrl !== normalizedUrl ? 'url-change' : 'first-sight',
+            metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
           });
         }
         if (admission.catalogEligible && ['posting-detail', 'application-form'].includes(destination.classification)) {
@@ -1044,6 +1078,10 @@ export class IngestionRunner {
               return;
             }
             committedJobIds.add(job.jobId);
+            if (this.store.recordRoleMetadataEvidence && occurrence.occurrence.metadataEvidence?.length) {
+              const projected = projectRoleMetadata(job);
+              await this.store.recordRoleMetadataEvidence(job.jobId, occurrence.occurrence.metadataEvidence, projected.conflicts, now);
+            }
             if (includeEvent) {
               consumedEvents.add(includeEvent.eventId);
               if (result.notificationInserted) alertedJobIds.add(job.jobId);

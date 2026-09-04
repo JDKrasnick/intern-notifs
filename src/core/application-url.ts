@@ -1,6 +1,7 @@
 import { applicationUrlRejection } from '../sources/quality.js';
 import { createHash } from 'node:crypto';
 import { platformFetch } from './platform-fetch.js';
+import { applicationMetadataArtifactsFromJsonDocuments, type ApplicationMetadataArtifact } from '../role-metadata.js';
 
 const requestHeaders = {
   Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -66,6 +67,8 @@ export interface ApplicationPageEvidence {
   contentExcerpt?: string;
   contentHash?: string;
   contentSource?: 'json-ld' | 'main' | 'body';
+  /** Transient normalized JSON-LD artifacts. Callers persist only extracted field evidence. */
+  metadataArtifacts?: ApplicationMetadataArtifact[];
   confidence: ApplicationPageConfidence;
 }
 
@@ -146,7 +149,9 @@ function textFromHtml(value: string): string {
   return decodeHtml(value.replace(/<script\b[^>]*>[\s\S]*?<\/script>|<style\b[^>]*>[\s\S]*?<\/style>|<svg\b[^>]*>[\s\S]*?<\/svg>/gi, ' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim());
 }
 
-function structuredJobText(html: string): { text?: string; source?: 'json-ld' } {
+function structuredJobText(html: string): { text?: string; source?: 'json-ld'; metadataArtifacts?: ApplicationMetadataArtifact[] } {
+  const documents = [...html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)].map((match) => match[1]!);
+  const metadataArtifacts = applicationMetadataArtifactsFromJsonDocuments(documents);
   for (const match of html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
     try {
       const values = Array.isArray(JSON.parse(match[1])) ? JSON.parse(match[1]) : [JSON.parse(match[1])];
@@ -159,12 +164,12 @@ function structuredJobText(html: string): { text?: string; source?: 'json-ld' } 
         if (record['@graph']) queue.push(record['@graph']);
         const type = record['@type'];
         if ((Array.isArray(type) ? type : [type]).includes('JobPosting') && typeof record.description === 'string') {
-          return { text: textFromHtml(record.description), source: 'json-ld' };
+          return { text: textFromHtml(record.description), source: 'json-ld', ...(metadataArtifacts.length ? { metadataArtifacts } : {}) };
         }
       }
     } catch { /* A malformed publisher JSON-LD block is non-fatal. */ }
   }
-  return {};
+  return metadataArtifacts.length ? { metadataArtifacts } : {};
 }
 
 async function discardResponseBody(response: Response): Promise<void> {
@@ -222,12 +227,13 @@ async function boundedResponseText(response: Response, maximumBytes = 512 * 1024
   return new TextDecoder().decode(bytes);
 }
 
-function applicationContent(html: string): { excerpt?: string; hash?: string; source?: 'json-ld' | 'main' | 'body' } {
+function applicationContent(html: string): { excerpt?: string; hash?: string; source?: 'json-ld' | 'main' | 'body'; metadataArtifacts?: ApplicationMetadataArtifact[] } {
   const structured = structuredJobText(html);
   const main = /<main\b[^>]*>([\s\S]*?)<\/main>/i.exec(html)?.[1];
   const text = structured.text ?? (main ? textFromHtml(main) : textFromHtml(/<body\b[^>]*>([\s\S]*?)<\/body>/i.exec(html)?.[1] ?? html));
-  if (!text) return {};
-  return { excerpt: text.slice(0, 12_000), hash: createHash('sha256').update(text).digest('hex'), source: structured.source ?? (main ? 'main' : 'body') };
+  if (!text) return structured.metadataArtifacts?.length ? { metadataArtifacts: structured.metadataArtifacts } : {};
+  return { excerpt: text.slice(0, 12_000), hash: createHash('sha256').update(text).digest('hex'), source: structured.source ?? (main ? 'main' : 'body'),
+    ...(structured.metadataArtifacts?.length ? { metadataArtifacts: structured.metadataArtifacts } : {}) };
 }
 
 const JOB_ROUTE = /(?:^|\/)(?:careers?|jobs?|openings?|positions?|roles?|vacancies?)(?:\/|$)/iu;
@@ -363,6 +369,7 @@ export async function inspectApplicationPage(
     ...(jobLinkCount ? { distinctJobLinkCount: jobLinkCount } : {}),
     ...(applicationFormPresent ? { applicationFormPresent: true } : {}),
     ...(content.excerpt ? { contentExcerpt: content.excerpt, contentHash: content.hash, contentSource: content.source } : {}),
+    ...(content.metadataArtifacts?.length ? { metadataArtifacts: content.metadataArtifacts } : {}),
     confidence: confidenceFor({ html: true, ...(title ? { title } : {}), ...(description ? { description } : {}), ...(content.excerpt ? { contentExcerpt: content.excerpt } : {}), ...(expectedPostingId ? { expectedPostingId } : {}), ...(postingIdPresent !== undefined ? { postingIdPresent } : {}) }),
   };
 }

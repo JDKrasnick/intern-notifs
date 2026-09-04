@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { sourceRoleAgreement, type ApplicationPageEvidence } from './core/application-url.js';
+import { applicationMetadataArtifactsFromJsonDocuments } from './role-metadata.js';
 
 export interface RenderedFrameSnapshot {
   url: string;
@@ -8,6 +9,7 @@ export interface RenderedFrameSnapshot {
   description?: string;
   visibleText?: string;
   structuredJobText?: string;
+  structuredJobDocuments?: string[];
   jobPostingCount: number;
   distinctJobLinkCount: number;
   applicationFormPresent: boolean;
@@ -50,6 +52,7 @@ function frameEvidence(frame: RenderedFrameSnapshot, expectedPostingId?: string)
   const contentExcerpt = frame.visibleText?.replace(/\s+/gu, ' ').trim().slice(0, 12_000);
   const renderedPostingText = [contentExcerpt, frame.structuredJobText].filter(Boolean).join(' ');
   const postingIdPresent = includesPostingId(renderedPostingText, expectedPostingId);
+  const metadataArtifacts = applicationMetadataArtifactsFromJsonDocuments(frame.structuredJobDocuments ?? []);
   return {
     url: frame.url,
     ...(frame.title ? { title: frame.title } : {}),
@@ -60,6 +63,7 @@ function frameEvidence(frame: RenderedFrameSnapshot, expectedPostingId?: string)
     distinctJobLinkCount: frame.distinctJobLinkCount,
     applicationFormPresent: frame.applicationFormPresent,
     ...(contentExcerpt ? { contentExcerpt, contentHash: hash(withoutExpectedPostingId(renderedPostingText, expectedPostingId)), contentSource: 'body' as const } : {}),
+    ...(metadataArtifacts.length ? { metadataArtifacts } : {}),
     confidence: { score: 100, level: 'high', recommendation: 'alert-eligible', signals: ['browser-visible evidence'] },
   };
 }

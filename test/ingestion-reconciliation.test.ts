@@ -3,6 +3,7 @@ import { IngestionRunner } from '../src/poll.js';
 import { GitHubMarkdownAdapter } from '../src/sources/github.js';
 import { MemoryInternshipStore } from '../src/store.js';
 import { buildInternshipIdentity } from '../src/identity/enrichment.js';
+import { extractPostingMetadataEvidence } from '../src/role-metadata.js';
 import type { Internship, ProcessedListing, SourceAdapter, SourceCheckpoint, SourceFetchResult, SourceOccurrenceState } from '../src/types.js';
 
 const listing = (sourceId: string, overrides: Partial<ProcessedListing> = {}): ProcessedListing => ({
@@ -46,6 +47,29 @@ class MutableAdapter implements SourceAdapter {
 }
 
 describe('snapshot reconciliation', () => {
+  it('reprojects changed source metadata without creating a second new-role event', async () => {
+    const store = new MemoryInternshipStore();
+    await store.putCheckpoint({ sourceId: 'source-a', successfulFetches: 1, lastRowCount: 1 });
+    const metadata = (pay: string, observedAt: string) => extractPostingMetadataEvidence({
+      artifact: { title: 'Software Engineering Intern', compensationText: pay },
+      sourceClass: 'official-ats', sourceId: 'source-a', sourceUrl: 'https://source.example.test/source-a', observedAt, exactPosting: true,
+    });
+    const adapter = new MutableAdapter('source-a', [listing('source-a', { metadataEvidence: metadata('USD $40/hour', '2026-07-29T12:00:00.000Z') })]);
+    await new IngestionRunner([adapter], store, () => new Date('2026-07-29T12:00:00.000Z')).run();
+    const original = [...store.jobs.values()][0]!;
+    expect(original.compensation).toMatchObject({ minHourlyUSD: 40, maxHourlyUSD: 40 });
+    expect(store.notificationEvents.size).toBe(1);
+
+    adapter.rows = [listing('source-a', { metadataEvidence: metadata('USD $45/hour', '2026-07-30T12:00:00.000Z') })];
+    await new IngestionRunner([adapter], store, () => new Date('2026-07-30T12:00:00.000Z')).run();
+    const updated = [...store.jobs.values()][0]!;
+    expect(updated.compensation).toMatchObject({ minHourlyUSD: 45, maxHourlyUSD: 45 });
+    expect(updated.jobId).toBe(original.jobId);
+    expect(updated.firstSeenAt).toBe(original.firstSeenAt);
+    expect(updated.notification).toEqual(original.notification);
+    expect(store.notificationEvents.size).toBe(1);
+  });
+
   it('closes an occurrence after two complete omissions, including an unchanged confirmation', async () => {
     const store = new MemoryInternshipStore();
     const adapter = new MutableAdapter('source-a', [listing('source-a')]);

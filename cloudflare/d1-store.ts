@@ -7,11 +7,12 @@ import type { ApplicationSession } from '../src/application-automation.js';
 import { preferredJobIdentityConflicts, resolvePostingAliases, type AliasResolution } from '../src/identity/posting.js';
 import { deletedUserTombstoneKey, type InternshipStore, type LeverAdmission, type PostingObservationCommit, type PostingObservationCommitResult, type ReleaseStore, type UserStore, type CatalogQuery } from '../src/store.js';
 import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from '../src/catalog-groups.js';
-import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, PostingIdentityDecision, PostingIdentityIncident, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from '../src/types.js';
+import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MetadataConflict, MonitoringChecklist, NotificationEvent, PostingIdentity, PostingIdentityDecision, PostingIdentityIncident, RoleMetadataEvidence, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from '../src/types.js';
 import type { D1Database, D1PreparedStatement } from './types.js';
 import { alertEligible, catalogEligible } from '../src/catalog-admission.js';
 import { postingObservationProjection } from '../src/identity/projection.js';
 import { mergeSourceOccurrence } from '../src/identity/source-occurrence.js';
+import { D1CatalogAdmissionStore } from './catalog-admission-store.js';
 
 type JsonRow = { value: string };
 const deliveryReceiptLifetimeSeconds = 90 * 24 * 60 * 60;
@@ -427,6 +428,9 @@ export class D1InternshipStore implements InternshipStore {
   }
   putSourceOccurrence(occurrence: SourceOccurrenceState) {
     return this.sourceOccurrenceStatement(occurrence).run().then(() => undefined);
+  }
+  recordRoleMetadataEvidence(jobId: string, evidence: readonly RoleMetadataEvidence[], conflicts: readonly MetadataConflict[], recordedAt: string) {
+    return new D1CatalogAdmissionStore(this.db).recordRoleMetadataEvidence(jobId, evidence, conflicts, recordedAt);
   }
   async putAdmissionState(job: Internship, occurrence?: SourceOccurrenceState): Promise<void> {
     await this.db.batch([this.internshipStatement(job), ...(occurrence ? [this.sourceOccurrenceStatement(occurrence)] : [])]);

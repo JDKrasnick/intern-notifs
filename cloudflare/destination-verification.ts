@@ -9,6 +9,7 @@ import { combineRenderedFrameEvidence, type RenderedFrameSnapshot } from '../src
 import type { CatalogAdmissionReason, Internship, ProcessedListing, ProviderIdentity, SourceOccurrence } from '../src/types.js';
 import { D1CatalogAdmissionStore } from './catalog-admission-store.js';
 import { D1InternshipStore } from './d1-store.js';
+import { extractVerifiedPageMetadataEvidence, mergeRoleMetadataEvidence, projectRoleMetadata, ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
 import type { D1Database, MessageBatch, Queue } from './types.js';
 
 export interface DestinationVerificationMessage {
@@ -20,6 +21,9 @@ export interface DestinationVerificationMessage {
   candidateUrl: string;
   reason: 'first-sight' | 'url-change' | 'content-change' | 'daily-retry' | 'weekly-sample' | 'historical-backfill';
   queuedAt: string;
+  metadataExtractionVersion?: number;
+  metadataArtifactHash?: string;
+  metadataBackfillToken?: string;
 }
 
 export interface DestinationVerificationEnvironment {
@@ -44,6 +48,12 @@ function parseMessage(value: unknown): DestinationVerificationMessage {
     || typeof message.externalId !== 'string' || typeof message.candidateUrl !== 'string'
     || !message.providerIdentity || typeof message.providerIdentity !== 'object') throw new Error('Destination verification message is invalid');
   return message as DestinationVerificationMessage;
+}
+
+function metadataExtractionCurrent(reference: SourceOccurrence, message: DestinationVerificationMessage): boolean {
+  if (!message.metadataExtractionVersion) return true;
+  return reference.metadataExtraction?.version === message.metadataExtractionVersion
+    && (!message.metadataArtifactHash || reference.metadataExtraction.artifactHash === message.metadataArtifactHash);
 }
 
 export function reachabilityFromHttpStatus(status: number | undefined): Reachability {
@@ -99,11 +109,46 @@ export async function persistDestinationAdmission(input: {
       || (browserVisible === true && ['posting-detail', 'application-form'].includes(destination.classification)),
     evaluatedAt: inspectedAt, previous: reference.admission ?? job.admission,
   });
-  const sourceReferences = job.sourceReferences.map((item) => item === reference ? { ...item, admission } : item);
+  const extracted = evidence && ['posting-detail', 'application-form'].includes(destination.classification)
+    ? extractVerifiedPageMetadataEvidence({
+      expectedTitle: reference.title,
+      expectedPostingId: message.providerIdentity.postingId,
+      page: { title: evidence.title ?? reference.title, text: evidence.contentExcerpt },
+      jsonLdArtifacts: evidence.metadataArtifacts,
+      sourceId: message.sourceId,
+      sourceUrl: evidence.url,
+      observedAt: inspectedAt,
+      exactPosting: true,
+    }) : [];
+  const enrichedReference = { ...reference, admission,
+    ...(extracted.length ? { metadataEvidence: mergeRoleMetadataEvidence(reference.metadataEvidence, extracted) } : {}),
+    ...(evidence ? { metadataExtraction: {
+      version: message.metadataExtractionVersion ?? 1,
+      artifactHash: evidence.contentHash ?? evidence.renderedEvidenceHash ?? createHash('sha256').update(JSON.stringify({ url: evidence.url, title: evidence.title, description: evidence.description })).digest('hex'),
+      observedAt: inspectedAt,
+      outcome: extracted.length ? 'extracted' as const : 'no-explicit-metadata' as const,
+    } } : {}),
+  };
+  const sourceReferences = job.sourceReferences.map((item) => item === reference ? enrichedReference : item);
   const occurrence = (await jobs.getSourceOccurrences(message.sourceId)).find((item) => item.externalId === message.externalId);
+  const projected = projectRoleMetadata({ ...job, sourceReferences, admission: deriveCanonicalAdmission(sourceReferences, inspectedAt) });
+  if (evidence && enrichedReference.metadataExtraction) await operations.recordRoleMetadataExtraction({
+    jobId: job.jobId, sourceId: message.sourceId, sourceUrl: evidence.url,
+    artifactHash: enrichedReference.metadataExtraction.artifactHash,
+    extractionVersion: enrichedReference.metadataExtraction.version,
+    outcome: enrichedReference.metadataExtraction.outcome,
+    observedAt: inspectedAt,
+    ...(message.metadataBackfillToken ? { backfillToken: message.metadataBackfillToken } : {}),
+  });
+  if (extracted.length) await operations.recordRoleMetadataEvidence(job.jobId, extracted, projected.conflicts, inspectedAt);
+  // Historical collection is deliberately staging-only. The guarded repair
+  // endpoint performs the public job write after exact token/count checks.
+  if (message.metadataBackfillToken) return { destination };
   await jobs.putAdmissionState(
-    { ...job, sourceReferences, admission: deriveCanonicalAdmission(sourceReferences, inspectedAt) },
-    occurrence ? { ...occurrence, occurrence: { ...occurrence.occurrence, admission }, changedAt: inspectedAt } : undefined,
+    projected.job,
+    occurrence ? { ...occurrence, occurrence: { ...occurrence.occurrence, admission,
+      ...(extracted.length ? { metadataEvidence: enrichedReference.metadataEvidence } : {}),
+      ...(enrichedReference.metadataExtraction ? { metadataExtraction: enrichedReference.metadataExtraction } : {}) }, changedAt: inspectedAt } : undefined,
   );
 
   const reason = admission.reasonCodes[0];
@@ -166,9 +211,10 @@ export async function processDestinationVerificationBatch(
       if (!job) { queued.ack(); continue; }
       const reference = job.sourceReferences.find((item) => item.sourceId === message.sourceId && item.externalId === message.externalId);
       const attemptKey = `${message.jobId}\0${message.sourceId}\0${message.candidateUrl}`;
-      if (!reference || matchingBrowserDestination(job, message, message.queuedAt)
+      if (!reference || (matchingBrowserDestination(job, message, message.queuedAt) && metadataExtractionCurrent(reference, message))
         || pendingAttemptKeys.has(attemptKey)
-        || await operations.hasVerificationAttemptSince(message.jobId, message.sourceId, message.candidateUrl, recentAttemptCutoff)) {
+        || (metadataExtractionCurrent(reference, message)
+          && await operations.hasVerificationAttemptSince(message.jobId, message.sourceId, message.candidateUrl, recentAttemptCutoff))) {
         queued.ack(); continue;
       }
       pendingAttemptKeys.add(attemptKey);
@@ -187,7 +233,7 @@ export async function processDestinationVerificationBatch(
         const job = await jobs.getJob(message.jobId);
         if (!job) { queued.ack(); continue; }
         const reference = job.sourceReferences.find((item) => item.sourceId === message.sourceId && item.externalId === message.externalId);
-        if (!reference || matchingBrowserDestination(job, message, message.queuedAt)) { queued.ack(); continue; }
+        if (!reference || (matchingBrowserDestination(job, message, message.queuedAt) && metadataExtractionCurrent(reference, message))) { queued.ack(); continue; }
         const page = await browser.newPage();
         let reachability: Reachability = 'live';
         let evidence: ApplicationPageEvidence | undefined;
@@ -232,6 +278,7 @@ export async function processDestinationVerificationBatch(
                   return {
                     url: location.href, title: document.title || undefined, description,
                     visibleText: main || undefined, structuredJobText: structuredJobText.join(' ').slice(0, 40_000) || undefined,
+                    structuredJobDocuments: structuredJobText,
                     jobPostingCount, distinctJobLinkCount: distinctJobLinks.size,
                     applicationFormPresent: actionableApply || [...document.querySelectorAll<Element>(
                       'form[action*="apply" i],form[id*="apply" i],input[type="file"],input[name="resume" i],input[name="cv" i]',
@@ -268,6 +315,7 @@ export async function processDestinationVerificationBatch(
           const collisionMessage: DestinationVerificationMessage = {
             version: 1, jobId: collisionJob.jobId, sourceId: collisionReference.sourceId,
             externalId: collisionReference.externalId, candidateUrl: prior.candidateUrl, reason: 'weekly-sample', queuedAt: attemptedAt,
+            metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
             providerIdentity: { provider: prior.provider, sourceId: collisionReference.sourceId, sourceUrl: collisionReference.sourceUrl,
               ...(prior.tenant ? { tenant: prior.tenant } : {}), postingId: prior.expectedPostingId },
           };
@@ -350,6 +398,7 @@ export async function enqueueDueDestinationVerifications(
     await env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage({
       jobId: incident.jobId, sourceId: incident.sourceId, externalId: reference.externalId,
       providerIdentity, candidateUrl: destination.candidateUrl, reason: 'daily-retry',
+      metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
     }, now.toISOString()));
     queued += 1;
   }
@@ -361,6 +410,7 @@ export async function enqueueDueDestinationVerifications(
         providerIdentity: { provider: rule.provider, sourceId: candidate.sourceId, sourceUrl: candidate.sourceUrl,
           ...(rule.tenant ? { tenant: rule.tenant } : {}), ...(candidate.expectedPostingId ? { postingId: candidate.expectedPostingId } : {}) },
         candidateUrl: candidate.candidateUrl, reason: 'weekly-sample',
+        metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
       }, now.toISOString()));
       queued += 1;
     }
@@ -370,6 +420,7 @@ export async function enqueueDueDestinationVerifications(
     await env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage({
       jobId: candidate.jobId, sourceId: candidate.sourceId, externalId: candidate.externalId,
       providerIdentity: candidate.providerIdentity, candidateUrl: candidate.candidateUrl, reason: 'historical-backfill',
+      metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
     }, now.toISOString()));
     queued += 1;
   }

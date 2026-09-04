@@ -4,6 +4,7 @@ import { isPastSeason } from '../core/early-career.js';
 import { isOfficialOccurrence } from '../sources/provenance.js';
 import type { Internship, SourceOccurrence, SourceOccurrenceState } from '../types.js';
 import { mergeSourceOccurrenceReferences, sourceOccurrenceKey } from './source-occurrence.js';
+import { projectRoleMetadata } from '../role-metadata.js';
 
 function earliest(values: Array<string | undefined>): string | undefined {
   return values.filter((value): value is string => Boolean(value)).sort()[0];
@@ -97,5 +98,5 @@ export function postingObservationProjection(
       ...(digestedAt ? { digestedAt } : {}),
     },
   };
-  return canonicalCatalogRecency(projected);
+  return canonicalCatalogRecency(projectRoleMetadata(projected).job);
 }

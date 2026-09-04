@@ -137,7 +137,7 @@ describe('verification in the poll', () => {
 
     expect([...store.jobs.values()][0]).toMatchObject({
       season: 'summer-2026',
-      applicationPageMetadataVersion: 1,
+      applicationPageMetadataVersion: 2,
     });
 
     const refetched: string[] = [];
