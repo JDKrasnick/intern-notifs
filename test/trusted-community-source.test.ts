@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { deriveCanonicalAdmission, evaluateCatalogAdmission } from '../src/catalog-admission.js';
 import { CatalogReconciler } from '../src/ingestion/catalog-reconciler.js';
+import { Poller } from '../src/poll.js';
+import { MemoryInternshipStore } from '../src/store.js';
 import {
   activeTrustedCommunityPolicy,
   advanceTrustedCommunityQualification,
@@ -22,6 +24,8 @@ import type {
   PostingIdentityDecision,
   ProcessedListing,
   SourceOccurrenceState,
+  SourceAdapter,
+  SourceFetchResult,
 } from '../src/types.js';
 
 const inspectedAt = '2026-09-04T12:00:00.000Z';
@@ -230,6 +234,30 @@ describe('trusted community source health', () => {
     const metrics = trustedCommunityMetrics({ rawRows: 1, eligibleRows: 1, listings: [role], priorOccurrences: [],
       admissionConfigurationVersion: 'policy-v1', rejectedAggregatorRows: 0, survivingAggregatorRows: 0, duplicateOccurrenceIds: 0 });
     expect(metrics.catalogYield).toBe(1);
+  });
+
+  it('does not checkpoint or self-enqueue a migration continuation after a circuit breach', async () => {
+    const store = new MemoryInternshipStore();
+    const adapter: SourceAdapter = {
+      id: 'simplify-summer-2026',
+      async fetch(previous): Promise<SourceFetchResult> {
+        const second = listing({ externalId: 'README.md:https://jobs.other.test/role-2', company: 'Other',
+          title: 'Data Engineering Intern', applyUrl: 'https://jobs.other.test/role-2' });
+        return { sourceId: this.id, listings: [listing(), second], notModified: false,
+          checkpoint: { sourceId: this.id, successfulFetches: (previous?.successfulFetches ?? 0) + 1, lastRowCount: 2 } };
+      },
+    };
+    const resolver = { async configurationVersion() { return 'registry-v1'; },
+      async resolveCanonicalEmployer() { return undefined; }, async resolveDestinationRule() { return undefined; } };
+    await new Poller([adapter], store, () => new Date(inspectedAt), undefined, undefined, undefined, undefined,
+      resolver, true, false).poll();
+    const checkpoint = await store.getCheckpoint(adapter.id);
+    const breached = await new Poller([adapter], store, () => new Date('2026-09-04T12:10:00.000Z'), undefined,
+      undefined, undefined, undefined, resolver, true, true).poll({ maxAdmissionMigrationListingsPerSourceRun: 0 });
+    expect(breached.failures).toEqual([expect.stringContaining('trusted-community circuit breaker')]);
+    expect(breached.continuationSources).toEqual([]);
+    expect(await store.getCheckpoint(adapter.id)).toEqual(checkpoint);
+    expect(await store.getSourceHealth(adapter.id)).toMatchObject({ state: 'quarantined' });
   });
 });
 

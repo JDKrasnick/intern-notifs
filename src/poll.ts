@@ -1145,6 +1145,7 @@ export class IngestionRunner {
             alertMode: trustedPolicy.alertMode,
           });
           if (breaches.length) {
+            report.continuationSources = report.continuationSources.filter((sourceId) => sourceId !== connector.id);
             await this.hideUnsafeTrustedCommunityListings({
               sourceId: connector.id,
               snapshotHash: batch.snapshotHash,
