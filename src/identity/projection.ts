@@ -1,8 +1,8 @@
 import { canonicalCatalogRecency } from '../catalog-recency.js';
-import { deriveCanonicalAdmission } from '../catalog-admission.js';
+import { alertEligible, deriveCanonicalAdmission } from '../catalog-admission.js';
 import { isPastSeason } from '../core/early-career.js';
 import { isOfficialOccurrence } from '../sources/provenance.js';
-import type { Internship, SourceOccurrence, SourceOccurrenceState } from '../types.js';
+import type { Internship, NotificationEvent, SourceOccurrence, SourceOccurrenceState } from '../types.js';
 import { mergeSourceOccurrenceReferences, sourceOccurrenceKey } from './source-occurrence.js';
 
 function earliest(values: Array<string | undefined>): string | undefined {
@@ -108,4 +108,33 @@ export function postingObservationProjection(
     },
   };
   return canonicalCatalogRecency(projected);
+}
+
+/**
+ * Finalizes delayed notification state from the same canonical projection that
+ * the store compare-and-swap commits. A stale caller may propose a promotion
+ * after another source has made the canonical job ineligible; in that case,
+ * retain only notification state that was already durable.
+ */
+export function postingObservationNotificationProjection(
+  current: Internship | undefined,
+  projected: Internship,
+  notificationEvent: NotificationEvent | undefined,
+): { job: Internship; notificationEvent?: NotificationEvent } {
+  if (!notificationEvent || alertEligible(projected)) {
+    return { job: projected, ...(notificationEvent ? { notificationEvent } : {}) };
+  }
+  const smsSentAt = projected.notification.smsSentAt;
+  const digestedAt = projected.notification.digestedAt;
+  return {
+    job: {
+      ...projected,
+      notification: {
+        smsPending: !smsSentAt && Boolean(current?.notification.smsPending),
+        digestPending: !digestedAt && Boolean(current?.notification.digestPending),
+        ...(smsSentAt ? { smsSentAt } : {}),
+        ...(digestedAt ? { digestedAt } : {}),
+      },
+    },
+  };
 }
