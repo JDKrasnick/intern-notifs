@@ -93,6 +93,23 @@ describe('source health', () => {
     expect(recovered).toMatchObject({ state: 'healthy', sourceStatus: 'paused', consecutiveFailures: 0, rawRows: 4, eligibleRows: 1 });
   });
 
+  it('keeps a quarantined source quarantined when a forced recovery fails transiently', () => {
+    const quarantined = failedSourceHealth({
+      sourceId: 'github-pitt-csc',
+      startedAt: '2026-07-29T12:00:00.000Z',
+      completedAt: '2026-07-29T12:00:01.000Z',
+      error: new SourceFetchError('malformed JSON', 'json'),
+    });
+    const failedRecovery = failedSourceHealth({
+      sourceId: 'github-pitt-csc',
+      previous: quarantined,
+      startedAt: '2026-07-29T12:10:00.000Z',
+      completedAt: '2026-07-29T12:10:01.000Z',
+      error: new SourceFetchError('request timed out', 'transport'),
+    });
+    expect(failedRecovery).toMatchObject({ state: 'quarantined', sourceStatus: 'paused', consecutiveFailures: 2 });
+  });
+
   it('promotes an automatically quiet source when eligible roles appear', () => {
     const quiet = successfulSourceHealth({
       sourceId: 'greenhouse-acme',

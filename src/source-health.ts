@@ -181,7 +181,7 @@ export function failedSourceHealth(input: {
 }): SourceHealth {
   const category = sourceFailureCategory(input.error);
   const failures = (input.previous?.consecutiveFailures ?? 0) + 1;
-  const quarantined = shouldQuarantine(category, input.error, failures);
+  const quarantined = input.previous?.state === 'quarantined' || shouldQuarantine(category, input.error, failures);
   const diagnostic = safeDiagnostic(input.error);
   const outcome = sourceFailureOutcome(input.error);
   const durationMs = Math.max(0, Date.parse(input.completedAt) - Date.parse(input.startedAt));

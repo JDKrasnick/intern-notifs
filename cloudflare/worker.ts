@@ -1110,7 +1110,25 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
     const failed = new Set<string>();
     const employerStore = new D1EmployerStore(env.DB);
     const admissionResolver = catalogAdmissionResolver(env);
-    const structured = await reviewedStructuredRegistry(employerStore);
+    let structured: Awaited<ReturnType<typeof reviewedStructuredRegistry>>;
+    try {
+      structured = await reviewedStructuredRegistry(employerStore);
+    } catch (error) {
+      for (const queued of batch.messages) {
+        const parsed = (() => {
+          try { return JSON.parse(typeof queued.body === 'string' ? queued.body : JSON.stringify(queued.body)) as { sourceId?: string; sourceKind?: string }; }
+          catch { return undefined; }
+        })();
+        await recordQueueFailureBestEffort({
+          db: env.DB, queueName: batch.queue, messageId: queued.id, attempts: queued.attempts,
+          timestamp: queued.timestamp, sourceId: parsed?.sourceId, sourceKind: parsed?.sourceKind,
+          body: queued.body, error,
+        });
+        console.error(JSON.stringify({ command: 'github-poll-setup', messageId: queued.id, error: safeDiagnostic(error) }));
+        queued.retry();
+      }
+      return;
+    }
     const resolveFailures = async (messageId: string) => {
       try { await resolveQueueFailures(env.DB, batch.queue, messageId); }
       catch (error) {

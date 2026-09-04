@@ -263,13 +263,15 @@ export async function applyDlq(input: { planId?: unknown; repairToken?: unknown;
       const diagnostic = classification === 'historical-transient'
         ? 'Original failure predates instrumentation and cannot be reconstructed.'
         : null;
-      await dependencies.db.prepare('UPDATE dlq_repair_plan_items SET purged_at = ? WHERE plan_id = ? AND message_id = ?')
-        .bind(now.toISOString(), plan.plan_id, item.message_id).run();
-      await dependencies.db.prepare(`INSERT INTO dlq_disposition_audit
-        (id, plan_id, queue_name, message_id, payload_hash, logical_key, operation, classification, diagnostic, reason, actor, disposed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .bind(randomUUID(), plan.plan_id, plan.queue_name, item.message_id, item.payload_hash, item.logical_key,
-          plan.operation, classification, diagnostic, plan.reason, actor, now.toISOString()).run();
+      await dependencies.db.batch([
+        dependencies.db.prepare('UPDATE dlq_repair_plan_items SET purged_at = ? WHERE plan_id = ? AND message_id = ?')
+          .bind(now.toISOString(), plan.plan_id, item.message_id),
+        dependencies.db.prepare(`INSERT INTO dlq_disposition_audit
+          (id, plan_id, queue_name, message_id, payload_hash, logical_key, operation, classification, diagnostic, reason, actor, disposed_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .bind(randomUUID(), plan.plan_id, plan.queue_name, item.message_id, item.payload_hash, item.logical_key,
+            plan.operation, classification, diagnostic, plan.reason, actor, now.toISOString()),
+      ]);
     }
     if (failed.size) throw new Error(`${failed.size} selected message(s) could not be purged; the plan remains retryable`);
     await dependencies.db.prepare(`UPDATE dlq_repair_plans SET applying_at = NULL, applied_at = ?
