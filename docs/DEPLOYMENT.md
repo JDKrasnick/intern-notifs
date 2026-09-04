@@ -332,9 +332,10 @@ from deployment and this code change.
 
 ### Posting identity D1 repair
 
-Deploy migrations `0010_posting_identity.sql` and
-`0011_issue_50_reviewed_employer_identity.sql` and the runtime identity support
-first, with `IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED=false`. Greenhouse, Lever,
+Deploy migrations `0010_posting_identity.sql`,
+`0011_issue_50_reviewed_employer_identity.sql`, and
+`0012_official_career_provider_identity.sql` and the runtime identity support first,
+with `IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED=false`. Greenhouse, Lever,
 and Ashby workers then retain contract-versioned immutable posting evidence;
 reviewed Workday, ByteDance, Tesla, Meta, Jane Street, Goldman Sachs, and IMC
 routes, authoritative employer requisitions, and checked-in canonical-URL

@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest';
 import { D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import { persistDestinationAdmission, reachabilityFromHttpStatus, type DestinationVerificationMessage } from '../cloudflare/destination-verification.js';
-import { matchingBrowserDestination } from '../src/destination-verification.js';
+import { evaluateCatalogAdmission } from '../src/catalog-admission.js';
+import { classifyDestination, matchingBrowserDestination } from '../src/destination-verification.js';
+import { processPosting } from '../src/ingestion/processor.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 import type { CatalogAdmission, Internship } from '../src/types.js';
 
@@ -56,6 +58,42 @@ function subject() {
 }
 
 describe('D1 catalog admission operations', () => {
+  it.each([
+    ['Tesla', 'tesla', 'tesla', 'https://www.tesla.com/careers/search/job/software-engineer-intern-275558'],
+    ['Meta', 'meta', 'meta', 'https://www.metacareers.com/jobs/1027438186737957'],
+    ['Jane Street', 'janestreet', 'jane-street', 'https://www.janestreet.com/join-jane-street/position/8599644002'],
+    ['Goldman Sachs', 'goldman-sachs', 'goldman-sachs', 'https://higher.gs.com/roles/171567'],
+    ['IMC', 'imc', 'imc', 'https://www.imc.com/us/careers/jobs/4823924101'],
+  ] as const)('admits a new reviewed-community %s role through its official provider mapping', async (
+    company, provider, canonicalEmployerId, applyUrl,
+  ) => {
+    const current = subject();
+    const migration = readFileSync(new URL('../cloudflare/migrations/0012_official_career_provider_identity.sql', import.meta.url), 'utf8');
+    current.database.exec(migration);
+    current.database.exec(migration);
+    const listing = processPosting({
+      sourceId: 'community-list', provenance: 'reviewed-community', externalId: `${provider}-role`,
+      sourceUrl: 'https://github.com/example/jobs', fetchedAt: '2026-09-01T12:00:00Z',
+      employer: { name: company, authority: 'source-row' }, title: 'Software Engineering Intern',
+      content: [{ kind: 'description', format: 'plain', value: 'Build production software.' }],
+      locations: ['New York, NY'], applyUrl, sourceState: 'open', lifecycleAuthority: 'source',
+    }).listing!;
+    expect(listing.providerIdentity).toMatchObject({ provider, tenant: provider });
+    const canonicalEmployer = await current.admission.resolveCanonicalEmployer(listing.providerIdentity!);
+    expect(canonicalEmployer).toEqual({ id: canonicalEmployerId, displayName: company });
+    const reviewed = {
+      ...listing,
+      employerEvidence: { authority: 'reviewed-registry' as const, canonicalEmployer: canonicalEmployer! },
+    };
+    const destination = classifyDestination({
+      listing: reviewed, reachability: 'implied', inspectedAt: '2026-09-01T12:00:00Z',
+    });
+    expect(destination.classification).toBe('posting-detail');
+    expect(evaluateCatalogAdmission({
+      listing: reviewed, destination, postingAttributed: true, evaluatedAt: '2026-09-01T12:00:00Z',
+    })).toMatchObject({ employerResolution: 'resolved', catalogEligible: true, alertEligible: true, reasonCodes: [] });
+  });
+
   it('requires explicit mapping supersession', async () => {
     const { admission: store } = subject();
     await store.putCanonicalEmployer({ id: 'acme', displayName: 'Acme', reviewedAt: '2026-08-26T00:00:00Z', reviewedBy: 'reviewer' }, '2026-08-26T00:00:00Z');

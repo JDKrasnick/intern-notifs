@@ -1,4 +1,4 @@
-import type { CanonicalEmployer, DestinationReviewRule, EmployerMapping } from '../src/types.js';
+import { POSTING_PROVIDERS, type CanonicalEmployer, type DestinationReviewRule, type EmployerMapping } from '../src/types.js';
 import { ATOMIC_REPAIR_RECORD_LIMIT } from './catalog-admission-store.js';
 import type { D1CatalogAdmissionStore, RepairChange } from './catalog-admission-store.js';
 
@@ -48,7 +48,9 @@ export async function handleCatalogAdmissionOperations(
     if (request.method === 'POST' && path === '/internal/admission/mappings') {
       const input = await body(request);
       const provider = text(input.provider, 'provider', 80) as EmployerMapping['provider'];
-      const allowed: EmployerMapping['provider'][] = ['greenhouse', 'lever', 'ashby', 'workday', 'bytedance', 'unknown', 'github', 'structured', 'employer-submission'];
+      const allowed: readonly EmployerMapping['provider'][] = [
+        ...POSTING_PROVIDERS, 'github', 'structured', 'employer-submission',
+      ];
       if (!allowed.includes(provider)) throw new Error('provider is invalid');
       const mapping: EmployerMapping = {
         id: text(input.id ?? crypto.randomUUID(), 'id', 160), provider, scope: text(input.scope, 'scope', 300),
