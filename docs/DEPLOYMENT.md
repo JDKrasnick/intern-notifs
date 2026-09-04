@@ -362,6 +362,13 @@ Provider identity does not choose any of those fields. Do not apply while
 `presentationDisagreements` is non-empty; the endpoint also refuses that apply.
 Keep the production dry run for the combined #50/#120 review.
 
+When an employer-owned posting page is the only authoritative presentation
+source, record its exact provider tenant, posting ID, company, title, location,
+and application URL in `posting_identity_presentation_reviews`. The ledger is
+append-only, validates its evidence hash and both official URLs at runtime, and
+can resolve only the matching exact identity. A route-level provider match alone
+never authorizes a title, location, employer name, or destination choice.
+
 Run the deterministic integrity audit against the same snapshot before any
 apply and archive its legacy/classified counts. Exit status `2` is expected
 while legacy occurrences still require backfill; it also reports any exact

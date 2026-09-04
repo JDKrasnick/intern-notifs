@@ -48,7 +48,7 @@ function sqliteD1(database: DatabaseSync, metrics?: QueryMetrics): D1Database {
 
 function database() {
   const value = new DatabaseSync(':memory:');
-  for (const name of ['0001_initial.sql', '0002_cost_guards.sql', '0003_billing_shutdown.sql', '0004_auth_rate_limits.sql', '0005_auth_consent.sql', '0006_employer_channel.sql', '0007_catalog_admission.sql']) {
+  for (const name of ['0001_initial.sql', '0002_cost_guards.sql', '0003_billing_shutdown.sql', '0004_auth_rate_limits.sql', '0005_auth_consent.sql', '0006_employer_channel.sql', '0007_catalog_admission.sql', '0013_posting_presentation_reviews.sql']) {
     value.exec(readFileSync(new URL(`../cloudflare/migrations/${name}`, import.meta.url), 'utf8'));
   }
   return value;
@@ -290,6 +290,69 @@ describe('D1 posting identity repair', () => {
       applyUrl: 'https://job-boards.greenhouse.io/drweng/jobs/3413670',
       sourceReferences: expect.arrayContaining([expect.objectContaining({ sourceId: 'greenhouse-drweng' })]),
     });
+  });
+
+  it('uses an immutable official-page review to resolve an exact provider collision', async () => {
+    const sqlite = database(); const db = sqliteD1(sqlite); const store = new D1InternshipStore(db);
+    const url = 'https://www.metacareers.com/jobs/1027438186737957';
+    const older = job('meta-older', url, '2026-08-25T00:00:00.000Z', [
+      { ...occurrence('speedyapply-2027-ai', 'meta-a', url), company: 'Meta',
+        title: 'Research Scientist Intern - AI - Cyber Security', location: 'Menlo Park, CA' },
+    ], { company: 'Meta', title: 'Research Scientist Intern - AI - Cyber Security', location: 'Menlo Park, CA' });
+    const newer = job('meta-newer', `${url}?utm_source=Simplify`, '2026-09-03T00:00:00.000Z', [
+      { ...occurrence('simplify-summer-2026', 'meta-b', `${url}?utm_source=Simplify`), company: '🔥 Meta',
+        title: 'Research Scientist Intern - Multiple Teams', location: 'Menlo Park, CA' },
+    ], { company: '🔥 Meta', title: 'Research Scientist Intern - Multiple Teams', location: 'Menlo Park, CA' });
+    await store.putInternship(older);
+    await store.putInternship(newer);
+
+    const dry = await runPostingIdentityRepair(db, { scope: 'identity' });
+    expect(dry).toMatchObject({
+      duplicateGroups: 1,
+      eligibleDuplicateGroups: 1,
+      unresolvedDuplicateGroups: 0,
+      presentationDisagreements: [],
+      conflicts: [],
+    });
+    await runPostingIdentityRepair(db, {
+      apply: true,
+      repairToken: dry.repairToken,
+      expectedChanges: dry.expectedChanges,
+      expectedDuplicateJobs: dry.duplicateJobs,
+      scope: 'identity',
+    });
+    expect(await store.getJob('meta-older')).toMatchObject({
+      company: 'Meta',
+      title: 'Research Scientist Intern, AI, Cyber Security, Safety — MSL Trust & Safety (PhD)',
+      location: 'Menlo Park, CA',
+      locations: ['Menlo Park, CA'],
+      applyUrl: url,
+      season: 'summer-2027',
+      postingIdentity: { provider: 'meta', tenant: 'meta', providerPostingId: '1027438186737957' },
+    });
+    expect(await store.getJob('meta-newer')).toMatchObject({ jobId: 'meta-older' });
+    sqlite.close();
+  });
+
+  it('fails closed when an official-page review evidence hash is invalid', async () => {
+    const sqlite = database(); const db = sqliteD1(sqlite);
+    sqlite.prepare(`INSERT INTO posting_identity_presentation_reviews
+      (id, provider, tenant, posting_id, company, title, location, locations_json,
+       apply_url, evidence_url, evidence_hash, reviewed_at, reviewed_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      'tampered-tesla', 'tesla', 'tesla', '275558', 'Tesla', 'Tampered title', 'Palo Alto, CA',
+      '["Palo Alto, CA"]', 'https://www.tesla.com/careers/search/job/software-engineer-275558',
+      'https://www.tesla.com/careers/search/job/software-engineer-275558', '0'.repeat(64),
+      '2026-09-04T15:40:00Z', 'test-reviewer',
+    );
+
+    const dry = await runPostingIdentityRepair(db, { scope: 'identity' });
+    expect(dry.conflicts).toEqual(['tampered-tesla: reviewed presentation evidence hash does not match']);
+    await expect(runPostingIdentityRepair(db, {
+      apply: true, repairToken: dry.repairToken, expectedChanges: dry.expectedChanges,
+      expectedDuplicateJobs: dry.duplicateJobs, scope: 'identity',
+    })).rejects.toThrow('posting identity conflicts remain');
+    sqlite.close();
   });
 
   it('reconciles Aquatic, Jump, and Squarepoint spellings through the same reviewed employer decision', async () => {
@@ -655,9 +718,9 @@ describe('D1 posting identity repair', () => {
     const verification = await runPostingIdentityRepair(db, { scope: 'identity' });
     expect(applied).toMatchObject({ applied: true, projectionRefreshRequired: true });
     expect(verification).toMatchObject({ expectedChanges: 0, conflicts: [] });
-    expect(postingIdentityRepairQueryCount(dry.expectedChanges)).toBe(123);
-    expect(postingIdentityRepairQueryCount(4_250 * 2)).toBe(438);
-    expect(metrics.statements).toBe(128);
+    expect(postingIdentityRepairQueryCount(dry.expectedChanges)).toBe(124);
+    expect(postingIdentityRepairQueryCount(4_250 * 2)).toBe(439);
+    expect(metrics.statements).toBe(130);
     expect(metrics.statements).toBeLessThanOrEqual(900);
     expect(metrics.maxBoundParameters).toBeLessThanOrEqual(100);
     expect(metrics.maxBatchStatements).toBeLessThanOrEqual(25);
