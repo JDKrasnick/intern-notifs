@@ -74,6 +74,21 @@ function withOfficialEmployerConflict(base: Internship): Internship {
 }
 
 describe('atomic posting observation commit', () => {
+  it.each(['closed', 'nontechnical'] as const)('rejects a %s event at the final persisted projection', async (kind) => {
+    const store = new MemoryInternshipStore();
+    const identity = buildPostingIdentity({ applicationUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' });
+    const proposed = observation(identity.canonicalJobId, 'community', 'role-a', identity);
+    proposed.occurrence.occurrence = { ...proposed.occurrence.occurrence,
+      ...(kind === 'closed' ? { state: 'closed' as const } : { technical: false }), admission: admission(at) };
+    proposed.job.sourceReferences = [proposed.occurrence.occurrence];
+    const result = await store.commitPostingObservation({ decision: proposed.occurrence.occurrence.postingIdentityDecision as Extract<PostingIdentityDecision, { status: 'confirmed' }>,
+      identity, ...proposed, notificationEvent: { eventId: 'delayed', sourceId: 'community', externalId: 'role-a',
+        jobId: identity.canonicalJobId, kind: 'new-job', createdAt: at } });
+    expect(result).toMatchObject({ notificationInserted: false });
+    expect(store.notificationEvents.size).toBe(0);
+    expect((await store.getJob(identity.canonicalJobId))!.notification).toMatchObject({ smsPending: false, digestPending: false });
+  });
+
   it('keeps document coordinates as identity only for legacy references without external IDs', () => {
     const base = observation('legacy', 'community-list', 'temporary', buildPostingIdentity({
       applicationUrl: 'https://jobs.lever.co/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',

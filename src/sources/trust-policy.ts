@@ -124,6 +124,7 @@ export function advanceTrustedCommunityQualification(input: {
       : basis ? 'eligible' as const : 'pending' as const;
   return {
     candidateKey,
+    ...(input.previous?.sourceMaterialHash ? { sourceMaterialHash: input.previous.sourceMaterialHash } : {}),
     ...(validatedDestinationKey ? { validatedDestinationKey } : {}),
     consecutiveCompleteSnapshots,
     ...(lastCountedSuccessfulFetchSequence !== undefined ? { lastCountedSuccessfulFetchSequence } : {}),

@@ -129,7 +129,7 @@ function seasonAllowsOpen(season: string, identity: Internship['internshipIdenti
 }
 
 function merge(existing: Internship, listing: ProcessedListing, externalId: string, now: string, applicationUrlValidatedAt?: string, metadataVersion?: number): Internship {
-  const becomingCatalogVisible = existing.admission?.catalogEligible === false && listing.admission?.catalogEligible === true;
+  const becomingCatalogVisible = !existing.catalogVisibleAt && existing.admission?.catalogEligible === false && listing.admission?.catalogEligible === true;
   existing = normalizeInternship(existing);
   listing = normalizeListing(listing);
   const reference = occurrence(listing, externalId);
@@ -321,17 +321,19 @@ export class CatalogReconciler {
         && stored.sourceReferences.length === 1
         && stored.sourceReferences[0]?.sourceId === input.sourceId
         && stored.sourceReferences[0]?.externalId === externalId);
-      const delayedPromotion = Boolean(existing && shouldPromoteDelayedNotification({
+      const deliveryAllowed = !input.baseline && job.open && job.technical
+        && matchesJobFilter(job, input.filter)
+        && job.admission?.alertEligible !== false
+        && !(job.postingIdentityStatus === 'unconfirmed' && input.publishUnconfirmedIdentities === false)
+        && (!input.alertEligible || input.alertEligible.has(externalId));
+      const delayedPromotion = Boolean(existing && deliveryAllowed && shouldPromoteDelayedNotification({
         previousOccurrenceAlertEligible: priorById.get(externalId)?.occurrence.admission?.alertEligible,
         occurrenceAlertEligible: listing.admission?.alertEligible,
         canonicalAlertEligible: job.admission?.alertEligible,
         baselineSuppressed: listing.trustedCommunityAlertQualification?.baselineSuppressed,
       }));
       if (!existing || retryingUncommittedCreate) {
-        if (input.baseline || !job.open || !job.technical || !matchesJobFilter(job, input.filter)
-          || job.admission?.alertEligible === false
-          || (job.postingIdentityStatus === 'unconfirmed' && input.publishUnconfirmedIdentities === false)
-          || (input.alertEligible && !input.alertEligible.has(externalId))) {
+        if (!deliveryAllowed) {
           job.notification = { smsPending: false, digestPending: false };
           filteredJobs.push(job);
         } else {

@@ -85,6 +85,12 @@ function sourceOwnedMaterial(value: ProcessedListing | SourceOccurrence): string
   });
 }
 
+function sourceMaterialHash(listing: ProcessedListing): string {
+  let applyUrl = listing.applyUrl;
+  try { applyUrl = canonicalApplicationUrl(applyUrl); } catch { /* Resolution rejects malformed URLs. */ }
+  return createHash('sha256').update(sourceOwnedMaterial({ ...listing, applyUrl })).digest('hex');
+}
+
 // Catalog rows written before posting identity v1 retained gh_src while
 // removing the older, general tracking parameters. Keep this lookup shape
 // only for adoption during the migration window; all new writes use the
@@ -675,12 +681,54 @@ export class IngestionRunner {
         return;
       }
       const priorTrustedQualification = priorOccurrence?.occurrence.trustedCommunityAlertQualification;
+      const materialHash = sourceMaterialHash(sourceListing);
+      const sameTrustedMaterial = priorTrustedQualification?.sourceMaterialHash
+        ? priorTrustedQualification.sourceMaterialHash === materialHash
+        : Boolean(priorOccurrence && sourceOwnedMaterial(priorOccurrence.occurrence) === sourceOwnedMaterial(listing));
+      // Publication slices consume evidence collected under this exact policy;
+      // they must not repeat every HTTP probe merely to clear suppression.
+      if (trustedCommunityPolicy && admissionAlreadyApplied && priorOccurrence
+        && priorTrustedQualification?.catalogPublicationSuppressed === true
+        && priorOccurrence.occurrence.admission
+        && sameTrustedMaterial) {
+        const existing = await this.store.getJob(priorOccurrence.jobId);
+        if (existing) {
+          const priorListing = priorOccurrence.occurrence;
+          const qualification = advanceTrustedCommunityQualification({
+            previous: priorTrustedQualification,
+            destination: priorListing.admission!.destination,
+            postingIdentityDecision: priorListing.postingIdentityDecision,
+            alertMode: trustedCommunityPolicy.alertMode,
+            completeFetchSequence,
+            catalogPublicationSuppressed: false,
+          });
+          const admission = evaluateCatalogAdmission({
+            listing: { ...listing, ...priorListing,
+              ...(priorListing.admission!.canonicalEmployer ? { employerEvidence: {
+                authority: 'reviewed-registry', canonicalEmployer: priorListing.admission!.canonicalEmployer,
+              } } : {}),
+            },
+            destination: priorListing.admission!.destination,
+            postingAttributed: priorListing.admission!.postingAttribution === 'attributed',
+            evaluatedAt: this.now().toISOString(),
+            trustedCommunity: { policy: trustedCommunityPolicy, qualification },
+          });
+          accepted[slot] = { ...listing, ...priorListing, admission,
+            ...(priorListing.postingIdentityDecision?.status === 'confirmed' && existing.postingIdentity
+              ? { postingIdentity: existing.postingIdentity } : {}),
+            trustedCommunityAlertQualification: qualification };
+          resolved.set(id, existing);
+          if (admission.alertEligible) alertEligible.add(id);
+          handledExternalIds.add(id);
+          return;
+        }
+      }
       if (trustedCommunityPolicy && admissionAlreadyApplied && priorOccurrence
         && priorTrustedQualification?.basis
         && priorTrustedQualification.catalogPublicationSuppressed !== true
         && priorOccurrence.occurrence.admission
         && postingSpecificDestination(priorOccurrence.occurrence.admission.destination)
-        && sourceOwnedMaterial(priorOccurrence.occurrence) === sourceOwnedMaterial(listing)) {
+        && sameTrustedMaterial) {
         handledExternalIds.add(id);
         return;
       }
@@ -870,14 +918,18 @@ export class IngestionRunner {
           : undefined;
         const priorDestination = priorOccurrence?.occurrence.admission?.destination;
         const reusableTrustedDestination = trustedCommunityPolicy
+          && !needsValidation && !destinationRule
           && priorDestination
           && postingSpecificDestination(priorDestination)
           && sameApplicationUrl(priorDestination.candidateUrl, normalizedUrl)
           ? priorDestination
           : undefined;
-        const destination = browserDestination ?? reusableTrustedDestination ?? observedDestination;
+        const freshNegative = needsValidation && !postingSpecificDestination(observedDestination);
+        const destination = freshNegative || (destinationRule && destinationRule.decision !== 'browser-required')
+          ? observedDestination
+          : browserDestination ?? reusableTrustedDestination ?? observedDestination;
         const trustedCommunityAlertQualification = trustedCommunityPolicy
-          ? advanceTrustedCommunityQualification({
+          ? { ...advanceTrustedCommunityQualification({
             previous: priorOccurrence?.occurrence.trustedCommunityAlertQualification,
             destination,
             postingIdentityDecision: listing.postingIdentityDecision,
@@ -889,7 +941,7 @@ export class IngestionRunner {
             baselineSuppressed: trustedCommunityPolicy.alertMode === 'disabled'
               || Boolean(priorOccurrence && !priorOccurrence.occurrence.trustedCommunityAlertQualification),
             catalogPublicationSuppressed: false,
-          })
+          }), sourceMaterialHash: materialHash }
           : undefined;
         const admission = evaluateCatalogAdmission({
           listing,
@@ -994,9 +1046,9 @@ export class IngestionRunner {
           resolverVersion: await this.catalogAdmissionResolver?.configurationVersion?.(),
           trustedCommunityCatalogEnabled: this.trustedCommunityCatalogEnabled,
         });
-        const configurationChanged = Boolean(prefetched.admissionConfigurationVersion
+        const configurationChanged = Boolean(prefetched.previous?.pendingAdmissionConfigurationVersion || (prefetched.admissionConfigurationVersion
           && prefetched.previous?.admissionConfigurationVersion
-          && prefetched.admissionConfigurationVersion !== prefetched.previous.admissionConfigurationVersion);
+          && prefetched.admissionConfigurationVersion !== prefetched.previous.admissionConfigurationVersion));
         const fetchCheckpoint = configurationChanged && prefetched.previous ? {
           ...prefetched.previous,
           etag: undefined,
@@ -1034,9 +1086,9 @@ export class IngestionRunner {
             resolverVersion: await this.catalogAdmissionResolver?.configurationVersion?.(),
             trustedCommunityCatalogEnabled: this.trustedCommunityCatalogEnabled,
           });
-        const admissionConfigurationChanged = Boolean(admissionConfigurationVersion
+        const admissionConfigurationChanged = Boolean(previous?.pendingAdmissionConfigurationVersion || (admissionConfigurationVersion
           && previous?.admissionConfigurationVersion
-          && admissionConfigurationVersion !== previous.admissionConfigurationVersion);
+          && admissionConfigurationVersion !== previous.admissionConfigurationVersion));
         const fetchCheckpoint = admissionConfigurationChanged && previous ? {
           ...previous,
           etag: undefined,
@@ -1074,33 +1126,41 @@ export class IngestionRunner {
           // verified season) that deliberately differs from the raw source;
           // reopening those rows by material comparison makes a completed
           // slice recur forever.
-          return prior && prior.occurrence.admissionConfigurationVersion !== githubAdmissionConfigurationVersion;
+          return prior && (prior.occurrence.admissionConfigurationVersion !== githubAdmissionConfigurationVersion
+            || (this.trustedCommunityCatalogEnabled && prior.occurrence.trustedCommunityAlertQualification?.sourceMaterialHash
+              && prior.occurrence.trustedCommunityAlertQualification.sourceMaterialHash !== sourceMaterialHash(sourceListing)));
         });
         const opportunisticMigrationCandidates = migrationLimit === undefined ? [] : batch.processed.listings.filter((sourceListing) =>
           !priorByExternalId.has(externalId(sourceListing)));
         const selectedRequiredMigrations = migrationLimit === undefined
           ? []
           : requiredMigrationCandidates.slice(0, migrationLimit);
-        // Once the durable migration backlog is empty, finish one ordinary
-        // full-role pass before advancing the checkpoint. Until then, new rows
-        // may use only spare slice capacity and an overflow forces another
-        // unconditional fetch. This prevents a later GitHub 304 from stranding
-        // valid roles that were present in the migration snapshot but never
-        // resolved.
+        // Standard migrations retain their final full-role pass. Trusted
+        // migrations bound new evidence too, then use spare capacity to publish
+        // already inspected occurrences. Overflow forces another full fetch.
+        const trustedPolicy = activeTrustedCommunityPolicy(connector.id, this.trustedCommunityCatalogEnabled);
         const opportunisticCapacity = migrationLimit === undefined
           ? 0
-          : requiredMigrationCandidates.length === 0
+          : !trustedPolicy && requiredMigrationCandidates.length === 0
             ? opportunisticMigrationCandidates.length
             : Math.max(0, migrationLimit - selectedRequiredMigrations.length);
         const selectedOpportunisticMigrations = migrationLimit === undefined
           ? []
           : opportunisticMigrationCandidates.slice(0, opportunisticCapacity);
-        const trustedPolicy = activeTrustedCommunityPolicy(connector.id, this.trustedCommunityCatalogEnabled);
-        const finishingTrustedMigration = Boolean(trustedPolicy && migrationLimit !== undefined
-          && requiredMigrationCandidates.length <= migrationLimit);
-        const migrationCandidates = migrationLimit === undefined || finishingTrustedMigration
+        const publicationCandidates = trustedPolicy && migrationLimit !== undefined
+          ? batch.processed.listings.filter((listing) => {
+            const prior = priorByExternalId.get(externalId(listing));
+            return prior && prior.occurrence.admissionConfigurationVersion === githubAdmissionConfigurationVersion
+              && (!prior.occurrence.trustedCommunityAlertQualification?.sourceMaterialHash
+                || prior.occurrence.trustedCommunityAlertQualification.sourceMaterialHash === sourceMaterialHash(listing))
+              && prior.occurrence.trustedCommunityAlertQualification?.catalogPublicationSuppressed === true;
+          }) : [];
+        const publicationCapacity = migrationLimit === undefined ? 0
+          : Math.max(0, migrationLimit - selectedRequiredMigrations.length - selectedOpportunisticMigrations.length);
+        const selectedPublications = publicationCandidates.slice(0, publicationCapacity);
+        const migrationCandidates = migrationLimit === undefined
           ? batch.processed.listings
-          : [...selectedRequiredMigrations, ...selectedOpportunisticMigrations];
+          : [...selectedRequiredMigrations, ...selectedOpportunisticMigrations, ...selectedPublications];
         const trustedFullBody = sourceAdmissionPolicy(connector.id).trust === 'trusted-community'
           && this.trustedCommunityCatalogEnabled
           && result.unchangedReason !== 'not_modified';
@@ -1113,17 +1173,21 @@ export class IngestionRunner {
           priorOccurrences,
           githubAdmissionConfigurationVersion,
           Boolean(githubAdmissionConfigurationVersion
+            && !admissionConfigurationChanged
             && admissionConfigurationVersion === previous?.admissionConfigurationVersion),
           result.unchangedReason === 'not_modified' ? undefined : result.checkpoint.successfulFetches,
         );
         // Existing catalog decisions are the durable migration obligation.
         // Rows with no prior occurrence are evaluated with spare slice capacity
         // but fail closed and cannot hold the source checkpoint open forever.
-        const admissionMigrationPending = !finishingTrustedMigration && migrationLimit !== undefined && (
+        const admissionEvidencePending = migrationLimit !== undefined && (
           requiredMigrationCandidates.length > selectedRequiredMigrations.length
           || selectedRequiredMigrations.some((listing) => !resolution.handledExternalIds.has(externalId(listing)))
           || opportunisticMigrationCandidates.length > selectedOpportunisticMigrations.length
         );
+        let admissionMigrationPending = admissionEvidencePending
+          || publicationCandidates.length > selectedPublications.length
+          || selectedPublications.some((listing) => !resolution.handledExternalIds.has(externalId(listing)));
         if (admissionMigrationPending) report.continuationSources.push(connector.id);
         if (trustedPolicy && result.unchangedReason !== 'not_modified') {
           const diagnostics = result.trustedCommunityDiagnostics ?? {
@@ -1149,7 +1213,7 @@ export class IngestionRunner {
             // Partial bounded slices are allowed to accumulate evidence. Any
             // pass that can clear suppression or advance the policy checkpoint
             // must prove that the current eligible snapshot was inspected.
-            requireCompleteInspection: !admissionMigrationPending,
+            requireCompleteInspection: !admissionEvidencePending,
           });
           if (breaches.length) {
             report.continuationSources = report.continuationSources.filter((sourceId) => sourceId !== connector.id);
@@ -1166,7 +1230,7 @@ export class IngestionRunner {
         }
         // A bounded policy migration stores evidence but exposes none of its
         // newly admitted rows until one complete healthy evaluation can pass.
-        if (trustedPolicy && admissionMigrationPending) {
+        if (trustedPolicy && admissionEvidencePending) {
           for (const listing of resolution.accepted) {
             if (listing.trustedCommunityAlertQualification) {
               listing.trustedCommunityAlertQualification = {
@@ -1302,6 +1366,10 @@ export class IngestionRunner {
           report.failures.push(`${connector.id}: migration notification persistence failed: ${notificationError instanceof Error ? notificationError.message : String(notificationError)}`);
         }
         const provider = providerFor(connector.id);
+        if (trustedPolicy && migrationLimit !== undefined && persistenceFailedJobIds.size) {
+          admissionMigrationPending = true;
+          if (!report.continuationSources.includes(connector.id)) report.continuationSources.push(connector.id);
+        }
         const unchanged304 = result.unchangedReason === 'not_modified';
         const metricCounts: ProcessedSnapshot['counts'] = unchanged304 ? {
           raw: previous?.lastRawCount ?? previous?.lastRawRowCount ?? previousHealth?.rawRows ?? batch.processed.counts.raw,
@@ -1345,6 +1413,7 @@ export class IngestionRunner {
           ...result.checkpoint,
           contentHash: batch.snapshotHash,
           activeExternalIds: [...batch.activeExternalIds],
+          pendingAdmissionConfigurationVersion: admissionMigrationPending ? admissionConfigurationVersion : undefined,
           ...(checkpointAdmissionConfigurationVersion ? { admissionConfigurationVersion: checkpointAdmissionConfigurationVersion } : {}),
         });
         for (const job of plan.newJobs) {

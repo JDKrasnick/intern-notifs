@@ -121,6 +121,8 @@ export interface DeliveryReceipt {
 export type SourceFailureCategory = 'http' | 'json' | 'transport' | 'identity' | 'link' | 'empty' | 'quality' | 'persistence';
 
 export interface SourceCheckpoint {
+  /** Forces continuation and gate rollback until all admission slices finish. */
+  pendingAdmissionConfigurationVersion?: string;
   sourceId: string;
   etag?: string;
   documentEtags?: Record<string, string>;
@@ -140,6 +142,8 @@ export interface SourceCheckpoint {
 export type TrustedCommunityAlertMode = 'disabled' | 'exact-identity-or-two-complete-snapshots';
 
 export interface TrustedCommunityAlertQualification {
+  /** Raw source facts inspected under the occurrence's admission version. */
+  sourceMaterialHash?: string;
   /** Canonicalized source candidate used to detect source-side destination changes. */
   candidateKey: string;
   /** Set only after a posting-specific destination has been validated. */

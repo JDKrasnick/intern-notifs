@@ -428,7 +428,7 @@ describe('trusted community source health', () => {
     };
 
     const result = await new Poller([adapter], store, () => new Date(inspectedAt), undefined,
-      undefined, undefined, undefined, resolver, true, true).poll({ maxAdmissionMigrationListingsPerSourceRun: 0 });
+      undefined, undefined, undefined, resolver, true, true).poll({ maxAdmissionMigrationListingsPerSourceRun: minimumEligibleRows });
 
     const inspectedCoverage = ((100 / minimumEligibleRows) * 100).toFixed(2);
     expect(result.failures).toContain(`simplify-summer-2026: trusted-community circuit breaker: inspection coverage ${inspectedCoverage}% below 90.00%`);
@@ -523,7 +523,148 @@ function changedDestination() {
   return destination({ candidateUrl: 'https://careers.example.test/jobs/role-2', finalUrl: 'https://careers.example.test/jobs/role-2' });
 }
 
+function migrationFixture() {
+  const store = new MemoryInternshipStore();
+  const sourceId = 'simplify-summer-2026';
+  const rows = Array.from({ length: SIMPLIFY_TRUSTED_COMMUNITY_THRESHOLDS.minimumEligibleRows }, (_, index) => {
+    const postingId = `role-${index}`;
+    const applyUrl = `https://careers-${index % 2}.example.test/jobs/${postingId}`;
+    return listing({ externalId: `README.md:${applyUrl}`, applyUrl, row: index + 1, company: `Employer ${index}`,
+      providerIdentity: { provider: 'github', sourceId, sourceUrl: 'https://github.com/SimplifyJobs/Summer2027-Internships', postingId } });
+  });
+  const state = { version: 'registry-v1', calls: 0, gone: false, aggregate: false, tick: 0 };
+  const adapter: SourceAdapter = { id: sourceId, async fetch(previous) {
+    return { sourceId, listings: rows, rawRowCount: SIMPLIFY_TRUSTED_COMMUNITY_THRESHOLDS.minimumRawRows, notModified: false,
+      checkpoint: { sourceId, successfulFetches: (previous?.successfulFetches ?? 0) + 1, lastRowCount: rows.length } };
+  } };
+  const resolver = {
+    async configurationVersion() { return state.version; },
+    async resolveCanonicalEmployer() { return undefined; },
+    async resolveDestinationRule(_identity: ProcessedListing['providerIdentity'], url: string) {
+      return state.aggregate && url === rows[0]!.applyUrl ? {
+        id: 'rejected', host: new URL(url).hostname, provider: 'github' as const, decision: 'aggregate-board' as const,
+        reviewedAt: inspectedAt, reviewedBy: 'test',
+      } : undefined;
+    },
+  };
+  const validate = async (url: string) => {
+    state.calls++;
+    if (state.gone && url === rows[0]!.applyUrl) throw new Error('Application page returned HTTP 404');
+    return { url, evidence: { url, title: 'Software Engineering Intern', postingIdPresent: true,
+      confidence: { score: 100, level: 'high' as const, recommendation: 'alert-eligible' as const, signals: [] } } };
+  };
+  const poll = (enabled: boolean, limit?: number) => new Poller([adapter], store,
+    () => new Date(Date.parse(inspectedAt) + state.tick++ * 1000), undefined, validate, false, undefined, resolver, true, enabled)
+    .poll({ maxAdmissionMigrationListingsPerSourceRun: limit });
+  return { store, rows, state, poll, sourceId };
+}
+
+describe('trusted rollout repair boundaries', () => {
+  it('rolls back publication even before the gate-on migration checkpoint advances', async () => {
+    const { store, rows, poll, sourceId } = migrationFixture();
+    await poll(false);
+    await poll(true, rows.length - 16);
+    await poll(true, 20);
+    expect(await store.listCatalog()).toHaveLength(20);
+    expect((await store.getCheckpoint(sourceId))!.pendingAdmissionConfigurationVersion).toBeDefined();
+    const rollback = await poll(false, rows.length);
+    expect(rollback.failures).toEqual([]);
+    expect(rollback.continuationSources).toEqual([]);
+    expect(await store.listCatalog()).toEqual([]);
+    expect((await store.getCheckpoint(sourceId))!.pendingAdmissionConfigurationVersion).toBeUndefined();
+    expect(store.notificationEvents.size).toBe(0);
+  });
+
+  it('collects evidence and publishes in bounded slices without probing completed rows again', async () => {
+    const { store, rows, state, poll, sourceId } = migrationFixture();
+    await poll(false);
+    const oldVersion = (await store.getCheckpoint(sourceId))!.admissionConfigurationVersion;
+    const initial = await poll(true, rows.length - 16);
+    expect(initial.failures).toEqual([]);
+    expect(initial.continuationSources).toEqual([sourceId]);
+    expect(await store.listCatalog()).toEqual([]);
+    const before = state.calls;
+    const finalEvidence = await poll(true, 20);
+    expect(finalEvidence.failures).toEqual([]);
+    expect(state.calls - before).toBe(16);
+    expect((await store.listCatalog()).length).toBe(20);
+    expect((await store.getCheckpoint(sourceId))!.admissionConfigurationVersion).toBe(oldVersion);
+    expect(finalEvidence.continuationSources).toEqual([sourceId]);
+    // A source edit during publication invalidates only that row's evidence.
+    const beforeChange = state.calls;
+    rows[50]!.title = 'Data Engineering Intern';
+    const changed = await poll(true, 20);
+    expect(changed.failures).toEqual([]);
+    expect(state.calls - beforeChange).toBe(1);
+    const afterEvidence = state.calls;
+    let continuation = changed.continuationSources;
+    for (let slice = 0; continuation.length && slice < 10; slice++) {
+      const count = (await store.listCatalog()).length;
+      const result = await poll(true, 200);
+      expect(result.failures).toEqual([]);
+      expect((await store.listCatalog()).length - count).toBeLessThanOrEqual(200);
+      continuation = result.continuationSources;
+    }
+    expect(continuation).toEqual([]);
+    expect(state.calls).toBe(afterEvidence);
+    expect(await store.listCatalog()).toHaveLength(rows.length);
+    const changedOccurrence = (await store.getSourceOccurrences(sourceId)).find(item => item.externalId === rows[50]!.externalId)!;
+    expect(changedOccurrence.occurrence.title).toBe('Data Engineering Intern');
+    expect((await store.getCheckpoint(sourceId))!.admissionConfigurationVersion).not.toBe(oldVersion);
+    expect(store.notificationEvents.size).toBe(0);
+  });
+
+  it.each(['gone', 'aggregate'] as const)('withdraws a cached good destination after fresh %s evidence', async (kind) => {
+    const { store, rows, state, poll, sourceId } = migrationFixture();
+    await poll(true);
+    const prior = (await store.getSourceOccurrences(sourceId)).find(item => item.externalId === rows[0]!.externalId)!;
+    expect((await store.getJob(prior.jobId))!.admission!.catalogEligible).toBe(true);
+    state.version = 'registry-v2';
+    state[kind] = true;
+    await poll(true);
+    const job = (await store.getJob(prior.jobId))!;
+    expect(job.admission).toMatchObject({ catalogEligible: false, destination: { classification: kind === 'gone' ? 'gone' : 'aggregate-board' } });
+    expect((await store.listCatalog()).some(item => item.jobId === job.jobId)).toBe(false);
+    expect((await store.getSourceHealth(sourceId))!.trustedCommunity!.destinationFailures).toBe(1);
+    expect(store.notificationEvents.size).toBe(0);
+  });
+});
+
 describe('trusted community delayed promotion', () => {
+  it.each(['closed', 'baseline', 'identity-hidden', 'filtered', 'unverified', 'nontechnical'] as const)(
+    'keeps %s delayed roles out of the outbox and reported new jobs', (condition) => {
+      const reconciler = new CatalogReconciler();
+      const role = listing({ admission: { ...admission(false), catalogEligible: false },
+        ...(condition === 'closed' ? { state: 'closed' } : {}),
+        ...(condition === 'nontechnical' ? { technical: false } : {}),
+      });
+      const first = reconciler.reconcile({ sourceId: role.sourceId, snapshotHash: 'one', activeExternalIds: new Set([role.externalId!]),
+        listings: [role], priorOccurrences: [], resolvedJobs: new Map(), now: inspectedAt, baseline: true });
+      const result = reconciler.reconcile({ sourceId: role.sourceId, snapshotHash: 'two', activeExternalIds: new Set([role.externalId!]),
+        listings: [{ ...role, admission: admission(true) }], priorOccurrences: first.occurrences,
+        resolvedJobs: new Map([[role.externalId!, first.jobs[0]!]]), now: '2026-09-05T12:00:00Z',
+        baseline: condition === 'baseline', publishUnconfirmedIdentities: condition !== 'identity-hidden',
+        ...(condition === 'filtered' ? { filter: { includeKeywords: ['unmatchable'] } } : {}),
+        ...(condition === 'unverified' ? { alertEligible: new Set<string>() } : {}),
+      });
+      expect(result.notifications).toEqual([]);
+      expect(result.newJobs).toEqual([]);
+      expect(result.jobs[0]?.notification).toMatchObject({ smsPending: false, digestPending: false });
+    },
+  );
+
+  it('preserves first visibility when a previously published role is hidden and readmitted', () => {
+    const reconciler = new CatalogReconciler();
+    const role = listing({ admission: admission(false) });
+    const first = reconciler.reconcile({ sourceId: role.sourceId, snapshotHash: 'one', activeExternalIds: new Set([role.externalId!]),
+      listings: [role], priorOccurrences: [], resolvedJobs: new Map(), now: inspectedAt, baseline: true });
+    const hidden = { ...first.jobs[0]!, admission: { ...admission(false), catalogEligible: false } };
+    const next = reconciler.reconcile({ sourceId: role.sourceId, snapshotHash: 'two', activeExternalIds: new Set([role.externalId!]),
+      listings: [role], priorOccurrences: first.occurrences, resolvedJobs: new Map([[role.externalId!, hidden]]),
+      now: '2026-09-05T12:00:00Z', baseline: false });
+    expect(next.jobs[0]).toMatchObject({ catalogVisibleAt: inspectedAt, catalogRecency: 'baseline', firstSeenAt: inspectedAt });
+  });
+
   it('creates one deterministic event only on the first eligible transition', () => {
     const reconciler = new CatalogReconciler();
     const initialListing = listing({ admission: { ...admission(false), catalogEligible: false }, trustedCommunityAlertQualification: {

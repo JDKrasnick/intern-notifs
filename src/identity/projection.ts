@@ -64,7 +64,7 @@ export function postingObservationProjection(
   const digestedAt = latest([current?.notification.digestedAt, proposed.notification.digestedAt]);
   const postingIdentityStatus = postingIdentityStatusForOccurrences(sourceReferences);
   const anyOpen = sourceReferences.some((reference) => reference.state === 'open');
-  const becomingCatalogVisible = current?.admission?.catalogEligible === false
+  const becomingCatalogVisible = !current?.catalogVisibleAt && current?.admission?.catalogEligible === false
     && admission?.catalogEligible === true;
   const season = presentation.season;
   const seasonEvidence = (proposed.internshipIdentity ?? current?.internshipIdentity) as { season?: { evidenceStatus?: string } } | undefined;
@@ -121,7 +121,7 @@ export function postingObservationNotificationProjection(
   projected: Internship,
   notificationEvent: NotificationEvent | undefined,
 ): { job: Internship; notificationEvent?: NotificationEvent } {
-  if (!notificationEvent || alertEligible(projected)) {
+  if (!notificationEvent || (alertEligible(projected) && projected.open && projected.technical !== false)) {
     return { job: projected, ...(notificationEvent ? { notificationEvent } : {}) };
   }
   const smsSentAt = projected.notification.smsSentAt;

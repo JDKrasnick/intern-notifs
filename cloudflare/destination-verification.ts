@@ -31,6 +31,7 @@ export interface DestinationVerificationEnvironment {
   RESEND_API_KEY?: string;
   ADMISSION_SUPPORT_RECIPIENT?: string;
   TRUSTED_COMMUNITY_CATALOG_ENABLED?: string;
+  IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED?: string;
 }
 
 export function destinationVerificationMessage(request: DestinationVerificationRequest, queuedAt = new Date().toISOString()): DestinationVerificationMessage {
@@ -73,6 +74,7 @@ export async function persistDestinationAdmission(input: {
   evidence?: ApplicationPageEvidence;
   browserVisible?: boolean;
   trustedCommunityCatalogEnabled?: boolean;
+  identityUnconfirmedPublicationEnabled?: boolean;
 }): Promise<{
   destination: ReturnType<typeof classifyDestination>;
   incident?: { sourceId: string; host: string; reason: string; incidentId: string; messageType: 'incident-opened' | 'quarantine' };
@@ -124,13 +126,18 @@ export async function persistDestinationAdmission(input: {
   };
   const sourceReferences = job.sourceReferences.map((item) => item === reference ? updatedReference : item);
   const canonicalAdmission = deriveCanonicalAdmission(sourceReferences, inspectedAt);
-  const becomingCatalogVisible = job.admission?.catalogEligible === false && canonicalAdmission?.catalogEligible === true;
-  const delayedPromotion = shouldPromoteDelayedNotification({
-    previousOccurrenceAlertEligible: reference.admission?.alertEligible,
-    occurrenceAlertEligible: admission.alertEligible,
-    canonicalAlertEligible: canonicalAdmission?.alertEligible,
-    baselineSuppressed: trustedCommunityAlertQualification?.baselineSuppressed,
-  });
+  const becomingCatalogVisible = !job.catalogVisibleAt && job.admission?.catalogEligible === false && canonicalAdmission?.catalogEligible === true;
+  // Only the trusted policy supplies durable baseline/qualification evidence.
+  // Preserve standard-source behavior when this rollout is inactive.
+  const delayedPromotion = Boolean(trustedCommunityPolicy && trustedCommunityAlertQualification
+    && job.open && job.technical !== false
+    && (job.postingIdentityStatus !== 'unconfirmed' || input.identityUnconfirmedPublicationEnabled === true)
+    && shouldPromoteDelayedNotification({
+      previousOccurrenceAlertEligible: reference.admission?.alertEligible,
+      occurrenceAlertEligible: admission.alertEligible,
+      canonicalAlertEligible: canonicalAdmission?.alertEligible,
+      baselineSuppressed: trustedCommunityAlertQualification?.baselineSuppressed,
+    }));
   const nextJob: Internship = {
     ...job,
     sourceReferences,
@@ -324,6 +331,7 @@ export async function processDestinationVerificationBatch(
           const collisionResult = await persistDestinationAdmission({ jobs, operations, message: collisionMessage,
             job: collisionJob, reference: collisionReference, reachability: 'live', inspectedAt, browserVisible: true,
             trustedCommunityCatalogEnabled: env.TRUSTED_COMMUNITY_CATALOG_ENABLED === 'true',
+            identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
             evidence: { url: prior.finalUrl ?? prior.candidateUrl, expectedPostingId: prior.expectedPostingId,
               renderedEvidenceHash: prior.renderedEvidenceHash, identicalEvidenceForDifferentPosting: true,
               confidence: { score: 0, level: 'low', recommendation: 'review', signals: ['identical rendered evidence for different posting IDs'] } } });
@@ -331,6 +339,7 @@ export async function processDestinationVerificationBatch(
         }
         const result = await persistDestinationAdmission({ jobs, operations, message, job, reference, reachability, inspectedAt,
           trustedCommunityCatalogEnabled: env.TRUSTED_COMMUNITY_CATALOG_ENABLED === 'true',
+          identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
           ...(evidence ? { evidence, browserVisible: true } : {}) });
         if (result.incident) opened.push(result.incident);
         await operations.recordVerificationAttempt({ id: crypto.randomUUID(), jobId: message.jobId, sourceId: message.sourceId,

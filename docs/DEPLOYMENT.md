@@ -225,6 +225,10 @@ Roll out in this order:
    mode disabled. The admission-version change performs bounded re-evaluation,
    holds publication until a complete healthy evaluation, marks the admitted
    backlog `baseline`, and permanently suppresses its alerts.
+   Evidence collection and subsequent publication both run in bounded slices.
+   Publication reuses current-policy evidence for unchanged source facts; the
+   policy checkpoint advances only after the remaining publication slices drain.
+   Re-admission preserves a role's existing first-visibility timestamp.
 4. Verify one complete healthy snapshot and inspect the count-only
    `trusted_community_source_evaluated` metrics. A breach must leave the trusted
    checkpoint unchanged and recover after one complete healthy snapshot.
