@@ -145,6 +145,34 @@ describe('trusted community source policy', () => {
     expect(settled).toMatchObject({ consecutiveCompleteSnapshots: 2, lastCountedSuccessfulFetchSequence: 8 });
   });
 
+  it('restarts an unconfirmed qualification streak after a missing complete snapshot', () => {
+    const first = advanceTrustedCommunityQualification({
+      destination: destination(), postingIdentityDecision: unconfirmed(),
+      alertMode: policy.alertMode, completeFetchSequence: 10,
+    });
+    const afterGap = advanceTrustedCommunityQualification({
+      previous: first, destination: destination(), postingIdentityDecision: unconfirmed(),
+      alertMode: policy.alertMode, completeFetchSequence: 12,
+    });
+    const adjacent = advanceTrustedCommunityQualification({
+      previous: afterGap, destination: destination(), postingIdentityDecision: unconfirmed(),
+      alertMode: policy.alertMode, completeFetchSequence: 13,
+    });
+
+    expect(afterGap).toMatchObject({
+      consecutiveCompleteSnapshots: 1,
+      lastCountedSuccessfulFetchSequence: 12,
+      status: 'pending',
+    });
+    expect(afterGap.basis).toBeUndefined();
+    expect(adjacent).toMatchObject({
+      consecutiveCompleteSnapshots: 2,
+      lastCountedSuccessfulFetchSequence: 13,
+      status: 'eligible',
+      basis: 'two-complete-snapshots',
+    });
+  });
+
   it('resets on a changed destination, fast-tracks exact identity, and preserves permanent baseline suppression', () => {
     const first = advanceTrustedCommunityQualification({ destination: destination(), postingIdentityDecision: unconfirmed(), alertMode: policy.alertMode, completeFetchSequence: 1, baselineSuppressed: true });
     const changed = advanceTrustedCommunityQualification({ previous: first, destination: destination({ candidateUrl: 'https://careers.example.test/jobs/role-2', finalUrl: 'https://careers.example.test/jobs/role-2' }), postingIdentityDecision: unconfirmed(), alertMode: policy.alertMode, completeFetchSequence: 2 });
@@ -408,6 +436,86 @@ describe('trusted community source health', () => {
     expect(await store.getCheckpoint(sourceId)).toEqual(previous);
     expect(await store.listCatalog()).toEqual([]);
     expect(await store.getSourceHealth(sourceId)).toMatchObject({ state: 'quarantined' });
+  });
+
+  it('restarts qualification when an occurrence is absent from a complete source snapshot', async () => {
+    const store = new MemoryInternshipStore();
+    const sourceId = 'simplify-summer-2026';
+    const target = listing();
+    const filler = Array.from({ length: SIMPLIFY_TRUSTED_COMMUNITY_THRESHOLDS.minimumEligibleRows }, (_, index) => {
+      const postingId = `filler-${index}`;
+      const applyUrl = `https://careers-${index % 2}.example.test/jobs/${postingId}`;
+      return listing({
+        externalId: `README.md:${applyUrl}`,
+        row: index + 20,
+        company: `Employer ${index}`,
+        applyUrl,
+        providerIdentity: {
+          provider: 'github', sourceId,
+          sourceUrl: 'https://github.com/SimplifyJobs/Summer2027-Internships', postingId,
+        },
+      });
+    });
+    const snapshots = [
+      [target, ...filler.slice(0, -1)],
+      filler,
+      [target, ...filler.slice(0, -1)],
+      [target, ...filler.slice(0, -1)],
+    ];
+    let fetchIndex = 0;
+    const adapter: SourceAdapter = {
+      id: sourceId,
+      async fetch(previous): Promise<SourceFetchResult> {
+        const listings = snapshots[fetchIndex++]!;
+        return {
+          sourceId,
+          rawRowCount: SIMPLIFY_TRUSTED_COMMUNITY_THRESHOLDS.minimumRawRows,
+          listings,
+          notModified: false,
+          checkpoint: {
+            sourceId,
+            successfulFetches: (previous?.successfulFetches ?? 0) + 1,
+            lastRowCount: listings.length,
+            contentHash: `snapshot-${fetchIndex}`,
+          },
+        };
+      },
+    };
+    const resolver = {
+      async configurationVersion() { return 'registry-v1'; },
+      async resolveCanonicalEmployer() { return undefined; },
+      async resolveDestinationRule(identity: ProcessedListing['providerIdentity'], candidateUrl: string) {
+        return {
+          id: `rule-${identity!.postingId}`, host: new URL(candidateUrl).hostname,
+          provider: 'github' as const, decision: 'standard-provider-route' as const,
+          reviewedAt: inspectedAt, reviewedBy: 'test',
+        };
+      },
+    };
+    const poller = new Poller([adapter], store, () => new Date(inspectedAt), undefined,
+      undefined, undefined, undefined, resolver, true, true);
+
+    await poller.poll();
+    await poller.poll();
+    await poller.poll();
+    const reappeared = (await store.getSourceOccurrences(sourceId))
+      .find((occurrence) => occurrence.externalId === target.externalId);
+    expect(reappeared?.occurrence.trustedCommunityAlertQualification).toMatchObject({
+      consecutiveCompleteSnapshots: 1,
+      lastCountedSuccessfulFetchSequence: 3,
+    });
+    expect(reappeared?.occurrence.trustedCommunityAlertQualification?.basis).toBeUndefined();
+    expect(store.notificationEvents.size).toBe(0);
+
+    await poller.poll();
+    const adjacent = (await store.getSourceOccurrences(sourceId))
+      .find((occurrence) => occurrence.externalId === target.externalId);
+    expect(adjacent?.occurrence.trustedCommunityAlertQualification).toMatchObject({
+      consecutiveCompleteSnapshots: 2,
+      lastCountedSuccessfulFetchSequence: 4,
+      basis: 'two-complete-snapshots',
+    });
+    expect(store.notificationEvents.size).toBe(0);
   });
 });
 

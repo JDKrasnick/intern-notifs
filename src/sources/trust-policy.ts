@@ -105,7 +105,13 @@ export function advanceTrustedCommunityQualification(input: {
   const settled = !reset && input.previous?.basis !== undefined;
   const countable = !settled && input.completeFetchSequence !== undefined
     && input.completeFetchSequence !== previousSequence;
-  const consecutiveCompleteSnapshots = countable ? previousCount + 1 : previousCount;
+  // A different sequence is not necessarily the next sequence: the occurrence
+  // may have been absent from one or more intervening complete snapshots.
+  const continuesStreak = previousSequence !== undefined
+    && input.completeFetchSequence === previousSequence + 1;
+  const consecutiveCompleteSnapshots = countable
+    ? continuesStreak ? previousCount + 1 : 1
+    : previousCount;
   const lastCountedSuccessfulFetchSequence = countable ? input.completeFetchSequence : previousSequence;
   const exactIdentity = input.postingIdentityDecision?.status === 'confirmed';
   const basis = exactIdentity
