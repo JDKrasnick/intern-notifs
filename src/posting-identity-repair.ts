@@ -392,24 +392,34 @@ function reviewedEmployerIdentity(
   if (job.admission?.canonicalEmployer?.id) return job.admission.canonicalEmployer.id;
   const identities = new Set<string>();
   for (const reference of job.sourceReferences) {
-    const provider = reference.provenance === 'reviewed-community'
-      ? 'github'
-      : reference.providerEvidence?.provider
-        ?? (reference.sourceId.startsWith('greenhouse-') ? 'greenhouse'
-          : reference.sourceId.startsWith('lever-') ? 'lever'
-            : reference.sourceId.startsWith('ashby-') ? 'ashby' : undefined);
-    if (!provider) continue;
+    const confirmed = reference.postingIdentityDecision?.status === 'confirmed'
+      ? reference.postingIdentityDecision
+      : undefined;
     const employerScope = `employer:${canonicalCompanyKey(reference.company)}`;
-    const scopes = provider === 'github'
-      ? [employerScope]
-      : [reference.sourceId, reference.providerEvidence?.tenant, employerScope];
-    for (const scope of scopes.filter((value): value is string => Boolean(value))) {
-      const variants = scope.startsWith('employer:')
-        ? [scope, `employer:${scope.slice('employer:'.length).replace(/[\s_]+/gu, '-')}`]
-        : [scope];
-      for (const variant of variants) {
-        const canonicalEmployerId = mappings.get(`${provider}\0${variant}`);
-        if (canonicalEmployerId) identities.add(canonicalEmployerId);
+    const provider = reference.providerEvidence?.provider
+      ?? (reference.sourceId.startsWith('greenhouse-') ? 'greenhouse'
+        : reference.sourceId.startsWith('lever-') ? 'lever'
+          : reference.sourceId.startsWith('ashby-') ? 'ashby' : undefined);
+    const contexts: Array<{ provider: string; scopes: Array<string | undefined> }> = [];
+    if (confirmed?.provider) contexts.push({
+      provider: confirmed.provider,
+      scopes: [reference.sourceId, confirmed.tenant,
+        confirmed.tenant ? `${confirmed.provider}-${confirmed.tenant}` : undefined, employerScope],
+    });
+    if (reference.provenance === 'reviewed-community') {
+      contexts.push({ provider: 'github', scopes: [employerScope] });
+    } else if (provider) {
+      contexts.push({ provider, scopes: [reference.sourceId, reference.providerEvidence?.tenant, employerScope] });
+    }
+    for (const context of contexts) {
+      for (const scope of context.scopes.filter((value): value is string => Boolean(value))) {
+        const variants = scope.startsWith('employer:')
+          ? [scope, `employer:${scope.slice('employer:'.length).replace(/[\s_]+/gu, '-')}`]
+          : [scope];
+        for (const variant of variants) {
+          const canonicalEmployerId = mappings.get(`${context.provider}\0${variant}`);
+          if (canonicalEmployerId) identities.add(canonicalEmployerId);
+        }
       }
     }
   }
@@ -694,10 +704,12 @@ export function postingIdentityRepairPlan(
     const ordered = hydrated.sort((a, b) => firstSeen(a.job).localeCompare(firstSeen(b.job)) || a.job.jobId.localeCompare(b.job.jobId));
     if (!ordered.length) continue;
     const canonical = ordered[0]!;
-    const official = officialPresentation(ordered.map((item) => item.job), canonical.evidence)
+    const presentationMembers = ordered.map((item) => ({ ...item.job, sourceReferences: item.job.sourceReferences
+      .map((reference) => classifiedOccurrence(reference, firstSeen(item.job))) }));
+    const official = officialPresentation(presentationMembers, canonical.evidence)
       ?? presentationReviews.get(key);
     const disagreement = ordered.length > 1
-      ? presentationDisagreement(key, canonical.job.jobId, ordered.map((item) => item.job), employerMappings, official)
+      ? presentationDisagreement(key, canonical.job.jobId, presentationMembers, employerMappings, official)
       : undefined;
     if (ordered.length > 1) {
       duplicateGroups += 1;
