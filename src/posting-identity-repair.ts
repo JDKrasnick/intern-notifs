@@ -4,7 +4,7 @@ import { catalogSearchText, catalogSourceClasses } from './catalog-fields.js';
 import { openCatalogSortKey } from './catalog-recency.js';
 import { inferSeason } from './core/early-career.js';
 import { canonicalCompanyKey, fingerprint, normalizeUrl } from './core/normalize.js';
-import { deriveCanonicalAdmission } from './catalog-admission.js';
+import { alertEligible, catalogEligible, deriveCanonicalAdmission } from './catalog-admission.js';
 import { canonicalizePostingUrl, providerPostingReference } from './identity/posting.js';
 import { postingIdentityStatusForOccurrences } from './identity/projection.js';
 import { resolvePostingIdentityDecision, type PostingIdentityRegistryResult } from './identity/registry.js';
@@ -154,15 +154,16 @@ function mergedOccurrenceEvidence(values: SourceOccurrence[]): SourceOccurrence[
 }
 
 function jobColumns(job: Internship): Partial<CatalogRow> {
+  const publishable = job.technical !== false && catalogEligible(job);
   return {
     url_key: job.normalizedUrl,
     fingerprint_key: job.fingerprint,
-    sms_pending: job.notification.smsPending ? 1 : 0,
-    digest_pending: job.notification.digestPending ? 1 : 0,
-    catalog_state: job.technical === false ? null : job.open ? 'OPEN' : 'CLOSED',
-    catalog_sort_key: job.technical === false ? null : job.open ? openCatalogSortKey(job) : `${job.lastSeenAt}#${job.jobId}`,
-    search_text: job.technical === false ? null : catalogSearchText(job),
-    source_classes: job.technical === false ? null : JSON.stringify(catalogSourceClasses(job)),
+    sms_pending: job.notification.smsPending && alertEligible(job) ? 1 : 0,
+    digest_pending: job.notification.digestPending && alertEligible(job) ? 1 : 0,
+    catalog_state: publishable ? job.open ? 'OPEN' : 'CLOSED' : null,
+    catalog_sort_key: publishable ? job.open ? openCatalogSortKey(job) : `${job.lastSeenAt}#${job.jobId}` : null,
+    search_text: publishable ? catalogSearchText(job) : null,
+    source_classes: publishable ? JSON.stringify(catalogSourceClasses(job)) : null,
   };
 }
 
