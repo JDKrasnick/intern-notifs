@@ -59,6 +59,29 @@ function subject() {
 }
 
 describe('D1 catalog admission operations', () => {
+  it('forwards verified-page replacement through the internship store adapter', async () => {
+    const { database, jobs } = subject();
+    const evidence = (sourceClass: 'official-json-ld' | 'official-page', artifactHash: string) => ({
+      schemaVersion: 1 as const,
+      extractionVersion: 1,
+      artifactHash,
+      sourceClass,
+      sourceId: 'community-list',
+      sourceUrl: 'https://careers.acme.test/role-1',
+      observedAt: '2026-09-04T00:00:00Z',
+      exactPosting: true as const,
+    });
+    await jobs.recordRoleMetadataEvidence('job-1', [evidence('official-json-ld', 'old-json-ld')], [], '2026-09-04T00:00:00Z');
+
+    await jobs.recordRoleMetadataEvidence('job-1', [evidence('official-page', 'current-page')], [], '2026-09-05T00:00:00Z', {
+      sourceId: 'community-list',
+      sourceClasses: ['official-json-ld', 'official-page'],
+    });
+
+    expect(database.prepare('SELECT source_class, artifact_hash FROM role_metadata_evidence WHERE is_current = 1').all())
+      .toEqual([{ source_class: 'official-page', artifact_hash: 'current-page' }]);
+  });
+
   it.each([
     ['Tesla', 'tesla', 'tesla', 'https://www.tesla.com/careers/search/job/software-engineer-intern-275558'],
     ['Meta', 'meta', 'meta', 'https://www.metacareers.com/jobs/1027438186737957'],

@@ -201,7 +201,16 @@ export class MemoryInternshipStore implements InternshipStore {
   async putInternship(job: Internship) { const canonical = canonicalCatalogRecency(job); this.jobs.set(canonical.jobId, structuredClone(canonical)); }
   async getSourceOccurrences(sourceId: string) { return [...this.occurrences.values()].filter((value) => value.sourceId === sourceId).map((value) => structuredClone(value)); }
   async putSourceOccurrence(occurrence: SourceOccurrenceState) { this.occurrences.set(`${occurrence.sourceId}#${occurrence.externalId}`, structuredClone(occurrence)); }
-  async recordRoleMetadataEvidence(jobId: string, evidence: readonly RoleMetadataEvidence[], conflicts: readonly MetadataConflict[]) {
+  async recordRoleMetadataEvidence(jobId: string, evidence: readonly RoleMetadataEvidence[], conflicts: readonly MetadataConflict[], _recordedAt: string,
+    replace?: { sourceId: string; sourceClasses: readonly EvidenceSource[] }) {
+    if (replace) {
+      const sourceClasses = new Set(replace.sourceClasses);
+      for (const [key, item] of this.roleMetadataEvidence) {
+        if (key.startsWith(`${jobId}\0`) && item.sourceId === replace.sourceId && sourceClasses.has(item.sourceClass)) {
+          this.roleMetadataEvidence.delete(key);
+        }
+      }
+    }
     for (const item of evidence) this.roleMetadataEvidence.set(`${jobId}\0${item.sourceClass}\0${item.sourceId}\0${item.sourceUrl}\0${item.artifactHash}`, structuredClone(item));
     this.roleMetadataConflicts.set(jobId, structuredClone([...conflicts]));
   }
