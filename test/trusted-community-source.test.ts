@@ -205,6 +205,11 @@ describe('trusted community source health', () => {
     expect(trustedCommunityCircuitBreaches({ metrics: { ...healthy, inspectedCandidates: 99, inspectionCoverage: 0.05,
       destinationFailureRate: 1, browserInspectionShare: 1, catalogYield: 0, alertYield: 0 }, alertMode: 'exact-identity-or-two-complete-snapshots' }))
       .toEqual([]);
+    expect(trustedCommunityCircuitBreaches({ metrics: { ...healthy, inspectedCandidates: 99, inspectionCoverage: 0.05 },
+      alertMode: 'disabled', requireCompleteInspection: true })).toEqual([
+      'inspected candidates 99 below 100',
+      'inspection coverage 5.00% below 90.00%',
+    ]);
     expect(trustedCommunityCircuitBreaches({ metrics: { ...healthy, destinationFailureRate: 0.9 }, alertMode: 'disabled' }))
       .toContain('destination failure rate exceeded');
     expect(trustedCommunityCircuitBreaches({ metrics: { ...healthy, rawRows: 0 }, alertMode: 'disabled' }))
@@ -284,6 +289,66 @@ describe('trusted community source health', () => {
     expect(breached.continuationSources).toEqual([]);
     expect(await store.getCheckpoint(adapter.id)).toEqual(checkpoint);
     expect(await store.getSourceHealth(adapter.id)).toMatchObject({ state: 'quarantined' });
+  });
+
+  it('keeps the final migration hidden and uncheckpointed when current inspection coverage is incomplete', async () => {
+    const store = new MemoryInternshipStore();
+    const sourceId = 'simplify-summer-2026';
+    const previous = {
+      sourceId,
+      successfulFetches: 1,
+      lastRowCount: 1217,
+      lastRawCount: 1452,
+      contentHash: 'prior-snapshot',
+      admissionConfigurationVersion: 'registry-v1',
+    };
+    await store.putCheckpoint(previous);
+    const listings = Array.from({ length: 1217 }, (_, index) => {
+      const postingId = `role-${index}`;
+      const host = index % 2 === 0 ? 'careers-a.example.test' : 'careers-b.example.test';
+      return listing({
+        externalId: `README.md:https://${host}/jobs/${postingId}`,
+        row: index + 1,
+        applyUrl: `https://${host}/jobs/${postingId}`,
+        providerIdentity: {
+          provider: 'github', sourceId, sourceUrl: 'https://github.com/SimplifyJobs/Summer2027-Internships', postingId,
+        },
+      });
+    });
+    const adapter: SourceAdapter = {
+      id: sourceId,
+      async fetch(): Promise<SourceFetchResult> {
+        return {
+          sourceId,
+          rawRowCount: 1452,
+          listings,
+          notModified: false,
+          checkpoint: { sourceId, successfulFetches: 2, lastRowCount: listings.length, contentHash: 'current-snapshot' },
+        };
+      },
+    };
+    const resolver = {
+      async configurationVersion() { return 'registry-v1'; },
+      async resolveCanonicalEmployer(identity: ProcessedListing['providerIdentity']) {
+        if (Number(identity!.postingId!.slice('role-'.length)) >= 100) throw new Error('fixture resolution failure');
+        return undefined;
+      },
+      async resolveDestinationRule(identity: ProcessedListing['providerIdentity'], candidateUrl: string) {
+        return {
+          id: `rule-${identity!.postingId}`, host: new URL(candidateUrl).hostname, provider: 'github' as const,
+          decision: 'standard-provider-route' as const, reviewedAt: inspectedAt, reviewedBy: 'test',
+        };
+      },
+    };
+
+    const result = await new Poller([adapter], store, () => new Date(inspectedAt), undefined,
+      undefined, undefined, undefined, resolver, true, true).poll({ maxAdmissionMigrationListingsPerSourceRun: 0 });
+
+    expect(result.failures).toContain('simplify-summer-2026: trusted-community circuit breaker: inspection coverage 8.22% below 90.00%');
+    expect(result.continuationSources).toEqual([]);
+    expect(await store.getCheckpoint(sourceId)).toEqual(previous);
+    expect(await store.listCatalog()).toEqual([]);
+    expect(await store.getSourceHealth(sourceId)).toMatchObject({ state: 'quarantined' });
   });
 });
 

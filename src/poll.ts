@@ -1146,6 +1146,10 @@ export class IngestionRunner {
           const breaches = trustedCommunityCircuitBreaches({
             metrics: trustedMetrics,
             alertMode: trustedPolicy.alertMode,
+            // Partial bounded slices are allowed to accumulate evidence. Any
+            // pass that can clear suppression or advance the policy checkpoint
+            // must prove that the current eligible snapshot was inspected.
+            requireCompleteInspection: !admissionMigrationPending,
           });
           if (breaches.length) {
             report.continuationSources = report.continuationSources.filter((sourceId) => sourceId !== connector.id);

@@ -129,6 +129,8 @@ export function trustedCommunityCircuitBreaches(input: {
   metrics: TrustedCommunitySourceMetrics;
   thresholds?: TrustedCommunityThresholds;
   alertMode: TrustedCommunityAlertMode;
+  /** Final publication/checkpoint passes must prove the current snapshot was inspected. */
+  requireCompleteInspection?: boolean;
 }): string[] {
   const thresholds = input.thresholds ?? SIMPLIFY_TRUSTED_COMMUNITY_THRESHOLDS;
   const { metrics } = input;
@@ -138,6 +140,12 @@ export function trustedCommunityCircuitBreaches(input: {
   if (metrics.duplicateOccurrenceIds > 0) breaches.push(`${metrics.duplicateOccurrenceIds} duplicate occurrence identity row(s)`);
   if (metrics.rawRows < thresholds.minimumRawRows) breaches.push(`raw rows ${metrics.rawRows} below ${thresholds.minimumRawRows}`);
   if (metrics.eligibleRows < thresholds.minimumEligibleRows) breaches.push(`eligible rows ${metrics.eligibleRows} below ${thresholds.minimumEligibleRows}`);
+  if (input.requireCompleteInspection && metrics.inspectedCandidates < thresholds.minimumInspectedCandidates) {
+    breaches.push(`inspected candidates ${metrics.inspectedCandidates} below ${thresholds.minimumInspectedCandidates}`);
+  }
+  if (input.requireCompleteInspection && metrics.inspectionCoverage < thresholds.minimumInspectionCoverage) {
+    breaches.push(`inspection coverage ${(metrics.inspectionCoverage * 100).toFixed(2)}% below ${(thresholds.minimumInspectionCoverage * 100).toFixed(2)}%`);
+  }
   const rateGatesActive = metrics.inspectedCandidates >= thresholds.minimumInspectedCandidates
     && metrics.inspectionCoverage >= thresholds.minimumInspectionCoverage;
   if (rateGatesActive) {
