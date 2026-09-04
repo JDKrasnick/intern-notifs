@@ -160,6 +160,11 @@ export function structuredSourceRunBlocked(health: SourceHealth | undefined, for
     || Boolean(health?.backoffUntil && Date.parse(health.backoffUntil) > Date.now());
 }
 
+export function githubSourceRunBlocked(health: SourceHealth | undefined, force: unknown): boolean {
+  return force !== true && (health?.sourceStatus === 'paused' || health?.state === 'quarantined'
+    || Boolean(health?.backoffUntil && Date.parse(health.backoffUntil) > Date.now()));
+}
+
 export function recoveredStructuredSourceHealth(health: SourceHealth): SourceHealth {
   const clean = { ...health };
   delete clean.backoffUntil;
@@ -1152,8 +1157,7 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
         }
         if (!source) throw new Error(`Unknown reviewed source ${JSON.stringify(sourceId)}`);
         const priorHealth = await new D1InternshipStore(env.DB).getSourceHealth(source.id);
-        if (!message.force && (priorHealth?.sourceStatus === 'paused' || priorHealth?.state === 'quarantined'
-          || Boolean(priorHealth?.backoffUntil && Date.parse(priorHealth.backoffUntil) > Date.now()))) {
+        if (githubSourceRunBlocked(priorHealth, message.force)) {
           console.log(JSON.stringify({ event: 'source_poll_skipped', command: 'github-poll', sourceId: source.id,
             reason: priorHealth?.state === 'quarantined' ? 'quarantined' : priorHealth?.sourceStatus === 'paused' ? 'paused' : 'backoff' }));
           continue;

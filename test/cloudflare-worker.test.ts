@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { queueHasBacklog } from '../cloudflare/queue-backlog.js';
-import { cloudflareOperationsFleets, cloudflareOperationsQueueClient, documentContent, failedStructuredRecoveryHealth, readDocumentUpload, recoveredStructuredSourceHealth, runScheduledPostingIdentityAudit, sendQueueMessageWithin, structuredSourceRunBlocked, validBackfillProvider } from '../cloudflare/worker.js';
+import { cloudflareOperationsFleets, cloudflareOperationsQueueClient, documentContent, failedStructuredRecoveryHealth, githubSourceRunBlocked, readDocumentUpload, recoveredStructuredSourceHealth, runScheduledPostingIdentityAudit, sendQueueMessageWithin, structuredSourceRunBlocked, validBackfillProvider } from '../cloudflare/worker.js';
 import cloudflareWorker from '../cloudflare/worker.js';
 import type { Environment } from '../cloudflare/worker.js';
 import type { PostingIdentityRepairPlan } from '../src/posting-identity-repair.js';
@@ -166,6 +166,16 @@ describe('structured source recovery guard', () => {
       state: 'quarantined', sourceStatus: 'paused', quarantineReason: 'Invalid schema',
       quarantinedAt: '2026-08-26T12:00:00.000Z', consecutiveFailures: 3,
     });
+  });
+});
+
+describe('GitHub source recovery guard', () => {
+  it('requires the literal boolean force flag to bypass quarantine', () => {
+    const health = { sourceId: 'github-source', state: 'quarantined' as const, sourceStatus: 'paused' as const,
+      lastAttemptAt: '2026-08-26T12:00:00.000Z', consecutiveFailures: 2, durationMs: 4 };
+    expect(githubSourceRunBlocked(health, undefined)).toBe(true);
+    expect(githubSourceRunBlocked(health, 'true')).toBe(true);
+    expect(githubSourceRunBlocked(health, true)).toBe(false);
   });
 });
 
