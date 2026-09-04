@@ -242,6 +242,12 @@ Roll out in this order:
 
 Roll back exposure by setting `trusted_community_catalog_enabled=false`. Roll
 back alert eligibility by restoring a reviewed disabled source-policy version.
+Catalog rollback first drains durable trusted admissions in bounded slices,
+including absent and closed occurrences, without depending on an upstream
+fetch. Wait for continuation work to finish before declaring rollback complete.
+Independently eligible official references remain published. An interrupted
+rollback retains its pending checkpoint so either rollback or reactivation can
+resume safely; source and delivery history remain intact.
 Never delete qualification evidence, source occurrences, identity decisions,
 notification tombstones, outbox rows, saves, or delivery history.
 

@@ -30,6 +30,8 @@ export interface ReconciliationInput {
   alertEligible?: Set<string>;
   /** Rollout gate: classified rows remain durable while publication is shadowed. */
   publishUnconfirmedIdentities?: boolean;
+  /** Enabled only by the active trusted source's reviewed alert policy. */
+  trustedCommunityAlertsEnabled?: boolean;
 }
 
 export interface ReconciliationPlan {
@@ -161,7 +163,11 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
   const season = preferIncoming || Boolean(applicationUrlValidatedAt) || (match >= 0 && existing.sourceReferences.length === 1)
     ? listing.season
     : existing.season;
-  const canRevive = existing.open || preferIncoming;
+  const trustedReappearance = Boolean(match >= 0 && listing.state === 'open'
+    && listing.admission?.catalogEligible === true
+    && listing.admission.evidenceCodes?.includes('trusted-community-source')
+    && !existing.sourceReferences.some(isOfficialOccurrence));
+  const canRevive = existing.open || preferIncoming || trustedReappearance;
   return normalizeInternship({
     ...base,
     company: canonicalCompany ?? company,
@@ -326,7 +332,9 @@ export class CatalogReconciler {
         && job.admission?.alertEligible !== false
         && !(job.postingIdentityStatus === 'unconfirmed' && input.publishUnconfirmedIdentities === false)
         && (!input.alertEligible || input.alertEligible.has(externalId));
-      const delayedPromotion = Boolean(existing && deliveryAllowed && shouldPromoteDelayedNotification({
+      const delayedPromotion = Boolean(input.trustedCommunityAlertsEnabled
+        && listing.trustedCommunityAlertQualification?.status === 'eligible'
+        && existing && deliveryAllowed && shouldPromoteDelayedNotification({
         previousOccurrenceAlertEligible: priorById.get(externalId)?.occurrence.admission?.alertEligible,
         occurrenceAlertEligible: listing.admission?.alertEligible,
         canonicalAlertEligible: job.admission?.alertEligible,

@@ -51,6 +51,7 @@
 - [x] Define source-admission, attribution, removal, and source-quality policies.
 - [ ] Roll out trusted-community catalog admission for the legacy-ID Simplify source.
   - [x] Add provider-neutral trust policy, source-reported admission, durable two-snapshot alert qualification, atomic delayed promotion, a default-off catalog gate, circuit breakers, sanitized metrics, and the checked-in 2026-09-04 dry-run report.
+  - [x] Keep standard-source admission repairs silent, revoke absent/closed trusted occurrences during bounded rollback, and reconcile validated trusted reappearances without overriding official closures.
   - [ ] Inspect all 646 browser-candidate routes and every failure class, then obtain owner approval before enabling `TRUSTED_COMMUNITY_CATALOG_ENABLED` and establishing the quiet baseline.
   - [ ] Observe one complete healthy snapshot, activate `exact-identity-or-two-complete-snapshots` through a reviewed source-policy version change, and complete the post-activation catalog/identity/index/outbox audit.
 - [ ] Complete issue #120's catalog-admission rollout.

@@ -18,7 +18,7 @@ import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
 import { evaluateSourceFreshness } from './ingestion/monitoring.js';
 import { sourceProvider, sourceRegion } from './integration-registry.js';
 import { processSnapshot } from './ingestion/processor.js';
-import { evaluateCatalogAdmission } from './catalog-admission.js';
+import { deriveCanonicalAdmission, evaluateCatalogAdmission } from './catalog-admission.js';
 import { classifyDestination, matchingBrowserDestination, requiresBrowserVerification, type CatalogAdmissionResolver, type DestinationVerificationRequest } from './destination-verification.js';
 import { reviewedBoardIndex } from './sources/index.js';
 import { sourceQualityFailures } from './sources/quality.js';
@@ -526,6 +526,47 @@ export class IngestionRunner {
     }
   }
 
+  /** Revocation depends on durable evidence, not on a successful upstream fetch.
+   * Retain lifecycle/history and any independently eligible official reference. */
+  private async revokeTrustedCommunityAdmission(
+    prior: SourceOccurrenceState,
+    admissionConfigurationVersion: string | undefined,
+    now: string,
+  ): Promise<void> {
+    const reference = prior.occurrence;
+    const previousAdmission = reference.admission!;
+    const job = await this.store.getJob(prior.jobId);
+    const admission = evaluateCatalogAdmission({
+      listing: { ...reference, fetchedAt: now,
+        ...(previousAdmission.canonicalEmployer ? { employerEvidence: {
+          authority: 'reviewed-registry', canonicalEmployer: previousAdmission.canonicalEmployer,
+        } } : {}),
+      },
+      destination: previousAdmission.destination,
+      postingAttributed: previousAdmission.postingAttribution === 'attributed',
+      evaluatedAt: now,
+    });
+    const updatedReference = { ...reference, admission, admissionConfigurationVersion };
+    const occurrence = { ...prior, occurrence: updatedReference, changedAt: now };
+    if (!job) {
+      await this.store.putSourceOccurrence(occurrence);
+      return;
+    }
+    const decision = reference.postingIdentityDecision;
+    if (!decision || decision.status === 'quarantined') {
+      throw new Error(`Cannot revoke trusted admission without a classified occurrence: ${prior.externalId}`);
+    }
+    const sourceReferences = job.sourceReferences.map((item) => item.sourceId === prior.sourceId
+      && item.externalId === prior.externalId ? updatedReference : item);
+    const result = await this.store.commitPostingObservation({
+      decision,
+      ...(job.postingIdentity ? { identity: job.postingIdentity } : {}),
+      job: { ...job, sourceReferences, admission: deriveCanonicalAdmission(sourceReferences, now) },
+      occurrence,
+    });
+    if (result.outcome !== 'committed') throw new Error(`Trusted admission revocation conflicted: ${prior.externalId}`);
+  }
+
   private readonly boardIndex = reviewedBoardIndex();
   private readonly boardActiveIds = new Map<string, Promise<Set<string>>>();
   private readonly currentRunGreenhouseActiveIds = new Map<string, Set<string>>();
@@ -689,6 +730,8 @@ export class IngestionRunner {
       // they must not repeat every HTTP probe merely to clear suppression.
       if (trustedCommunityPolicy && admissionAlreadyApplied && priorOccurrence
         && priorTrustedQualification?.catalogPublicationSuppressed === true
+        && priorOccurrence.present
+        && priorOccurrence.occurrence.state === listing.state
         && priorOccurrence.occurrence.admission
         && sameTrustedMaterial) {
         const existing = await this.store.getJob(priorOccurrence.jobId);
@@ -725,6 +768,8 @@ export class IngestionRunner {
       }
       if (trustedCommunityPolicy && admissionAlreadyApplied && priorOccurrence
         && priorTrustedQualification?.basis
+        && priorOccurrence.present
+        && priorOccurrence.occurrence.state === listing.state
         && priorTrustedQualification.catalogPublicationSuppressed !== true
         && priorOccurrence.occurrence.admission
         && postingSpecificDestination(priorOccurrence.occurrence.admission.destination)
@@ -1078,7 +1123,6 @@ export class IngestionRunner {
       let failureCategory: NonNullable<SourceHealth['diagnosticCategory']> = 'transport';
       let trustedMetrics: SourceHealth['trustedCommunity'];
       try {
-        if (prefetched?.error) throw prefetched.error;
         const admissionConfigurationVersion = prefetched
           ? prefetched.admissionConfigurationVersion
           : effectiveAdmissionConfigurationVersion({
@@ -1086,6 +1130,27 @@ export class IngestionRunner {
             resolverVersion: await this.catalogAdmissionResolver?.configurationVersion?.(),
             trustedCommunityCatalogEnabled: this.trustedCommunityCatalogEnabled,
           });
+        let remainingMigrationLimit = options.maxAdmissionMigrationListingsPerSourceRun;
+        if (!this.trustedCommunityCatalogEnabled && sourceAdmissionPolicy(connector.id).trust === 'trusted-community') {
+          failureCategory = 'persistence';
+          const revocations = (await this.store.getSourceOccurrences(connector.id))
+            .filter((item) => item.occurrence.admission?.evidenceCodes?.includes('trusted-community-source'));
+          if (revocations.length) await this.store.putCheckpoint({
+            sourceId: connector.id, successfulFetches: 0, ...previous,
+            pendingAdmissionConfigurationVersion: admissionConfigurationVersion ?? 'standard-v1',
+          });
+          const selected = remainingMigrationLimit === undefined ? revocations : revocations.slice(0, remainingMigrationLimit);
+          for (const occurrence of selected) {
+            await this.revokeTrustedCommunityAdmission(occurrence, admissionConfigurationVersion, this.now().toISOString());
+          }
+          if (remainingMigrationLimit !== undefined) remainingMigrationLimit -= selected.length;
+          if (selected.length < revocations.length) {
+            report.continuationSources.push(connector.id);
+            continue;
+          }
+        }
+        failureCategory = 'transport';
+        if (prefetched?.error) throw prefetched.error;
         const admissionConfigurationChanged = Boolean(previous?.pendingAdmissionConfigurationVersion || (admissionConfigurationVersion
           && previous?.admissionConfigurationVersion
           && admissionConfigurationVersion !== previous.admissionConfigurationVersion));
@@ -1116,7 +1181,7 @@ export class IngestionRunner {
           ? admissionConfigurationVersion
           : undefined;
         const migrationLimit = admissionConfigurationChanged && githubAdmissionConfigurationVersion
-          ? options.maxAdmissionMigrationListingsPerSourceRun
+          ? remainingMigrationLimit
           : undefined;
         const priorByExternalId = new Map(priorOccurrences.map((occurrence) => [occurrence.externalId, occurrence]));
         const requiredMigrationCandidates = migrationLimit === undefined ? [] : batch.processed.listings.filter((sourceListing) => {
@@ -1272,6 +1337,7 @@ export class IngestionRunner {
           metadataValidated: resolution.metadataValidated,
           alertEligible: resolution.alertEligible,
           publishUnconfirmedIdentities: this.publishUnconfirmedIdentities,
+          trustedCommunityAlertsEnabled: trustedPolicy?.alertMode === 'exact-identity-or-two-complete-snapshots',
         });
         failureCategory = 'persistence';
         const notificationByJobId = new Map(plan.notifications.map((event) => [event.jobId, event]));

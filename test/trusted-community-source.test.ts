@@ -3,7 +3,8 @@ import simplifyBaselineReport from '../docs/trusted-community/simplify-summer-20
 import { deriveCanonicalAdmission, evaluateCatalogAdmission } from '../src/catalog-admission.js';
 import { CatalogReconciler } from '../src/ingestion/catalog-reconciler.js';
 import { Poller } from '../src/poll.js';
-import { MemoryInternshipStore } from '../src/store.js';
+import { MemoryInternshipStore, MemoryUserStore } from '../src/store.js';
+import { createApiHandler } from '../src/api.js';
 import { trustedCommunityBaselineReport } from '../src/sources/trusted-community-baseline.js';
 import {
   activeTrustedCommunityPolicy,
@@ -526,14 +527,15 @@ function changedDestination() {
 function migrationFixture() {
   const store = new MemoryInternshipStore();
   const sourceId = 'simplify-summer-2026';
-  const rows = Array.from({ length: SIMPLIFY_TRUSTED_COMMUNITY_THRESHOLDS.minimumEligibleRows }, (_, index) => {
+  const rows = Array.from({ length: SIMPLIFY_TRUSTED_COMMUNITY_THRESHOLDS.minimumEligibleRows + 1 }, (_, index) => {
     const postingId = `role-${index}`;
     const applyUrl = `https://careers-${index % 2}.example.test/jobs/${postingId}`;
     return listing({ externalId: `README.md:${applyUrl}`, applyUrl, row: index + 1, company: `Employer ${index}`,
       providerIdentity: { provider: 'github', sourceId, sourceUrl: 'https://github.com/SimplifyJobs/Summer2027-Internships', postingId } });
   });
-  const state = { version: 'registry-v1', calls: 0, gone: false, aggregate: false, tick: 0 };
+  const state = { version: 'registry-v1', calls: 0, gone: false, aggregate: false, tick: 0, failFetch: false };
   const adapter: SourceAdapter = { id: sourceId, async fetch(previous) {
+    if (state.failFetch) throw new Error('source unavailable');
     return { sourceId, listings: rows, rawRowCount: SIMPLIFY_TRUSTED_COMMUNITY_THRESHOLDS.minimumRawRows, notModified: false,
       checkpoint: { sourceId, successfulFetches: (previous?.successfulFetches ?? 0) + 1, lastRowCount: rows.length } };
   } };
@@ -560,6 +562,114 @@ function migrationFixture() {
 }
 
 describe('trusted rollout repair boundaries', () => {
+  it('revokes without upstream access and can reverse an interrupted rollback', async () => {
+    const { store, rows, state, poll, sourceId } = migrationFixture();
+    await poll(true);
+    state.failFetch = true;
+    const rollback = await poll(false, 1);
+    expect(rollback.failures).toEqual([]);
+    expect(rollback.continuationSources).toEqual([sourceId]);
+    expect((await store.listCatalog()).length).toBe(rows.length - 1);
+    expect((await store.getCheckpoint(sourceId))!.pendingAdmissionConfigurationVersion).toBeDefined();
+    state.failFetch = false;
+    const restored = await poll(true, 20);
+    expect(restored.failures).toEqual([]);
+    expect(restored.continuationSources).toEqual([]);
+    expect(await store.listCatalog()).toHaveLength(rows.length);
+    expect((await store.getCheckpoint(sourceId))!.pendingAdmissionConfigurationVersion).toBeUndefined();
+    expect(store.notificationEvents.size).toBe(0);
+  });
+
+  it('retains independent official admission when revoking an absent trusted reference', async () => {
+    const { store, rows, poll, sourceId } = migrationFixture();
+    await poll(true);
+    const target = rows.shift()!;
+    const prior = (await store.getSourceOccurrences(sourceId)).find(item => item.externalId === target.externalId)!;
+    const job = (await store.getJob(prior.jobId))!;
+    const official = { ...prior.occurrence, sourceId: 'official-acme', externalId: 'official-role', provenance: 'official-ats' as const,
+      admission: { ...admission(true), employerResolution: 'resolved' as const, canonicalEmployer: { id: 'acme', displayName: 'Acme' },
+        evidenceCodes: undefined, postingAttribution: 'attributed' as const, reasonCodes: [] } };
+    await store.putInternship({ ...job, sourceReferences: [...job.sourceReferences, official], admission: official.admission });
+    await poll(false, 1);
+    expect(await store.getJob(prior.jobId)).toMatchObject({ admission: { catalogEligible: true,
+      canonicalEmployer: { id: 'acme' } }, firstSeenAt: job.firstSeenAt });
+    expect((await store.getSourceOccurrences(sourceId)).find(item => item.externalId === target.externalId)!.occurrence.admission)
+      .toMatchObject({ catalogEligible: false, alertEligible: false });
+    expect(store.notificationEvents.size).toBe(0);
+  });
+
+  it.each([false, true])('keeps standard admission repairs silent with trusted gate=%s', async (enabled) => {
+    const store = new MemoryInternshipStore();
+    const sourceId = 'standard-review-fixture';
+    const url = 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    const role = listing({ sourceId, externalId: 'role-1', provenance: 'official-ats', applyUrl: url,
+      providerIdentity: { provider: 'ashby', sourceId, sourceUrl: 'https://example.test/source', tenant: 'acme',
+        postingId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' } });
+    let mapped = false;
+    const adapter: SourceAdapter = { id: sourceId, async fetch(previous) {
+      return { sourceId, listings: [role], rawRowCount: 1, notModified: false,
+        checkpoint: { sourceId, successfulFetches: (previous?.successfulFetches ?? 0) + 1, lastRowCount: 1 } };
+    } };
+    const resolver = { async configurationVersion() { return mapped ? 'registry-v2' : 'registry-v1'; },
+      async resolveCanonicalEmployer() { return mapped ? { id: 'acme', displayName: 'Acme' } : undefined; },
+      async resolveDestinationRule() { return undefined; } };
+    const validate = async () => ({ url, evidence: { url, title: role.title, postingIdPresent: true,
+      confidence: { score: 100, level: 'high' as const, recommendation: 'alert-eligible' as const, signals: [] } } });
+    const run = () => new Poller([adapter], store, () => new Date(mapped ? '2026-09-05T12:00:00Z' : inspectedAt),
+      undefined, validate, false, undefined, resolver, true, enabled).poll();
+    await run();
+    expect([...store.jobs.values()][0]?.admission?.catalogEligible).toBe(false);
+    mapped = true;
+    const result = await run();
+    expect(result.failures).toEqual([]);
+    expect([...store.jobs.values()][0]).toMatchObject({ admission: { catalogEligible: true },
+      notification: { smsPending: false, digestPending: false } });
+    expect(result.newJobs).toEqual([]);
+    expect(store.notificationEvents.size).toBe(0);
+  });
+
+  it('reopens settled occurrences after two omissions without changing identity or discovery history', async () => {
+    const { store, rows, poll, sourceId } = migrationFixture();
+    await poll(true);
+    await poll(true);
+    const target = rows.shift()!;
+    const prior = (await store.getSourceOccurrences(sourceId)).find(item => item.externalId === target.externalId)!;
+    const original = (await store.getJob(prior.jobId))!;
+    await poll(true);
+    await poll(true);
+    expect((await store.getJob(prior.jobId))!.open).toBe(false);
+    rows.unshift(target);
+    await poll(true);
+    expect((await store.getSourceOccurrences(sourceId)).find(item => item.externalId === target.externalId))
+      .toMatchObject({ present: true, consecutiveOmissions: 0, jobId: prior.jobId, occurrence: { state: 'open' } });
+    expect(await store.getJob(prior.jobId)).toMatchObject({ open: true, firstSeenAt: original.firstSeenAt,
+      catalogVisibleAt: original.catalogVisibleAt, notification: { smsPending: false, digestPending: false } });
+    expect(store.notificationEvents.size).toBe(0);
+  });
+
+  it.each(['open', 'closed'] as const)('revokes absent %s roles in bounded rollback slices', async (state) => {
+    const { store, rows, poll, sourceId } = migrationFixture();
+    await poll(true);
+    const target = rows.shift()!;
+    const prior = (await store.getSourceOccurrences(sourceId)).find(item => item.externalId === target.externalId)!;
+    const original = (await store.getJob(prior.jobId))!;
+    if (state === 'closed') { await poll(true); await poll(true); }
+    const before = (await store.getSourceOccurrences(sourceId)).find(item => item.externalId === target.externalId)!;
+    const first = await poll(false, 1);
+    expect(first.continuationSources).toEqual([sourceId]);
+    const after = (await store.getSourceOccurrences(sourceId)).find(item => item.externalId === target.externalId)!;
+    expect(after).toMatchObject({ present: before.present, consecutiveOmissions: before.consecutiveOmissions,
+      occurrence: { state, admission: { catalogEligible: false, alertEligible: false } } });
+    const api = createApiHandler({ jobs: store, users: new MemoryUserStore(), identityUnconfirmedPublicationEnabled: true });
+    expect((await api({ rawPath: `/jobs/${prior.jobId}`, requestContext: { http: { method: 'GET' } } })).statusCode).toBe(404);
+    const final = await poll(false, rows.length);
+    expect(final.failures).toEqual([]);
+    expect(final.continuationSources).toEqual([]);
+    expect(await store.listCatalog()).toEqual([]);
+    expect(await store.getJob(prior.jobId)).toMatchObject({ firstSeenAt: original.firstSeenAt, catalogVisibleAt: original.catalogVisibleAt });
+    expect(store.notificationEvents.size).toBe(0);
+  });
+
   it('rolls back publication even before the gate-on migration checkpoint advances', async () => {
     const { store, rows, poll, sourceId } = migrationFixture();
     await poll(false);
@@ -635,6 +745,8 @@ describe('trusted community delayed promotion', () => {
     'keeps %s delayed roles out of the outbox and reported new jobs', (condition) => {
       const reconciler = new CatalogReconciler();
       const role = listing({ admission: { ...admission(false), catalogEligible: false },
+        trustedCommunityAlertQualification: { candidateKey: destination().candidateUrl, status: 'eligible',
+          consecutiveCompleteSnapshots: 2, baselineSuppressed: false, basis: 'two-complete-snapshots' },
         ...(condition === 'closed' ? { state: 'closed' } : {}),
         ...(condition === 'nontechnical' ? { technical: false } : {}),
       });
@@ -643,7 +755,7 @@ describe('trusted community delayed promotion', () => {
       const result = reconciler.reconcile({ sourceId: role.sourceId, snapshotHash: 'two', activeExternalIds: new Set([role.externalId!]),
         listings: [{ ...role, admission: admission(true) }], priorOccurrences: first.occurrences,
         resolvedJobs: new Map([[role.externalId!, first.jobs[0]!]]), now: '2026-09-05T12:00:00Z',
-        baseline: condition === 'baseline', publishUnconfirmedIdentities: condition !== 'identity-hidden',
+        baseline: condition === 'baseline', publishUnconfirmedIdentities: condition !== 'identity-hidden', trustedCommunityAlertsEnabled: true,
         ...(condition === 'filtered' ? { filter: { includeKeywords: ['unmatchable'] } } : {}),
         ...(condition === 'unverified' ? { alertEligible: new Set<string>() } : {}),
       });
@@ -679,14 +791,19 @@ describe('trusted community delayed promotion', () => {
       ...initialListing.trustedCommunityAlertQualification!, consecutiveCompleteSnapshots: 2, lastCountedSuccessfulFetchSequence: 2,
       status: 'eligible', basis: 'two-complete-snapshots',
     } });
+    const dormant = reconciler.reconcile({ sourceId: promotedListing.sourceId, snapshotHash: 'two', activeExternalIds: new Set([promotedListing.externalId!]),
+      listings: [promotedListing], priorOccurrences: [prior], resolvedJobs: new Map([[promotedListing.externalId!, existing]]),
+      now: '2026-09-05T12:00:00.000Z', baseline: false, trustedCommunityAlertsEnabled: false });
+    expect(dormant.notifications).toEqual([]);
+    expect(dormant.jobs[0]?.notification).toMatchObject({ smsPending: false, digestPending: false });
     const promoted = reconciler.reconcile({ sourceId: promotedListing.sourceId, snapshotHash: 'two', activeExternalIds: new Set([promotedListing.externalId!]),
-      listings: [promotedListing], priorOccurrences: [prior], resolvedJobs: new Map([[promotedListing.externalId!, existing]]), now: '2026-09-05T12:00:00.000Z', baseline: false });
+      listings: [promotedListing], priorOccurrences: [prior], resolvedJobs: new Map([[promotedListing.externalId!, existing]]), now: '2026-09-05T12:00:00.000Z', baseline: false, trustedCommunityAlertsEnabled: true });
     expect(promoted.notifications).toHaveLength(1);
     expect(promoted.jobs[0]).toMatchObject({ firstSeenAt: inspectedAt, catalogRecency: 'normal',
       notification: { smsPending: true, digestPending: true } });
 
     const replay = reconciler.reconcile({ sourceId: promotedListing.sourceId, snapshotHash: 'three', activeExternalIds: new Set([promotedListing.externalId!]),
-      listings: [promotedListing], priorOccurrences: promoted.occurrences, resolvedJobs: new Map([[promotedListing.externalId!, promoted.jobs[0]!]]), now: '2026-09-06T12:00:00.000Z', baseline: false });
+      listings: [promotedListing], priorOccurrences: promoted.occurrences, resolvedJobs: new Map([[promotedListing.externalId!, promoted.jobs[0]!]]), now: '2026-09-06T12:00:00.000Z', baseline: false, trustedCommunityAlertsEnabled: true });
     expect(replay.notifications).toHaveLength(0);
   });
 
@@ -704,7 +821,7 @@ describe('trusted community delayed promotion', () => {
       occurrence: { ...role, admission: priorAdmission }, present: true, consecutiveOmissions: 0, changedSnapshotHash: 'one', changedAt: inspectedAt };
     existing.sourceReferences = [prior.occurrence];
     const result = reconciler.reconcile({ sourceId: role.sourceId, snapshotHash: 'two', activeExternalIds: new Set([role.externalId!]), listings: [role],
-      priorOccurrences: [prior], resolvedJobs: new Map([[role.externalId!, existing]]), now: '2026-09-05T12:00:00.000Z', baseline: false });
+      priorOccurrences: [prior], resolvedJobs: new Map([[role.externalId!, existing]]), now: '2026-09-05T12:00:00.000Z', baseline: false, trustedCommunityAlertsEnabled: true });
     expect(result.notifications).toHaveLength(0);
     expect(result.jobs[0]).toMatchObject({ catalogRecency: 'baseline' });
   });
@@ -744,7 +861,7 @@ describe('trusted community delayed promotion', () => {
     const result = reconciler.reconcile({
       sourceId: role.sourceId, snapshotHash: 'two', activeExternalIds: new Set([role.externalId!]),
       listings: [role], priorOccurrences: [prior], resolvedJobs: new Map([[role.externalId!, existing]]),
-      now: '2026-09-05T12:00:00.000Z', baseline: false,
+      now: '2026-09-05T12:00:00.000Z', baseline: false, trustedCommunityAlertsEnabled: true,
     });
 
     expect(result.jobs[0]).toMatchObject({
