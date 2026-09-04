@@ -68,6 +68,13 @@ describe('snapshot reconciliation', () => {
     expect(updated.firstSeenAt).toBe(original.firstSeenAt);
     expect(updated.notification).toEqual(original.notification);
     expect(store.notificationEvents.size).toBe(1);
+
+    adapter.rows = [listing('source-a', { metadataEvidence: metadata('', '2026-07-31T12:00:00.000Z') })];
+    await new IngestionRunner([adapter], store, () => new Date('2026-07-31T12:00:00.000Z')).run();
+    const removed = [...store.jobs.values()][0]!;
+    expect(removed.compensation).toEqual({ raw: '' });
+    expect(removed.roleMetadata).toBeUndefined();
+    expect(store.notificationEvents.size).toBe(1);
   });
 
   it('closes an occurrence after two complete omissions, including an unchanged confirmation', async () => {

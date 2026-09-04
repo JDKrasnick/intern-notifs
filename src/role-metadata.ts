@@ -74,6 +74,22 @@ function jsonLdIdentifier(value: unknown): string | undefined {
   return id || stringValue(value['@id']);
 }
 
+function postingIdentifierMatches(expected: string, actual: string | undefined): boolean {
+  if (!actual) return false;
+  const decode = (value: string) => { try { return decodeURIComponent(value); } catch { return value; } };
+  const normalizedExpected = decode(expected).trim().toLowerCase();
+  const normalizedActual = decode(actual).trim().toLowerCase();
+  if (normalizedActual === normalizedExpected) return true;
+  try {
+    const url = new URL(actual);
+    return url.pathname.split('/').filter(Boolean).some((part) => decode(part).toLowerCase() === normalizedExpected)
+      || [...url.searchParams.values()].some((value) => value.toLowerCase() === normalizedExpected)
+      || decode(url.hash.replace(/^#/u, '')).toLowerCase() === normalizedExpected;
+  } catch {
+    return normalizedActual.split(/[:/#?&=]+/u).some((part) => part === normalizedExpected);
+  }
+}
+
 function jsonLdLocations(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(jsonLdLocations);
   if (!record(value)) return [];
@@ -139,7 +155,7 @@ export function extractVerifiedPageMetadataEvidence(input: {
   const expectedId = input.expectedPostingId?.toLowerCase();
   const artifacts = input.jsonLdArtifacts ?? [];
   const matching = artifacts.filter((artifact) => titleAgreement(input.expectedTitle, artifact.title)
-    && (artifacts.length === 1 || (expectedId ? artifact.identifier?.toLowerCase().includes(expectedId) === true : false)));
+    && (artifacts.length === 1 || (expectedId ? postingIdentifierMatches(expectedId, artifact.identifier) : false)));
   const selected = matching.length === 1 ? matching[0] : !expectedId && artifacts.length === 1 && titleAgreement(input.expectedTitle, artifacts[0]!.title) ? artifacts[0] : undefined;
   const jsonLd = selected ? extractPostingMetadataEvidence({ artifact: selected, sourceClass: 'official-json-ld', sourceId: input.sourceId,
     sourceUrl: input.sourceUrl, observedAt: input.observedAt, exactPosting: true }) : [];
@@ -439,14 +455,30 @@ export function extractRoleMetadataEvidence(input: ExtractRoleMetadataInput): Ro
 
 export function extractPostingMetadataEvidence(input: Omit<ExtractRoleMetadataInput, 'sourceClass' | 'titleOnly'> & { sourceClass: Exclude<EvidenceSource, 'deterministic-inference'> }): RoleMetadataEvidence[] {
   const artifactHash = input.artifactHash ?? roleMetadataArtifactHash(input.artifact);
+  const extracted = extractRoleMetadataEvidence({ ...input, artifactHash });
+  const sourceSnapshot: RoleMetadataEvidence = extracted ?? {
+    schemaVersion: 1,
+    extractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+    artifactHash,
+    sourceClass: input.sourceClass,
+    sourceId: input.sourceId,
+    sourceUrl: input.sourceUrl,
+    observedAt: input.observedAt,
+    exactPosting: true,
+  };
   return [
-    extractRoleMetadataEvidence({ ...input, artifactHash }),
+    sourceSnapshot,
     extractRoleMetadataEvidence({ ...input, artifactHash, sourceClass: 'deterministic-inference', titleOnly: true }),
   ].filter((value): value is RoleMetadataEvidence => Boolean(value));
 }
 
+export function roleMetadataEvidenceHasFields(value: RoleMetadataEvidence): boolean {
+  return Boolean(value.compensationRanges?.length || value.education || value.locations?.length || value.workMode
+    || value.applicationDeadline || value.employerPublishedAt || value.employerUpdatedAt);
+}
+
 export function metadataEvidenceSlot(value: RoleMetadataEvidence): string {
-  return `${value.sourceClass}\0${value.sourceId}\0${value.sourceUrl}`;
+  return `${value.sourceClass}\0${value.sourceId}`;
 }
 
 export function mergeRoleMetadataEvidence(current: readonly RoleMetadataEvidence[] = [], incoming: readonly RoleMetadataEvidence[] = []): RoleMetadataEvidence[] {
@@ -518,7 +550,8 @@ export function reconcileRoleMetadata(
   evidence: readonly RoleMetadataEvidence[],
   existing?: Internship,
 ): { metadata?: ReconciledRoleMetadata; compensation?: Compensation; conflicts: MetadataConflict[] } {
-  const usable = evidence.filter((item) => item.schemaVersion === 1 && item.extractionVersion === ROLE_METADATA_EXTRACTION_VERSION && item.exactPosting);
+  const usable = evidence.filter((item) => item.schemaVersion === 1 && item.extractionVersion === ROLE_METADATA_EXTRACTION_VERSION
+    && item.exactPosting && roleMetadataEvidenceHasFields(item));
   if (!usable.length) return { conflicts: [] };
   const conflicts: MetadataConflict[] = [];
   const ranges = reconcileRanges(usable, existing?.compensation.ranges);
@@ -590,30 +623,53 @@ export function projectRoleMetadata(job: Internship, evidence = job.sourceRefere
 } {
   const result = reconcileRoleMetadata(evidence, job);
   const identity = structuredIdentity(job);
-  if (!result.metadata && !identity?.programType?.value) return { job, conflicts: result.conflicts };
+  const previousMetadata = job.roleMetadata;
+  if (!result.metadata && !identity?.programType?.value && !previousMetadata) return { job, conflicts: result.conflicts };
   const metadataLocations = result.metadata?.locations;
   const locationNames = metadataLocations?.map((item) => item.name);
-  const updatedIdentity = identity && result.metadata ? {
+  const previousEducationWasProjected = Boolean(identity && previousMetadata?.education
+    && stable(identity.education) === stable(previousMetadata.education));
+  const previousIdentityLocationsWereProjected = Boolean(identity && previousMetadata?.locations
+    && stable(identity.locations) === stable(previousMetadata.locations));
+  const updatedIdentity = identity && (result.metadata || previousMetadata) ? {
     ...identity,
-    ...(result.metadata.education ? { education: result.metadata.education } : {}),
-    ...(metadataLocations?.length ? { locations: metadataLocations } : {}),
+    ...(result.metadata?.education ? { education: result.metadata.education }
+      : previousEducationWasProjected ? { education: { levels: [], evidenceStatus: 'unspecified' as const, provenance: [] } } : {}),
+    ...(metadataLocations?.length ? { locations: metadataLocations } : previousIdentityLocationsWereProjected ? { locations: [] } : {}),
   } : job.internshipIdentity;
-  return {
-    job: {
-      ...job,
-      ...(updatedIdentity ? { internshipIdentity: updatedIdentity } : {}),
-      ...(result.metadata ? { roleMetadata: result.metadata } : {}),
-      ...(result.compensation ? { compensation: result.compensation } : {}),
-      ...(locationNames?.length ? { locations: locationNames, location: locationSummary(locationNames) } : {}),
-      ...(result.metadata?.workMode ? { workMode: result.metadata.workMode.value } : {}),
-      ...(result.metadata?.applicationDeadline ? { applicationDeadline: result.metadata.applicationDeadline.value } : {}),
-      ...(result.metadata?.graduationWindow ? { graduationWindow: result.metadata.graduationWindow.value } : {}),
-      ...(identity?.programType?.value ? { programType: identity.programType.value } : {}),
-      ...(result.metadata?.employerPublishedAt ? { employerPublishedAt: result.metadata.employerPublishedAt.value } : {}),
-      ...(result.metadata?.employerUpdatedAt ? { employerUpdatedAt: result.metadata.employerUpdatedAt.value } : {}),
-    },
-    conflicts: result.conflicts,
+  const previousCompensationWasProjected = Boolean(previousMetadata?.compensationRanges
+    && stable(job.compensation) === stable(compensationFromRanges(previousMetadata.compensationRanges)));
+  const projected: Internship = {
+    ...job,
+    ...(updatedIdentity ? { internshipIdentity: updatedIdentity } : {}),
+    ...(result.metadata ? { roleMetadata: result.metadata } : {}),
+    ...(result.compensation ? { compensation: result.compensation } : previousCompensationWasProjected ? { compensation: { raw: '' } } : {}),
+    ...(locationNames?.length ? { locations: locationNames, location: locationSummary(locationNames) } : {}),
+    ...(result.metadata?.workMode ? { workMode: result.metadata.workMode.value } : {}),
+    ...(result.metadata?.applicationDeadline ? { applicationDeadline: result.metadata.applicationDeadline.value } : {}),
+    ...(result.metadata?.graduationWindow ? { graduationWindow: result.metadata.graduationWindow.value } : {}),
+    ...(identity?.programType?.value ? { programType: identity.programType.value } : {}),
+    ...(result.metadata?.employerPublishedAt ? { employerPublishedAt: result.metadata.employerPublishedAt.value } : {}),
+    ...(result.metadata?.employerUpdatedAt ? { employerUpdatedAt: result.metadata.employerUpdatedAt.value } : {}),
   };
+  if (!result.metadata) delete projected.roleMetadata;
+  if (previousMetadata?.workMode?.value === job.workMode && !result.metadata?.workMode) delete projected.workMode;
+  if (stable(previousMetadata?.applicationDeadline?.value) === stable(job.applicationDeadline) && !result.metadata?.applicationDeadline) delete projected.applicationDeadline;
+  if (stable(previousMetadata?.graduationWindow?.value) === stable(job.graduationWindow) && !result.metadata?.graduationWindow) delete projected.graduationWindow;
+  if (previousMetadata?.employerPublishedAt?.value === job.employerPublishedAt && !result.metadata?.employerPublishedAt) delete projected.employerPublishedAt;
+  if (previousMetadata?.employerUpdatedAt?.value === job.employerUpdatedAt && !result.metadata?.employerUpdatedAt) delete projected.employerUpdatedAt;
+  const previousLocationNames = previousMetadata?.locations?.map((item) => item.name);
+  if (previousLocationNames && stable(previousLocationNames) === stable(job.locations) && !metadataLocations?.length) {
+    const fallbackLocations = normalizeLocations(job.sourceReferences.flatMap((reference) => reference.locations ?? [reference.location]));
+    if (fallbackLocations.length) {
+      projected.locations = fallbackLocations;
+      projected.location = locationSummary(fallbackLocations);
+    } else {
+      delete projected.locations;
+      projected.location = 'Location not specified';
+    }
+  }
+  return { job: projected, conflicts: result.conflicts };
 }
 
 export function unsupportedMetadataCurrencies(evidence: readonly RoleMetadataEvidence[]): string[] {

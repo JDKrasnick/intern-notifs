@@ -23,7 +23,7 @@ import { queueHasBacklog } from './queue-backlog.js';
 import type { D1Database, MessageBatch, Queue, R2Bucket, ScheduledController } from './types.js';
 import { disconnectGmail, gmailApi, gmailCallback, GmailStore, processGmailWork, recordGmailFailure, type GmailWorkMessage } from './gmail.js';
 import { D1EmployerStore } from './employer-store.js';
-import { D1CatalogAdmissionStore } from './catalog-admission-store.js';
+import { D1CatalogAdmissionStore, ROLE_METADATA_REVALIDATION_MS } from './catalog-admission-store.js';
 import { handleCatalogAdmissionOperations } from './catalog-admission-api.js';
 import { handleEmployerApi } from './employer-api.js';
 import { closeEmployerOccurrence, handleEmployerOperations, runEmployerMaintenance } from './employer-operations-api.js';
@@ -560,7 +560,9 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
         const limit = input.limit ?? 100;
         if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error('limit must be an integer from 1 to 500');
         const collectionToken = input.collectionToken?.trim() || crypto.randomUUID();
-        const candidates = await operations.metadataVerificationCandidates(limit);
+        const candidates = await operations.metadataVerificationCandidates(limit, {
+          observedBefore: new Date(Date.now() - ROLE_METADATA_REVALIDATION_MS).toISOString(),
+        });
         await sendQueueMessages(env.DESTINATION_VERIFICATION_QUEUE, candidates.map((candidate) => destinationVerificationMessage({
           ...candidate,
           reason: 'historical-backfill',

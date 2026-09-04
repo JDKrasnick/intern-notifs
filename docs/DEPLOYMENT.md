@@ -137,8 +137,9 @@ documentation.
 
 ## Employer metadata enrichment (#134)
 
-Apply `0015_role_metadata_enrichment.sql` before deploying the enrichment
-Worker. The migration is additive: it stores compact versioned field evidence,
+Apply `0015_role_metadata_enrichment.sql` and
+`0016_role_metadata_repair_plans.sql` before deploying the enrichment Worker.
+The migrations are additive: they store compact versioned field evidence,
 historical artifact versions, extraction outcomes, conflicts, and guarded repair
 staging. Full job descriptions are never written to these tables.
 
@@ -175,6 +176,10 @@ group detail results to confirm unchanged job IDs, occurrences, saves,
 applications, receipts, notification flags/tombstones, visibility timestamps,
 and lifecycle state. Roll back exposure with a new reviewed repair; retain the
 evidence and conflict history.
+
+After projection, the daily destination-verification scheduler rechecks up to
+100 exact pages whose metadata observation is at least 30 days old. The queued
+artifact hash prevents an older extraction from satisfying that revalidation.
 
 ## Catalog admission rollout (#120)
 

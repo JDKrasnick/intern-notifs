@@ -26,7 +26,7 @@ function sqliteD1(database: DatabaseSync): D1Database {
 
 function subject() {
   const database = new DatabaseSync(':memory:');
-  for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0015_role_metadata_enrichment.sql']) {
+  for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   const db = sqliteD1(database);
@@ -92,5 +92,61 @@ describe('D1 role metadata evidence and guarded repair', () => {
     await current.jobs.putInternship({ ...job(), lastSeenAt: '2026-09-04T12:01:30.000Z' });
     await expect(current.operations.applyRoleMetadataRepair(plan.repairToken, 1, 0, '2026-09-04T12:02:00.000Z')).rejects.toThrow();
     expect((await current.jobs.getJob('job-1'))?.compensation.raw).toBe('');
+  });
+
+  it('binds combined historical conflicts to the dry-run token', async () => {
+    const current = subject();
+    const conflictJob = { ...job(), sourceReferences: [
+      { ...job().sourceReferences[0]!, sourceId: 'source-one', externalId: 'one' },
+      { ...job().sourceReferences[0]!, sourceId: 'source-two', externalId: 'two' },
+    ] };
+    const safeJob = { ...job(), jobId: 'job-2', normalizedUrl: 'https://careers.acme.test/jobs/456',
+      applyUrl: 'https://careers.acme.test/jobs/456', fingerprint: 'fingerprint-2', sourceReferences: [
+        { ...job().sourceReferences[0]!, sourceId: 'source-safe', externalId: 'safe' },
+      ] };
+    await current.jobs.putInternship(conflictJob);
+    await current.jobs.putInternship(safeJob);
+    const pay = (sourceId: string, amount: number) => extractPostingMetadataEvidence({
+      artifact: { title: job().title, compensationText: `USD $${amount}/hour` }, sourceClass: 'official-page', sourceId,
+      sourceUrl: `https://${sourceId}.example.test/jobs/123`, observedAt: '2026-09-04T12:00:00.000Z', exactPosting: true,
+    });
+    await current.operations.recordRoleMetadataEvidence('job-1', pay('source-one', 40), [], '2026-09-04T12:00:00.000Z');
+    await current.operations.recordRoleMetadataEvidence('job-1', pay('source-two', 50), [], '2026-09-04T12:00:00.000Z');
+    await current.operations.recordRoleMetadataEvidence('job-2', pay('source-safe', 60), [], '2026-09-04T12:00:00.000Z');
+    const plan = await current.operations.stageRoleMetadataRepair('2026-09-04T12:01:00.000Z');
+    expect(plan).toMatchObject({ expectedJobs: 1, conflicts: [{ field: 'compensation' }] });
+    expect(current.database.prepare("SELECT count(*) AS count FROM role_metadata_conflicts WHERE state = 'open'").get()).toEqual({ count: 0 });
+    await expect(current.operations.applyRoleMetadataRepair(plan.repairToken, plan.expectedJobs, plan.expectedOccurrences,
+      '2026-09-04T12:02:00.000Z')).rejects.toThrow('conflicts must be resolved');
+    expect((await current.jobs.getJob('job-2'))?.compensation.raw).toBe('');
+  });
+
+  it('requeues projected exact-page evidence after the revalidation cutoff', async () => {
+    const current = subject();
+    const evidence = extractPostingMetadataEvidence({
+      artifact: { title: job().title, compensationText: 'USD $45/hour' }, sourceClass: 'official-page',
+      sourceId: 'community-acme', sourceUrl: job().applyUrl, observedAt: '2026-07-01T12:00:00.000Z', exactPosting: true,
+    });
+    const destination = {
+      classification: 'posting-detail' as const, candidateUrl: job().applyUrl, finalUrl: job().applyUrl,
+      provider: 'github' as const, inspectedAt: '2026-07-01T12:00:00.000Z', browserVisible: true,
+    };
+    const admission = {
+      employerResolution: 'resolved' as const, postingAttribution: 'attributed' as const, destination,
+      metadata: { complete: true, title: 'complete' as const, location: 'complete' as const },
+      catalogEligible: true, alertEligible: true, reasonCodes: [], evaluatedAt: '2026-07-01T12:00:00.000Z',
+      evidenceObservedAt: '2026-07-01T12:00:00.000Z',
+    };
+    const currentJob = job();
+    currentJob.sourceReferences = [{ ...currentJob.sourceReferences[0]!, metadataEvidence: evidence, admission }];
+    currentJob.admission = admission;
+    await current.jobs.putInternship(currentJob);
+    await current.operations.recordRoleMetadataEvidence(currentJob.jobId, evidence, [], '2026-07-01T12:00:00.000Z');
+    await expect(current.operations.metadataVerificationCandidates(10, {
+      observedBefore: '2026-08-01T00:00:00.000Z', includeUnobserved: false, requireProjectedEvidence: true,
+    })).resolves.toMatchObject([{ jobId: 'job-1', sourceId: 'community-acme', metadataArtifactHash: evidence[0]!.artifactHash }]);
+    await expect(current.operations.metadataVerificationCandidates(10, {
+      observedBefore: '2026-06-01T00:00:00.000Z', includeUnobserved: false, requireProjectedEvidence: true,
+    })).resolves.toEqual([]);
   });
 });

@@ -130,6 +130,16 @@ describe('provider-neutral role metadata', () => {
       expectedTitle: 'Software Engineering Intern', expectedPostingId: '999', page: { title: 'Careers at Acme' },
       jsonLdArtifacts: artifacts, sourceId: 'community-acme', sourceUrl: 'https://careers.acme.test/jobs', observedAt, exactPosting: false,
     })).toEqual([]);
+
+    const prefixCollision = applicationMetadataArtifactsFromJsonDocuments([JSON.stringify({ '@graph': [
+      { '@type': 'JobPosting', identifier: { value: '1234' }, title: 'Software Engineering Intern',
+        baseSalary: { currency: 'USD', value: { value: 99, unitText: 'HOUR' } } },
+      { '@type': 'JobPosting', identifier: { value: '456' }, title: 'Software Engineering Intern' },
+    ] })]);
+    expect(extractVerifiedPageMetadataEvidence({
+      expectedTitle: 'Software Engineering Intern', expectedPostingId: '123', page: { title: 'Careers at Acme' },
+      jsonLdArtifacts: prefixCollision, sourceId: 'community-acme', sourceUrl: 'https://careers.acme.test/jobs', observedAt, exactPosting: true,
+    })).toEqual([]);
   });
 
   it('is deterministic across write order and preserves an existing scalar on an equal-authority conflict', () => {

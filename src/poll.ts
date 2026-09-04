@@ -23,7 +23,7 @@ import { classifyDestination, matchingBrowserDestination, requiresBrowserVerific
 import { reviewedBoardIndex } from './sources/index.js';
 import { sourceQualityFailures } from './sources/quality.js';
 import { SourceFetchError } from './sources/source-error.js';
-import { extractVerifiedPageMetadataEvidence, mergeRoleMetadataEvidence, projectRoleMetadata, ROLE_METADATA_EXTRACTION_VERSION } from './role-metadata.js';
+import { extractVerifiedPageMetadataEvidence, mergeRoleMetadataEvidence, projectRoleMetadata, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION } from './role-metadata.js';
 import { failedSourceHealth, sourceFailureOutcome, successfulSourceHealth } from './source-health.js';
 import type {
   Internship,
@@ -788,7 +788,7 @@ export class IngestionRunner {
               version: ROLE_METADATA_EXTRACTION_VERSION,
               artifactHash: pageEvidence.contentHash ?? pageEvidence.renderedEvidenceHash ?? createHash('sha256').update(JSON.stringify({ url: pageEvidence.url, title: pageEvidence.title, description: pageEvidence.description })).digest('hex'),
               observedAt: inspectedAt,
-              outcome: pageMetadata.length ? 'extracted' : 'no-explicit-metadata',
+              outcome: pageMetadata.some(roleMetadataEvidenceHasFields) ? 'extracted' : 'no-explicit-metadata',
             },
           };
           metadataValidated.set(id, applicationPageMetadataVersion);

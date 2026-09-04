@@ -7,9 +7,9 @@ import type { ApplicationPageEvidence } from '../src/core/application-url.js';
 import { reachabilityFromFailure, type Reachability } from '../src/core/application-verification.js';
 import { combineRenderedFrameEvidence, type RenderedFrameSnapshot } from '../src/rendered-destination-evidence.js';
 import type { CatalogAdmissionReason, Internship, ProcessedListing, ProviderIdentity, SourceOccurrence } from '../src/types.js';
-import { D1CatalogAdmissionStore } from './catalog-admission-store.js';
+import { D1CatalogAdmissionStore, ROLE_METADATA_REVALIDATION_MS } from './catalog-admission-store.js';
 import { D1InternshipStore } from './d1-store.js';
-import { extractVerifiedPageMetadataEvidence, mergeRoleMetadataEvidence, projectRoleMetadata, ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
+import { extractVerifiedPageMetadataEvidence, mergeRoleMetadataEvidence, projectRoleMetadata, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
 import type { D1Database, MessageBatch, Queue } from './types.js';
 
 export interface DestinationVerificationMessage {
@@ -126,7 +126,7 @@ export async function persistDestinationAdmission(input: {
       version: message.metadataExtractionVersion ?? 1,
       artifactHash: evidence.contentHash ?? evidence.renderedEvidenceHash ?? createHash('sha256').update(JSON.stringify({ url: evidence.url, title: evidence.title, description: evidence.description })).digest('hex'),
       observedAt: inspectedAt,
-      outcome: extracted.length ? 'extracted' as const : 'no-explicit-metadata' as const,
+      outcome: extracted.some(roleMetadataEvidenceHasFields) ? 'extracted' as const : 'no-explicit-metadata' as const,
     } } : {}),
   };
   const sourceReferences = job.sourceReferences.map((item) => item === reference ? enrichedReference : item);
@@ -421,6 +421,20 @@ export async function enqueueDueDestinationVerifications(
       jobId: candidate.jobId, sourceId: candidate.sourceId, externalId: candidate.externalId,
       providerIdentity: candidate.providerIdentity, candidateUrl: candidate.candidateUrl, reason: 'historical-backfill',
       metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+    }, now.toISOString()));
+    queued += 1;
+  }
+  const metadataObservedBefore = new Date(now.getTime() - ROLE_METADATA_REVALIDATION_MS).toISOString();
+  for (const candidate of await operations.metadataVerificationCandidates(100, {
+    observedBefore: metadataObservedBefore,
+    includeUnobserved: false,
+    requireProjectedEvidence: true,
+  })) {
+    await env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage({
+      jobId: candidate.jobId, sourceId: candidate.sourceId, externalId: candidate.externalId,
+      providerIdentity: candidate.providerIdentity, candidateUrl: candidate.candidateUrl, reason: 'content-change',
+      metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+      ...(candidate.metadataArtifactHash ? { metadataArtifactHash: candidate.metadataArtifactHash } : {}),
     }, now.toISOString()));
     queued += 1;
   }
