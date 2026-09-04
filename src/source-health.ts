@@ -181,7 +181,8 @@ export function failedSourceHealth(input: {
 }): SourceHealth {
   const category = sourceFailureCategory(input.error);
   const failures = (input.previous?.consecutiveFailures ?? 0) + 1;
-  const quarantined = input.previous?.state === 'quarantined' || shouldQuarantine(category, input.error, failures);
+  const previouslyQuarantined = input.previous?.state === 'quarantined';
+  const quarantined = previouslyQuarantined || shouldQuarantine(category, input.error, failures);
   const diagnostic = safeDiagnostic(input.error);
   const outcome = sourceFailureOutcome(input.error);
   const durationMs = Math.max(0, Date.parse(input.completedAt) - Date.parse(input.startedAt));
@@ -235,7 +236,10 @@ export function failedSourceHealth(input: {
       incidentUpdatedAt: input.completedAt,
       ...(input.previous?.incidentAcknowledgedAt ? { incidentAcknowledgedAt: input.previous.incidentAcknowledgedAt } : {}),
     } : {}),
-    ...(quarantined ? { quarantinedAt: input.completedAt, quarantineReason: diagnostic } : {}),
+    ...(quarantined ? {
+      quarantinedAt: previouslyQuarantined ? input.previous?.quarantinedAt ?? input.completedAt : input.completedAt,
+      quarantineReason: previouslyQuarantined ? input.previous?.quarantineReason ?? diagnostic : diagnostic,
+    } : {}),
     ...(input.previous?.rawRows !== undefined ? { rawRows: input.previous.rawRows, rawCount: input.previous.rawRows } : {}),
     ...(input.previous?.validRows !== undefined ? { validRows: input.previous.validRows, validCount: input.previous.validRows } : {}),
     ...(input.previous?.eligibleRows !== undefined ? { eligibleRows: input.previous.eligibleRows, eligibleCount: input.previous.eligibleRows } : {}),

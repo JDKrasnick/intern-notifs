@@ -107,7 +107,15 @@ describe('source health', () => {
       completedAt: '2026-07-29T12:10:01.000Z',
       error: new SourceFetchError('request timed out', 'transport'),
     });
-    expect(failedRecovery).toMatchObject({ state: 'quarantined', sourceStatus: 'paused', consecutiveFailures: 2 });
+    expect(failedRecovery).toMatchObject({
+      state: 'quarantined',
+      sourceStatus: 'paused',
+      consecutiveFailures: 2,
+      quarantinedAt: quarantined.quarantinedAt,
+      quarantineReason: quarantined.quarantineReason,
+      lastSafeDiagnostic: 'request timed out',
+      recentRuns: expect.arrayContaining([expect.objectContaining({ diagnostic: 'request timed out' })]),
+    });
   });
 
   it('promotes an automatically quiet source when eligible roles appear', () => {
