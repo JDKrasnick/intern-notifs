@@ -173,6 +173,11 @@ describe('posting identity', () => {
     ['Workday', 'https://micron.wd1.myworkdayjobs.com/External/job/Boise/Intern_JR108448', 'https://micron.wd1.myworkdayjobs.com/external/job/Boise/renamed-role_JR108448'],
     ['Workday route host', 'https://micron.wd1.myworkdayjobs.com/External/job/Boise/Intern_JR108448', 'https://micron.wd5.myworkdayjobs.com/en-US/External/job/Intern_JR108448'],
     ['ByteDance family', 'https://lifeattiktok.com/search/7672883129493948677', 'https://jobs.bytedance.com/en/position/7672883129493948677/detail'],
+    ['Tesla Careers', 'https://www.tesla.com/careers/search/job/275558', 'https://www.tesla.com/en_CA/careers/search/job/internship-distributed-systems-engineer-275558'],
+    ['Meta Careers', 'https://www.metacareers.com/jobs/1027438186737957', 'https://www.metacareers.com/profile/job_details/1027438186737957/'],
+    ['Jane Street', 'https://www.janestreet.com/join-jane-street/position/8599644002', 'https://www.janestreet.com/join-jane-street/apply/8599644002/'],
+    ['Goldman Sachs', 'https://higher.gs.com/roles/171567', 'https://higher.gs.com/roles/171567?type=students'],
+    ['IMC', 'https://www.imc.com/us/careers/jobs/4823924101', 'https://www.imc.com/gb/careers/jobs/4823924101?ref=feed'],
   ])('matches %s URL aliases', (_provider, left, right) => {
     expect(postingIdentity(left)).toBe(postingIdentity(right));
     expect(postingIdentityKey(left)).toBe(postingIdentityKey(right));
@@ -200,10 +205,34 @@ describe('posting identity', () => {
       `https://jobs.ashbyhq.com/acme/${uuid}/frontend`,
       'https://job-boards.greenhouse.io/acme/jobs/123/backend',
       'https://jobs.bytedance.com/en/position/123/frontend',
+      'https://www.tesla.com/careers/search/job/software-intern',
+      'https://www.metacareers.com/jobs/not-a-number',
+      'https://www.janestreet.com/join-jane-street/position/not-a-number',
+      'https://higher.gs.com/roles/not-a-number',
+      'https://www.imc.com/us/careers/jobs/not-a-number',
     ]) expect(providerPostingReference(url).provider).toBe('unknown');
     expect(providerPostingReference(`https://jobs.lever.co/acme/${uuid}/apply`).provider).toBe('lever');
     expect(providerPostingReference(`https://jobs.ashbyhq.com/acme/${uuid}/application`).provider).toBe('ashby');
     expect(providerPostingReference('https://jobs.bytedance.com/en/position/123/detail').provider).toBe('bytedance');
+  });
+
+  it.each([
+    ['tesla', 'https://www.tesla.com/careers/search/job/internship-software-engineer-275558', 'tesla', '275558'],
+    ['meta', 'https://www.metacareers.com/profile/job_details/1027438186737957/', 'meta', '1027438186737957'],
+    ['janestreet', 'https://www.janestreet.com/join-jane-street/position/8599644002/', 'janestreet', '8599644002'],
+    ['goldman-sachs', 'https://higher.gs.com/roles/171567', 'goldman-sachs', '171567'],
+    ['imc', 'https://www.imc.com/us/careers/jobs/4823924101', 'imc', '4823924101'],
+  ] as const)('confirms a reviewed %s route directly', (provider, applicationUrl, tenant, postingId) => {
+    expect(resolvePostingIdentityDecision({
+      sourceId: 'reviewed-community', externalId: applicationUrl, applicationUrl,
+      observedAt: '2026-09-01T12:00:00.000Z',
+    })).toMatchObject({
+      decision: {
+        status: 'confirmed', evidenceKind: 'immutable-provider-id',
+        exactKey: `provider:${provider}:${tenant}:${postingId}`,
+      },
+      identity: { provider, tenant, providerPostingId: postingId },
+    });
   });
 
   it('groups location variants only as a soft role family', () => {

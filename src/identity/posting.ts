@@ -75,6 +75,24 @@ export function providerPostingReference(input: string): ProviderPostingReferenc
   if (host.endsWith('.myworkdayjobs.com') && (match = /_([^/_]+)\/?$/i.exec(url.pathname))) {
     return { provider: 'workday', tenant: host.split('.')[0]!.toLowerCase(), postingId: match[1]!.toLowerCase() };
   }
+  if (host === 'tesla.com'
+      && (match = /^(?:\/[a-z]{2}(?:_[a-z]{2})?)?\/careers\/search\/job\/(?:[^/]*-)?(\d+)\/?$/i.exec(url.pathname))) {
+    return { provider: 'tesla', tenant: 'tesla', postingId: match[1] };
+  }
+  if (host === 'metacareers.com'
+      && (match = /^\/(?:jobs|profile\/job_details)\/(\d+)\/?$/i.exec(url.pathname))) {
+    return { provider: 'meta', tenant: 'meta', postingId: match[1] };
+  }
+  if (host === 'janestreet.com'
+      && (match = /^\/join-jane-street\/(?:position|apply)\/(\d+)\/?$/i.exec(url.pathname))) {
+    return { provider: 'janestreet', tenant: 'janestreet', postingId: match[1] };
+  }
+  if (host === 'higher.gs.com' && (match = /^\/roles\/(\d+)\/?$/i.exec(url.pathname))) {
+    return { provider: 'goldman-sachs', tenant: 'goldman-sachs', postingId: match[1] };
+  }
+  if (host === 'imc.com' && (match = /^\/[a-z]{2}\/careers\/jobs\/(\d+)\/?$/i.exec(url.pathname))) {
+    return { provider: 'imc', tenant: 'imc', postingId: match[1] };
+  }
   return { provider: 'unknown' };
 }
 
