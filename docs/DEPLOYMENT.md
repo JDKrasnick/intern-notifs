@@ -204,8 +204,8 @@ npm run source:trusted-community:dry-run -- --record
 git diff -- docs/trusted-community/simplify-summer-2026-baseline.json
 ```
 
-The 2026-09-04 run observed 2,074 raw rows, 1,738 technically eligible rows,
-1,299 exact route shapes, 439 browser-inspection candidates, zero surviving
+The 2026-09-04 run observed 2,079 raw rows, 1,737 technically eligible rows,
+1,091 exact route shapes, 646 browser-inspection candidates, zero surviving
 aggregators, and zero duplicate occurrence IDs. Review every candidate route
 family and every failure class; require zero identity conflicts, duplicate
 alerts, and outbox writes. The dry run calculates the numeric circuit thresholds
@@ -217,7 +217,7 @@ Roll out in this order:
    `trusted_community_catalog_enabled=false`. Confirm Simplify policy reports
    `alertMode: disabled` and the existing catalog/outbox counts do not change.
 2. Run the current dry run, drain destination-verification work, and inspect all
-   439 browser candidates plus aggregate, gone, blocked/unresolved, malformed,
+   646 browser candidates plus aggregate, gone, blocked/unresolved, malformed,
    mismatch, and conflict results. Require zero surviving aggregators and
    duplicate occurrence IDs.
 3. Obtain owner approval for the recorded report and reviewed infrastructure

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import simplifyBaselineReport from '../docs/trusted-community/simplify-summer-2026-baseline.json' with { type: 'json' };
 import { deriveCanonicalAdmission, evaluateCatalogAdmission } from '../src/catalog-admission.js';
 import { CatalogReconciler } from '../src/ingestion/catalog-reconciler.js';
 import { Poller } from '../src/poll.js';
 import { MemoryInternshipStore } from '../src/store.js';
+import { trustedCommunityBaselineReport } from '../src/sources/trusted-community-baseline.js';
 import {
   activeTrustedCommunityPolicy,
   advanceTrustedCommunityQualification,
@@ -181,23 +183,78 @@ describe('trusted community source policy', () => {
 });
 
 describe('trusted community source health', () => {
-  it('derives explicit numeric thresholds from the recorded baseline', () => {
-    expect(trustedCommunityThresholds(SIMPLIFY_TRUSTED_COMMUNITY_BASELINE)).toEqual(SIMPLIFY_TRUSTED_COMMUNITY_THRESHOLDS);
-    expect(SIMPLIFY_TRUSTED_COMMUNITY_THRESHOLDS).toMatchObject({
-      minimumRawRows: 1452,
-      minimumEligibleRows: 1217,
-      minimumInspectedCandidates: 100,
-      minimumInspectionCoverage: 0.9,
+  it('derives every route metric from technically eligible listings only', () => {
+    const technicalExact = listing({
+      applyUrl: 'https://jobs.lever.co/acme/role-1',
+      providerIdentity: {
+        provider: 'lever', sourceId: 'simplify-summer-2026',
+        sourceUrl: 'https://github.com/SimplifyJobs/Summer2027-Internships', tenant: 'acme', postingId: 'role-1',
+      },
     });
+    const technicalBrowser = listing({
+      externalId: 'README.md:https://careers.example.test/openings',
+      applyUrl: 'https://careers.example.test/openings',
+    });
+    const shelvedExact = listing({
+      externalId: 'README.md:https://jobs.lever.co/acme/role-3',
+      applyUrl: 'https://jobs.lever.co/acme/role-3',
+      technical: false,
+      providerIdentity: {
+        provider: 'lever', sourceId: 'simplify-summer-2026',
+        sourceUrl: 'https://github.com/SimplifyJobs/Summer2027-Internships', tenant: 'acme', postingId: 'role-3',
+      },
+    });
+    const report = trustedCommunityBaselineReport({
+      sourceId: 'simplify-summer-2026',
+      generatedAt: inspectedAt,
+      sourcePolicyVersion: 'test-v1',
+      processed: {
+        listings: [technicalExact, technicalBrowser, shelvedExact],
+        decisions: [],
+        counts: { raw: 3, valid: 3, eligible: 2, shelved: 1, filtered: 0, withheld: 0 },
+      },
+      diagnostics: { rejectedAggregatorRows: 0, survivingAggregatorRows: 0, duplicateOccurrenceIds: 0 },
+    });
+
+    expect(report.counts).toMatchObject({
+      technicallyEligibleRows: 2,
+      exactRouteShapes: 1,
+      browserInspectionCandidates: 1,
+    });
+    expect(report.rates).toMatchObject({ exactRouteShare: 0.5, browserInspectionShare: 0.5 });
+  });
+
+  it('derives explicit numeric thresholds from the recorded baseline', () => {
+    expect(SIMPLIFY_TRUSTED_COMMUNITY_BASELINE).toEqual({
+      rawRows: simplifyBaselineReport.counts.rawRows,
+      eligibleRows: simplifyBaselineReport.counts.technicallyEligibleRows,
+      destinationFailures: simplifyBaselineReport.counts.rejectedAggregatorRows,
+      browserInspectionCandidates: simplifyBaselineReport.counts.browserInspectionCandidates,
+      catalogAdmissions: simplifyBaselineReport.counts.technicallyEligibleRows,
+      alertQualifications: simplifyBaselineReport.counts.exactRouteShapes,
+    });
+    expect(trustedCommunityThresholds(SIMPLIFY_TRUSTED_COMMUNITY_BASELINE)).toEqual(SIMPLIFY_TRUSTED_COMMUNITY_THRESHOLDS);
+    expect(SIMPLIFY_TRUSTED_COMMUNITY_THRESHOLDS).toEqual(simplifyBaselineReport.thresholds);
   });
 
   it('applies structural gates immediately and rate gates only at sufficient coverage', () => {
+    const thresholds = SIMPLIFY_TRUSTED_COMMUNITY_THRESHOLDS;
     const healthy = {
-      rawRows: 2074, eligibleRows: 1738, rejectedAggregatorRows: 0, survivingAggregatorRows: 0,
-      duplicateOccurrenceIds: 0, inspectedCandidates: 1738, browserInspectionCandidates: 439,
+      rawRows: SIMPLIFY_TRUSTED_COMMUNITY_BASELINE.rawRows,
+      eligibleRows: SIMPLIFY_TRUSTED_COMMUNITY_BASELINE.eligibleRows,
+      rejectedAggregatorRows: 0, survivingAggregatorRows: 0,
+      duplicateOccurrenceIds: 0,
+      inspectedCandidates: SIMPLIFY_TRUSTED_COMMUNITY_BASELINE.eligibleRows,
+      browserInspectionCandidates: SIMPLIFY_TRUSTED_COMMUNITY_BASELINE.browserInspectionCandidates,
       destinationFailures: 0, destinationFailuresByReason: {},
-      inspectionCoverage: 1, browserInspectionShare: 439 / 1738, destinationFailureRate: 0,
-      catalogYield: 1738 / 2074, alertYield: 1299 / 1738,
+      inspectionCoverage: 1,
+      browserInspectionShare: SIMPLIFY_TRUSTED_COMMUNITY_BASELINE.browserInspectionCandidates
+        / SIMPLIFY_TRUSTED_COMMUNITY_BASELINE.eligibleRows,
+      destinationFailureRate: 0,
+      catalogYield: SIMPLIFY_TRUSTED_COMMUNITY_BASELINE.catalogAdmissions
+        / SIMPLIFY_TRUSTED_COMMUNITY_BASELINE.rawRows,
+      alertYield: SIMPLIFY_TRUSTED_COMMUNITY_BASELINE.alertQualifications
+        / SIMPLIFY_TRUSTED_COMMUNITY_BASELINE.eligibleRows,
     };
     expect(trustedCommunityCircuitBreaches({ metrics: healthy, alertMode: 'exact-identity-or-two-complete-snapshots' })).toEqual([]);
     expect(trustedCommunityCircuitBreaches({ metrics: { ...healthy, duplicateOccurrenceIds: 1 }, alertMode: 'disabled' }))
@@ -213,13 +270,13 @@ describe('trusted community source health', () => {
     expect(trustedCommunityCircuitBreaches({ metrics: { ...healthy, destinationFailureRate: 0.9 }, alertMode: 'disabled' }))
       .toContain('destination failure rate exceeded');
     expect(trustedCommunityCircuitBreaches({ metrics: { ...healthy, rawRows: 0 }, alertMode: 'disabled' }))
-      .toEqual(expect.arrayContaining(['parser returned zero rows', 'raw rows 0 below 1452']));
+      .toEqual(expect.arrayContaining(['parser returned zero rows', `raw rows 0 below ${thresholds.minimumRawRows}`]));
     expect(trustedCommunityCircuitBreaches({ metrics: { ...healthy, survivingAggregatorRows: 1 }, alertMode: 'disabled' }))
       .toContain('1 aggregator row(s) survived rejection');
-    expect(trustedCommunityCircuitBreaches({ metrics: { ...healthy, rawRows: 1451 }, alertMode: 'disabled' }))
-      .toContain('raw rows 1451 below 1452');
-    expect(trustedCommunityCircuitBreaches({ metrics: { ...healthy, eligibleRows: 1216 }, alertMode: 'disabled' }))
-      .toContain('eligible rows 1216 below 1217');
+    expect(trustedCommunityCircuitBreaches({ metrics: { ...healthy, rawRows: thresholds.minimumRawRows - 1 }, alertMode: 'disabled' }))
+      .toContain(`raw rows ${thresholds.minimumRawRows - 1} below ${thresholds.minimumRawRows}`);
+    expect(trustedCommunityCircuitBreaches({ metrics: { ...healthy, eligibleRows: thresholds.minimumEligibleRows - 1 }, alertMode: 'disabled' }))
+      .toContain(`eligible rows ${thresholds.minimumEligibleRows - 1} below ${thresholds.minimumEligibleRows}`);
     expect(trustedCommunityCircuitBreaches({ metrics: { ...healthy, browserInspectionShare: 1 }, alertMode: 'disabled' }))
       .toContain('browser inspection share exceeded');
     expect(trustedCommunityCircuitBreaches({ metrics: { ...healthy, catalogYield: 0 }, alertMode: 'disabled' }))
@@ -294,16 +351,17 @@ describe('trusted community source health', () => {
   it('keeps the final migration hidden and uncheckpointed when current inspection coverage is incomplete', async () => {
     const store = new MemoryInternshipStore();
     const sourceId = 'simplify-summer-2026';
+    const { minimumRawRows, minimumEligibleRows } = SIMPLIFY_TRUSTED_COMMUNITY_THRESHOLDS;
     const previous = {
       sourceId,
       successfulFetches: 1,
-      lastRowCount: 1217,
-      lastRawCount: 1452,
+      lastRowCount: minimumEligibleRows,
+      lastRawCount: minimumRawRows,
       contentHash: 'prior-snapshot',
       admissionConfigurationVersion: 'registry-v1',
     };
     await store.putCheckpoint(previous);
-    const listings = Array.from({ length: 1217 }, (_, index) => {
+    const listings = Array.from({ length: minimumEligibleRows }, (_, index) => {
       const postingId = `role-${index}`;
       const host = index % 2 === 0 ? 'careers-a.example.test' : 'careers-b.example.test';
       return listing({
@@ -320,7 +378,7 @@ describe('trusted community source health', () => {
       async fetch(): Promise<SourceFetchResult> {
         return {
           sourceId,
-          rawRowCount: 1452,
+          rawRowCount: minimumRawRows,
           listings,
           notModified: false,
           checkpoint: { sourceId, successfulFetches: 2, lastRowCount: listings.length, contentHash: 'current-snapshot' },
@@ -344,7 +402,8 @@ describe('trusted community source health', () => {
     const result = await new Poller([adapter], store, () => new Date(inspectedAt), undefined,
       undefined, undefined, undefined, resolver, true, true).poll({ maxAdmissionMigrationListingsPerSourceRun: 0 });
 
-    expect(result.failures).toContain('simplify-summer-2026: trusted-community circuit breaker: inspection coverage 8.22% below 90.00%');
+    const inspectedCoverage = ((100 / minimumEligibleRows) * 100).toFixed(2);
+    expect(result.failures).toContain(`simplify-summer-2026: trusted-community circuit breaker: inspection coverage ${inspectedCoverage}% below 90.00%`);
     expect(result.continuationSources).toEqual([]);
     expect(await store.getCheckpoint(sourceId)).toEqual(previous);
     expect(await store.listCatalog()).toEqual([]);

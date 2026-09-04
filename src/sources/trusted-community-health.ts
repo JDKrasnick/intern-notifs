@@ -1,3 +1,4 @@
+import simplifyBaselineReport from '../../docs/trusted-community/simplify-summer-2026-baseline.json' with { type: 'json' };
 import type {
   CatalogAdmissionReason,
   ProcessedListing,
@@ -27,12 +28,12 @@ export interface TrustedCommunityThresholds {
 }
 
 export const SIMPLIFY_TRUSTED_COMMUNITY_BASELINE: TrustedCommunityBaseline = {
-  rawRows: 2074,
-  eligibleRows: 1738,
-  destinationFailures: 0,
-  browserInspectionCandidates: 439,
-  catalogAdmissions: 1738,
-  alertQualifications: 1299,
+  rawRows: simplifyBaselineReport.counts.rawRows,
+  eligibleRows: simplifyBaselineReport.counts.technicallyEligibleRows,
+  destinationFailures: simplifyBaselineReport.counts.rejectedAggregatorRows,
+  browserInspectionCandidates: simplifyBaselineReport.counts.browserInspectionCandidates,
+  catalogAdmissions: simplifyBaselineReport.counts.technicallyEligibleRows,
+  alertQualifications: simplifyBaselineReport.counts.exactRouteShapes,
 };
 
 export function trustedCommunityThresholds(baseline: TrustedCommunityBaseline): TrustedCommunityThresholds {
