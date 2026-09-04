@@ -187,6 +187,60 @@ and Resend failures. Immediate aggregate/gone quarantines, incident openings,
 and grace-deadline warnings are grouped by source, host, and reason and deduped
 through the D1 delivery ledger.
 
+### Trusted community source rollout
+
+`simplify-summer-2026` is the only trusted-community source. The source ID stays
+unchanged so checkpoints, occurrences, job IDs, saves, discovery times, and
+delivery history continue in place. Checked-in runtime defaults keep
+`TRUSTED_COMMUNITY_CATALOG_ENABLED=false`; do not add an alert environment flag.
+Alert behavior lives in the versioned policy in `src/sources/trust-policy.ts`.
+
+The sanitized baseline report is
+[`trusted-community/simplify-summer-2026-baseline.json`](trusted-community/simplify-summer-2026-baseline.json).
+Regenerate it from a complete current source fetch before activation:
+
+```bash
+npm run source:trusted-community:dry-run -- --record
+git diff -- docs/trusted-community/simplify-summer-2026-baseline.json
+```
+
+The 2026-09-04 run observed 2,074 raw rows, 1,738 technically eligible rows,
+1,299 exact route shapes, 439 browser-inspection candidates, zero surviving
+aggregators, and zero duplicate occurrence IDs. Review every candidate route
+family and every failure class; require zero identity conflicts, duplicate
+alerts, and outbox writes. The dry run calculates the numeric circuit thresholds
+from those counts—operators must not hand-edit them.
+
+Roll out in this order:
+
+1. Deploy the Worker, queues, and infrastructure with
+   `trusted_community_catalog_enabled=false`. Confirm Simplify policy reports
+   `alertMode: disabled` and the existing catalog/outbox counts do not change.
+2. Run the current dry run, drain destination-verification work, and inspect all
+   439 browser candidates plus aggregate, gone, blocked/unresolved, malformed,
+   mismatch, and conflict results. Require zero surviving aggregators and
+   duplicate occurrence IDs.
+3. Obtain owner approval for the recorded report and reviewed infrastructure
+   plan. Set `trusted_community_catalog_enabled=true`; leave the source alert
+   mode disabled. The admission-version change performs bounded re-evaluation,
+   holds publication until a complete healthy evaluation, marks the admitted
+   backlog `baseline`, and permanently suppresses its alerts.
+4. Verify one complete healthy snapshot and inspect the count-only
+   `trusted_community_source_evaluated` metrics. A breach must leave the trusted
+   checkpoint unchanged and recover after one complete healthy snapshot.
+5. In a separate reviewed configuration change, set Simplify's alert mode to
+   `exact-identity-or-two-complete-snapshots` and bump its policy version. Do not
+   change the catalog gate for this step.
+6. After activation, require stable job IDs, `firstSeenAt`, saves, and delivery
+   history; one-time `catalogVisibleAt`; baseline ranking for the activation set;
+   no identity conflicts or fuzzy merges; correct pending indexes; and exactly
+   one deterministic `new-job` outbox event for each newly qualified role.
+
+Roll back exposure by setting `trusted_community_catalog_enabled=false`. Roll
+back alert eligibility by restoring a reviewed disabled source-policy version.
+Never delete qualification evidence, source occurrences, identity decisions,
+notification tombstones, outbox rows, saves, or delivery history.
+
 Greenhouse, Lever, and Ashby use dedicated half-hour EventBridge schedules,
 dispatcher Lambdas, FIFO work queues, two-minute workers, and dead-letter
 queues. Published boards are checked every thirty minutes whether active or
