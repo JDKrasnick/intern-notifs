@@ -50,7 +50,8 @@ function job(): Internship {
 
 function subject() {
   const database = new DatabaseSync(':memory:');
-  for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0008_catalog_admission_occurrence_repair.sql']) {
+  for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0008_catalog_admission_occurrence_repair.sql',
+    '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   const db = sqliteD1(database);
@@ -293,6 +294,55 @@ describe('D1 catalog admission operations', () => {
       } });
     expect(await jobs.getJob(current.jobId)).toMatchObject({ admission: { postingAttribution: 'attributed',
       catalogEligible: true, alertEligible: true }, sourceReferences: [{ admission: { postingAttribution: 'attributed' } }] });
+  });
+
+  it('retires JSON-LD metadata that disappears from a refreshed exact page', async () => {
+    const { admission: operations, jobs, database } = subject();
+    await operations.putCanonicalEmployer({ id: 'acme', displayName: 'Acme', reviewedAt: '2026-08-28T00:00:00Z',
+      reviewedBy: 'reviewer' }, '2026-08-28T00:00:00Z');
+    await operations.supersedeEmployerMapping({ id: 'community-acme', provider: 'greenhouse', scope: 'employer:acme',
+      canonicalEmployerId: 'acme', reviewedAt: '2026-08-28T00:00:00Z', reviewedBy: 'reviewer' });
+    const reference = {
+      sourceId: 'community-list', provenance: 'reviewed-community' as const, externalId: 'row-1', document: 'README.md',
+      sourceUrl: 'https://github.com/example/jobs', row: 1, company: 'Acme', title: 'Software Engineering Intern',
+      location: 'Remote', locations: ['Remote'], season: 'summer-2027',
+      applyUrl: 'https://careers.acme.test/openings?gh_jid=1234567', compensation: { raw: '' }, state: 'open' as const,
+    };
+    const current = { ...job(), sourceReferences: [reference] };
+    await jobs.putInternship(current);
+    await jobs.putSourceOccurrence({ sourceId: reference.sourceId, externalId: reference.externalId, jobId: current.jobId,
+      occurrence: reference, present: true, consecutiveOmissions: 0, changedSnapshotHash: 'snapshot',
+      changedAt: '2026-08-28T00:00:00Z', firstObservedAt: '2026-08-28T00:00:00Z', firstObservedAtPrecision: 'exact' });
+    const message: DestinationVerificationMessage = { version: 1, jobId: current.jobId, sourceId: reference.sourceId,
+      externalId: reference.externalId, providerIdentity: { provider: 'greenhouse', sourceId: reference.sourceId,
+        sourceUrl: reference.sourceUrl, employerScope: 'employer:acme', postingId: '1234567' },
+      candidateUrl: reference.applyUrl, reason: 'first-sight', queuedAt: '2026-08-28T00:00:00Z', metadataExtractionVersion: 1 };
+    const pageEvidence = {
+      url: reference.applyUrl, title: reference.title, contentExcerpt: `${reference.title} ${'Role details. '.repeat(30)}`,
+      postingIdPresent: true, applicationFormPresent: true,
+      confidence: { score: 100, level: 'high' as const, recommendation: 'alert-eligible' as const, signals: ['browser-visible evidence'] },
+    };
+    await persistDestinationAdmission({ jobs, operations, message, job: current, reference, reachability: 'live',
+      inspectedAt: '2026-08-28T00:01:00Z', browserVisible: true, evidence: { ...pageEvidence,
+        metadataArtifacts: [{ title: reference.title, identifier: '1234567', compensationText: 'USD $40-$50/hour' }] } });
+    const enriched = (await jobs.getJob(current.jobId))!;
+    expect(enriched.compensation).toMatchObject({ minHourlyUSD: 40, maxHourlyUSD: 50 });
+
+    const enrichedReference = enriched.sourceReferences[0]!;
+    await persistDestinationAdmission({ jobs, operations, message: { ...message, metadataBackfillToken: 'collection-1' },
+      job: enriched, reference: enrichedReference, reachability: 'live',
+      inspectedAt: '2026-08-29T00:01:00Z', browserVisible: true, evidence: pageEvidence });
+
+    expect((await jobs.getJob(current.jobId))?.compensation).toMatchObject({ minHourlyUSD: 40, maxHourlyUSD: 50 });
+    expect(database.prepare("SELECT count(*) AS count FROM role_metadata_evidence WHERE source_class = 'official-json-ld' AND is_current = 1").get())
+      .toEqual({ count: 0 });
+    const plan = await operations.stageRoleMetadataRepair('2026-08-29T00:02:00Z');
+    expect(plan.expectedJobs).toBe(1);
+    await operations.applyRoleMetadataRepair(plan.repairToken, plan.expectedJobs, plan.expectedOccurrences, '2026-08-29T00:03:00Z');
+    const refreshed = (await jobs.getJob(current.jobId))!;
+    expect(refreshed.compensation).toEqual({ raw: '' });
+    expect(refreshed.sourceReferences[0]?.metadataEvidence?.some((item) => item.sourceClass === 'official-json-ld')).toBe(false);
+    expect((await operations.roleMetadataAudit()).projectionOnlyOmissions).toEqual([]);
   });
 
   it('detects identical rendered artifacts observed for different posting IDs', async () => {

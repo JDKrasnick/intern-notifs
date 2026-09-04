@@ -1,5 +1,5 @@
 import type { SourceOccurrence } from '../types.js';
-import { mergeRoleMetadataEvidence } from '../role-metadata.js';
+import { mergeRoleMetadataEvidence, replaceVerifiedPageMetadataEvidence } from '../role-metadata.js';
 
 /**
  * Source occurrences are durably stored by source and external ID. Document
@@ -49,7 +49,9 @@ export function mergeSourceOccurrence(
     : incoming.providerEvidence ?? previous?.providerEvidence;
   const provenance = incoming.provenance ?? previous?.provenance;
   const admission = latestAdmission(previous?.admission, incoming.admission);
-  const metadataEvidence = mergeRoleMetadataEvidence(previous?.metadataEvidence, incoming.metadataEvidence);
+  const metadataEvidence = incoming.metadataExtraction
+    ? replaceVerifiedPageMetadataEvidence(previous?.metadataEvidence, incoming.metadataEvidence, incoming.sourceId)
+    : mergeRoleMetadataEvidence(previous?.metadataEvidence, incoming.metadataEvidence);
   return {
     ...previous,
     ...incoming,

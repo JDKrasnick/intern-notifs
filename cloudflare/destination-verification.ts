@@ -9,7 +9,7 @@ import { combineRenderedFrameEvidence, type RenderedFrameSnapshot } from '../src
 import type { CatalogAdmissionReason, Internship, ProcessedListing, ProviderIdentity, SourceOccurrence } from '../src/types.js';
 import { D1CatalogAdmissionStore, ROLE_METADATA_REVALIDATION_MS } from './catalog-admission-store.js';
 import { D1InternshipStore } from './d1-store.js';
-import { extractVerifiedPageMetadataEvidence, mergeRoleMetadataEvidence, projectRoleMetadata, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
+import { extractVerifiedPageMetadataEvidence, projectRoleMetadata, replaceVerifiedPageMetadataEvidence, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION, VERIFIED_PAGE_METADATA_SOURCES } from '../src/role-metadata.js';
 import type { D1Database, MessageBatch, Queue } from './types.js';
 
 export interface DestinationVerificationMessage {
@@ -120,8 +120,11 @@ export async function persistDestinationAdmission(input: {
       observedAt: inspectedAt,
       exactPosting: true,
     }) : [];
+  const metadataEvidence = evidence
+    ? replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, extracted, message.sourceId)
+    : reference.metadataEvidence;
   const enrichedReference = { ...reference, admission,
-    ...(extracted.length ? { metadataEvidence: mergeRoleMetadataEvidence(reference.metadataEvidence, extracted) } : {}),
+    ...(evidence ? { metadataEvidence } : {}),
     ...(evidence ? { metadataExtraction: {
       version: message.metadataExtractionVersion ?? 1,
       artifactHash: evidence.contentHash ?? evidence.renderedEvidenceHash ?? createHash('sha256').update(JSON.stringify({ url: evidence.url, title: evidence.title, description: evidence.description })).digest('hex'),
@@ -140,14 +143,17 @@ export async function persistDestinationAdmission(input: {
     observedAt: inspectedAt,
     ...(message.metadataBackfillToken ? { backfillToken: message.metadataBackfillToken } : {}),
   });
-  if (extracted.length) await operations.recordRoleMetadataEvidence(job.jobId, extracted, projected.conflicts, inspectedAt);
+  if (evidence) await operations.recordRoleMetadataEvidence(job.jobId, extracted, projected.conflicts, inspectedAt, {
+    sourceId: message.sourceId,
+    sourceClasses: VERIFIED_PAGE_METADATA_SOURCES,
+  });
   // Historical collection is deliberately staging-only. The guarded repair
   // endpoint performs the public job write after exact token/count checks.
   if (message.metadataBackfillToken) return { destination };
   await jobs.putAdmissionState(
     projected.job,
     occurrence ? { ...occurrence, occurrence: { ...occurrence.occurrence, admission,
-      ...(extracted.length ? { metadataEvidence: enrichedReference.metadataEvidence } : {}),
+      ...(evidence ? { metadataEvidence: enrichedReference.metadataEvidence } : {}),
       ...(enrichedReference.metadataExtraction ? { metadataExtraction: enrichedReference.metadataExtraction } : {}) }, changedAt: inspectedAt } : undefined,
   );
 

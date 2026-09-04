@@ -24,6 +24,7 @@ import type {
 } from './types.js';
 
 export const ROLE_METADATA_EXTRACTION_VERSION = 1;
+export const VERIFIED_PAGE_METADATA_SOURCES = ['official-json-ld', 'official-page'] as const;
 const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   'official-ats': 0,
   'official-json-ld': 1,
@@ -486,6 +487,19 @@ export function mergeRoleMetadataEvidence(current: readonly RoleMetadataEvidence
   const slots = new Map(current.map((item) => [metadataEvidenceSlot(item), item]));
   for (const item of incoming) slots.set(metadataEvidenceSlot(item), item);
   return [...slots.values()].sort((left, right) => metadataEvidenceSlot(left).localeCompare(metadataEvidenceSlot(right)));
+}
+
+/** Replaces the complete page-derived snapshot while preserving evidence owned by other stages. */
+export function replaceVerifiedPageMetadataEvidence(
+  current: readonly RoleMetadataEvidence[] = [],
+  incoming: readonly RoleMetadataEvidence[] = [],
+  sourceId: string,
+): RoleMetadataEvidence[] {
+  const replaced = new Set<EvidenceSource>(VERIFIED_PAGE_METADATA_SOURCES);
+  return mergeRoleMetadataEvidence(
+    current.filter((item) => item.sourceId !== sourceId || !replaced.has(item.sourceClass)),
+    incoming,
+  );
 }
 
 function priority(value: { provenance: FieldProvenance[] }): number {

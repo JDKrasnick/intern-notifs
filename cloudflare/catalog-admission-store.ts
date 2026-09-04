@@ -11,6 +11,7 @@ import type {
   CatalogAdmission,
   DestinationReviewRule,
   EmployerMapping,
+  EvidenceSource,
   Internship,
   ProviderIdentity,
   SourceOccurrence,
@@ -18,7 +19,7 @@ import type {
   MetadataConflict,
   RoleMetadataEvidence,
 } from '../src/types.js';
-import { mergeRoleMetadataEvidence, projectRoleMetadata, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION, unsupportedMetadataCurrencies, unsupportedMetadataPeriods } from '../src/role-metadata.js';
+import { projectRoleMetadata, replaceVerifiedPageMetadataEvidence, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION, unsupportedMetadataCurrencies, unsupportedMetadataPeriods } from '../src/role-metadata.js';
 import type { D1Database } from './types.js';
 
 export const ATOMIC_REPAIR_RECORD_LIMIT = 900;
@@ -199,8 +200,14 @@ export class D1CatalogAdmissionStore {
     evidence: readonly RoleMetadataEvidence[],
     conflicts: readonly MetadataConflict[],
     recordedAt: string,
+    replace?: { sourceId: string; sourceClasses: readonly EvidenceSource[] },
   ): Promise<void> {
     const statements = [];
+    if (replace?.sourceClasses.length) {
+      statements.push(this.db.prepare(`UPDATE role_metadata_evidence SET is_current = 0
+        WHERE job_id = ? AND source_id = ? AND source_class IN (${replace.sourceClasses.map(() => '?').join(', ')}) AND is_current = 1`)
+        .bind(jobId, replace.sourceId, ...replace.sourceClasses));
+    }
     for (const item of evidence) {
       statements.push(this.db.prepare(`UPDATE role_metadata_evidence SET is_current = 0
         WHERE job_id = ? AND source_class = ? AND source_id = ? AND artifact_hash <> ? AND is_current = 1`)
@@ -279,7 +286,7 @@ export class D1CatalogAdmissionStore {
       const historical = evidenceByJob.get(job.jobId) ?? [];
       const sourceReferences = job.sourceReferences.map((reference) => {
         const matching = historical.filter((item) => item.sourceId === reference.sourceId);
-        return matching.length ? { ...reference, metadataEvidence: mergeRoleMetadataEvidence(reference.metadataEvidence, matching) } : reference;
+        return { ...reference, metadataEvidence: replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, matching, reference.sourceId) };
       });
       const projected = projectRoleMetadata({ ...job, sourceReferences }).job;
       const fields = ['compensation', 'programType', 'workMode', 'applicationDeadline', 'graduationWindow', 'locations', 'employerPublishedAt', 'employerUpdatedAt']
@@ -413,7 +420,7 @@ export class D1CatalogAdmissionStore {
       if (!historical.length) continue;
       const sourceReferences = job.sourceReferences.map((reference) => {
         const matching = historical.filter((item) => item.sourceId === reference.sourceId);
-        return matching.length ? { ...reference, metadataEvidence: mergeRoleMetadataEvidence(reference.metadataEvidence, matching) } : reference;
+        return { ...reference, metadataEvidence: replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, matching, reference.sourceId) };
       });
       const result = projectRoleMetadata({ ...job, sourceReferences });
       conflicts.push(...result.conflicts);

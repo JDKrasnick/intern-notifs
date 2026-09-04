@@ -23,7 +23,7 @@ import { classifyDestination, matchingBrowserDestination, requiresBrowserVerific
 import { reviewedBoardIndex } from './sources/index.js';
 import { sourceQualityFailures } from './sources/quality.js';
 import { SourceFetchError } from './sources/source-error.js';
-import { extractVerifiedPageMetadataEvidence, mergeRoleMetadataEvidence, projectRoleMetadata, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION } from './role-metadata.js';
+import { extractVerifiedPageMetadataEvidence, mergeRoleMetadataEvidence, projectRoleMetadata, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION, VERIFIED_PAGE_METADATA_SOURCES } from './role-metadata.js';
 import { failedSourceHealth, sourceFailureOutcome, successfulSourceHealth } from './source-health.js';
 import type {
   Internship,
@@ -1092,7 +1092,11 @@ export class IngestionRunner {
             committedJobIds.add(job.jobId);
             if (this.store.recordRoleMetadataEvidence && occurrence.occurrence.metadataEvidence?.length) {
               const projected = projectRoleMetadata(job);
-              await this.store.recordRoleMetadataEvidence(job.jobId, occurrence.occurrence.metadataEvidence, projected.conflicts, now);
+              await this.store.recordRoleMetadataEvidence(job.jobId, occurrence.occurrence.metadataEvidence, projected.conflicts, now,
+                occurrence.occurrence.metadataExtraction ? {
+                  sourceId: occurrence.sourceId,
+                  sourceClasses: VERIFIED_PAGE_METADATA_SOURCES,
+                } : undefined);
             }
             if (includeEvent) {
               consumedEvents.add(includeEvent.eventId);
