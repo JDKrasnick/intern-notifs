@@ -288,7 +288,8 @@ function applicability(segment: string, knownLocations: readonly string[]): Pick
     return terms.length > 0 && terms.every((term) => segment.toLowerCase().includes(term));
   });
   const prefix = /^\s*([A-Za-z][A-Za-z .,&/-]{2,60})\s*:/u.exec(segment)?.[1]?.trim();
-  if (!locations.length && prefix && !/^(?:salary|pay|compensation|range|base)$/iu.test(prefix)) locations.push(prefix);
+  const compensationLabel = prefix && /\b(?:salary|pay|compensation|wages?|earnings?|rate|range)\b/iu.test(prefix);
+  if (!locations.length && prefix && !compensationLabel && !/^base$/iu.test(prefix)) locations.push(prefix);
   const levels = educationLevels(segment);
   return {
     ...(locations.length ? { applicableLocations: normalizeLocations(locations) } : {}),

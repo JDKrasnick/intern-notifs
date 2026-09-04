@@ -53,6 +53,22 @@ describe('provider-neutral role metadata', () => {
     expect(compensationFromRanges(ranges)).toMatchObject({ minAnnualUSD: 90_000, maxAnnualUSD: 120_000 });
   });
 
+  it('does not mistake compensation headings for location applicability', () => {
+    const hourly = extractCompensationRanges('The pay range is: $40-$50/hour.', {
+      provenance: field, knownLocations: ['New York, NY'],
+    });
+    const annual = extractCompensationRanges('Base salary: $100,000-$120,000/year.', {
+      provenance: field, knownLocations: ['New York, NY'],
+    });
+    const locationSpecific = extractCompensationRanges('New York, NY: $45-$55/hour.', {
+      provenance: field, knownLocations: ['New York, NY'],
+    });
+    expect(compensationFromRanges(hourly)).toMatchObject({ minHourlyUSD: 40, maxHourlyUSD: 50 });
+    expect(compensationFromRanges(annual)).toMatchObject({ minAnnualUSD: 100_000, maxAnnualUSD: 120_000 });
+    expect(locationSpecific).toMatchObject([{ applicableLocations: ['New York, NY'] }]);
+    expect(compensationFromRanges(locationSpecific).minHourlyUSD).toBeUndefined();
+  });
+
   it('keeps a repeated-period pay expression as one range', () => {
     expect(extractCompensationRanges('The market range is USD $40/hour - $85/hour.', { provenance: field }))
       .toMatchObject([{ minAmount: 40, maxAmount: 85, currency: 'USD', period: 'hourly' }]);
