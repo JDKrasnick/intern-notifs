@@ -250,6 +250,18 @@ export function newJobNotificationEvent(sourceId: string, externalId: string, jo
   };
 }
 
+export function shouldPromoteDelayedNotification(input: {
+  previousOccurrenceAlertEligible?: boolean;
+  occurrenceAlertEligible?: boolean;
+  canonicalAlertEligible?: boolean;
+  baselineSuppressed?: boolean;
+}): boolean {
+  return input.previousOccurrenceAlertEligible !== true
+    && input.occurrenceAlertEligible === true
+    && input.canonicalAlertEligible === true
+    && input.baselineSuppressed !== true;
+}
+
 function closeOccurrence(job: Internship, state: SourceOccurrenceState, now: string): Internship {
   const sourceReferences = job.sourceReferences.map((reference) =>
     reference.sourceId === state.sourceId
@@ -309,10 +321,12 @@ export class CatalogReconciler {
         && stored.sourceReferences.length === 1
         && stored.sourceReferences[0]?.sourceId === input.sourceId
         && stored.sourceReferences[0]?.externalId === externalId);
-      const delayedPromotion = Boolean(existing
-        && priorById.get(externalId)?.occurrence.admission?.alertEligible !== true
-        && listing.admission?.alertEligible === true
-        && listing.trustedCommunityAlertQualification?.baselineSuppressed !== true);
+      const delayedPromotion = Boolean(existing && shouldPromoteDelayedNotification({
+        previousOccurrenceAlertEligible: priorById.get(externalId)?.occurrence.admission?.alertEligible,
+        occurrenceAlertEligible: listing.admission?.alertEligible,
+        canonicalAlertEligible: job.admission?.alertEligible,
+        baselineSuppressed: listing.trustedCommunityAlertQualification?.baselineSuppressed,
+      }));
       if (!existing || retryingUncommittedCreate) {
         if (input.baseline || !job.open || !job.technical || !matchesJobFilter(job, input.filter)
           || job.admission?.alertEligible === false

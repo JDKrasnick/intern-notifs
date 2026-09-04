@@ -459,4 +459,50 @@ describe('trusted community delayed promotion', () => {
     expect(result.notifications).toHaveLength(0);
     expect(result.jobs[0]).toMatchObject({ catalogRecency: 'baseline' });
   });
+
+  it('does not promote when the final canonical admission remains hidden by an official employer conflict', () => {
+    const reconciler = new CatalogReconciler();
+    const priorAdmission = { ...admission(false), catalogEligible: false };
+    const role = listing({ admission: admission(true), trustedCommunityAlertQualification: {
+      candidateKey: 'https://careers.example.test/jobs/role-1', validatedDestinationKey: 'https://careers.example.test/jobs/role-1',
+      consecutiveCompleteSnapshots: 2, lastCountedSuccessfulFetchSequence: 2, status: 'eligible',
+      basis: 'two-complete-snapshots', baselineSuppressed: false,
+    } });
+    const trustedReference = { ...role, admission: priorAdmission };
+    const officialAdmission = (id: string): CatalogAdmission => ({
+      ...admission(true), canonicalEmployer: { id, displayName: id }, employerResolution: 'resolved',
+      postingAttribution: 'attributed', reasonCodes: [], evidenceCodes: undefined,
+    });
+    const officialA = { ...trustedReference, sourceId: 'official-a', externalId: 'official-a',
+      provenance: 'official-ats' as const, admission: officialAdmission('employer-a') };
+    const officialB = { ...trustedReference, sourceId: 'official-b', externalId: 'official-b',
+      provenance: 'official-structured' as const, admission: officialAdmission('employer-b') };
+    const existing: Internship = {
+      jobId: 'job-1', company: role.company, title: role.title, location: role.location, season: role.season,
+      applyUrl: role.applyUrl, normalizedUrl: role.applyUrl, fingerprint: 'fp', compensation: { raw: '' },
+      sourceReferences: [trustedReference, officialA, officialB], technical: true, open: true,
+      admission: { ...priorAdmission, employerResolution: 'conflict', catalogEligible: false, alertEligible: false,
+        reasonCodes: ['employer-conflict'] },
+      firstSeenAt: inspectedAt, lastSeenAt: inspectedAt,
+      notification: { smsPending: false, digestPending: false },
+    };
+    const prior: SourceOccurrenceState = {
+      sourceId: role.sourceId, externalId: role.externalId!, jobId: existing.jobId,
+      occurrence: trustedReference, present: true, consecutiveOmissions: 0,
+      changedSnapshotHash: 'one', changedAt: inspectedAt,
+    };
+
+    const result = reconciler.reconcile({
+      sourceId: role.sourceId, snapshotHash: 'two', activeExternalIds: new Set([role.externalId!]),
+      listings: [role], priorOccurrences: [prior], resolvedJobs: new Map([[role.externalId!, existing]]),
+      now: '2026-09-05T12:00:00.000Z', baseline: false,
+    });
+
+    expect(result.jobs[0]).toMatchObject({
+      admission: { catalogEligible: false, alertEligible: false },
+      notification: { smsPending: false, digestPending: false },
+    });
+    expect(result.jobs[0]?.admission?.reasonCodes).toContain('employer-conflict');
+    expect(result.notifications).toHaveLength(0);
+  });
 });

@@ -6,7 +6,7 @@ import type { DestinationVerificationRequest } from '../src/destination-verifica
 import type { ApplicationPageEvidence } from '../src/core/application-url.js';
 import { reachabilityFromFailure, type Reachability } from '../src/core/application-verification.js';
 import { combineRenderedFrameEvidence, type RenderedFrameSnapshot } from '../src/rendered-destination-evidence.js';
-import { newJobNotificationEvent } from '../src/ingestion/catalog-reconciler.js';
+import { newJobNotificationEvent, shouldPromoteDelayedNotification } from '../src/ingestion/catalog-reconciler.js';
 import { activeTrustedCommunityPolicy, advanceTrustedCommunityQualification } from '../src/sources/trust-policy.js';
 import type { CatalogAdmissionReason, Internship, ProcessedListing, ProviderIdentity, SourceOccurrence } from '../src/types.js';
 import { D1CatalogAdmissionStore } from './catalog-admission-store.js';
@@ -125,8 +125,12 @@ export async function persistDestinationAdmission(input: {
   const sourceReferences = job.sourceReferences.map((item) => item === reference ? updatedReference : item);
   const canonicalAdmission = deriveCanonicalAdmission(sourceReferences, inspectedAt);
   const becomingCatalogVisible = job.admission?.catalogEligible === false && canonicalAdmission?.catalogEligible === true;
-  const delayedPromotion = reference.admission?.alertEligible !== true && admission.alertEligible
-    && trustedCommunityAlertQualification?.baselineSuppressed !== true;
+  const delayedPromotion = shouldPromoteDelayedNotification({
+    previousOccurrenceAlertEligible: reference.admission?.alertEligible,
+    occurrenceAlertEligible: admission.alertEligible,
+    canonicalAlertEligible: canonicalAdmission?.alertEligible,
+    baselineSuppressed: trustedCommunityAlertQualification?.baselineSuppressed,
+  });
   const nextJob: Internship = {
     ...job,
     sourceReferences,
