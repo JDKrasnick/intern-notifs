@@ -155,6 +155,13 @@ npm run migrate:role-metadata -- audit
 npm run migrate:role-metadata -- dry-run
 ```
 
+After each queued batch drains, repeat collection with
+`--collection-token TOKEN_FROM_FIRST_RESPONSE` until the audit reports
+`collectionCoverage.complete: true`, with both `pendingOrUnobserved` and
+`stale` at zero. Queued or in-flight verifications remain pending until their
+extraction attempt is recorded. The dry run returns HTTP 409 and apply refuses
+to run while collection is incomplete.
+
 Archive the complete collection and dry-run reports. Review fills and
 corrections by field/source class, every conflict, unsupported currencies/pay periods, and
 blocked/inconclusive/aggregate outcomes. Unknown values must remain unknown.

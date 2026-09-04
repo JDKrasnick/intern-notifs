@@ -46,7 +46,93 @@ function job(): Internship {
   };
 }
 
+function jobWithVerifiedDestination(): Internship {
+  const current = job();
+  const destination = {
+    classification: 'posting-detail' as const,
+    candidateUrl: current.applyUrl,
+    finalUrl: current.applyUrl,
+    provider: 'github' as const,
+    inspectedAt: '2026-09-01T00:00:00.000Z',
+    browserVisible: true,
+  };
+  const admission = {
+    employerResolution: 'resolved' as const,
+    postingAttribution: 'attributed' as const,
+    destination,
+    metadata: { complete: true, title: 'complete' as const, location: 'complete' as const },
+    catalogEligible: true,
+    alertEligible: true,
+    reasonCodes: [],
+    evaluatedAt: '2026-09-01T00:00:00.000Z',
+    evidenceObservedAt: '2026-09-01T00:00:00.000Z',
+  };
+  return { ...current, admission, sourceReferences: [{ ...current.sourceReferences[0]!, admission }] };
+}
+
 describe('D1 role metadata evidence and guarded repair', () => {
+  it('reports and blocks incomplete exact-destination collection', async () => {
+    const current = subject();
+    const original = jobWithVerifiedDestination();
+    await current.jobs.putInternship(original);
+    const firstAudit = await current.operations.roleMetadataAudit(new Date('2026-09-04T12:00:00.000Z'));
+    expect(firstAudit.collectionCoverage).toMatchObject({
+      extractionVersion: 1, eligible: 1, current: 0, pendingOrUnobserved: 1, stale: 0, complete: false,
+    });
+    const incompletePlan = await current.operations.stageRoleMetadataRepair('2026-09-04T12:00:00.000Z');
+    await expect(current.operations.applyRoleMetadataRepair(
+      incompletePlan.repairToken,
+      incompletePlan.expectedJobs,
+      incompletePlan.expectedOccurrences,
+      '2026-09-04T12:01:00.000Z',
+    )).rejects.toThrow('collection was incomplete during the dry-run');
+
+    await current.operations.recordRoleMetadataExtraction({
+      jobId: original.jobId,
+      sourceId: original.sourceReferences[0]!.sourceId,
+      sourceUrl: original.applyUrl,
+      artifactHash: 'no-explicit-metadata',
+      extractionVersion: 1,
+      outcome: 'no-explicit-metadata',
+      observedAt: '2026-07-01T12:02:00.000Z',
+      backfillToken: 'collection-1',
+    });
+    const staleAudit = await current.operations.roleMetadataAudit(new Date('2026-09-04T12:03:00.000Z'));
+    expect(staleAudit.collectionCoverage).toMatchObject({
+      eligible: 1, current: 0, pendingOrUnobserved: 0, stale: 1, complete: false,
+    });
+    const stalePlan = await current.operations.stageRoleMetadataRepair('2026-09-04T12:03:00.000Z');
+    await expect(current.operations.applyRoleMetadataRepair(
+      stalePlan.repairToken,
+      stalePlan.expectedJobs,
+      stalePlan.expectedOccurrences,
+      '2026-09-04T12:04:00.000Z',
+    )).rejects.toThrow('collection was incomplete during the dry-run');
+
+    await current.operations.recordRoleMetadataExtraction({
+      jobId: original.jobId,
+      sourceId: original.sourceReferences[0]!.sourceId,
+      sourceUrl: original.applyUrl,
+      artifactHash: 'no-explicit-metadata',
+      extractionVersion: 1,
+      outcome: 'no-explicit-metadata',
+      observedAt: '2026-09-04T12:05:00.000Z',
+      backfillToken: 'collection-1',
+    });
+    const completeAudit = await current.operations.roleMetadataAudit(new Date('2026-09-04T12:06:00.000Z'));
+    expect(completeAudit.collectionCoverage).toMatchObject({
+      eligible: 1, current: 1, pendingOrUnobserved: 0, stale: 0, complete: true,
+      outcomes: { 'no-explicit-metadata': 1 }, backfillTokens: { 'collection-1': 1 },
+    });
+    const completePlan = await current.operations.stageRoleMetadataRepair('2026-09-04T12:06:00.000Z');
+    await expect(current.operations.applyRoleMetadataRepair(
+      completePlan.repairToken,
+      completePlan.expectedJobs,
+      completePlan.expectedOccurrences,
+      '2026-09-04T12:07:00.000Z',
+    )).resolves.toMatchObject({ changed: 0, occurrencesChanged: 0, projectionRefreshRequired: false });
+  });
+
   it('retains artifact history and silently applies an exact staged projection', async () => {
     const current = subject();
     const original = job();

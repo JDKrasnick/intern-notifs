@@ -18,11 +18,22 @@ import type {
   MetadataConflict,
   RoleMetadataEvidence,
 } from '../src/types.js';
-import { mergeRoleMetadataEvidence, projectRoleMetadata, ROLE_METADATA_EXTRACTION_VERSION, unsupportedMetadataCurrencies, unsupportedMetadataPeriods } from '../src/role-metadata.js';
+import { mergeRoleMetadataEvidence, projectRoleMetadata, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION, unsupportedMetadataCurrencies, unsupportedMetadataPeriods } from '../src/role-metadata.js';
 import type { D1Database } from './types.js';
 
 export const ATOMIC_REPAIR_RECORD_LIMIT = 900;
 export const ROLE_METADATA_REVALIDATION_MS = 30 * 24 * 60 * 60_000;
+
+export interface RoleMetadataCollectionCoverage {
+  extractionVersion: number;
+  eligible: number;
+  current: number;
+  pendingOrUnobserved: number;
+  stale: number;
+  complete: boolean;
+  outcomes: Record<string, number>;
+  backfillTokens: Record<string, number>;
+}
 
 type JsonRow = { value: string };
 export type RepairChange = {
@@ -47,6 +58,19 @@ function roleMetadataEvidenceSnapshot(rows: Array<{ job_id: string; evidence: st
 
 function roleMetadataSchemaMissing(error: unknown): boolean {
   return error instanceof Error && /no such table:\s*role_metadata_/iu.test(error.message);
+}
+
+function roleMetadataCollectionSnapshot(value: RoleMetadataCollectionCoverage): string {
+  const sorted = (items: Record<string, number>) => Object.fromEntries(Object.entries(items).sort(([left], [right]) => left.localeCompare(right)));
+  return hash(JSON.stringify({
+    extractionVersion: value.extractionVersion,
+    eligible: value.eligible,
+    current: value.current,
+    pendingOrUnobserved: value.pendingOrUnobserved,
+    stale: value.stale,
+    outcomes: sorted(value.outcomes),
+    backfillTokens: sorted(value.backfillTokens),
+  }));
 }
 
 function repairToken(
@@ -105,6 +129,70 @@ function preserveDurableFields(current: Internship, change: RepairChange): Inter
 
 export class D1CatalogAdmissionStore {
   constructor(private readonly db: D1Database) {}
+
+  private async roleMetadataCollectionCoverage(
+    jobs: readonly Internship[],
+    observedAfter: string,
+  ): Promise<RoleMetadataCollectionCoverage> {
+    const [attempts, evidence] = await Promise.all([
+      this.db.prepare(`SELECT job_id, source_id, observed_at, outcome, backfill_token
+        FROM role_metadata_extraction_attempts WHERE extraction_version = ?`)
+        .bind(ROLE_METADATA_EXTRACTION_VERSION)
+        .all<{ job_id: string; source_id: string; observed_at: string; outcome: string; backfill_token: string | null }>(),
+      this.db.prepare(`SELECT job_id, source_id, observed_at, evidence
+        FROM role_metadata_evidence WHERE extraction_version = ? AND is_current = 1
+          AND source_class IN ('official-page', 'official-json-ld')`)
+        .bind(ROLE_METADATA_EXTRACTION_VERSION)
+        .all<{ job_id: string; source_id: string; observed_at: string; evidence: string }>(),
+    ]);
+    const latest = new Map<string, { observedAt: string; outcome: string; backfillToken?: string }>();
+    const recordLatest = (key: string, value: { observedAt: string; outcome: string; backfillToken?: string }) => {
+      const previous = latest.get(key);
+      if (!previous || value.observedAt > previous.observedAt) latest.set(key, value);
+    };
+    for (const item of attempts.results) recordLatest(`${item.job_id}\0${item.source_id}`, {
+      observedAt: item.observed_at,
+      outcome: item.outcome,
+      ...(item.backfill_token ? { backfillToken: item.backfill_token } : {}),
+    });
+    for (const item of evidence.results) {
+      const parsed = JSON.parse(item.evidence) as RoleMetadataEvidence;
+      recordLatest(`${item.job_id}\0${item.source_id}`, {
+        observedAt: item.observed_at,
+        outcome: roleMetadataEvidenceHasFields(parsed) ? 'extracted' : 'no-explicit-metadata',
+      });
+    }
+    const eligible = new Set<string>();
+    for (const job of jobs) {
+      if (!job.open) continue;
+      for (const reference of job.sourceReferences) {
+        const destination = reference.admission?.destination;
+        if (reference.externalId && destination && ['posting-detail', 'application-form'].includes(destination.classification)) {
+          eligible.add(`${job.jobId}\0${reference.sourceId}`);
+        }
+      }
+    }
+    let current = 0; let pendingOrUnobserved = 0; let stale = 0;
+    const outcomes: Record<string, number> = {}; const backfillTokens: Record<string, number> = {};
+    for (const key of eligible) {
+      const observation = latest.get(key);
+      if (!observation) { pendingOrUnobserved += 1; continue; }
+      outcomes[observation.outcome] = (outcomes[observation.outcome] ?? 0) + 1;
+      if (observation.backfillToken) backfillTokens[observation.backfillToken] = (backfillTokens[observation.backfillToken] ?? 0) + 1;
+      if (observation.observedAt <= observedAfter) stale += 1;
+      else current += 1;
+    }
+    return {
+      extractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+      eligible: eligible.size,
+      current,
+      pendingOrUnobserved,
+      stale,
+      complete: pendingOrUnobserved === 0 && stale === 0,
+      outcomes,
+      backfillTokens,
+    };
+  }
 
   async recordRoleMetadataEvidence(
     jobId: string,
@@ -165,7 +253,7 @@ export class D1CatalogAdmissionStore {
     }
   }
 
-  async roleMetadataAudit(): Promise<{
+  async roleMetadataAudit(now = new Date()): Promise<{
     scanned: number;
     enriched: number;
     projectionOnlyOmissions: Array<{ jobId: string; fields: string[] }>;
@@ -175,6 +263,7 @@ export class D1CatalogAdmissionStore {
     unsupportedPeriods: Record<string, number>;
     openConflicts: number;
     verificationOutcomes: Record<string, number>;
+    collectionCoverage: RoleMetadataCollectionCoverage;
   }> {
     const [rows, current] = await Promise.all([
       this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'internship'").all<JsonRow>(),
@@ -212,6 +301,10 @@ export class D1CatalogAdmissionStore {
     const conflicts = await this.db.prepare("SELECT count(*) AS count FROM role_metadata_conflicts WHERE state = 'open'").first<{ count: number }>();
     const outcomes = await this.db.prepare(`SELECT coalesce(classification, state) AS outcome, count(*) AS count
       FROM destination_verification_attempts GROUP BY coalesce(classification, state)`).all<{ outcome: string; count: number }>();
+    const collectionCoverage = await this.roleMetadataCollectionCoverage(
+      jobs,
+      new Date(now.getTime() - ROLE_METADATA_REVALIDATION_MS).toISOString(),
+    );
     return {
       scanned: jobs.length,
       enriched: jobs.filter((job) => Boolean(job.roleMetadata)).length,
@@ -222,6 +315,7 @@ export class D1CatalogAdmissionStore {
       unsupportedPeriods,
       openConflicts: Number(conflicts?.count ?? 0),
       verificationOutcomes: Object.fromEntries(outcomes.results.map((row) => [row.outcome, Number(row.count)])),
+      collectionCoverage,
     };
   }
 
@@ -335,10 +429,16 @@ export class D1CatalogAdmissionStore {
       throw new Error(`Role metadata repair exceeds the atomic D1 limit of ${ATOMIC_REPAIR_RECORD_LIMIT} records`);
     }
     const evidenceSnapshot = roleMetadataEvidenceSnapshot(evidenceRows.results);
+    const collectionCoverage = await this.roleMetadataCollectionCoverage(
+      jobRows.results.map((row) => JSON.parse(row.value) as Internship),
+      new Date(Date.parse(createdAt) - ROLE_METADATA_REVALIDATION_MS).toISOString(),
+    );
+    const collectionSnapshot = roleMetadataCollectionSnapshot(collectionCoverage);
     const conflictSnapshot = conflicts.map((conflict) => JSON.stringify(conflict)).sort().join('\n');
     const repairToken = createHash('sha256').update([
       ...staged.map((item) => `${item.jobId}\0${hash(item.original)}\0${hash(item.proposed)}`),
       `evidence\0${evidenceSnapshot}`,
+      `collection\0${collectionSnapshot}`,
       `conflicts\0${hash(conflictSnapshot)}`,
     ].sort().join('\n')).digest('hex');
     const statements = staged.map((item) => this.db.prepare(`INSERT INTO role_metadata_repair_stage
@@ -348,12 +448,14 @@ export class D1CatalogAdmissionStore {
       .bind(repairToken, item.jobId, item.original, item.proposed, createdAt));
     for (let offset = 0; offset < statements.length; offset += 50) await this.db.batch(statements.slice(offset, offset + 50));
     await this.db.prepare(`INSERT INTO role_metadata_repair_plans
-      (token, expected_jobs, expected_occurrences, conflict_count, evidence_snapshot, created_at)
-      VALUES (?, ?, 0, ?, ?, ?)
+      (token, expected_jobs, expected_occurrences, conflict_count, evidence_snapshot, collection_snapshot, collection_complete, created_at)
+      VALUES (?, ?, 0, ?, ?, ?, ?, ?)
       ON CONFLICT(token) DO UPDATE SET expected_jobs=excluded.expected_jobs,
         expected_occurrences=excluded.expected_occurrences, conflict_count=excluded.conflict_count,
-        evidence_snapshot=excluded.evidence_snapshot, created_at=excluded.created_at`)
-      .bind(repairToken, staged.length, conflicts.length, evidenceSnapshot, createdAt).run();
+        evidence_snapshot=excluded.evidence_snapshot, collection_snapshot=excluded.collection_snapshot,
+        collection_complete=excluded.collection_complete, created_at=excluded.created_at`)
+      .bind(repairToken, staged.length, conflicts.length, evidenceSnapshot, collectionSnapshot,
+        collectionCoverage.complete ? 1 : 0, createdAt).run();
     return { repairToken, expectedJobs: staged.length, expectedOccurrences: 0, fillsByField, correctionsByField,
       changesBySourceClass, conflicts, unsupportedCurrencies, unsupportedPeriods };
   }
@@ -364,13 +466,20 @@ export class D1CatalogAdmissionStore {
     if (expectedOccurrences !== 0) throw new Error('Role metadata repair does not rewrite source occurrences');
     const rows = await this.db.prepare('SELECT * FROM role_metadata_repair_stage WHERE token = ? ORDER BY job_id').bind(token)
       .all<{ job_id: string; original_value: string; proposed_value: string }>();
-    const plan = await this.db.prepare(`SELECT expected_jobs, expected_occurrences, conflict_count, evidence_snapshot
+    const plan = await this.db.prepare(`SELECT expected_jobs, expected_occurrences, conflict_count, evidence_snapshot,
+        collection_snapshot, collection_complete
       FROM role_metadata_repair_plans WHERE token = ?`).bind(token)
-      .first<{ expected_jobs: number; expected_occurrences: number; conflict_count: number; evidence_snapshot: string }>();
+      .first<{ expected_jobs: number; expected_occurrences: number; conflict_count: number; evidence_snapshot: string;
+        collection_snapshot: string; collection_complete: number }>();
     if (!plan || Number(plan.expected_jobs) !== expectedJobs || Number(plan.expected_occurrences) !== expectedOccurrences) {
       throw new Error('Role metadata repair plan changed; run the dry-run again');
     }
     if (Number(plan.conflict_count) > 0) throw new Error('Role metadata conflicts must be resolved before apply');
+    if (Number(plan.collection_complete) !== 1) throw new Error('Role metadata collection was incomplete during the dry-run; collect and run the dry-run again');
+    const collection = (await this.roleMetadataAudit(new Date(appliedAt))).collectionCoverage;
+    if (!collection.complete || roleMetadataCollectionSnapshot(collection) !== plan.collection_snapshot) {
+      throw new Error('Role metadata collection changed or is incomplete; collect and run the dry-run again');
+    }
     const currentEvidence = await this.db.prepare('SELECT job_id, evidence FROM role_metadata_evidence WHERE is_current = 1 ORDER BY job_id, source_class')
       .all<{ job_id: string; evidence: string }>();
     if (roleMetadataEvidenceSnapshot(currentEvidence.results) !== plan.evidence_snapshot) {
@@ -385,13 +494,13 @@ export class D1CatalogAdmissionStore {
     const guard = this.db.prepare(`INSERT INTO role_metadata_repair_guards (token, ok, applied_at)
       SELECT ?, CASE WHEN (SELECT count(*) FROM role_metadata_repair_stage WHERE token = ?) = ?
         AND EXISTS (SELECT 1 FROM role_metadata_repair_plans WHERE token = ? AND conflict_count = 0
-          AND expected_jobs = ? AND expected_occurrences = ?)
+          AND expected_jobs = ? AND expected_occurrences = ? AND collection_complete = 1 AND collection_snapshot = ?)
         AND NOT EXISTS (
           SELECT 1 FROM role_metadata_repair_stage AS stage
           LEFT JOIN catalog_items AS item ON item.pk = 'JOB#' || stage.job_id AND item.sk = 'META' AND item.kind = 'internship'
           WHERE stage.token = ? AND (item.value IS NULL OR item.value <> stage.original_value)
         ) THEN 1 ELSE 0 END, ?`)
-      .bind(token, token, expectedJobs, token, expectedJobs, expectedOccurrences, token, appliedAt);
+      .bind(token, token, expectedJobs, token, expectedJobs, expectedOccurrences, plan.collection_snapshot, token, appliedAt);
     const updates = rows.results.map((row) => {
       const proposed = JSON.parse(row.proposed_value) as Internship;
       return this.db.prepare(`UPDATE catalog_items SET value = ?, search_text = ?

@@ -53,6 +53,16 @@ function stableSourceMaterial(value: unknown): string {
   return JSON.stringify(value) ?? 'null';
 }
 
+function withoutObservationTimestamps(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutObservationTimestamps);
+  if (value && typeof value === 'object') return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key, item]) => key !== 'observedAt' && item !== undefined)
+      .map(([key, item]) => [key, withoutObservationTimestamps(item)]),
+  );
+  return value;
+}
+
 function sourceOwnedMaterial(value: ProcessedListing | SourceOccurrence): string {
   // GitHub row numbers and fetch timestamps move whenever a maintainer edits
   // the Markdown around a role. Compare only facts the source owns so that
@@ -67,7 +77,9 @@ function sourceOwnedMaterial(value: ProcessedListing | SourceOccurrence): string
     // Destination verification can append page/browser evidence to a durable
     // occurrence. Exclude it from the source comparison so an unchanged ATS
     // row can still take the fast path on its next poll.
-    metadataEvidence: value.metadataEvidence?.filter((item) => item.sourceUrl === value.sourceUrl),
+    metadataEvidence: withoutObservationTimestamps(
+      value.metadataEvidence?.filter((item) => item.sourceUrl === value.sourceUrl),
+    ),
     company: value.company,
     title: value.title,
     location: value.location,

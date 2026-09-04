@@ -586,10 +586,11 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
       return withCors(Response.json({
         ...report,
         verificationOutcomes: audit.verificationOutcomes,
+        collectionCoverage: audit.collectionCoverage,
         projectionOnlyOmissions: audit.projectionOnlyOmissions,
         supportedRoleSpecificDisclosedMetadataMisses: audit.supportedRoleSpecificDisclosedMetadataMisses,
         applied: false,
-      }, { status: report.conflicts.length ? 409 : 200 }));
+      }, { status: report.conflicts.length || !audit.collectionCoverage.complete ? 409 : 200 }));
     } catch (error) {
       return withCors(Response.json({ message: error instanceof Error ? error.message : 'Role metadata backfill failed' }, { status: 409 }));
     }
