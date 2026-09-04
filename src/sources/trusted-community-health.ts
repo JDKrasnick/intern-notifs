@@ -76,6 +76,7 @@ export function trustedCommunityMetrics(input: {
   eligibleRows: number;
   listings: readonly ProcessedListing[];
   priorOccurrences: readonly SourceOccurrenceState[];
+  eligibleExternalIds: ReadonlySet<string>;
   admissionConfigurationVersion?: string;
   rejectedAggregatorRows: number;
   survivingAggregatorRows: number;
@@ -83,7 +84,7 @@ export function trustedCommunityMetrics(input: {
 }): TrustedCommunitySourceMetrics {
   const prior = new Map(input.priorOccurrences.map((item) => [item.externalId, item.occurrence]));
   const current = new Map(input.listings.map((item) => [item.externalId!, item]));
-  const inspected = [...new Set([...prior.keys(), ...current.keys()])].flatMap((externalId) => {
+  const inspected = [...input.eligibleExternalIds].flatMap((externalId) => {
     const occurrence = current.get(externalId) ?? prior.get(externalId);
     if (!occurrence || (input.admissionConfigurationVersion
       && occurrence.admissionConfigurationVersion !== input.admissionConfigurationVersion)) return [];

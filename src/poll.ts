@@ -1136,6 +1136,9 @@ export class IngestionRunner {
             eligibleRows: batch.processed.counts.eligible,
             listings: resolution.accepted,
             priorOccurrences,
+            eligibleExternalIds: new Set(batch.processed.listings
+              .filter((listing) => listing.technical !== false)
+              .map(externalId)),
             admissionConfigurationVersion: githubAdmissionConfigurationVersion,
             ...diagnostics,
           });

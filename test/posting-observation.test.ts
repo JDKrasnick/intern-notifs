@@ -114,6 +114,40 @@ describe('atomic posting observation commit', () => {
     expect(projected.sourceReferences[0]?.admission).toEqual(browserAdmission);
   });
 
+  it('records visibility only when the canonical multi-source admission becomes eligible', () => {
+    const identity = buildPostingIdentity({
+      applicationUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    });
+    const current = observation(identity.canonicalJobId, 'official-a', 'official-a', identity);
+    const officialAdmission = (id: string): CatalogAdmission => ({
+      ...admission(at), canonicalEmployer: { id, displayName: id },
+    });
+    const officialA = { ...current.job.sourceReferences[0]!, provenance: 'official-ats' as const,
+      admission: officialAdmission('employer-a') };
+    const officialB = { ...officialA, sourceId: 'official-b', externalId: 'official-b',
+      provenance: 'official-structured' as const, admission: officialAdmission('employer-b') };
+    current.job.sourceReferences = [officialA, officialB];
+    current.job.admission = {
+      ...admission(at), canonicalEmployer: undefined, employerResolution: 'conflict',
+      catalogEligible: false, alertEligible: false, reasonCodes: ['employer-conflict'],
+    };
+    delete current.job.catalogVisibleAt;
+    delete current.job.catalogRecency;
+
+    const incoming = observation(identity.canonicalJobId, 'community', 'community', identity);
+    incoming.job.sourceReferences[0] = {
+      ...incoming.job.sourceReferences[0]!, provenance: 'reviewed-community', admission: admission(at),
+    };
+    incoming.job.admission = admission(at);
+    incoming.occurrence.occurrence = incoming.job.sourceReferences[0]!;
+
+    const projected = postingObservationProjection(current.job, incoming.job, incoming.occurrence);
+
+    expect(projected.admission).toMatchObject({ catalogEligible: false, reasonCodes: ['employer-conflict'] });
+    expect(projected.catalogVisibleAt).toBeUndefined();
+    expect(projected.catalogRecency).toBeUndefined();
+  });
+
   it('keeps the official presentation season when a community observation commits later', () => {
     const identity = buildPostingIdentity({
       applicationUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',

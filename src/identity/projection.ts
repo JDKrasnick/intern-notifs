@@ -65,14 +65,19 @@ export function postingObservationProjection(
   const postingIdentityStatus = postingIdentityStatusForOccurrences(sourceReferences);
   const anyOpen = sourceReferences.some((reference) => reference.state === 'open');
   const becomingCatalogVisible = current?.admission?.catalogEligible === false
-    && proposed.admission?.catalogEligible === true;
+    && admission?.catalogEligible === true;
   const season = presentation.season;
   const seasonEvidence = (proposed.internshipIdentity ?? current?.internshipIdentity) as { season?: { evidenceStatus?: string } } | undefined;
   const seasonAllowsOpen = !isPastSeason(season, new Date(proposed.lastSeenAt))
     || (seasonEvidence?.season?.evidenceStatus === 'explicit'
       && sourceReferences.some((reference) => reference.state === 'open' && isOfficialOccurrence(reference)));
+  const base = { ...proposed };
+  if (admission?.catalogEligible === false && !current?.catalogVisibleAt) {
+    delete base.catalogVisibleAt;
+    delete base.catalogRecency;
+  }
   const projected = {
-    ...proposed,
+    ...base,
     company: presentation.company,
     title: presentation.title,
     location: presentation.location,
@@ -87,12 +92,12 @@ export function postingObservationProjection(
     technical: sourceReferences.some((reference) => (!anyOpen || reference.state === 'open') && reference.technical !== false),
     open: !proposed.invalidApplicationUrl && anyOpen && seasonAllowsOpen && Boolean(current?.open || proposed.open),
     firstSeenAt: earliest([current?.firstSeenAt, proposed.firstSeenAt]) ?? proposed.firstSeenAt,
-    ...(becomingCatalogVisible
-      ? { catalogVisibleAt: proposed.catalogVisibleAt ?? proposed.lastSeenAt, catalogRecency: proposed.catalogRecency ?? 'normal' as const }
-      : current?.catalogVisibleAt || proposed.catalogVisibleAt
-        ? { catalogVisibleAt: earliest([current?.catalogVisibleAt, proposed.catalogVisibleAt]) }
-        : admission?.catalogEligible === false
-          ? {}
+    ...(admission?.catalogEligible === false && !current?.catalogVisibleAt
+      ? {}
+      : becomingCatalogVisible
+        ? { catalogVisibleAt: proposed.catalogVisibleAt ?? proposed.lastSeenAt, catalogRecency: proposed.catalogRecency ?? 'normal' as const }
+        : current?.catalogVisibleAt || proposed.catalogVisibleAt
+          ? { catalogVisibleAt: earliest([current?.catalogVisibleAt, proposed.catalogVisibleAt]) }
           : { catalogVisibleAt: earliest([current?.firstSeenAt, proposed.firstSeenAt]) }),
     lastSeenAt: latest([current?.lastSeenAt, proposed.lastSeenAt]) ?? proposed.lastSeenAt,
     notification: {

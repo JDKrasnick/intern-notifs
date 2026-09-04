@@ -232,8 +232,34 @@ describe('trusted community source health', () => {
         consecutiveCompleteSnapshots: 1, status: 'disabled', baselineSuppressed: true, catalogPublicationSuppressed: true,
       } });
     const metrics = trustedCommunityMetrics({ rawRows: 1, eligibleRows: 1, listings: [role], priorOccurrences: [],
-      admissionConfigurationVersion: 'policy-v1', rejectedAggregatorRows: 0, survivingAggregatorRows: 0, duplicateOccurrenceIds: 0 });
+      eligibleExternalIds: new Set([role.externalId!]), admissionConfigurationVersion: 'policy-v1',
+      rejectedAggregatorRows: 0, survivingAggregatorRows: 0, duplicateOccurrenceIds: 0 });
     expect(metrics.catalogYield).toBe(1);
+  });
+
+  it('excludes stale prior occurrences from current snapshot health metrics', () => {
+    const current = listing({ externalId: 'README.md:https://careers.example.test/jobs/current' });
+    const staleSuccess = listing({ externalId: 'README.md:https://careers.example.test/jobs/stale-success',
+      admission: admission(false), admissionConfigurationVersion: 'policy-v1' });
+    const staleFailure = listing({ externalId: 'README.md:https://careers.example.test/jobs/stale-failure',
+      admission: { ...admission(false), catalogEligible: false,
+        destination: destination({ classification: 'gone' }), reasonCodes: ['destination-gone'] },
+      admissionConfigurationVersion: 'policy-v1' });
+    const priorOccurrences = [staleSuccess, staleFailure].map((role): SourceOccurrenceState => ({
+      sourceId: role.sourceId, externalId: role.externalId!, jobId: role.externalId!, occurrence: role,
+      present: false, consecutiveOmissions: 1, changedSnapshotHash: 'prior', changedAt: inspectedAt,
+    }));
+
+    const metrics = trustedCommunityMetrics({
+      rawRows: 1, eligibleRows: 1, listings: [], priorOccurrences,
+      eligibleExternalIds: new Set([current.externalId!]), admissionConfigurationVersion: 'policy-v1',
+      rejectedAggregatorRows: 0, survivingAggregatorRows: 0, duplicateOccurrenceIds: 0,
+    });
+
+    expect(metrics).toMatchObject({
+      inspectedCandidates: 0, inspectionCoverage: 0, destinationFailures: 0,
+      catalogYield: 0, alertYield: 0,
+    });
   });
 
   it('does not checkpoint or self-enqueue a migration continuation after a circuit breach', async () => {
