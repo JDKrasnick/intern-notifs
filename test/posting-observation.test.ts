@@ -49,7 +49,46 @@ function observation(jobId: string, sourceId: string, externalId: string, identi
   };
 }
 
+function withOfficialEmployerConflict(base: Internship): Internship {
+  const officialAdmission = (id: string): CatalogAdmission => ({
+    ...admission(at), canonicalEmployer: { id, displayName: id },
+  });
+  const reference = base.sourceReferences[0]!;
+  const officialA = {
+    ...reference, sourceId: 'official-a', externalId: 'official-a', provenance: 'official-ats' as const,
+    admission: officialAdmission('employer-a'),
+  };
+  const officialB = {
+    ...reference, sourceId: 'official-b', externalId: 'official-b', provenance: 'official-structured' as const,
+    admission: officialAdmission('employer-b'),
+  };
+  return {
+    ...base,
+    sourceReferences: [officialA, officialB],
+    admission: {
+      ...admission(at), canonicalEmployer: undefined, employerResolution: 'conflict',
+      catalogEligible: false, alertEligible: false, reasonCodes: ['employer-conflict'],
+    },
+    notification: { smsPending: false, digestPending: false },
+  };
+}
+
 describe('atomic posting observation commit', () => {
+  it.each(['closed', 'nontechnical'] as const)('rejects a %s event at the final persisted projection', async (kind) => {
+    const store = new MemoryInternshipStore();
+    const identity = buildPostingIdentity({ applicationUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' });
+    const proposed = observation(identity.canonicalJobId, 'community', 'role-a', identity);
+    proposed.occurrence.occurrence = { ...proposed.occurrence.occurrence,
+      ...(kind === 'closed' ? { state: 'closed' as const } : { technical: false }), admission: admission(at) };
+    proposed.job.sourceReferences = [proposed.occurrence.occurrence];
+    const result = await store.commitPostingObservation({ decision: proposed.occurrence.occurrence.postingIdentityDecision as Extract<PostingIdentityDecision, { status: 'confirmed' }>,
+      identity, ...proposed, notificationEvent: { eventId: 'delayed', sourceId: 'community', externalId: 'role-a',
+        jobId: identity.canonicalJobId, kind: 'new-job', createdAt: at } });
+    expect(result).toMatchObject({ notificationInserted: false });
+    expect(store.notificationEvents.size).toBe(0);
+    expect((await store.getJob(identity.canonicalJobId))!.notification).toMatchObject({ smsPending: false, digestPending: false });
+  });
+
   it('keeps document coordinates as identity only for legacy references without external IDs', () => {
     const base = observation('legacy', 'community-list', 'temporary', buildPostingIdentity({
       applicationUrl: 'https://jobs.lever.co/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
@@ -114,6 +153,40 @@ describe('atomic posting observation commit', () => {
     expect(projected.sourceReferences[0]?.admission).toEqual(browserAdmission);
   });
 
+  it('records visibility only when the canonical multi-source admission becomes eligible', () => {
+    const identity = buildPostingIdentity({
+      applicationUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    });
+    const current = observation(identity.canonicalJobId, 'official-a', 'official-a', identity);
+    const officialAdmission = (id: string): CatalogAdmission => ({
+      ...admission(at), canonicalEmployer: { id, displayName: id },
+    });
+    const officialA = { ...current.job.sourceReferences[0]!, provenance: 'official-ats' as const,
+      admission: officialAdmission('employer-a') };
+    const officialB = { ...officialA, sourceId: 'official-b', externalId: 'official-b',
+      provenance: 'official-structured' as const, admission: officialAdmission('employer-b') };
+    current.job.sourceReferences = [officialA, officialB];
+    current.job.admission = {
+      ...admission(at), canonicalEmployer: undefined, employerResolution: 'conflict',
+      catalogEligible: false, alertEligible: false, reasonCodes: ['employer-conflict'],
+    };
+    delete current.job.catalogVisibleAt;
+    delete current.job.catalogRecency;
+
+    const incoming = observation(identity.canonicalJobId, 'community', 'community', identity);
+    incoming.job.sourceReferences[0] = {
+      ...incoming.job.sourceReferences[0]!, provenance: 'reviewed-community', admission: admission(at),
+    };
+    incoming.job.admission = admission(at);
+    incoming.occurrence.occurrence = incoming.job.sourceReferences[0]!;
+
+    const projected = postingObservationProjection(current.job, incoming.job, incoming.occurrence);
+
+    expect(projected.admission).toMatchObject({ catalogEligible: false, reasonCodes: ['employer-conflict'] });
+    expect(projected.catalogVisibleAt).toBeUndefined();
+    expect(projected.catalogRecency).toBeUndefined();
+  });
+
   it('keeps the official presentation season when a community observation commits later', () => {
     const identity = buildPostingIdentity({
       applicationUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
@@ -149,6 +222,30 @@ describe('atomic posting observation commit', () => {
     expect(store.occurrences.size).toBe(2);
     expect(store.notificationEvents.size).toBe(1);
     expect(store.postingAliases.size).toBeGreaterThan(1);
+  });
+
+  it('rejects a stale promotion when the final canonical projection has an employer conflict', async () => {
+    const store = new MemoryInternshipStore();
+    const identity = buildPostingIdentity({
+      applicationUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    });
+    const stalePromotion = observation(identity.canonicalJobId, 'community', 'role-a', identity);
+    await store.putInternship(withOfficialEmployerConflict(stalePromotion.job));
+    const event = {
+      eventId: 'stale-promotion', sourceId: 'community', externalId: 'role-a', jobId: identity.canonicalJobId,
+      kind: 'new-job' as const, createdAt: at,
+    };
+
+    await expect(store.commitPostingObservation({
+      decision: stalePromotion.occurrence.occurrence.postingIdentityDecision as Exclude<PostingIdentityDecision, { status: 'quarantined' }>,
+      identity, ...stalePromotion, notificationEvent: event,
+    })).resolves.toMatchObject({ outcome: 'committed', notificationInserted: false });
+
+    expect(await store.getJob(identity.canonicalJobId)).toMatchObject({
+      admission: { employerResolution: 'conflict', catalogEligible: false, alertEligible: false },
+      notification: { smsPending: false, digestPending: false },
+    });
+    expect(store.notificationEvents.size).toBe(0);
   });
 
   it('quarantines only a contradictory incoming occurrence and leaves the canonical role untouched', async () => {

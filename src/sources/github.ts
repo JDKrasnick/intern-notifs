@@ -137,6 +137,11 @@ export class GitHubMarkdownAdapter implements SourceAdapter, SourceConnector {
       processed,
       listings: eligible,
       ...(rejectedApplicationUrls.length ? { rejectedApplicationUrls } : {}),
+      trustedCommunityDiagnostics: {
+        rejectedAggregatorRows: rejectedApplicationUrls.filter((item) => item.reason.includes('aggregator')).length,
+        survivingAggregatorRows: rawListings.filter((item) => applicationUrlRejection(item.applyUrl)?.includes('aggregator')).length,
+        duplicateOccurrenceIds: duplicateIdentities,
+      },
       notModified: neutral.outcome === 'unchanged',
     };
   }

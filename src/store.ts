@@ -13,7 +13,7 @@ import type { LeverOwnershipEvidence } from './sources/lever-evidence.js';
 import type { LeverCandidateProbeResult } from './sources/lever-probe.js';
 import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from './catalog-groups.js';
 import { alertEligible, catalogEligible } from './catalog-admission.js';
-import { postingObservationProjection } from './identity/projection.js';
+import { postingObservationNotificationProjection, postingObservationProjection } from './identity/projection.js';
 
 export interface LeverAdmission {
   source: ReviewedLeverSource;
@@ -174,8 +174,10 @@ export class MemoryInternshipStore implements InternshipStore {
       return this.commitPostingObservation({ decision, sourceId: input.occurrence.sourceId, externalId: input.occurrence.externalId, occurrence: input.occurrence.occurrence });
     }
     for (const alias of resolution.aliases) this.postingAliases.set(alias, resolution.canonicalJobId);
-    const projected = postingObservationProjection(this.jobs.get(input.job.jobId), input.job, input.occurrence);
-    this.jobs.set(input.job.jobId, structuredClone(projected));
+    const storedJob = this.jobs.get(input.job.jobId);
+    const projected = postingObservationProjection(storedJob, input.job, input.occurrence);
+    const finalized = postingObservationNotificationProjection(storedJob, projected, input.notificationEvent);
+    this.jobs.set(input.job.jobId, structuredClone(finalized.job));
     this.occurrences.set(`${input.occurrence.sourceId}#${input.occurrence.externalId}`, structuredClone(input.occurrence));
     if (input.decision.status === 'unconfirmed') {
       const candidateId = createHash('sha256').update(`posting-review-family-v1:${input.decision.reviewFamilyKey}`).digest('hex');
@@ -189,8 +191,10 @@ export class MemoryInternshipStore implements InternshipStore {
           ? prior.lastObservedAt : input.decision.observedAt,
       });
     }
-    const notificationInserted = Boolean(input.notificationEvent && !this.notificationEvents.has(input.notificationEvent.eventId));
-    if (notificationInserted) this.notificationEvents.set(input.notificationEvent!.eventId, structuredClone(input.notificationEvent!));
+    const notificationInserted = Boolean(finalized.notificationEvent && !this.notificationEvents.has(finalized.notificationEvent.eventId));
+    if (notificationInserted) {
+      this.notificationEvents.set(finalized.notificationEvent!.eventId, structuredClone(finalized.notificationEvent!));
+    }
     return { outcome: 'committed', canonicalJobId: input.job.jobId, notificationInserted };
   }
   async putInternship(job: Internship) { const canonical = canonicalCatalogRecency(job); this.jobs.set(canonical.jobId, structuredClone(canonical)); }
@@ -495,9 +499,6 @@ export class DynamoInternshipStore implements InternshipStore {
         };
         return this.commitPostingObservation({ decision, sourceId: input.occurrence.sourceId, externalId: input.occurrence.externalId, occurrence: input.occurrence.occurrence });
       }
-      const eventExists = input.notificationEvent ? Boolean((await this.client.send(new GetCommand({
-        TableName: this.tableName, Key: { pk: `OUTBOX#${input.notificationEvent.eventId}`, sk: 'EVENT' }, ConsistentRead: true,
-      }))).Item) : false;
       const storedJobResult = await this.client.send(new GetCommand({
         TableName: this.tableName, Key: { pk: `JOB#${input.job.jobId}`, sk: 'META' }, ConsistentRead: true,
       }));
@@ -512,6 +513,10 @@ export class DynamoInternshipStore implements InternshipStore {
         return this.commitPostingObservation({ decision, sourceId: input.occurrence.sourceId, externalId: input.occurrence.externalId, occurrence: input.occurrence.occurrence });
       }
       const projectedJob = postingObservationProjection(storedJob, input.job, input.occurrence);
+      const finalized = postingObservationNotificationProjection(storedJob, projectedJob, input.notificationEvent);
+      const eventExists = finalized.notificationEvent ? Boolean((await this.client.send(new GetCommand({
+        TableName: this.tableName, Key: { pk: `OUTBOX#${finalized.notificationEvent.eventId}`, sk: 'EVENT' }, ConsistentRead: true,
+      }))).Item) : false;
       const reviewCandidate = input.decision.status === 'unconfirmed' ? {
         candidateId: createHash('sha256').update(`posting-review-family-v1:${input.decision.reviewFamilyKey}`).digest('hex'),
         reviewFamilyKey: input.decision.reviewFamilyKey,
@@ -531,7 +536,7 @@ export class DynamoInternshipStore implements InternshipStore {
               ConditionExpression: 'attribute_not_exists(pk)',
             } }),
         { Put: {
-          TableName: this.tableName, Item: internshipItem(projectedJob),
+          TableName: this.tableName, Item: internshipItem(finalized.job),
           ConditionExpression: storedJob ? 'job = :expectedJob' : 'attribute_not_exists(pk)',
           ...(storedJob ? { ExpressionAttributeValues: { ':expectedJob': storedJob } } : {}),
         } },
@@ -549,15 +554,15 @@ export class DynamoInternshipStore implements InternshipStore {
             ':occurrenceKeys': new Set([`${input.occurrence.sourceId}\0${input.occurrence.externalId}`]),
           },
         } }] : []),
-        ...(input.notificationEvent && !eventExists ? [{ Put: {
-          TableName: this.tableName, Item: { pk: `OUTBOX#${input.notificationEvent.eventId}`, sk: 'EVENT', event: input.notificationEvent },
+        ...(finalized.notificationEvent && !eventExists ? [{ Put: {
+          TableName: this.tableName, Item: { pk: `OUTBOX#${finalized.notificationEvent.eventId}`, sk: 'EVENT', event: finalized.notificationEvent },
           ConditionExpression: 'attribute_not_exists(pk)',
         } }] : []),
       ];
       if (transaction.length > 100) throw new Error('Posting observation exceeds the DynamoDB transaction limit');
       try {
         await this.client.send(new TransactWriteCommand({ TransactItems: transaction }));
-        return { outcome: 'committed', canonicalJobId: input.job.jobId, notificationInserted: Boolean(input.notificationEvent && !eventExists) };
+        return { outcome: 'committed', canonicalJobId: input.job.jobId, notificationInserted: Boolean(finalized.notificationEvent && !eventExists) };
       } catch (error) {
         if ((error as { name?: string }).name !== 'TransactionCanceledException' || attempt === 3) throw error;
       }

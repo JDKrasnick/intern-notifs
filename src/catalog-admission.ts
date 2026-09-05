@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { sourceRoleAgreement } from './core/application-url.js';
+import type { TrustedCommunityAdmissionPolicy } from './sources/trust-policy.js';
 import type {
   CatalogAdmission,
   CatalogAdmissionReason,
@@ -7,6 +8,7 @@ import type {
   MetadataCompleteness,
   ProcessedListing,
   SourceOccurrence,
+  TrustedCommunityAlertQualification,
 } from './types.js';
 
 const GENERIC_EMPLOYER = /\b(?:talent community|job board|open roles?|careers?|external|private|job wrapping|university jobs?|early career)\b/iu;
@@ -78,8 +80,12 @@ export function evaluateCatalogAdmission(input: {
   postingAttributed: boolean;
   evaluatedAt: string;
   previous?: CatalogAdmission;
+  trustedCommunity?: {
+    policy: TrustedCommunityAdmissionPolicy;
+    qualification: TrustedCommunityAlertQualification;
+  };
 }): CatalogAdmission {
-  const { listing, destination, postingAttributed, evaluatedAt, previous } = input;
+  const { listing, destination, postingAttributed, evaluatedAt, previous, trustedCommunity } = input;
   const employer = listing.employerEvidence?.canonicalEmployer;
   const genericEmployer = isGenericEmployerLabel(employer?.displayName ?? listing.company);
   const metadata = listing.metadataCompleteness ?? metadataCompleteness({
@@ -89,12 +95,12 @@ export function evaluateCatalogAdmission(input: {
   });
   const reasons = metadataReasons(metadata);
   if (!employer) reasons.push('employer-unresolved');
-  else if (genericEmployer) reasons.push('employer-generic-label');
+  if (genericEmployer) reasons.push('employer-generic-label');
   if (!postingAttributed) reasons.push('posting-unattributed');
   const destinationFailure = destinationReason(destination);
   if (destinationFailure) reasons.push(destinationFailure);
 
-  const previouslyGood = previous?.catalogEligible
+  const previouslyGood = !trustedCommunity && previous?.catalogEligible
     && ['posting-detail', 'application-form'].includes(previous.destination.classification);
   const newlyInconclusive = destination.classification === 'unresolved' || destination.classification === 'blocked-uninspectable';
   const graceDeadline = previouslyGood && newlyInconclusive
@@ -105,13 +111,22 @@ export function evaluateCatalogAdmission(input: {
     const index = reasons.findIndex((reason) => reason === 'destination-unresolved' || reason === 'destination-blocked-uninspectable');
     if (index >= 0) reasons.splice(index, 1, 'destination-grace');
   }
-  const blocking = reasons.filter((reason) => reason !== 'destination-grace');
-  const catalogEligible = blocking.length === 0 && (destination.classification === 'posting-detail'
+  const diagnosticOnly = trustedCommunity
+    ? new Set<CatalogAdmissionReason>(['employer-unresolved', 'posting-unattributed'])
+    : new Set<CatalogAdmissionReason>();
+  const blocking = reasons.filter((reason) => reason !== 'destination-grace' && !diagnosticOnly.has(reason));
+  const catalogEligible = trustedCommunity?.qualification.catalogPublicationSuppressed !== true
+    && blocking.length === 0 && (destination.classification === 'posting-detail'
     || destination.classification === 'application-form'
     || inGrace);
+  const trustedAlertEligible = trustedCommunity?.policy.alertMode === 'exact-identity-or-two-complete-snapshots'
+    && trustedCommunity.qualification.status === 'eligible'
+    && !trustedCommunity.qualification.baselineSuppressed;
   return {
     ...(employer && !genericEmployer ? { canonicalEmployer: employer } : {}),
-    employerResolution: employer && !genericEmployer ? 'resolved' : 'unresolved',
+    employerResolution: employer && !genericEmployer
+      ? 'resolved'
+      : trustedCommunity ? 'source-reported' : 'unresolved',
     postingAttribution: postingAttributed ? 'attributed' : 'unattributed',
     destination: inGrace && previous ? {
       ...destination,
@@ -120,8 +135,9 @@ export function evaluateCatalogAdmission(input: {
     } : destination,
     metadata,
     catalogEligible,
-    alertEligible: catalogEligible && !inGrace,
+    alertEligible: catalogEligible && !inGrace && (trustedCommunity ? trustedAlertEligible : true),
     reasonCodes: [...new Set(reasons)].sort(),
+    ...(trustedCommunity ? { evidenceCodes: ['trusted-community-source' as const] } : {}),
     evaluatedAt,
     evidenceObservedAt: destination.inspectedAt,
     ...(graceDeadline ? { graceDeadline } : {}),
@@ -175,7 +191,9 @@ export function deriveCanonicalAdmission(references: readonly SourceOccurrence[]
       reasonCodes: [...new Set([...latest.reasonCodes, 'metadata-conflict' as const])].sort(), evaluatedAt };
   }
   const admissible = decisions.filter((decision) => decision.catalogEligible)
-    .sort((a, b) => Number(b.alertEligible) - Number(a.alertEligible) || b.evaluatedAt.localeCompare(a.evaluatedAt))[0];
+    .sort((a, b) => Number(b.employerResolution === 'resolved') - Number(a.employerResolution === 'resolved')
+      || Number(b.alertEligible) - Number(a.alertEligible)
+      || b.evaluatedAt.localeCompare(a.evaluatedAt))[0];
   if (admissible) return { ...admissible, evaluatedAt };
   const latest = [...decisions].sort((a, b) => b.evaluatedAt.localeCompare(a.evaluatedAt))[0]!;
   return { ...latest, catalogEligible: false, alertEligible: false, evaluatedAt };

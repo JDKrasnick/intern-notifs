@@ -32,6 +32,7 @@ Optional Gmail application detection is not Google sign-in. It is available only
 - Account data remains until deletion; abandoned signups expire after 7 days, inactive anonymous installations after 12 months, delivery receipts after 90 days, and assistance metadata after 30 days.
 - Source code uses the MIT License. InternNotifs-created catalog metadata allows reuse with attribution under CC BY 4.0, excluding employer text, third-party source content, logos, and trademarks.
 - JD Krasnick approved the published policy text as written and confirmed `onlinestuff309@gmail.com` as the public support mailbox on 2026-08-26. The mailbox may be replaced later without changing the private-support boundary.
+- Simplify's 2027 internship list is the only initial `trusted-community` source. Trust allows a validated source-reported role into browse without canonical-employer resolution; it never proves posting identity, creates aliases, or enables alerts by itself. Catalog exposure uses one default-off runtime gate, while later alert activation requires a reviewed source-policy version change and permanently suppresses the activation backlog.
 
 ## Store-launch checklist
 

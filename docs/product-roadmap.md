@@ -49,6 +49,12 @@
 - [ ] Finish #56's shared statement-level work-authorization classifier, retained evidence reason, student filters, and alert matching; #113 supplies the provider-neutral status model and honest `unknown` default without inferring eligibility.
 - [ ] Roll out #113 in order: apply the D1 migration and seed/verify registry parity, enable operator queues, pilot one manually approved employer, then consider the portal flag and automatic publishing only after its documented threshold.
 - [x] Define source-admission, attribution, removal, and source-quality policies.
+- [ ] Roll out trusted-community catalog admission for the legacy-ID Simplify source.
+  - [x] Add provider-neutral trust policy, source-reported admission, durable two-snapshot alert qualification, atomic delayed promotion, a default-off catalog gate, circuit breakers, sanitized metrics, and the checked-in 2026-09-04 dry-run report.
+  - [x] Keep standard-source admission repairs silent, revoke absent/closed trusted occurrences during bounded rollback, and reconcile validated trusted reappearances without overriding official closures.
+  - [x] Repair provider-neutral single-posting/navigation classification and truncated-page browser recovery; [audit every eligible URL over HTTP](trusted-community/2026-09-05-destination-audit.md) without employer-specific exceptions. Rendered-page acceptance remains below.
+  - [ ] Inspect all 646 browser-candidate routes and every failure class, then obtain owner approval before enabling `TRUSTED_COMMUNITY_CATALOG_ENABLED` and establishing the quiet baseline.
+  - [ ] Observe one complete healthy snapshot, activate `exact-identity-or-two-complete-snapshots` through a reviewed source-policy version change, and complete the post-activation catalog/identity/index/outbox audit.
 - [ ] Complete issue #120's catalog-admission rollout.
   - [x] Add the provider-neutral employer, posting-attribution, destination, and metadata admission record; derive canonical eligibility from source occurrences; and gate catalog indexes and alert outbox writes.
   - [x] Add reviewed D1 employer mappings and destination rules, browser-verification queue/DLQ processing, evidence and incident history, grouped support email states, guarded silent repair, and the Saved unavailable state.
@@ -152,6 +158,7 @@
 
 | Date | Decision | Reason |
 | --- | --- | --- |
+| 2026-09-04 | Trust only `simplify-summer-2026` for source-reported catalog admission, with catalog exposure default-off and alerts activated later by source-policy version | A validated official handoff can support useful browse coverage without falsely claiming canonical employer or posting identity; a quiet baseline and two complete snapshots prevent backlog alerts |
 | 2026-09-01 | Use a buffered 70% posting-identity coverage policy floor instead of pinning enforcement to the exact activation snapshot | Reviewed-community growth legitimately changes the confirmed/unconfirmed source mix; structural identity blockers and a policy low-water mark detect corruption without turning normal ingestion into a failed daily audit |
 | 2026-09-01 | Enable unconfirmed posting-identity publication after the guarded repair and waive the final 24-hour acceptance gate while retaining a non-gating follow-up | The guarded production repair converged, every integrity blocker was zero, the enforced scheduled audit passed, all affected aliases and official destinations were verified, and publication status remains explicit to users |
 | 2026-09-01 | Expand exact posting identity first through collision-free provider-owned routes | Tesla, Meta, Jane Street, Goldman Sachs, and IMC expose immutable numeric posting IDs on narrowly scoped official hosts; larger ATS families remain unconfirmed when historical duplicate jobs still need a reviewed presentation decision |
