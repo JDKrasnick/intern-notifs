@@ -52,7 +52,7 @@ completed at 18:22:29 UTC; reinspection completed at 18:27:31 UTC.
 ## Rollout status
 
 Migrations 0015 and 0016 were applied to production, and PR #161 was deployed
-with the current main branch's PR #160 recovery changes retained. Deployment
+with main's PR #160 recovery and PR #159 trusted-source changes retained. Deployment
 preserves the existing unconfirmed-publication setting and 70% identity floor.
 The public jobs endpoint returned HTTP 200 after deployment.
 

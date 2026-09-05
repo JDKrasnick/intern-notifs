@@ -2789,6 +2789,7 @@ exports[`CDK stack > keeps an infrastructure snapshot 1`] = `
               "Ref": "InternshipsB67F358B",
             },
             "RUNTIME_CONFIG_PARAMETER_NAME": "/intern-notifs/runtime-config",
+            "TRUSTED_COMMUNITY_CATALOG_ENABLED": "false",
             "USERS_TABLE": {
               "Ref": "UserData6A2E227B",
             },

@@ -4,7 +4,7 @@ import { GitHubMarkdownAdapter } from '../src/sources/github.js';
 import { MemoryInternshipStore } from '../src/store.js';
 import { buildInternshipIdentity } from '../src/identity/enrichment.js';
 import { extractPostingMetadataEvidence } from '../src/role-metadata.js';
-import type { Internship, ProcessedListing, SourceAdapter, SourceCheckpoint, SourceFetchResult, SourceOccurrenceState } from '../src/types.js';
+import type { CatalogAdmission, Internship, ProcessedListing, SourceAdapter, SourceCheckpoint, SourceFetchResult, SourceOccurrenceState } from '../src/types.js';
 
 const listing = (sourceId: string, overrides: Partial<ProcessedListing> = {}): ProcessedListing => ({
   sourceId,
@@ -44,6 +44,19 @@ class MutableAdapter implements SourceAdapter {
       },
     };
   }
+}
+
+function officialAdmission(employerId: string): CatalogAdmission {
+  const evaluatedAt = '2026-07-29T12:00:00.000Z';
+  return {
+    canonicalEmployer: { id: employerId, displayName: employerId }, employerResolution: 'resolved',
+    postingAttribution: 'attributed', destination: {
+      classification: 'application-form', candidateUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/application',
+      provider: 'ashby', tenant: 'acme', expectedPostingId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', inspectedAt: evaluatedAt,
+    },
+    metadata: { complete: true, title: 'complete', location: 'complete' },
+    catalogEligible: true, alertEligible: true, reasonCodes: [], evaluatedAt, evidenceObservedAt: evaluatedAt,
+  };
 }
 
 describe('snapshot reconciliation', () => {
@@ -371,6 +384,49 @@ describe('snapshot reconciliation', () => {
     const replayed = await new IngestionRunner([adapter], store).run();
     expect(replayed.newJobs).toEqual([]);
     expect(store.notificationEvents.size).toBe(1);
+  });
+
+  it('does not report a new job when a concurrent official write makes the committed projection hidden', async () => {
+    class RacingStore extends MemoryInternshipStore {
+      injectedConflict = false;
+      override async commitPostingObservation(input: Parameters<MemoryInternshipStore['commitPostingObservation']>[0]) {
+        if (!this.injectedConflict && !('sourceId' in input) && input.notificationEvent) {
+          this.injectedConflict = true;
+          const reference = input.occurrence.occurrence;
+          const officialA = {
+            ...reference, sourceId: 'official-a', externalId: 'official-a', provenance: 'official-ats' as const,
+            admission: officialAdmission('employer-a'),
+          };
+          const officialB = {
+            ...reference, sourceId: 'official-b', externalId: 'official-b', provenance: 'official-structured' as const,
+            admission: officialAdmission('employer-b'),
+          };
+          this.jobs.set(input.job.jobId, {
+            ...input.job,
+            sourceReferences: [officialA, officialB],
+            admission: {
+              ...officialAdmission('employer-a'), canonicalEmployer: undefined, employerResolution: 'conflict',
+              catalogEligible: false, alertEligible: false, reasonCodes: ['employer-conflict'],
+            },
+            notification: { smsPending: false, digestPending: false },
+          });
+        }
+        return super.commitPostingObservation(input);
+      }
+    }
+    const store = new RacingStore();
+    await store.putCheckpoint({ sourceId: 'source-a', successfulFetches: 1, lastRowCount: 0 });
+
+    const report = await new IngestionRunner([
+      new MutableAdapter('source-a', [listing('source-a')]),
+    ], store).run();
+
+    expect(report.newJobs).toEqual([]);
+    expect(store.notificationEvents.size).toBe(0);
+    expect([...store.jobs.values()][0]).toMatchObject({
+      admission: { employerResolution: 'conflict', catalogEligible: false, alertEligible: false },
+      notification: { smsPending: false, digestPending: false },
+    });
   });
 
   it('retries an atomic job and outbox write without exposing pending delivery state first', async () => {

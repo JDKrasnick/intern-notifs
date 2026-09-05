@@ -54,6 +54,8 @@ export interface RuntimeDependencies {
   catalogAdmissionResolver?: CatalogAdmissionResolver;
   /** Defaults off in deployed runtimes until the compatible client is live. */
   identityUnconfirmedPublicationEnabled?: boolean;
+  /** Catalog exposure gate; alert activation stays in reviewed source policy. */
+  trustedCommunityCatalogEnabled?: boolean;
 }
 
 export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies: RuntimeDependencies) {
@@ -68,6 +70,7 @@ export async function runRuntimeCommand(command: 'poll' | 'digest', dependencies
       dependencies.enqueueDestinationVerification,
       dependencies.catalogAdmissionResolver,
       dependencies.identityUnconfirmedPublicationEnabled ?? false,
+      dependencies.trustedCommunityCatalogEnabled ?? false,
     ).poll({
       allowCompleteEmptySnapshot: dependencies.allowCompleteEmptySnapshot,
       maxAdmissionMigrationListingsPerSourceRun: dependencies.maxAdmissionMigrationListingsPerSourceRun,
@@ -133,6 +136,7 @@ export async function runtimeHandler(event: { command?: string } = {}) {
     store: new DynamoInternshipStore(tableName), userStore: new DynamoUserStore(usersTable), config: await loadRuntimeConfig(parameterName),
     groupedPipelineUserIds: cohort,
     identityUnconfirmedPublicationEnabled: process.env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
+    trustedCommunityCatalogEnabled: process.env.TRUSTED_COMMUNITY_CATALOG_ENABLED === 'true',
   });
   console.log(JSON.stringify({ command, ...result }));
   return result;

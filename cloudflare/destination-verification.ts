@@ -6,6 +6,8 @@ import type { DestinationVerificationRequest } from '../src/destination-verifica
 import type { ApplicationPageEvidence } from '../src/core/application-url.js';
 import { reachabilityFromFailure, type Reachability } from '../src/core/application-verification.js';
 import { combineRenderedFrameEvidence, type RenderedFrameSnapshot } from '../src/rendered-destination-evidence.js';
+import { newJobNotificationEvent, shouldPromoteDelayedNotification } from '../src/ingestion/catalog-reconciler.js';
+import { activeTrustedCommunityPolicy, advanceTrustedCommunityQualification } from '../src/sources/trust-policy.js';
 import type { CatalogAdmissionReason, Internship, ProcessedListing, ProviderIdentity, SourceOccurrence } from '../src/types.js';
 import { D1CatalogAdmissionStore, ROLE_METADATA_REVALIDATION_MS } from './catalog-admission-store.js';
 import { D1InternshipStore } from './d1-store.js';
@@ -32,6 +34,8 @@ export interface DestinationVerificationEnvironment {
   DESTINATION_VERIFICATION_QUEUE: Queue;
   RESEND_API_KEY?: string;
   ADMISSION_SUPPORT_RECIPIENT?: string;
+  TRUSTED_COMMUNITY_CATALOG_ENABLED?: string;
+  IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED?: string;
 }
 
 export function destinationVerificationMessage(request: DestinationVerificationRequest, queuedAt = new Date().toISOString()): DestinationVerificationMessage {
@@ -79,11 +83,14 @@ export async function persistDestinationAdmission(input: {
   inspectedAt: string;
   evidence?: ApplicationPageEvidence;
   browserVisible?: boolean;
+  trustedCommunityCatalogEnabled?: boolean;
+  identityUnconfirmedPublicationEnabled?: boolean;
 }): Promise<{
   destination: ReturnType<typeof classifyDestination>;
   incident?: { sourceId: string; host: string; reason: string; incidentId: string; messageType: 'incident-opened' | 'quarantine' };
 }> {
   const { jobs, operations, message, job, reference, reachability, inspectedAt, evidence, browserVisible } = input;
+  const occurrence = (await jobs.getSourceOccurrences(message.sourceId)).find((item) => item.externalId === message.externalId);
   const mappedEmployer = await operations.resolveCanonicalEmployer(message.providerIdentity);
   const listing: ProcessedListing = {
     ...reference,
@@ -102,12 +109,25 @@ export async function persistDestinationAdmission(input: {
   const rule = await operations.resolveReviewRule(message.providerIdentity, message.candidateUrl);
   const destination = classifyDestination({ listing, reachability, ...(evidence ? { evidence } : {}), inspectedAt,
     ...(browserVisible !== undefined ? { browserVisible } : {}), ...(rule ? { rule } : {}) });
+  const trustedCommunityPolicy = activeTrustedCommunityPolicy(message.sourceId, input.trustedCommunityCatalogEnabled ?? false);
+  const trustedCommunityAlertQualification = trustedCommunityPolicy
+    ? advanceTrustedCommunityQualification({
+      previous: occurrence?.occurrence.trustedCommunityAlertQualification
+        ?? reference.trustedCommunityAlertQualification,
+      destination,
+      postingIdentityDecision: reference.postingIdentityDecision,
+      alertMode: trustedCommunityPolicy.alertMode,
+    })
+    : undefined;
   const admission = evaluateCatalogAdmission({
     listing, destination,
     postingAttributed: reference.provenance !== 'reviewed-community'
       || reference.admission?.postingAttribution === 'attributed'
       || (browserVisible === true && ['posting-detail', 'application-form'].includes(destination.classification)),
     evaluatedAt: inspectedAt, previous: reference.admission ?? job.admission,
+    ...(trustedCommunityPolicy && trustedCommunityAlertQualification
+      ? { trustedCommunity: { policy: trustedCommunityPolicy, qualification: trustedCommunityAlertQualification } }
+      : {}),
   });
   const extracted = evidence && ['posting-detail', 'application-form'].includes(destination.classification)
     ? extractVerifiedPageMetadataEvidence({
@@ -125,6 +145,7 @@ export async function persistDestinationAdmission(input: {
     ? replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, extracted, message.sourceId)
     : reference.metadataEvidence;
   const enrichedReference = { ...reference, admission,
+    ...(trustedCommunityAlertQualification ? { trustedCommunityAlertQualification } : {}),
     ...(evidence ? { metadataEvidence } : {}),
     ...(evidence ? { metadataExtraction: {
       version: message.metadataExtractionVersion ?? 1,
@@ -134,7 +155,6 @@ export async function persistDestinationAdmission(input: {
     } } : {}),
   };
   const sourceReferences = job.sourceReferences.map((item) => item === reference ? enrichedReference : item);
-  const occurrence = (await jobs.getSourceOccurrences(message.sourceId)).find((item) => item.externalId === message.externalId);
   const projected = projectRoleMetadata({ ...job, sourceReferences, admission: deriveCanonicalAdmission(sourceReferences, inspectedAt) });
   if (evidence && enrichedReference.metadataExtraction) await operations.recordRoleMetadataExtraction({
     jobId: job.jobId, sourceId: message.sourceId, sourceUrl: evidence.url,
@@ -151,12 +171,43 @@ export async function persistDestinationAdmission(input: {
   // Historical collection is deliberately staging-only. The guarded repair
   // endpoint performs the public job write after exact token/count checks.
   if (message.metadataBackfillToken) return { destination };
-  await jobs.putAdmissionState(
-    projected.job,
-    occurrence ? { ...occurrence, occurrence: { ...occurrence.occurrence, admission,
-      ...(evidence ? { metadataEvidence: enrichedReference.metadataEvidence } : {}),
-      ...(enrichedReference.metadataExtraction ? { metadataExtraction: enrichedReference.metadataExtraction } : {}) }, changedAt: inspectedAt } : undefined,
-  );
+  const canonicalAdmission = deriveCanonicalAdmission(sourceReferences, inspectedAt);
+  const becomingCatalogVisible = !job.catalogVisibleAt && job.admission?.catalogEligible === false && canonicalAdmission?.catalogEligible === true;
+  // Only the trusted policy supplies durable baseline/qualification evidence.
+  // Preserve standard-source behavior when this rollout is inactive.
+  const delayedPromotion = Boolean(trustedCommunityPolicy && trustedCommunityAlertQualification
+    && job.open && job.technical !== false
+    && (job.postingIdentityStatus !== 'unconfirmed' || input.identityUnconfirmedPublicationEnabled === true)
+    && shouldPromoteDelayedNotification({
+      previousOccurrenceAlertEligible: reference.admission?.alertEligible,
+      occurrenceAlertEligible: admission.alertEligible,
+      canonicalAlertEligible: canonicalAdmission?.alertEligible,
+      baselineSuppressed: trustedCommunityAlertQualification?.baselineSuppressed,
+    }));
+  const nextJob: Internship = {
+    ...projected.job,
+    sourceReferences,
+    ...(canonicalAdmission ? { admission: canonicalAdmission } : {}),
+    ...(becomingCatalogVisible ? { catalogVisibleAt: inspectedAt,
+      catalogRecency: trustedCommunityAlertQualification?.baselineSuppressed ? 'baseline' : 'normal' } : {}),
+    ...(delayedPromotion ? { notification: { ...job.notification, smsPending: true, digestPending: true } } : {}),
+  };
+  const nextOccurrence = occurrence ? {
+    ...occurrence,
+    occurrence: { ...occurrence.occurrence, ...enrichedReference },
+    changedAt: inspectedAt,
+  } : undefined;
+  if (nextOccurrence && reference.postingIdentityDecision && reference.postingIdentityDecision.status !== 'quarantined') {
+    await jobs.commitPostingObservation({
+      decision: reference.postingIdentityDecision,
+      ...(job.postingIdentity ? { identity: job.postingIdentity } : {}),
+      job: nextJob,
+      occurrence: nextOccurrence,
+      ...(delayedPromotion ? { notificationEvent: newJobNotificationEvent(message.sourceId, message.externalId, nextJob, inspectedAt) } : {}),
+    });
+  } else {
+    await jobs.putAdmissionState(nextJob, nextOccurrence);
+  }
 
   const reason = admission.reasonCodes[0];
   await operations.resolveIncidents(message.jobId, message.sourceId, inspectedAt, reason);
@@ -328,12 +379,16 @@ export async function processDestinationVerificationBatch(
           };
           const collisionResult = await persistDestinationAdmission({ jobs, operations, message: collisionMessage,
             job: collisionJob, reference: collisionReference, reachability: 'live', inspectedAt, browserVisible: true,
+            trustedCommunityCatalogEnabled: env.TRUSTED_COMMUNITY_CATALOG_ENABLED === 'true',
+            identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
             evidence: { url: prior.finalUrl ?? prior.candidateUrl, expectedPostingId: prior.expectedPostingId,
               renderedEvidenceHash: prior.renderedEvidenceHash, identicalEvidenceForDifferentPosting: true,
               confidence: { score: 0, level: 'low', recommendation: 'review', signals: ['identical rendered evidence for different posting IDs'] } } });
           if (collisionResult.incident) opened.push(collisionResult.incident);
         }
         const result = await persistDestinationAdmission({ jobs, operations, message, job, reference, reachability, inspectedAt,
+          trustedCommunityCatalogEnabled: env.TRUSTED_COMMUNITY_CATALOG_ENABLED === 'true',
+          identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
           ...(evidence ? { evidence, browserVisible: true } : {}) });
         if (result.incident) opened.push(result.incident);
         await operations.recordVerificationAttempt({ id: crypto.randomUUID(), jobId: message.jobId, sourceId: message.sourceId,

@@ -32,6 +32,8 @@ export interface ReconciliationInput {
   alertEligible?: Set<string>;
   /** Rollout gate: classified rows remain durable while publication is shadowed. */
   publishUnconfirmedIdentities?: boolean;
+  /** Enabled only by the active trusted source's reviewed alert policy. */
+  trustedCommunityAlertsEnabled?: boolean;
 }
 
 export interface ReconciliationPlan {
@@ -54,6 +56,9 @@ function occurrence(listing: ProcessedListing, externalId: string): SourceOccurr
     ...(listing.metadataEvidence?.length ? { metadataEvidence: listing.metadataEvidence } : {}),
     ...(listing.metadataExtraction ? { metadataExtraction: listing.metadataExtraction } : {}),
     ...(listing.postingIdentityDecision ? { postingIdentityDecision: listing.postingIdentityDecision } : {}),
+    ...(listing.trustedCommunityAlertQualification
+      ? { trustedCommunityAlertQualification: listing.trustedCommunityAlertQualification }
+      : {}),
     document: listing.document,
     sourceUrl: listing.sourceUrl,
     row: listing.row,
@@ -130,6 +135,7 @@ function seasonAllowsOpen(season: string, identity: Internship['internshipIdenti
 }
 
 function merge(existing: Internship, listing: ProcessedListing, externalId: string, now: string, applicationUrlValidatedAt?: string, metadataVersion?: number): Internship {
+  const becomingCatalogVisible = !existing.catalogVisibleAt && existing.admission?.catalogEligible === false && listing.admission?.catalogEligible === true;
   existing = normalizeInternship(existing);
   listing = normalizeListing(listing);
   const reference = occurrence(listing, externalId);
@@ -161,7 +167,11 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
   const season = preferIncoming || Boolean(applicationUrlValidatedAt) || (match >= 0 && existing.sourceReferences.length === 1)
     ? listing.season
     : existing.season;
-  const canRevive = existing.open || preferIncoming;
+  const trustedReappearance = Boolean(match >= 0 && listing.state === 'open'
+    && listing.admission?.catalogEligible === true
+    && listing.admission.evidenceCodes?.includes('trusted-community-source')
+    && !existing.sourceReferences.some(isOfficialOccurrence));
+  const canRevive = existing.open || preferIncoming || trustedReappearance;
   const merged = normalizeInternship({
     ...base,
     company: canonicalCompany ?? company,
@@ -185,6 +195,10 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
     ...(admission ? { admission } : {}),
     technical: canRevive ? anyOpenTechnicalOccurrence(sourceReferences) : existing.technical,
     open: keepQuarantined ? false : canRevive && sourceReferences.some((item) => item.state === 'open') && seasonAllowsOpen(season, internshipIdentity, sourceReferences, now),
+    ...(becomingCatalogVisible ? {
+      catalogVisibleAt: now,
+      catalogRecency: listing.trustedCommunityAlertQualification?.baselineSuppressed ? 'baseline' as const : 'normal' as const,
+    } : {}),
     lastSeenAt: now,
     ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}),
     ...(metadataVersion ? { applicationPageMetadataVersion: metadataVersion } : {}),
@@ -225,15 +239,17 @@ function create(listing: ProcessedListing, externalId: string, now: string, base
     technical: listing.technical ?? isTechnicalJob(listing),
     open: listing.state === 'open' && seasonAllowsOpen(listing.season, listing.internshipIdentity, [reference], now),
     firstSeenAt: now,
-    catalogVisibleAt: now,
-    catalogRecency: baseline ? 'baseline' : 'normal',
+    ...(admission?.catalogEligible === false ? {} : {
+      catalogVisibleAt: now,
+      catalogRecency: baseline ? 'baseline' as const : 'normal' as const,
+    }),
     lastSeenAt: now,
     notification: { smsPending: true, digestPending: true },
   };
   return projectRoleMetadata(created).job;
 }
 
-function notificationEvent(sourceId: string, externalId: string, job: Internship, now: string): NotificationEvent {
+export function newJobNotificationEvent(sourceId: string, externalId: string, job: Internship, now: string): NotificationEvent {
   return {
     // The canonical job identity, not arrival source, owns the one-time alert.
     // This makes official/community races converge on one outbox tombstone.
@@ -244,6 +260,18 @@ function notificationEvent(sourceId: string, externalId: string, job: Internship
     kind: 'new-job',
     createdAt: now,
   };
+}
+
+export function shouldPromoteDelayedNotification(input: {
+  previousOccurrenceAlertEligible?: boolean;
+  occurrenceAlertEligible?: boolean;
+  canonicalAlertEligible?: boolean;
+  baselineSuppressed?: boolean;
+}): boolean {
+  return input.previousOccurrenceAlertEligible !== true
+    && input.occurrenceAlertEligible === true
+    && input.canonicalAlertEligible === true
+    && input.baselineSuppressed !== true;
 }
 
 function closeOccurrence(job: Internship, state: SourceOccurrenceState, now: string): Internship {
@@ -305,17 +333,31 @@ export class CatalogReconciler {
         && stored.sourceReferences.length === 1
         && stored.sourceReferences[0]?.sourceId === input.sourceId
         && stored.sourceReferences[0]?.externalId === externalId);
+      const deliveryAllowed = !input.baseline && job.open && job.technical
+        && matchesJobFilter(job, input.filter)
+        && job.admission?.alertEligible !== false
+        && !(job.postingIdentityStatus === 'unconfirmed' && input.publishUnconfirmedIdentities === false)
+        && (!input.alertEligible || input.alertEligible.has(externalId));
+      const delayedPromotion = Boolean(input.trustedCommunityAlertsEnabled
+        && listing.trustedCommunityAlertQualification?.status === 'eligible'
+        && existing && deliveryAllowed && shouldPromoteDelayedNotification({
+        previousOccurrenceAlertEligible: priorById.get(externalId)?.occurrence.admission?.alertEligible,
+        occurrenceAlertEligible: listing.admission?.alertEligible,
+        canonicalAlertEligible: job.admission?.alertEligible,
+        baselineSuppressed: listing.trustedCommunityAlertQualification?.baselineSuppressed,
+      }));
       if (!existing || retryingUncommittedCreate) {
-        if (input.baseline || !job.open || !job.technical || !matchesJobFilter(job, input.filter)
-          || job.admission?.alertEligible === false
-          || (job.postingIdentityStatus === 'unconfirmed' && input.publishUnconfirmedIdentities === false)
-          || (input.alertEligible && !input.alertEligible.has(externalId))) {
+        if (!deliveryAllowed) {
           job.notification = { smsPending: false, digestPending: false };
           filteredJobs.push(job);
         } else {
           newJobs.push(job);
-          notifications.push(notificationEvent(input.sourceId, externalId, job, input.now));
+          notifications.push(newJobNotificationEvent(input.sourceId, externalId, job, input.now));
         }
+      } else if (delayedPromotion) {
+        job.notification = { ...job.notification, smsPending: true, digestPending: true };
+        newJobs.push(job);
+        notifications.push(newJobNotificationEvent(input.sourceId, externalId, job, input.now));
       }
       jobs.set(job.jobId, job);
       if (!listing.postingIdentityDecision) {

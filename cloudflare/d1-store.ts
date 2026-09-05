@@ -10,7 +10,7 @@ import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupF
 import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, EvidenceSource, Internship, MetadataConflict, MonitoringChecklist, NotificationEvent, PostingIdentity, PostingIdentityDecision, PostingIdentityIncident, RoleMetadataEvidence, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from '../src/types.js';
 import type { D1Database, D1PreparedStatement } from './types.js';
 import { alertEligible, catalogEligible } from '../src/catalog-admission.js';
-import { postingObservationProjection } from '../src/identity/projection.js';
+import { postingObservationNotificationProjection, postingObservationProjection } from '../src/identity/projection.js';
 import { mergeSourceOccurrence } from '../src/identity/source-occurrence.js';
 import { D1CatalogAdmissionStore } from './catalog-admission-store.js';
 
@@ -299,7 +299,9 @@ export class D1InternshipStore implements InternshipStore {
           occurrence: input.occurrence.occurrence,
         });
       }
-      const canonical = postingObservationProjection(stored, input.job, occurrence);
+      const projected = postingObservationProjection(stored, input.job, occurrence);
+      const finalized = postingObservationNotificationProjection(stored, projected, input.notificationEvent);
+      const canonical = finalized.job;
       const canonicalJson = JSON.stringify(canonical);
       const expectedJson = stored ? JSON.stringify(stored) : '__posting_observation_absent__';
       const projectionGuard = "EXISTS (SELECT 1 FROM catalog_items WHERE pk = ? AND sk = 'META' AND value = ?)";
@@ -380,13 +382,13 @@ export class D1InternshipStore implements InternshipStore {
           WHERE id = ? AND ${conflictGuard} AND ${projectionGuard}
         `).bind(candidateId, candidateId, ...candidateGuardValues));
       }
-      const notificationIndex = input.notificationEvent ? statements.length : -1;
-      if (input.notificationEvent) statements.push(this.db.prepare(`
+      const notificationIndex = finalized.notificationEvent ? statements.length : -1;
+      if (finalized.notificationEvent) statements.push(this.db.prepare(`
         INSERT INTO catalog_items (pk, sk, kind, value)
         SELECT ?, 'EVENT', 'notification-event', ? WHERE ${conflictGuard} AND ${projectionGuard}
         ON CONFLICT(pk, sk) DO NOTHING
       `).bind(
-        `OUTBOX#${input.notificationEvent.eventId}`, JSON.stringify(input.notificationEvent),
+        `OUTBOX#${finalized.notificationEvent.eventId}`, JSON.stringify(finalized.notificationEvent),
         ...guardValues, `JOB#${canonical.jobId}`, canonicalJson,
       ));
       results = await this.db.batch(statements);

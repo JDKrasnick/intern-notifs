@@ -317,6 +317,8 @@ describe('D1 catalog admission operations', () => {
       } });
     expect(await jobs.getJob(current.jobId)).toMatchObject({ admission: { postingAttribution: 'attributed',
       catalogEligible: true, alertEligible: true }, sourceReferences: [{ admission: { postingAttribution: 'attributed' } }] });
+    expect(await jobs.getJob(current.jobId)).toMatchObject({ catalogVisibleAt: current.catalogVisibleAt,
+      notification: { smsPending: false, digestPending: false } });
   });
 
   it('retires JSON-LD metadata that disappears from a refreshed exact page', async () => {

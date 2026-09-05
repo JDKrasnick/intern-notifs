@@ -30,6 +30,18 @@ describe('GitHub source adapters', () => {
     const result = await adapter.fetch();
     expect(result.postings.map((posting) => posting.title)).toEqual(['Software Engineering Intern']);
     expect(result.rawCount).toBe(2);
+    expect(result.trustedCommunityDiagnostics).toMatchObject({ duplicateOccurrenceIds: 1 });
+  });
+  it('reports count-only aggregator rejection diagnostics', async () => {
+    const adapter = new GitHubMarkdownAdapter({
+      id: 'fixture', owner: 'owner', repo: 'repo', documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }],
+      fetchImpl: async () => new Response('| Company | Position | Location | Posting |\n| --- | --- | --- | --- |\n'
+        + '| Acme | Software Engineering Intern | Remote | [Apply](https://www.indeed.com/viewjob?jk=one) |'),
+    });
+    const result = await adapter.fetch();
+    expect(result.trustedCommunityDiagnostics).toEqual({
+      rejectedAggregatorRows: 1, survivingAggregatorRows: 0, duplicateOccurrenceIds: 0,
+    });
   });
   it('lets a reviewed list carry the lifecycle signal for a row whose title omits it', async () => {
     const adapter = new GitHubMarkdownAdapter({

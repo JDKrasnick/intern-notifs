@@ -121,6 +121,8 @@ export interface DeliveryReceipt {
 export type SourceFailureCategory = 'http' | 'json' | 'transport' | 'identity' | 'link' | 'empty' | 'quality' | 'persistence';
 
 export interface SourceCheckpoint {
+  /** Forces continuation and gate rollback until all admission slices finish. */
+  pendingAdmissionConfigurationVersion?: string;
   sourceId: string;
   etag?: string;
   documentEtags?: Record<string, string>;
@@ -135,6 +137,42 @@ export interface SourceCheckpoint {
   activeExternalIds?: string[];
   lastRawRowCount?: number;
   lastWithheldRowCount?: number;
+}
+
+export type TrustedCommunityAlertMode = 'disabled' | 'exact-identity-or-two-complete-snapshots';
+
+export interface TrustedCommunityAlertQualification {
+  /** Raw source facts inspected under the occurrence's admission version. */
+  sourceMaterialHash?: string;
+  /** Canonicalized source candidate used to detect source-side destination changes. */
+  candidateKey: string;
+  /** Set only after a posting-specific destination has been validated. */
+  validatedDestinationKey?: string;
+  consecutiveCompleteSnapshots: number;
+  lastCountedSuccessfulFetchSequence?: number;
+  status: 'disabled' | 'pending' | 'eligible' | 'ineligible';
+  basis?: 'exact-identity' | 'two-complete-snapshots';
+  /** Permanent for the occurrence: activating a policy can never alert its backlog. */
+  baselineSuppressed: boolean;
+  /** Temporary fail-closed state while a complete source-policy migration is pending. */
+  catalogPublicationSuppressed?: boolean;
+}
+
+export interface TrustedCommunitySourceMetrics {
+  rawRows: number;
+  eligibleRows: number;
+  rejectedAggregatorRows: number;
+  survivingAggregatorRows: number;
+  duplicateOccurrenceIds: number;
+  inspectedCandidates: number;
+  browserInspectionCandidates: number;
+  destinationFailures: number;
+  destinationFailuresByReason: Partial<Record<CatalogAdmissionReason, number>>;
+  inspectionCoverage: number;
+  browserInspectionShare: number;
+  destinationFailureRate: number;
+  catalogYield: number;
+  alertYield: number;
 }
 
 export type SourceHealthState = 'healthy' | 'degraded' | 'quarantined' | 'never-succeeded';
@@ -212,6 +250,7 @@ export interface SourceHealth {
   quarantinedAt?: string;
   quarantineReason?: string;
   recentRuns?: SourceRun[];
+  trustedCommunity?: TrustedCommunitySourceMetrics;
 }
 
 export interface SourceRun {
@@ -370,15 +409,18 @@ export type CatalogAdmissionReason =
   | 'metadata-location-truncated'
   | 'metadata-location-malformed';
 
+export type CatalogAdmissionEvidence = 'trusted-community-source';
+
 export interface CatalogAdmission {
   canonicalEmployer?: Pick<CanonicalEmployer, 'id' | 'displayName'>;
-  employerResolution: 'resolved' | 'unresolved' | 'conflict';
+  employerResolution: 'resolved' | 'source-reported' | 'unresolved' | 'conflict';
   postingAttribution: 'attributed' | 'unattributed';
   destination: DestinationEvidence;
   metadata: MetadataCompleteness;
   catalogEligible: boolean;
   alertEligible: boolean;
   reasonCodes: CatalogAdmissionReason[];
+  evidenceCodes?: CatalogAdmissionEvidence[];
   evaluatedAt: string;
   evidenceObservedAt: string;
   graceDeadline?: string;
@@ -713,6 +755,8 @@ export interface SourceOccurrence extends SourceReference {
   providerEvidence?: ProviderPostingEvidence;
   /** Durable identity decision for this occurrence. Missing means legacy-unclassified. */
   postingIdentityDecision?: PostingIdentityDecision;
+  /** Durable evidence for delayed alerts from an explicitly trusted community source. */
+  trustedCommunityAlertQualification?: TrustedCommunityAlertQualification;
   /** Source-local classification retained so job eligibility is independent of poll order. */
   technical?: boolean;
   company: string;
@@ -963,5 +1007,11 @@ export interface SourceFetchResult {
     attempted: boolean;
     notModified: boolean;
     validatorChanged?: boolean;
+  };
+  /** Count-only connector diagnostics; URLs and row contents are never emitted. */
+  trustedCommunityDiagnostics?: {
+    rejectedAggregatorRows: number;
+    survivingAggregatorRows: number;
+    duplicateOccurrenceIds: number;
   };
 }

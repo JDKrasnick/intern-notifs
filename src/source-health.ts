@@ -41,6 +41,7 @@ export function sourceFailureCategory(error: unknown): SourceFailureCategory {
 }
 
 function shouldQuarantine(category: SourceFailureCategory, error: unknown, failures: number): boolean {
+  if (error instanceof SourceFetchError && error.immediateQuarantine) return true;
   if (category === 'json' || category === 'identity') return true;
   if (category === 'http' && error instanceof SourceFetchError && [401, 403, 404].includes(error.status ?? 0)) return true;
   return (category === 'quality' || category === 'link' || category === 'empty') && failures >= QUALITY_FAILURES_BEFORE_QUARANTINE;
