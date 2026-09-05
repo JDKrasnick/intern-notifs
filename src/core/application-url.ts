@@ -44,6 +44,10 @@ export interface ApplicationPageConfidence {
 
 export interface ApplicationPageEvidence {
   url: string;
+  /** True when only the bounded prefix of the response was inspected. */
+  inspectionTruncated?: boolean;
+  /** Exact number of response bytes inspected before decoding. */
+  inspectedBytes?: number;
   /** A specific source path collapsed to a site's root after redirecting. */
   redirectedToGenericDestination?: boolean;
   title?: string;
@@ -184,13 +188,13 @@ async function discardResponseBody(response: Response): Promise<void> {
   }
 }
 
-async function boundedResponseText(response: Response, maximumBytes = 512 * 1024): Promise<string> {
-  const declared = Number(response.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > maximumBytes) {
-    await discardResponseBody(response);
-    throw new ApplicationUrlValidationError('Application page exceeds the inspection size limit');
-  }
-  if (!response.body) return '';
+async function boundedResponseText(
+  response: Response,
+  maximumBytes = 512 * 1024,
+): Promise<{ text: string; inspectedBytes: number; inspectionTruncated: boolean }> {
+  const declaredHeader = response.headers.get('content-length');
+  const declared = declaredHeader === null ? undefined : Number(declaredHeader);
+  if (!response.body) return { text: '', inspectedBytes: 0, inspectionTruncated: false };
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -207,9 +211,15 @@ async function boundedResponseText(response: Response, maximumBytes = 512 * 1024
     while (true) {
       const { done, value } = await readChunk();
       if (done) { complete = true; break; }
+      const remaining = maximumBytes - size;
+      if (value.byteLength > remaining) {
+        if (remaining > 0) chunks.push(value.slice(0, remaining));
+        size = maximumBytes;
+        break;
+      }
       size += value.byteLength;
-      if (size > maximumBytes) throw new ApplicationUrlValidationError('Application page exceeds the inspection size limit');
       chunks.push(value);
+      if (size === maximumBytes) break;
     }
   } finally {
     if (!complete) {
@@ -224,16 +234,31 @@ async function boundedResponseText(response: Response, maximumBytes = 512 * 1024
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-  return new TextDecoder().decode(bytes);
+  return {
+    text: new TextDecoder().decode(bytes),
+    inspectedBytes: size,
+    inspectionTruncated: !complete || (Number.isFinite(declared) && declared! > size),
+  };
 }
 
-function applicationContent(html: string): { excerpt?: string; hash?: string; source?: 'json-ld' | 'main' | 'body'; metadataArtifacts?: ApplicationMetadataArtifact[] } {
+function applicationContent(
+  html: string,
+  inspection: Pick<ApplicationPageEvidence, 'inspectionTruncated' | 'inspectedBytes'>,
+): { excerpt?: string; hash?: string; source?: 'json-ld' | 'main' | 'body'; metadataArtifacts?: ApplicationMetadataArtifact[] } {
   const structured = structuredJobText(html);
   const main = /<main\b[^>]*>([\s\S]*?)<\/main>/i.exec(html)?.[1];
   const text = structured.text ?? (main ? textFromHtml(main) : textFromHtml(/<body\b[^>]*>([\s\S]*?)<\/body>/i.exec(html)?.[1] ?? html));
   if (!text) return structured.metadataArtifacts?.length ? { metadataArtifacts: structured.metadataArtifacts } : {};
-  return { excerpt: text.slice(0, 12_000), hash: createHash('sha256').update(text).digest('hex'), source: structured.source ?? (main ? 'main' : 'body'),
-    ...(structured.metadataArtifacts?.length ? { metadataArtifacts: structured.metadataArtifacts } : {}) };
+  return {
+    excerpt: text.slice(0, 12_000),
+    hash: createHash('sha256').update(JSON.stringify({
+      text,
+      inspectionTruncated: inspection.inspectionTruncated === true,
+      inspectedBytes: inspection.inspectedBytes ?? 0,
+    })).digest('hex'),
+    source: structured.source ?? (main ? 'main' : 'body'),
+    ...(structured.metadataArtifacts?.length ? { metadataArtifacts: structured.metadataArtifacts } : {}),
+  };
 }
 
 const JOB_ROUTE = /(?:^|\/)(?:careers?|jobs?|openings?|positions?|roles?|vacancies?)(?:\/|$)/iu;
@@ -348,11 +373,13 @@ export async function inspectApplicationPage(
       confidence: confidenceFor({ html: false, ...(expectedPostingId ? { expectedPostingId } : {}) }),
     };
   }
-  const html = await boundedResponseText(response);
-  const content = applicationContent(html);
+  const inspection = await boundedResponseText(response);
+  const html = inspection.text;
+  const content = applicationContent(html, inspection);
   const title = /<title[^>]*>\s*([^<]+?)\s*<\/title>/i.exec(html)?.[1]?.replace(/\s+/g, ' ').trim();
   const description = /<meta[^>]+(?:name|property)=["'](?:description|og:description)["'][^>]+content=["']([^"']+)["']/i.exec(html)?.[1]?.replace(/\s+/g, ' ').trim();
-  const postingIdPresent = expectedPostingId ? html.includes(expectedPostingId) : undefined;
+  const postingIdObserved = expectedPostingId ? html.includes(expectedPostingId) : undefined;
+  const postingIdPresent = inspection.inspectionTruncated && postingIdObserved === false ? undefined : postingIdObserved;
   const jobPostingCount = [...html.matchAll(/["']@type["']\s*:\s*["']JobPosting["']/gi)].length;
   const jobLinkCount = distinctJobLinkCount(html, destination);
   const applicationFormPresent = /<form\b[^>]*(?:action=["'][^"']*(?:apply|application)|id=["'][^"']*(?:apply|application))|<input\b[^>]*(?:type=["']file["']|name=["'](?:resume|cv)["'])/i.test(html);
@@ -361,6 +388,8 @@ export async function inspectApplicationPage(
   }
   return {
     url: destination.toString(),
+    inspectionTruncated: inspection.inspectionTruncated,
+    inspectedBytes: inspection.inspectedBytes,
     ...(title ? { title } : {}),
     ...(description ? { description } : {}),
     ...(expectedPostingId ? { expectedPostingId } : {}),
