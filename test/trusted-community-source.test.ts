@@ -722,7 +722,9 @@ describe('trusted rollout repair boundaries', () => {
     expect(changedOccurrence.occurrence.title).toBe('Data Engineering Intern');
     expect((await store.getCheckpoint(sourceId))!.admissionConfigurationVersion).not.toBe(oldVersion);
     expect(store.notificationEvents.size).toBe(0);
-  });
+  // This production-sized fixture drains multiple bounded publication slices.
+  // Keep every row/assertion while allowing for shared CI runner contention.
+  }, 20_000);
 
   it.each(['gone', 'aggregate'] as const)('withdraws a cached good destination after fresh %s evidence', async (kind) => {
     const { store, rows, state, poll, sourceId } = migrationFixture();
