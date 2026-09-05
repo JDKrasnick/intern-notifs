@@ -156,7 +156,9 @@ export function extractVerifiedPageMetadataEvidence(input: {
   const expectedId = input.expectedPostingId?.toLowerCase();
   const artifacts = input.jsonLdArtifacts ?? [];
   const matching = artifacts.filter((artifact) => titleAgreement(input.expectedTitle, artifact.title)
-    && (artifacts.length === 1 || (expectedId ? postingIdentifierMatches(expectedId, artifact.identifier) : false)));
+    && (expectedId && artifact.identifier
+      ? postingIdentifierMatches(expectedId, artifact.identifier)
+      : artifacts.length === 1));
   const selected = matching.length === 1 ? matching[0] : !expectedId && artifacts.length === 1 && titleAgreement(input.expectedTitle, artifacts[0]!.title) ? artifacts[0] : undefined;
   const jsonLd = selected ? extractPostingMetadataEvidence({ artifact: selected, sourceClass: 'official-json-ld', sourceId: input.sourceId,
     sourceUrl: input.sourceUrl, observedAt: input.observedAt, exactPosting: true }) : [];
@@ -416,8 +418,9 @@ export function extractRoleMetadataEvidence(input: ExtractRoleMetadataInput): Ro
   // evidence record. Do not let a title token inherit official-page authority.
   const text = input.titleOnly ? title : input.artifact.text ?? '';
   const compensationText = input.titleOnly ? '' : input.artifact.compensationText ?? input.artifact.text ?? '';
+  const normalizedLocations = input.titleOnly ? [] : normalizeLocations(input.artifact.locations?.length ? input.artifact.locations : labeledLocations(input.artifact.text ?? ''));
   const compensationRanges = extractCompensationRanges(compensationText, {
-    provenance: field('compensation-range'), knownLocations: input.artifact.locations,
+    provenance: field('compensation-range'), knownLocations: normalizedLocations,
     requirePayContext: !input.artifact.compensationText,
   });
   const levels = educationLevels(text);
@@ -430,7 +433,6 @@ export function extractRoleMetadataEvidence(input: ExtractRoleMetadataInput): Ro
   const mode = input.titleOnly
     ? explicitWorkMode(title)
     : explicitWorkMode(input.artifact.workMode) ?? explicitPageWorkMode(input.artifact.text ?? '');
-  const normalizedLocations = input.titleOnly ? [] : normalizeLocations(input.artifact.locations?.length ? input.artifact.locations : labeledLocations(input.artifact.text ?? ''));
   const locations: InternshipLocation[] = normalizedLocations.map((name) => ({ name,
     workMode: explicitWorkMode(name) ?? mode ?? 'unspecified', provenance: [field('location-explicit')] }));
   const directDeadline = input.titleOnly ? undefined : deadline(input.artifact.deadline, input.artifact.deadlineTimezone);
@@ -639,6 +641,20 @@ export function projectRoleMetadata(job: Internship, evidence = job.sourceRefere
   const result = reconcileRoleMetadata(evidence, job);
   const identity = structuredIdentity(job);
   const previousMetadata = job.roleMetadata;
+  // A conflict is not a withdrawal. Retain the accepted projection and its
+  // provenance so later resolution or withdrawal can still replace it cleanly.
+  if (result.metadata && previousMetadata) {
+    const conflicted = new Set(result.conflicts.map((conflict) => conflict.field));
+    const preserve = <K extends keyof ReconciledRoleMetadata>(key: K, field: RoleMetadataField) => {
+      if (conflicted.has(field) && result.metadata![key] === undefined && previousMetadata[key] !== undefined) {
+        result.metadata![key] = previousMetadata[key];
+      }
+    };
+    preserve('workMode', 'work-mode');
+    preserve('applicationDeadline', 'application-deadline');
+    preserve('employerPublishedAt', 'employer-published-at');
+    preserve('employerUpdatedAt', 'employer-updated-at');
+  }
   if (!result.metadata && !identity?.programType?.value && !previousMetadata) return { job, conflicts: result.conflicts };
   const metadataLocations = result.metadata?.locations;
   const locationNames = metadataLocations?.map((item) => item.name);

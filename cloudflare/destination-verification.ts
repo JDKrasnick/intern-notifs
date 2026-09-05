@@ -113,7 +113,8 @@ export async function persistDestinationAdmission(input: {
     ? extractVerifiedPageMetadataEvidence({
       expectedTitle: reference.title,
       expectedPostingId: message.providerIdentity.postingId,
-      page: { title: evidence.title ?? reference.title, text: evidence.contentExcerpt },
+      page: { title: evidence.title ?? reference.title,
+        text: evidence.contentSource === 'json-ld' ? undefined : evidence.contentExcerpt },
       jsonLdArtifacts: evidence.metadataArtifacts,
       sourceId: message.sourceId,
       sourceUrl: evidence.url,

@@ -785,7 +785,9 @@ export class IngestionRunner {
             expectedPostingId: listing.providerIdentity?.postingId,
             page: {
               title: pageEvidence.title ?? listing.title,
-              text: pageEvidence.contentExcerpt,
+              // Structured descriptions must pass the JSON-LD posting match;
+              // do not also promote them as independently verified page text.
+              text: pageEvidence.contentSource === 'json-ld' ? undefined : pageEvidence.contentExcerpt,
             },
             jsonLdArtifacts: pageEvidence.metadataArtifacts,
             sourceId: listing.sourceId,

@@ -346,6 +346,13 @@ describe('D1 catalog admission operations', () => {
       confidence: { score: 100, level: 'high' as const, recommendation: 'alert-eligible' as const, signals: ['browser-visible evidence'] },
     };
     await persistDestinationAdmission({ jobs, operations, message, job: current, reference, reachability: 'live',
+      inspectedAt: '2026-08-28T00:00:30Z', browserVisible: true, evidence: { ...pageEvidence,
+        contentSource: 'json-ld', contentExcerpt: `${reference.title}. Salary is USD $99/hour.`,
+        metadataArtifacts: [{ title: reference.title, identifier: '9999999', compensationText: 'USD $99/hour' }] } });
+    expect((await jobs.getJob(current.jobId))?.compensation).toEqual({ raw: '' });
+    expect(database.prepare('SELECT count(*) AS count FROM role_metadata_evidence WHERE evidence LIKE ?')
+      .get('%compensationRanges%')).toEqual({ count: 0 });
+    await persistDestinationAdmission({ jobs, operations, message, job: current, reference, reachability: 'live',
       inspectedAt: '2026-08-28T00:01:00Z', browserVisible: true, evidence: { ...pageEvidence,
         metadataArtifacts: [{ title: reference.title, identifier: '1234567', compensationText: 'USD $40-$50/hour' }] } });
     const enriched = (await jobs.getJob(current.jobId))!;

@@ -35,6 +35,64 @@ function job(overrides: Partial<Internship> = {}): Internship {
 }
 
 describe('provider-neutral role metadata', () => {
+  it.each([
+    ['999', false], ['123', true], [undefined, true],
+  ])('checks singleton JSON-LD identifier %s before projecting pay', (identifier, accepted) => {
+    const original = job({ title: 'Software Engineering Intern' });
+    const extracted = extractVerifiedPageMetadataEvidence({
+      expectedTitle: original.title, expectedPostingId: '123', page: { title: original.title },
+      jsonLdArtifacts: [{ title: original.title, identifier, compensationText: 'USD $99/hour' }],
+      sourceId: 'community-acme', sourceUrl: original.applyUrl, observedAt, exactPosting: true,
+    });
+    expect(projectRoleMetadata(original, extracted).job.compensation.maxHourlyUSD).toBe(accepted ? 99 : undefined);
+  });
+
+  it.each([
+    ['New York, NY', 'USD', 50], ['Toronto, ON', 'XXX', undefined],
+  ])('uses the explicit page location %s to interpret dollar pay', (location, currency, maximum) => {
+    const original = job({ title: 'Software Engineering Intern' });
+    const extracted = extractVerifiedPageMetadataEvidence({
+      expectedTitle: original.title, page: { title: original.title,
+        text: `Location: ${location}. The pay range is $40-$50/hour.` },
+      sourceId: 'community-acme', sourceUrl: original.applyUrl, observedAt, exactPosting: true,
+    });
+    expect(extracted[0]?.compensationRanges?.[0]?.currency).toBe(currency);
+    const projected = projectRoleMetadata(original, extracted).job;
+    expect(projected.locations).toEqual([location]);
+    expect(projected.compensation.maxHourlyUSD).toBe(maximum);
+  });
+
+  it('preserves accepted scalars through conflict, resolution, and withdrawal', () => {
+    const original = job({ title: 'Software Engineering Intern' });
+    const facts = (sourceId: string, changed: boolean) => extractPostingMetadataEvidence({
+      artifact: { title: original.title, workMode: changed ? 'hybrid' : 'remote',
+        deadline: changed ? '2026-11-01' : '2026-10-01',
+        publishedAt: changed ? '2026-08-02' : '2026-08-01',
+        updatedAt: changed ? '2026-09-02' : '2026-09-01' },
+      sourceClass: 'official-page', sourceId, sourceUrl: original.applyUrl, observedAt, exactPosting: true,
+    });
+    const first = facts('one', false); const second = facts('two', true);
+    const accepted = projectRoleMetadata(original, first).job;
+    const conflicted = projectRoleMetadata(accepted, [...first, ...second]);
+    expect(conflicted.conflicts).toHaveLength(4);
+    for (const key of ['workMode', 'applicationDeadline', 'employerPublishedAt', 'employerUpdatedAt'] as const) {
+      expect(conflicted.job[key]).toEqual(accepted[key]);
+      expect(conflicted.job.roleMetadata?.[key]).toEqual(accepted.roleMetadata?.[key]);
+    }
+    expect(projectRoleMetadata(conflicted.job, [...second, ...first]).job).toEqual(conflicted.job);
+    const resolved = projectRoleMetadata(conflicted.job, second);
+    expect(resolved.conflicts).toEqual([]);
+    expect(resolved.job).toMatchObject({ workMode: 'hybrid', applicationDeadline: { date: '2026-11-01' },
+      employerPublishedAt: '2026-08-02T00:00:00.000Z', employerUpdatedAt: '2026-09-02T00:00:00.000Z' });
+    for (const prior of [conflicted.job, resolved.job]) {
+      const withdrawn = projectRoleMetadata(prior, []).job;
+      for (const key of ['workMode', 'applicationDeadline', 'employerPublishedAt', 'employerUpdatedAt', 'roleMetadata'] as const) {
+        expect(withdrawn[key]).toBeUndefined();
+      }
+      expect(withdrawn.notification).toEqual(original.notification);
+    }
+  });
+
   it('keeps differently applicable USD ranges separate without global extrema', () => {
     const ranges = extractCompensationRanges(
       'San Francisco, CA: $45-$55/hour; New York, NY: $50-$60/hour',
