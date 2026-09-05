@@ -63,6 +63,14 @@ describe('record-level catalog admission', () => {
     expect(valid.classification).toBe('posting-detail');
   });
 
+  it('does not treat one structured posting in a truncated prefix as exact-page proof', () => {
+    const role = listing({ applyUrl: 'https://careers.acme.test/custom' });
+    const destination = classifyDestination({ listing: role, reachability: 'live', inspectedAt: '2026-09-04T12:00:00Z',
+      evidence: page({ title: 'Careers', contentExcerpt: 'Browse opportunities', jobPostingCount: 1,
+        inspectionTruncated: true, inspectedBytes: 512 * 1024 }) });
+    expect(destination).toMatchObject({ classification: 'unresolved', inspectionTruncated: true, inspectedBytes: 512 * 1024 });
+  });
+
   it('uses the required missing-location copy but rejects truncated and malformed display fields', () => {
     expect(metadataCompleteness({ title: 'Software Engineering Intern', locations: [] }))
       .toEqual({ complete: true, title: 'complete', location: 'not-specified' });

@@ -4,7 +4,7 @@ import { Poller } from './poll.js';
 import { reviewedAshbySources, type ReviewedAshbySource } from './sources/ashby-config.js';
 import { AshbyPostingsAdapter } from './sources/ashby.js';
 import { SourceFetchError } from './sources/source-error.js';
-import { failedSourceHealth, safeDiagnostic, successfulSourceHealth } from './source-health.js';
+import { ApplicationLinkValidationError, failedSourceHealth, safeDiagnostic, sourceFailureCategory, successfulSourceHealth } from './source-health.js';
 import { DynamoInternshipStore, DynamoUserStore, type InternshipStore, type UserStore } from './store.js';
 import type { SourceCheckpoint, SourceFetchResult } from './types.js';
 import type { AshbyWorkMessage } from './ashby-dispatch.js';
@@ -149,19 +149,21 @@ async function validateShadowLinks(
 ) {
   let next = 0;
   let failures = 0;
+  const samples: Array<{ category: ReturnType<typeof sourceFailureCategory>; diagnostic: string }> = [];
   const worker = async () => {
     while (next < listings.length) {
       const listing = listings[next++];
       try {
         await validate(listing.applyUrl);
-      } catch {
+      } catch (error) {
         failures += 1;
+        if (samples.length < 5) samples.push({ category: sourceFailureCategory(error), diagnostic: safeDiagnostic(error) });
       }
     }
   };
   await Promise.all(Array.from({ length: Math.min(SHADOW_LINK_CONCURRENCY, listings.length) }, worker));
   if (listings.length && failures / listings.length > SHADOW_LINK_FAILURE_THRESHOLD) {
-    throw new Error(`${failures}/${listings.length} eligible Ashby application links failed shadow validation`);
+    throw new ApplicationLinkValidationError('Ashby', failures, listings.length, samples);
   }
   return { checked: listings.length, failures };
 }
@@ -175,7 +177,7 @@ export async function runAshbyBoard(
   if (!source) throw new Error(`Unknown reviewed Ashby source ${JSON.stringify(message.sourceId)}`);
   const mode = source.status;
   const sourceHealth = await dependencies.store.getSourceHealth(source.id);
-  if (!message.force && sourceHealth?.sourceStatus === 'paused') {
+  if (!message.force && (sourceHealth?.sourceStatus === 'paused' || sourceHealth?.state === 'quarantined')) {
     return { sourceId: source.id, mode, skipped: 'paused', notModified: true, listings: 0, notifications: { sent: 0, skipped: 0, failed: 0 } };
   }
   if (!message.force && sourceHealth?.backoffUntil && Date.parse(sourceHealth.backoffUntil) > Date.now()) {

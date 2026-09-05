@@ -42,7 +42,9 @@ function router(options: RouterOptions = {}): typeof fetch {
       return json(jobsBody, { etag: 'W/"acme-1"', url: jobsUrl });
     }
     if (options.oversizedApplicationPage) {
-      const response = new Response('', { status: 200, headers: { 'content-type': 'text/html', 'content-length': '600000' } });
+      const body = '<title>Software Engineer Intern</title><main>Job 5001. Responsibilities and qualifications.</main>'
+        + 'x'.repeat(600_000);
+      const response = new Response(body, { status: 200, headers: { 'content-type': 'text/html', 'content-length': String(body.length) } });
       Object.defineProperty(response, 'url', { value: resolvedApplyUrl });
       return response;
     }
@@ -70,10 +72,10 @@ describe('runGreenhouseLiveContract', () => {
     const result = await runGreenhouseLiveContract(acmeSource, router({ etagTransportError: true }));
     expect(result).toMatchObject({ status: 'inconclusive', checks: { identity: 'ok', schema: 'ok', etagNotModified: 'inconclusive', linkHealth: 'ok' } });
   });
-  it('defers oversized dynamic application pages to headed verification', async () => {
+  it('accepts useful evidence from the bounded prefix of an oversized application page', async () => {
     const result = await runGreenhouseLiveContract(acmeSource, router({ oversizedApplicationPage: true }));
-    expect(result).toMatchObject({ status: 'inconclusive', checks: { identity: 'ok', schema: 'ok',
-      etagNotModified: 'ok', linkHealth: 'skipped' } });
+    expect(result).toMatchObject({ status: 'ok', checks: { identity: 'ok', schema: 'ok',
+      etagNotModified: 'ok', linkHealth: 'ok' } });
   });
   it('treats an identity transport outage as inconclusive without probing jobs', async () => {
     const result = await runGreenhouseLiveContract(acmeSource, router({ identityTransportError: true }));

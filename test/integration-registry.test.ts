@@ -39,7 +39,7 @@ describe('catalog provider integration registry', () => {
     expect(queueReferences.size).toBe(catalogProviderDefinitions.length * 2);
   });
 
-  it('retains the stable ATS definitions and advertises only implemented GitHub controls', () => {
+  it('retains the stable provider definitions and advertises implemented controls', () => {
     expect(integrationRegistry.greenhouse).toMatchObject({
       displayName: 'Greenhouse', regions: ['unknown'], defaultRegion: 'unknown', sourceActions: [...supportedActions], workflows: [],
     });
@@ -49,7 +49,7 @@ describe('catalog provider integration registry', () => {
     expect(integrationRegistry.ashby).toMatchObject({
       displayName: 'Ashby', regions: ['global'], defaultRegion: 'global', workflows: [],
     });
-    expect(integrationRegistry.github).toMatchObject({ sourceActions: ['replay'], workflows: [] });
+    expect(integrationRegistry.github).toMatchObject({ sourceActions: [...supportedActions], workflows: [] });
   });
 
   it('matches source IDs through provider rules without ATS ambiguity', () => {

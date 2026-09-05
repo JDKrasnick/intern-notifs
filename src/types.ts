@@ -192,6 +192,7 @@ export interface SourceHealth {
   withheldCount?: number;
   applicationLinksChecked?: number;
   applicationLinkFailures?: number;
+  applicationLinkFailureSamples?: Array<{ category: SourceFailureCategory; diagnostic: string }>;
   durationMs: number;
   failureCategory?: SourceFailureCategory;
   lastFailureCategory?: SourceFailureCategory;
@@ -319,6 +320,8 @@ export interface DestinationEvidence {
   tenant?: string;
   expectedPostingId?: string;
   inspectedAt: string;
+  inspectionTruncated?: boolean;
+  inspectedBytes?: number;
   evidenceHash?: string;
   postingIdPresent?: boolean;
   jobPostingCount?: number;
