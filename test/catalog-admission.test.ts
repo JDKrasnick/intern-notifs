@@ -107,6 +107,44 @@ describe('record-level catalog admission', () => {
     expect(destination.classification).toBe('posting-detail');
   });
 
+  it.each([7, 8, 10, 14, 17, 100])('admits a matching single posting with %s navigation/related links', async (links) => {
+    const role = listing({ applyUrl: 'https://careers.future-employer.test/opportunities/software-intern',
+      providerIdentity: { provider: 'github', sourceId: 'community', sourceUrl: 'https://example.test/source' } });
+    const evidence = await inspectApplicationPage(role.applyUrl, async () => new Response(`
+      <title>Software Engineering Intern</title>
+      <script type="application/ld+json">{"@type":"JobPosting","title":"Software Engineering Intern",
+      "description":"Build software with our engineering team during this internship."}</script>
+      ${Array.from({ length: links }, (_, i) => `<a href="/jobs/related-${i}">Related role</a>`).join('')}
+    `, { headers: { 'content-type': 'text/html' } }));
+    expect(evidence).toMatchObject({ jobPostingCount: 1, distinctJobLinkCount: links });
+    for (const browserVisible of [undefined, true]) {
+      const destination = classifyDestination({ listing: role, evidence, reachability: 'live',
+        inspectedAt: role.fetchedAt, browserVisible });
+      expect(destination.classification).toBe('posting-detail');
+      expect(evaluateCatalogAdmission({ listing: role, destination, postingAttributed: true, evaluatedAt: role.fetchedAt }))
+        .toMatchObject({ catalogEligible: true, alertEligible: true });
+    }
+  });
+
+  it.each([
+    { jobPostingCount: 2 },
+    { redirectedToGenericDestination: true },
+    { identicalEvidenceForDifferentPosting: true },
+    { title: 'Restaurant General Manager', description: 'Manage restaurant staffing', contentExcerpt: 'Restaurant management' },
+    { jobPostingCount: 0, postingIdPresent: true },
+    { jobPostingCount: 0, applicationFormPresent: true },
+  ])('keeps contradictory or weak high-link-count pages withheld: %j', (overrides) => {
+    const role = listing({ applyUrl: 'https://careers.future-employer.test/jobs/1234567' });
+    const evidence = page({ jobPostingCount: 1, distinctJobLinkCount: 14, ...overrides });
+    for (const browserVisible of [undefined, true]) {
+      const destination = classifyDestination({ listing: role, evidence, reachability: 'live',
+        inspectedAt: role.fetchedAt, browserVisible });
+      expect(destination.classification).toBe('aggregate-board');
+      expect(evaluateCatalogAdmission({ listing: role, destination, postingAttributed: true, evaluatedAt: role.fetchedAt }))
+        .toMatchObject({ catalogEligible: false, alertEligible: false });
+    }
+  });
+
   it('retains last-known-good handoff for seven days while pausing alerts', () => {
     const role = listing({ applyUrl: 'https://careers.acme.test/roles/1234567' });
     const goodDestination = classifyDestination({ listing: role, reachability: 'live', evidence: page({ postingIdPresent: true }), inspectedAt: '2026-08-20T12:00:00Z' });

@@ -148,8 +148,14 @@ export function classifyDestination(input: {
   if (input.rule?.decision === 'aggregate-board') return { ...common, classification: 'aggregate-board' };
   const exactPostingEvidence = input.evidence?.postingIdPresent === true
     || input.evidence?.jobPostingCount === 1 || input.evidence?.applicationFormPresent === true;
+  // Navigation and related-role links do not turn a matching, structured
+  // single posting into a board. A URL/ID echoed in a shell is not enough to
+  // override the high-link-count guard; contradictory evidence still wins.
+  const matchingSinglePosting = input.evidence?.jobPostingCount === 1
+    && sourceRoleAgreement(input.listing.title, input.evidence) !== 'weak';
   if (input.evidence?.identicalEvidenceForDifferentPosting || input.evidence?.redirectedToGenericDestination
-    || (input.evidence?.jobPostingCount ?? 0) > 1 || (input.evidence?.distinctJobLinkCount ?? 0) >= 8
+    || (input.evidence?.jobPostingCount ?? 0) > 1
+    || ((input.evidence?.distinctJobLinkCount ?? 0) >= 8 && !matchingSinglePosting)
     || ((input.evidence?.distinctJobLinkCount ?? 0) > 1 && !exactPostingEvidence)) {
     return { ...common, classification: 'aggregate-board' };
   }
