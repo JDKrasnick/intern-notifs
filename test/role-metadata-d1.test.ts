@@ -1,6 +1,7 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
 import { D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
@@ -77,7 +78,7 @@ describe('D1 role metadata evidence and guarded repair', () => {
     await current.jobs.putInternship(original);
     const firstAudit = await current.operations.roleMetadataAudit(new Date('2026-09-04T12:00:00.000Z'));
     expect(firstAudit.collectionCoverage).toMatchObject({
-      extractionVersion: 2, eligible: 1, current: 0, pendingOrUnobserved: 1, stale: 0, complete: false,
+      extractionVersion: ROLE_METADATA_EXTRACTION_VERSION, eligible: 1, current: 0, pendingOrUnobserved: 1, stale: 0, complete: false,
     });
     const incompletePlan = await current.operations.stageRoleMetadataRepair('2026-09-04T12:00:00.000Z');
     await expect(current.operations.applyRoleMetadataRepair(
@@ -92,7 +93,7 @@ describe('D1 role metadata evidence and guarded repair', () => {
       sourceId: original.sourceReferences[0]!.sourceId,
       sourceUrl: original.applyUrl,
       artifactHash: 'no-explicit-metadata',
-      extractionVersion: 2,
+      extractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
       outcome: 'no-explicit-metadata',
       observedAt: '2026-07-01T12:02:00.000Z',
       backfillToken: 'collection-1',
@@ -114,7 +115,7 @@ describe('D1 role metadata evidence and guarded repair', () => {
       sourceId: original.sourceReferences[0]!.sourceId,
       sourceUrl: original.applyUrl,
       artifactHash: 'no-explicit-metadata',
-      extractionVersion: 2,
+      extractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
       outcome: 'no-explicit-metadata',
       observedAt: '2026-09-04T12:05:00.000Z',
       backfillToken: 'collection-1',

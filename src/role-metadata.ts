@@ -23,7 +23,10 @@ import type {
   WorkMode,
 } from './types.js';
 
-export const ROLE_METADATA_EXTRACTION_VERSION = 2;
+// Increment whenever a parser change can produce a different result from an
+// unchanged artifact. This makes the collection scheduler revisit both a
+// previous negative result and an already-enriched posting.
+export const ROLE_METADATA_EXTRACTION_VERSION = 3;
 export const VERIFIED_PAGE_METADATA_SOURCES = ['official-json-ld', 'official-page'] as const;
 const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   'official-ats': 0,
@@ -272,9 +275,12 @@ const CURRENCY_CODE = String.raw`USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP|JPY|CNY|INR|CHF
 const PAY = new RegExp(String.raw`(?:(${CURRENCY_CODE})\s*)?([$€£])?\s*(${MONEY_AMOUNT})\s*([kK])?\s*(?:(?:-|–|—|to)\s*(?:(${CURRENCY_CODE})\s*)?[$€£]?\s*(${MONEY_AMOUNT})\s*([kK])?)?\s*(?:\/\s*)?(?:per\s+)?\(?\s*(${PERIOD})(?:\b|$)`, 'giu');
 const SPLIT_PERIOD_PAY = new RegExp(String.raw`(?:(${CURRENCY_CODE})\s*)?([$€£])?\s*(${MONEY_AMOUNT})\s*([kK])?\s*(?:\/|per\s+)(${PERIOD})\s*(?:-|–|—|to)\s*(?:(${CURRENCY_CODE})\s*)?[$€£]?\s*(${MONEY_AMOUNT})\s*([kK])?\s*(?:\/|per\s+)(${PERIOD})(?:\b|$)`, 'giu');
 const USD_TEXT_PAY = new RegExp(String.raw`\b(USD)\s+(${MONEY_AMOUNT})\s*([kK])?\s*(?:(?:-|–|—|to)\s*(${MONEY_AMOUNT})\s*([kK])?)?\s*(?:\/|per\s+)?(${PERIOD})(?:\b|$)`, 'giu');
+// Some ATS templates place the currency after a range and before its period.
+// Keep this separate from PAY so its capture groups remain easy to audit.
+const BETWEEN_RANGE_AND_PERIOD_CURRENCY_PAY = new RegExp(String.raw`([$€£])\s*(${MONEY_AMOUNT})\s*([kK])?\s*(?:-|–|—|to)\s*[$€£]?\s*(${MONEY_AMOUNT})\s*([kK])?\s*(${CURRENCY_CODE})\s*(?:\/\s*)?(?:per\s+)?(${PERIOD})(?:\b|$)`, 'giu');
 // Publishers often state the period in the label, not after the amounts.
 // Keep that label in the same clause and require explicit pay terminology.
-const LABELED_PAY = new RegExp(String.raw`\b(hourly|annual(?:ized)?|yearly)\s+(?:(?:base|estimated|starting)\s+)?(?:pay|salary|wage|rate|compensation)(?:\s+range)?[^.;$€£\d]{0,100}?(?:(${CURRENCY_CODE})\s*)?([$€£])\s*(${MONEY_AMOUNT})\s*([kK])?\s*(?:(?:-|–|—|to)\s*[$€£]?\s*(${MONEY_AMOUNT})\s*([kK])?)?(?:\s*\(?(${CURRENCY_CODE})\b\)?)?`, 'giu');
+const LABELED_PAY = new RegExp(String.raw`\b(hourly|annual(?:ized)?|yearly|daily|weekly|monthly)\s+(?:(?:base|estimated|starting)\s+)?(?:pay|salary|wage|rate|compensation)(?:\s+range)?[^.;$€£\d]{0,100}?(?:(${CURRENCY_CODE})\s*)?([$€£])\s*(${MONEY_AMOUNT})\s*([kK])?\s*(?:(?:-|–|—|to)\s*[$€£]?\s*(${MONEY_AMOUNT})\s*([kK])?)?(?:\s*\(?(${CURRENCY_CODE})\b\)?)?`, 'giu');
 
 function compensationPeriod(value: string): CompensationPeriod {
   if (/^(?:hour|hourly|hr)$/iu.test(value)) return 'hourly';
@@ -312,7 +318,7 @@ export function extractCompensationRanges(
   const ranges: CompensationRange[] = [];
   const segments = value.split(/(?<=[.;\n])\s+|\s*[;\n]\s*/u).filter(Boolean);
   const append = (segment: string, raw: string, first: number, second: number, periodText: string, currency: string) => {
-    if (input.requirePayContext && !/\b(?:salary|pays?|compensation|base rate|market range|hourly rate|annual range|internships? (?:is|are) paid)\b/iu.test(segment)) return;
+    if (input.requirePayContext && !/\b(?:salary|pays?|compensation|base rate|market range|hourly rate|annual range|hiring range|internships? (?:is|are) paid)\b/iu.test(segment)) return;
     const period = compensationPeriod(periodText);
     const minAmount = Math.min(first, second); const maxAmount = Math.max(first, second);
     const plausible = period === 'hourly' ? minAmount >= 5 && maxAmount <= 500
@@ -335,6 +341,10 @@ export function extractCompensationRanges(
       const currency = match[1]?.toUpperCase() ?? match[6]?.toUpperCase()
         ?? CURRENCY_SYMBOL[match[2]!] ?? (match[2] === '$' ? dollarCurrency(input.knownLocations ?? []) : 'XXX');
       append(segment, match[0], amount(match[3]!, match[4]), amount(match[7]!, match[8]), match[5]!, currency);
+    }
+    for (const match of segment.matchAll(BETWEEN_RANGE_AND_PERIOD_CURRENCY_PAY)) {
+      const currency = match[6]!.toUpperCase() ?? CURRENCY_SYMBOL[match[1]!] ?? 'XXX';
+      append(segment, match[0], amount(match[2]!, match[3]), amount(match[4]!, match[5]), match[7]!, currency);
     }
     for (const match of segment.matchAll(PAY)) {
       const explicit = match[1]?.toUpperCase();
@@ -363,9 +373,13 @@ export function extractCompensationRanges(
 }
 
 export function compensationFromRanges(ranges: readonly CompensationRange[]): Compensation {
-  const supported = ranges.filter((range) => range.currency === 'USD' && ['hourly', 'annual'].includes(range.period));
-  const raw = boundedText([...new Set(supported.map((range) => range.sourceText))].join(' · '), 160);
-  const result: Compensation = { raw, ...(supported.length ? { ranges: supported.map((range) => ({ ...range, provenance: mergeProvenance(range.provenance) })) } : {}) };
+  // `ranges` is the additive public contract. Retain every explicit amount,
+  // including native currencies and nonstandard/unknown periods. The old USD
+  // scalar bounds remain intentionally narrow for existing sorting consumers.
+  const projected = ranges.map((range) => ({ ...range, provenance: mergeProvenance(range.provenance) }));
+  const raw = boundedText([...new Set(projected.map((range) => range.sourceText))].join(' · '), 160);
+  const result: Compensation = { raw, ...(projected.length ? { ranges: projected } : {}) };
+  const supported = projected.filter((range) => range.currency === 'USD' && ['hourly', 'annual'].includes(range.period));
   const global = supported.filter((range) => !range.applicableLocations?.length && !range.applicableEducationLevels?.length);
   const hourly = global.filter((range) => range.period === 'hourly');
   const annual = global.filter((range) => range.period === 'annual');
@@ -549,7 +563,6 @@ function rangeValue(range: CompensationRange): string {
 function reconcileRanges(evidence: readonly RoleMetadataEvidence[], existing: readonly CompensationRange[] = []): { ranges: CompensationRange[]; conflicts: MetadataConflict[] } {
   const groups = new Map<string, Array<CompensationRange & { artifactHash: string }>>();
   for (const item of evidence) for (const range of item.compensationRanges ?? []) {
-    if (range.currency !== 'USD' || !['hourly', 'annual'].includes(range.period)) continue;
     const key = rangeApplicability(range); const values = groups.get(key) ?? []; values.push({ ...range, artifactHash: item.artifactHash }); groups.set(key, values);
   }
   const ranges: CompensationRange[] = []; const conflicts: MetadataConflict[] = [];

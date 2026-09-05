@@ -6,6 +6,7 @@ import {
   verifyApplication,
 } from '../src/core/application-verification.js';
 import { IngestionRunner } from '../src/poll.js';
+import { ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
 import { MemoryInternshipStore } from '../src/store.js';
 import type { ProcessedListing, SourceAdapter, SourceCheckpoint, SourceFetchResult } from '../src/types.js';
 
@@ -137,7 +138,7 @@ describe('verification in the poll', () => {
 
     expect([...store.jobs.values()][0]).toMatchObject({
       season: 'summer-2026',
-      applicationPageMetadataVersion: 3,
+      applicationPageMetadataVersion: ROLE_METADATA_EXTRACTION_VERSION + 1,
     });
 
     const refetched: string[] = [];

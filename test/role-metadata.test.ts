@@ -8,6 +8,7 @@ import {
   extractVerifiedPageMetadataEvidence,
   projectRoleMetadata,
   reconcileRoleMetadata,
+  ROLE_METADATA_EXTRACTION_VERSION,
 } from '../src/role-metadata.js';
 import type { FieldProvenance, Internship, RoleMetadataEvidence } from '../src/types.js';
 
@@ -19,7 +20,7 @@ const field: FieldProvenance = {
 
 function evidence(overrides: Partial<RoleMetadataEvidence>): RoleMetadataEvidence {
   return {
-    schemaVersion: 1, extractionVersion: 2, artifactHash: 'artifact', sourceClass: 'official-page',
+    schemaVersion: 1, extractionVersion: ROLE_METADATA_EXTRACTION_VERSION, artifactHash: 'artifact', sourceClass: 'official-page',
     sourceId: 'community-acme', sourceUrl: 'https://careers.acme.test/jobs/123', observedAt, exactPosting: true,
     ...overrides,
   };
@@ -142,28 +143,28 @@ describe('provider-neutral role metadata', () => {
     expect(item?.applicationDeadline?.value).toEqual({ kind: 'date', date: '2026-11-11' });
   });
 
-  it('retains unsupported currency as evidence without projecting it publicly', () => {
+  it('projects native-currency ranges without inventing USD scalar bounds', () => {
     const [item] = extractPostingMetadataEvidence({
       artifact: { title: 'Software Intern', compensationText: 'CAD $30-$40/hour' }, sourceClass: 'official-ats',
       sourceId: 'lever-acme', sourceUrl: 'https://api.lever.test/acme', observedAt, exactPosting: true,
     });
     expect(item?.compensationRanges?.[0]?.currency).toBe('CAD');
-    expect(reconcileRoleMetadata(item ? [item] : []).compensation).toBeUndefined();
+    expect(reconcileRoleMetadata(item ? [item] : []).compensation).toMatchObject({ raw: 'CAD $30-$40/hour', ranges: [{ currency: 'CAD', period: 'hourly' }] });
   });
 
   it('does not assume an ambiguous dollar symbol is USD without a US location', () => {
     const ranges = extractCompensationRanges('The pay range is $30-$40/hour.', { provenance: field, knownLocations: ['Toronto, ON'] });
     expect(ranges[0]?.currency).toBe('XXX');
-    expect(compensationFromRanges(ranges)).toEqual({ raw: '' });
+    expect(compensationFromRanges(ranges)).toMatchObject({ raw: '$30-$40/hour', ranges: [{ currency: 'XXX', period: 'hourly' }] });
   });
 
-  it('retains unsupported pay periods as evidence without projecting them publicly', () => {
+  it('projects nonstandard pay periods without using them as legacy scalar bounds', () => {
     const [item] = extractPostingMetadataEvidence({
       artifact: { title: 'Software Intern', compensationText: 'USD $500-$700/week' }, sourceClass: 'official-ats',
       sourceId: 'lever-acme', sourceUrl: 'https://api.lever.test/acme', observedAt, exactPosting: true,
     });
     expect(item?.compensationRanges?.[0]?.period).toBe('weekly');
-    expect(reconcileRoleMetadata(item ? [item] : []).compensation).toBeUndefined();
+    expect(reconcileRoleMetadata(item ? [item] : []).compensation).toMatchObject({ raw: 'USD $500-$700/week', ranges: [{ currency: 'USD', period: 'weekly' }] });
   });
 
   it('accepts explicit degree and work-mode title evidence but never an inexact artifact', () => {
