@@ -159,9 +159,17 @@ export function classifyDestination(input: {
   const matchingSinglePosting = singleStructuredPosting && input.evidence
     && sourceRoleAgreement(input.listing.title, input.evidence) !== 'weak';
   if (input.evidence?.identicalEvidenceForDifferentPosting || input.evidence?.redirectedToGenericDestination
-    || (input.evidence?.jobPostingCount ?? 0) > 1
-    || ((input.evidence?.distinctJobLinkCount ?? 0) >= 8 && !matchingSinglePosting)
+    || (input.evidence?.jobPostingCount ?? 0) > 1) {
+    return { ...common, classification: 'aggregate-board' };
+  }
+  if (((input.evidence?.distinctJobLinkCount ?? 0) >= 8 && !matchingSinglePosting)
     || ((input.evidence?.distinctJobLinkCount ?? 0) > 1 && !exactPostingEvidence)) {
+    // A matching structured prefix cannot prove either a single posting or a
+    // board. Keep it hidden but recoverable by the browser-verification queue.
+    if (input.evidence?.inspectionTruncated === true && input.evidence.jobPostingCount === 1
+      && sourceRoleAgreement(input.listing.title, input.evidence) !== 'weak') {
+      return { ...common, classification: 'unresolved' };
+    }
     return { ...common, classification: 'aggregate-board' };
   }
   if (input.reachability === 'blocked' && input.rule?.decision === 'blocked-accepted' && routeContainsPostingId(identity, candidateUrl)) {

@@ -211,7 +211,9 @@ describe('trusted community source policy', () => {
   });
 });
 
-describe('trusted community source health', () => {
+// These suites include production-sized snapshots and multiple durable polls.
+// Preserve full fixtures while allowing bounded headroom on shared runners.
+describe('trusted community source health', { timeout: 20_000 }, () => {
   it('derives every route metric from technically eligible listings only', () => {
     const technicalExact = listing({
       applyUrl: 'https://jobs.lever.co/acme/role-1',
@@ -561,7 +563,7 @@ function migrationFixture() {
   return { store, rows, state, poll, sourceId };
 }
 
-describe('trusted rollout repair boundaries', () => {
+describe('trusted rollout repair boundaries', { timeout: 20_000 }, () => {
   it('revokes without upstream access and can reverse an interrupted rollback', async () => {
     const { store, rows, state, poll, sourceId } = migrationFixture();
     await poll(true);
@@ -722,9 +724,7 @@ describe('trusted rollout repair boundaries', () => {
     expect(changedOccurrence.occurrence.title).toBe('Data Engineering Intern');
     expect((await store.getCheckpoint(sourceId))!.admissionConfigurationVersion).not.toBe(oldVersion);
     expect(store.notificationEvents.size).toBe(0);
-  // This production-sized fixture drains multiple bounded publication slices.
-  // Keep every row/assertion while allowing for shared CI runner contention.
-  }, 20_000);
+  });
 
   it.each(['gone', 'aggregate'] as const)('withdraws a cached good destination after fresh %s evidence', async (kind) => {
     const { store, rows, state, poll, sourceId } = migrationFixture();

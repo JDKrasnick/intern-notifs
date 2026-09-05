@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { deriveCanonicalAdmission, evaluateCatalogAdmission, metadataCompleteness } from '../src/catalog-admission.js';
-import { classifyDestination } from '../src/destination-verification.js';
+import { classifyDestination, requiresBrowserVerification } from '../src/destination-verification.js';
 import { inspectApplicationPage, type ApplicationPageEvidence } from '../src/core/application-url.js';
 import type { CatalogAdmission, ProcessedListing, SourceOccurrence } from '../src/types.js';
 
@@ -136,7 +136,6 @@ describe('record-level catalog admission', () => {
 
   it.each([
     { jobPostingCount: 2 },
-    { inspectionTruncated: true },
     { redirectedToGenericDestination: true },
     { identicalEvidenceForDifferentPosting: true },
     { title: 'Restaurant General Manager', description: 'Manage restaurant staffing', contentExcerpt: 'Restaurant management' },
@@ -151,6 +150,26 @@ describe('record-level catalog admission', () => {
       expect(destination.classification).toBe('aggregate-board');
       expect(evaluateCatalogAdmission({ listing: role, destination, postingAttributed: true, evaluatedAt: role.fetchedAt }))
         .toMatchObject({ catalogEligible: false, alertEligible: false });
+    }
+  });
+
+  it('queues a matching truncated structured page instead of permanently labeling its navigation a board', () => {
+    const role = listing({ applyUrl: 'https://careers.future-employer.test/opportunities/software-intern' });
+    const evidence = page({ jobPostingCount: 1, distinctJobLinkCount: 14, inspectionTruncated: true });
+    for (const browserVisible of [undefined, true]) {
+      const destination = classifyDestination({ listing: role, evidence, reachability: 'live',
+        inspectedAt: role.fetchedAt, browserVisible });
+      expect(destination.classification).toBe('unresolved');
+      expect(requiresBrowserVerification(destination)).toBe(true);
+      expect(evaluateCatalogAdmission({ listing: role, destination, postingAttributed: true, evaluatedAt: role.fetchedAt }))
+        .toMatchObject({ catalogEligible: false, alertEligible: false });
+    }
+    const verified = classifyDestination({ listing: role, evidence: { ...evidence, inspectionTruncated: false },
+      reachability: 'live', inspectedAt: role.fetchedAt, browserVisible: true });
+    expect(verified.classification).toBe('posting-detail');
+    for (const contradiction of [{ jobPostingCount: 2 }, { redirectedToGenericDestination: true }, { identicalEvidenceForDifferentPosting: true }]) {
+      expect(classifyDestination({ listing: role, evidence: { ...evidence, ...contradiction }, reachability: 'live',
+        inspectedAt: role.fetchedAt }).classification).toBe('aggregate-board');
     }
   });
 
