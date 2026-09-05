@@ -6,9 +6,26 @@ const MAX_RECENT_RUNS = 25;
 const QUALITY_FAILURES_BEFORE_QUARANTINE = 2;
 const MAX_PROVIDER_BACKOFF_MS = 30 * 60_000;
 
+export class ApplicationLinkValidationError extends Error {
+  readonly samples: Array<{ category: SourceFailureCategory; diagnostic: string }>;
+
+  constructor(provider: string, failures: number, total: number, samples: Array<{ category: SourceFailureCategory; diagnostic: string }>) {
+    const sanitized = samples.slice(0, 5).map((sample) => ({
+      category: sample.category,
+      diagnostic: safeDiagnostic(sample.diagnostic),
+    }));
+    super(`${failures}/${total} eligible ${provider} application links failed shadow validation`);
+    this.samples = sanitized;
+  }
+}
+
 export function safeDiagnostic(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/https?:\/\/\S+/g, '[url]').slice(0, 500);
+  return message
+    .replace(/https?:\/\/\S+/g, '[url]')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu, '[email]')
+    .replace(/\b(bearer|token|secret|password)\s*[:=]\s*\S+/giu, '$1=[redacted]')
+    .slice(0, 500);
 }
 
 export function sourceFailureCategory(error: unknown): SourceFailureCategory {
@@ -165,7 +182,8 @@ export function failedSourceHealth(input: {
 }): SourceHealth {
   const category = sourceFailureCategory(input.error);
   const failures = (input.previous?.consecutiveFailures ?? 0) + 1;
-  const quarantined = shouldQuarantine(category, input.error, failures);
+  const previouslyQuarantined = input.previous?.state === 'quarantined';
+  const quarantined = previouslyQuarantined || shouldQuarantine(category, input.error, failures);
   const diagnostic = safeDiagnostic(input.error);
   const outcome = sourceFailureOutcome(input.error);
   const durationMs = Math.max(0, Date.parse(input.completedAt) - Date.parse(input.startedAt));
@@ -191,7 +209,7 @@ export function failedSourceHealth(input: {
     ...(input.provider ? { provider: input.provider } : {}),
     ...(input.region ? { region: input.region } : {}),
     state: quarantined ? 'quarantined' : 'degraded',
-    sourceStatus: input.previous?.sourceStatus ?? 'active',
+    sourceStatus: quarantined ? 'paused' : input.previous?.sourceStatus ?? 'active',
     pollTier: input.previous?.pollTier ?? 'active',
     configVersion: input.previous?.configVersion ?? 1,
     lastAttemptAt: input.completedAt,
@@ -219,7 +237,10 @@ export function failedSourceHealth(input: {
       incidentUpdatedAt: input.completedAt,
       ...(input.previous?.incidentAcknowledgedAt ? { incidentAcknowledgedAt: input.previous.incidentAcknowledgedAt } : {}),
     } : {}),
-    ...(quarantined ? { quarantinedAt: input.completedAt, quarantineReason: diagnostic } : {}),
+    ...(quarantined ? {
+      quarantinedAt: previouslyQuarantined ? input.previous?.quarantinedAt ?? input.completedAt : input.completedAt,
+      quarantineReason: previouslyQuarantined ? input.previous?.quarantineReason ?? diagnostic : diagnostic,
+    } : {}),
     ...(input.previous?.rawRows !== undefined ? { rawRows: input.previous.rawRows, rawCount: input.previous.rawRows } : {}),
     ...(input.previous?.validRows !== undefined ? { validRows: input.previous.validRows, validCount: input.previous.validRows } : {}),
     ...(input.previous?.eligibleRows !== undefined ? { eligibleRows: input.previous.eligibleRows, eligibleCount: input.previous.eligibleRows } : {}),
@@ -230,6 +251,11 @@ export function failedSourceHealth(input: {
       : {}),
     ...(input.previous?.applicationLinkFailures !== undefined
       ? { applicationLinkFailures: input.previous.applicationLinkFailures }
+      : {}),
+    ...(input.error instanceof ApplicationLinkValidationError
+      ? { applicationLinkFailureSamples: input.error.samples }
+      : input.previous?.applicationLinkFailureSamples
+        ? { applicationLinkFailureSamples: input.previous.applicationLinkFailureSamples }
       : {}),
     recentRuns: withRun(input.previous, run),
   };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { failedSourceHealth, sourceFailureCategory, successfulSourceHealth } from '../src/source-health.js';
+import { ApplicationLinkValidationError, failedSourceHealth, sourceFailureCategory, successfulSourceHealth } from '../src/source-health.js';
 import { SourceFetchError } from '../src/sources/source-error.js';
 
 describe('source health', () => {
@@ -35,6 +35,7 @@ describe('source health', () => {
       error: new SourceFetchError('response shape was invalid', 'json'),
     });
     expect(health.state).toBe('quarantined');
+    expect(health.sourceStatus).toBe('paused');
     expect(health.quarantineReason).toContain('shape');
   });
 
@@ -68,6 +69,22 @@ describe('source health', () => {
     expect(second.recentRuns).toHaveLength(2);
   });
 
+  it('persists only bounded, redacted application-link failure samples', () => {
+    const error = new ApplicationLinkValidationError('Lever', 6, 8, Array.from({ length: 7 }, (_, index) => ({
+      category: 'link' as const,
+      diagnostic: `https://secret.example/${index}?token=private applicant${index}@example.com`,
+    })));
+    const health = failedSourceHealth({
+      sourceId: 'lever-acme',
+      startedAt: '2026-07-29T12:00:00.000Z',
+      completedAt: '2026-07-29T12:00:01.000Z',
+      error,
+    });
+    expect(health.applicationLinkFailureSamples).toHaveLength(5);
+    expect(JSON.stringify(health.applicationLinkFailureSamples)).not.toContain('secret.example');
+    expect(JSON.stringify(health.applicationLinkFailureSamples)).not.toContain('applicant');
+  });
+
   it('returns a quarantined source to healthy after a clean run', () => {
     const quarantined = failedSourceHealth({
       sourceId: 'greenhouse-acme',
@@ -83,7 +100,32 @@ describe('source health', () => {
       rawRows: 4,
       eligibleRows: 1,
     });
-    expect(recovered).toMatchObject({ state: 'healthy', consecutiveFailures: 0, rawRows: 4, eligibleRows: 1 });
+    expect(recovered).toMatchObject({ state: 'healthy', sourceStatus: 'paused', consecutiveFailures: 0, rawRows: 4, eligibleRows: 1 });
+  });
+
+  it('keeps a quarantined source quarantined when a forced recovery fails transiently', () => {
+    const quarantined = failedSourceHealth({
+      sourceId: 'github-pitt-csc',
+      startedAt: '2026-07-29T12:00:00.000Z',
+      completedAt: '2026-07-29T12:00:01.000Z',
+      error: new SourceFetchError('malformed JSON', 'json'),
+    });
+    const failedRecovery = failedSourceHealth({
+      sourceId: 'github-pitt-csc',
+      previous: quarantined,
+      startedAt: '2026-07-29T12:10:00.000Z',
+      completedAt: '2026-07-29T12:10:01.000Z',
+      error: new SourceFetchError('request timed out', 'transport'),
+    });
+    expect(failedRecovery).toMatchObject({
+      state: 'quarantined',
+      sourceStatus: 'paused',
+      consecutiveFailures: 2,
+      quarantinedAt: quarantined.quarantinedAt,
+      quarantineReason: quarantined.quarantineReason,
+      lastSafeDiagnostic: 'request timed out',
+      recentRuns: expect.arrayContaining([expect.objectContaining({ diagnostic: 'request timed out' })]),
+    });
   });
 
   it('promotes an automatically quiet source when eligible roles appear', () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { queueHasBacklog } from '../cloudflare/queue-backlog.js';
-import { cloudflareOperationsFleets, cloudflareOperationsQueueClient, documentContent, failedStructuredRecoveryHealth, readDocumentUpload, recoveredStructuredSourceHealth, runScheduledPostingIdentityAudit, sendQueueMessageWithin, structuredSourceRunBlocked, validBackfillProvider } from '../cloudflare/worker.js';
+import { cloudflareOperationsFleets, cloudflareOperationsQueueClient, documentContent, failedStructuredRecoveryHealth, githubSourceRunBlocked, readDocumentUpload, recoveredStructuredSourceHealth, runScheduledPostingIdentityAudit, sendQueueMessageWithin, structuredSourceRunBlocked, validBackfillProvider } from '../cloudflare/worker.js';
+import cloudflareWorker from '../cloudflare/worker.js';
 import type { Environment } from '../cloudflare/worker.js';
 import type { PostingIdentityRepairPlan } from '../src/posting-identity-repair.js';
 import type { Queue } from '../cloudflare/types.js';
@@ -25,6 +26,20 @@ describe('Cloudflare scheduled dispatch cost guard', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await expect(queueHasBacklog(queue(async () => { throw new Error('metrics unavailable'); }), 'greenhouse')).resolves.toBe(false);
     vi.restoreAllMocks();
+  });
+});
+
+describe('Cloudflare DLQ route authentication', () => {
+  it('hides the internal operation when the operations key is absent or wrong', async () => {
+    const request = new Request('https://intern-notifs.test/internal/operations/dlq', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Operations-Key': 'wrong' },
+      body: JSON.stringify({ operation: 'inspect', queue: 'lever' }),
+    });
+    const response = await cloudflareWorker.fetch(request, {
+      OPERATIONS_SHARED_SECRET: 'secret',
+      DB: { prepare: () => ({ bind() { return this; }, async first() { return null; }, async all() { return { results: [] }; }, async run() { return { meta: { changes: 0 } }; } }), async batch() { return []; } },
+    } as unknown as Environment);
+    expect(response.status).toBe(404);
   });
 });
 
@@ -135,9 +150,9 @@ describe('structured source recovery guard', () => {
     expect(structuredSourceRunBlocked(quarantined, true)).toBe(false);
   });
 
-  it('clears pause, quarantine, and backoff only from successful recovery health', () => {
+  it('clears quarantine and backoff but keeps a successful recovery paused', () => {
     expect(recoveredStructuredSourceHealth({ ...quarantined, state: 'healthy', lastSuccessAt: '2026-08-26T12:01:00.000Z' }))
-      .toMatchObject({ state: 'healthy', sourceStatus: 'active', consecutiveFailures: 0, incidentState: 'resolved' });
+      .toMatchObject({ state: 'healthy', sourceStatus: 'paused', consecutiveFailures: 0, incidentState: 'resolved' });
     const recovered = recoveredStructuredSourceHealth({ ...quarantined, state: 'healthy' });
     expect(recovered).not.toHaveProperty('backoffUntil');
     expect(recovered).not.toHaveProperty('quarantineReason');
@@ -151,6 +166,16 @@ describe('structured source recovery guard', () => {
       state: 'quarantined', sourceStatus: 'paused', quarantineReason: 'Invalid schema',
       quarantinedAt: '2026-08-26T12:00:00.000Z', consecutiveFailures: 3,
     });
+  });
+});
+
+describe('GitHub source recovery guard', () => {
+  it('requires the literal boolean force flag to bypass quarantine', () => {
+    const health = { sourceId: 'github-source', state: 'quarantined' as const, sourceStatus: 'paused' as const,
+      lastAttemptAt: '2026-08-26T12:00:00.000Z', consecutiveFailures: 2, durationMs: 4 };
+    expect(githubSourceRunBlocked(health, undefined)).toBe(true);
+    expect(githubSourceRunBlocked(health, 'true')).toBe(true);
+    expect(githubSourceRunBlocked(health, true)).toBe(false);
   });
 });
 
