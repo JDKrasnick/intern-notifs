@@ -17,6 +17,10 @@ export interface LeverPosting {
   descriptionPlain?: string;
   additional?: string;
   additionalPlain?: string;
+  salaryDescription?: string;
+  salaryDescriptionPlain?: string;
+  salaryRange?: { currency?: string; interval?: string; min?: number; max?: number };
+  lists?: { text?: string; content?: string }[];
   createdAt?: number;
   updatedAt?: number;
   categories?: { location?: string; commitment?: string; team?: string; allLocations?: string[] };
@@ -39,6 +43,22 @@ const advancedDegreePattern = new RegExp(`(?:\\b(?:must|requires?|requirement|el
 
 function plain(value: string | undefined) {
   return (value ?? '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/\s+/g, ' ').trim();
+}
+
+function leverSalaryText(posting: LeverPosting): string | undefined {
+  const range = posting.salaryRange;
+  const periods: Record<string, string> = {
+    'per-year-salary': 'year', 'per-month-salary': 'month',
+    'per-week-salary': 'week', 'per-day-wage': 'day', 'per-hour-wage': 'hour',
+  };
+  const period = range?.interval ? periods[range.interval] : undefined;
+  // Unknown intervals and incomplete bands are not grounds to infer annual pay.
+  const structured = range && period && /^[A-Z]{3}$/.test(range.currency ?? '')
+    && typeof range.min === 'number' && Number.isFinite(range.min) && range.min > 0
+    && typeof range.max === 'number' && Number.isFinite(range.max) && range.max >= range.min
+    ? `Salary: ${range.currency} ${range.min} - ${range.max} per ${period}` : undefined;
+  return [structured, posting.salaryDescriptionPlain, posting.salaryDescription]
+    .filter((value): value is string => typeof value === 'string' && Boolean(value.trim())).map(plain).join('\n') || undefined;
 }
 
 export function inferLeverSeason(title: string, description: string): string {
@@ -130,6 +150,7 @@ export function mapLeverSourcedPosting(
     posting.description,
     posting.additionalPlain,
     posting.additional,
+    ...(posting.lists ?? []).flatMap((list) => [list.text, list.content]),
   ].filter((value): value is string => typeof value === 'string').map((value) => ({
     kind: 'description' as const,
     format: value.includes('<') ? 'html' as const : 'plain' as const,
@@ -147,9 +168,9 @@ export function mapLeverSourcedPosting(
     providerIdentity: { provider: 'lever', tenant: options.site },
     title: posting.text,
     content,
-    locations: posting.categories?.location
-      ? [posting.categories.location]
-      : posting.categories?.allLocations ?? [],
+    locations: [...new Set([posting.categories?.location, ...(posting.categories?.allLocations ?? [])]
+      .filter((value): value is string => Boolean(value)))],
+    ...(leverSalaryText(posting) ? { compensationText: leverSalaryText(posting) } : {}),
     applyUrl: posting.applyUrl,
     hostedUrl: posting.hostedUrl,
     providerEvidence: {

@@ -77,7 +77,7 @@ describe('D1 role metadata evidence and guarded repair', () => {
     await current.jobs.putInternship(original);
     const firstAudit = await current.operations.roleMetadataAudit(new Date('2026-09-04T12:00:00.000Z'));
     expect(firstAudit.collectionCoverage).toMatchObject({
-      extractionVersion: 1, eligible: 1, current: 0, pendingOrUnobserved: 1, stale: 0, complete: false,
+      extractionVersion: 2, eligible: 1, current: 0, pendingOrUnobserved: 1, stale: 0, complete: false,
     });
     const incompletePlan = await current.operations.stageRoleMetadataRepair('2026-09-04T12:00:00.000Z');
     await expect(current.operations.applyRoleMetadataRepair(
@@ -92,7 +92,7 @@ describe('D1 role metadata evidence and guarded repair', () => {
       sourceId: original.sourceReferences[0]!.sourceId,
       sourceUrl: original.applyUrl,
       artifactHash: 'no-explicit-metadata',
-      extractionVersion: 1,
+      extractionVersion: 2,
       outcome: 'no-explicit-metadata',
       observedAt: '2026-07-01T12:02:00.000Z',
       backfillToken: 'collection-1',
@@ -114,7 +114,7 @@ describe('D1 role metadata evidence and guarded repair', () => {
       sourceId: original.sourceReferences[0]!.sourceId,
       sourceUrl: original.applyUrl,
       artifactHash: 'no-explicit-metadata',
-      extractionVersion: 1,
+      extractionVersion: 2,
       outcome: 'no-explicit-metadata',
       observedAt: '2026-09-04T12:05:00.000Z',
       backfillToken: 'collection-1',

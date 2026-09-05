@@ -23,7 +23,7 @@ import type {
   WorkMode,
 } from './types.js';
 
-export const ROLE_METADATA_EXTRACTION_VERSION = 1;
+export const ROLE_METADATA_EXTRACTION_VERSION = 2;
 export const VERIFIED_PAGE_METADATA_SOURCES = ['official-json-ld', 'official-page'] as const;
 const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   'official-ats': 0,
@@ -266,14 +266,19 @@ function amount(value: string, suffix?: string): number {
 
 const CURRENCY_SYMBOL: Record<string, string> = { '€': 'EUR', '£': 'GBP' };
 const NON_USD = new Set(['XXX', 'CAD', 'AUD', 'NZD', 'SGD', 'HKD', 'EUR', 'GBP', 'JPY', 'CNY', 'INR', 'CHF']);
-const PERIOD = String.raw`hour|hourly|hr|day|daily|week|weekly|month|monthly|year|yearly|yr|annum|annual(?:ly)?`;
-const PAY = new RegExp(String.raw`(?:(USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP|JPY|CNY|INR|CHF)\s*)?([$€£])?\s*(\d{1,3}(?:,\d{3})*|\d+(?:\.\d+)?)\s*([kK])?\s*(?:(?:-|–|—|to)\s*(?:(USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP|JPY|CNY|INR|CHF)\s*)?[$€£]?\s*(\d{1,3}(?:,\d{3})*|\d+(?:\.\d+)?)\s*([kK])?)?\s*(?:\/|per\s+)?(${PERIOD})(?:\b|$)`, 'giu');
-const SPLIT_PERIOD_PAY = new RegExp(String.raw`(?:(USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP|JPY|CNY|INR|CHF)\s*)?([$€£])?\s*(\d{1,3}(?:,\d{3})*|\d+(?:\.\d+)?)\s*([kK])?\s*(?:\/|per\s+)(${PERIOD})\s*(?:-|–|—|to)\s*(?:(USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP|JPY|CNY|INR|CHF)\s*)?[$€£]?\s*(\d{1,3}(?:,\d{3})*|\d+(?:\.\d+)?)\s*([kK])?\s*(?:\/|per\s+)(${PERIOD})(?:\b|$)`, 'giu');
-const USD_TEXT_PAY = new RegExp(String.raw`\b(USD)\s+(\d{1,3}(?:,\d{3})*|\d+(?:\.\d+)?)\s*([kK])?\s*(?:(?:-|–|—|to)\s*(\d{1,3}(?:,\d{3})*|\d+(?:\.\d+)?)\s*([kK])?)?\s*(?:\/|per\s+)?(${PERIOD})(?:\b|$)`, 'giu');
+const PERIOD = String.raw`hour|hourly|hr|day|daily|week|weekly|month|monthly|year|yearly|yr|annum|annual(?:ly|ized)?`;
+const MONEY_AMOUNT = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?`;
+const CURRENCY_CODE = String.raw`USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP|JPY|CNY|INR|CHF|XXX`;
+const PAY = new RegExp(String.raw`(?:(${CURRENCY_CODE})\s*)?([$€£])?\s*(${MONEY_AMOUNT})\s*([kK])?\s*(?:(?:-|–|—|to)\s*(?:(${CURRENCY_CODE})\s*)?[$€£]?\s*(${MONEY_AMOUNT})\s*([kK])?)?\s*(?:\/\s*)?(?:per\s+)?\(?\s*(${PERIOD})(?:\b|$)`, 'giu');
+const SPLIT_PERIOD_PAY = new RegExp(String.raw`(?:(${CURRENCY_CODE})\s*)?([$€£])?\s*(${MONEY_AMOUNT})\s*([kK])?\s*(?:\/|per\s+)(${PERIOD})\s*(?:-|–|—|to)\s*(?:(${CURRENCY_CODE})\s*)?[$€£]?\s*(${MONEY_AMOUNT})\s*([kK])?\s*(?:\/|per\s+)(${PERIOD})(?:\b|$)`, 'giu');
+const USD_TEXT_PAY = new RegExp(String.raw`\b(USD)\s+(${MONEY_AMOUNT})\s*([kK])?\s*(?:(?:-|–|—|to)\s*(${MONEY_AMOUNT})\s*([kK])?)?\s*(?:\/|per\s+)?(${PERIOD})(?:\b|$)`, 'giu');
+// Publishers often state the period in the label, not after the amounts.
+// Keep that label in the same clause and require explicit pay terminology.
+const LABELED_PAY = new RegExp(String.raw`\b(hourly|annual(?:ized)?|yearly)\s+(?:(?:base|estimated|starting)\s+)?(?:pay|salary|wage|rate|compensation)(?:\s+range)?[^.;$€£\d]{0,100}?(?:(${CURRENCY_CODE})\s*)?([$€£])\s*(${MONEY_AMOUNT})\s*([kK])?\s*(?:(?:-|–|—|to)\s*[$€£]?\s*(${MONEY_AMOUNT})\s*([kK])?)?(?:\s*\(?(${CURRENCY_CODE})\b\)?)?`, 'giu');
 
 function compensationPeriod(value: string): CompensationPeriod {
   if (/^(?:hour|hourly|hr)$/iu.test(value)) return 'hourly';
-  if (/^(?:year|yearly|yr|annum|annual(?:ly)?)$/iu.test(value)) return 'annual';
+  if (/^(?:year|yearly|yr|annum|annual(?:ly|ized)?)$/iu.test(value)) return 'annual';
   if (/^(?:day|daily)$/iu.test(value)) return 'daily';
   if (/^(?:week|weekly)$/iu.test(value)) return 'weekly';
   if (/^(?:month|monthly)$/iu.test(value)) return 'monthly';
@@ -307,7 +312,7 @@ export function extractCompensationRanges(
   const ranges: CompensationRange[] = [];
   const segments = value.split(/(?<=[.;\n])\s+|\s*[;\n]\s*/u).filter(Boolean);
   const append = (segment: string, raw: string, first: number, second: number, periodText: string, currency: string) => {
-    if (input.requirePayContext && !/\b(?:salary|pay|compensation|base rate|market range|hourly rate|annual range|internships? (?:is|are) paid)\b/iu.test(segment)) return;
+    if (input.requirePayContext && !/\b(?:salary|pays?|compensation|base rate|market range|hourly rate|annual range|internships? (?:is|are) paid)\b/iu.test(segment)) return;
     const period = compensationPeriod(periodText);
     const minAmount = Math.min(first, second); const maxAmount = Math.max(first, second);
     const plausible = period === 'hourly' ? minAmount >= 5 && maxAmount <= 500
@@ -318,6 +323,11 @@ export function extractCompensationRanges(
       sourceText: boundedText(raw, 160), provenance: [input.provenance] });
   };
   for (const segment of segments) {
+    for (const match of segment.matchAll(LABELED_PAY)) {
+      const currency = match[2]?.toUpperCase() ?? match[8]?.toUpperCase()
+        ?? CURRENCY_SYMBOL[match[3]!] ?? dollarCurrency(input.knownLocations ?? []);
+      append(segment, match[0], amount(match[4]!, match[5]), match[6] ? amount(match[6], match[7]) : amount(match[4]!, match[5]), match[1]!, currency);
+    }
     for (const match of segment.matchAll(SPLIT_PERIOD_PAY)) {
       const leftPeriod = compensationPeriod(match[5]!);
       const rightPeriod = compensationPeriod(match[9]!);
@@ -331,8 +341,8 @@ export function extractCompensationRanges(
       if (!explicit && !match[2]) continue;
       const symbolCurrency = CURRENCY_SYMBOL[match[2]!] ?? (match[2] === '$' ? dollarCurrency(input.knownLocations ?? []) : 'XXX');
       const trailing = match[5]?.toUpperCase();
-      const nearbyPrefix = segment.slice(Math.max(0, (match.index ?? 0) - 8), match.index).toUpperCase().match(/\b[A-Z]{3}\s*$/u)?.[0]?.trim();
-      const nearbySuffix = segment.slice((match.index ?? 0) + match[0].length, (match.index ?? 0) + match[0].length + 8).toUpperCase().match(/^\s*[A-Z]{3}\b/u)?.[0]?.trim();
+      const nearbyPrefix = segment.slice(Math.max(0, (match.index ?? 0) - 8), match.index).match(new RegExp(String.raw`\b(${CURRENCY_CODE})\s*$`, 'iu'))?.[1]?.toUpperCase();
+      const nearbySuffix = segment.slice((match.index ?? 0) + match[0].length, (match.index ?? 0) + match[0].length + 8).match(new RegExp(String.raw`^\s*(${CURRENCY_CODE})\b`, 'iu'))?.[1]?.toUpperCase();
       const currency = explicit ?? trailing ?? nearbyPrefix ?? nearbySuffix ?? symbolCurrency;
       append(segment, match[0], amount(match[3]!, match[4]), match[6] ? amount(match[6], match[7]) : amount(match[3]!, match[4]), match[8]!, currency);
     }

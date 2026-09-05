@@ -19,7 +19,7 @@ const field: FieldProvenance = {
 
 function evidence(overrides: Partial<RoleMetadataEvidence>): RoleMetadataEvidence {
   return {
-    schemaVersion: 1, extractionVersion: 1, artifactHash: 'artifact', sourceClass: 'official-page',
+    schemaVersion: 1, extractionVersion: 2, artifactHash: 'artifact', sourceClass: 'official-page',
     sourceId: 'community-acme', sourceUrl: 'https://careers.acme.test/jobs/123', observedAt, exactPosting: true,
     ...overrides,
   };

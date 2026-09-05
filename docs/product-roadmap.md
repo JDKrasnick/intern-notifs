@@ -76,7 +76,9 @@
 - [ ] Complete issue #134's employer metadata enrichment rollout.
   - [x] Add versioned provider-neutral evidence extraction and deterministic reconciliation for ATS, structured JSON-LD, exact server-rendered pages, and Browser Rendering artifacts; retain distinct applicable pay ranges, bounded field excerpts, title-only evidence, conflicts, and projection repair.
   - [x] Add additive D1 evidence/history, conflict and guarded repair tables plus operations-only collection, dry-run, apply, verification, and CLI workflows.
-  - [ ] Apply migration `0015_role_metadata_enrichment.sql`, deploy the Worker, archive the production collection/dry-run, obtain owner approval for its exact token/counts, apply, and verify zero supported role-specific misses or projection-only omissions.
+  - [x] Apply migrations `0015_role_metadata_enrichment.sql` and `0016_role_metadata_repair_plans.sql` and deploy the Worker while preserving production publication settings (2026-09-05).
+  - [x] Audit all 1,453 public roles missing pay and add regressions for confirmed disclosure formats; record recoverability and acquisition limits in [the coverage audit](role-metadata-coverage.md).
+  - [ ] Archive the authenticated production collection/dry-run, obtain owner approval for its exact token/counts, apply, and verify zero supported role-specific misses or projection-only omissions. Existing operations credential required; no guarded backfill has been applied.
 - [ ] Complete issue #99 catalog quality hardening and backfill.
   - [x] Add shared catalog normalization, structured locations/pay, defensive mobile presentation, and the guarded D1 repair workflow.
   - [x] Deploy the normalization and dry-run endpoint, then save the production dry-run report for owner approval.
