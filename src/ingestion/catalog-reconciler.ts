@@ -7,6 +7,8 @@ import { isOfficialOccurrence } from '../sources/provenance.js';
 import { isPastSeason } from '../core/early-career.js';
 import { deriveCanonicalAdmission } from '../catalog-admission.js';
 import { stableSourceOccurrenceJobId } from '../identity/registry.js';
+import { projectRoleMetadata } from '../role-metadata.js';
+import { mergeSourceOccurrence } from '../identity/source-occurrence.js';
 import type {
   Internship,
   NotificationEvent,
@@ -51,6 +53,8 @@ function occurrence(listing: ProcessedListing, externalId: string): SourceOccurr
       ? { admissionConfigurationVersion: listing.admissionConfigurationVersion }
       : {}),
     ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
+    ...(listing.metadataEvidence?.length ? { metadataEvidence: listing.metadataEvidence } : {}),
+    ...(listing.metadataExtraction ? { metadataExtraction: listing.metadataExtraction } : {}),
     ...(listing.postingIdentityDecision ? { postingIdentityDecision: listing.postingIdentityDecision } : {}),
     ...(listing.trustedCommunityAlertQualification
       ? { trustedCommunityAlertQualification: listing.trustedCommunityAlertQualification }
@@ -147,7 +151,7 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
   const title = preferIncoming ? listing.title || existing.title : existing.title || listing.title;
   const sourceReferences = match >= 0
     ? existing.sourceReferences.map((item, index) => index === match ? {
-      ...reference,
+      ...mergeSourceOccurrence(item, reference),
       ...(item.firstAttachedAt ? { firstAttachedAt: item.firstAttachedAt } : {}),
       ...(item.firstAttachedAtPrecision ? { firstAttachedAtPrecision: item.firstAttachedAtPrecision } : item.firstAttachedAt ? { firstAttachedAtPrecision: 'exact' as const } : { firstAttachedAtPrecision: 'unknown' as const }),
     } : item)
@@ -168,7 +172,7 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
     && listing.admission.evidenceCodes?.includes('trusted-community-source')
     && !existing.sourceReferences.some(isOfficialOccurrence));
   const canRevive = existing.open || preferIncoming || trustedReappearance;
-  return normalizeInternship({
+  const merged = normalizeInternship({
     ...base,
     company: canonicalCompany ?? company,
     title,
@@ -199,6 +203,7 @@ function merge(existing: Internship, listing: ProcessedListing, externalId: stri
     ...(applicationUrlValidatedAt ? { applicationUrlValidatedAt } : {}),
     ...(metadataVersion ? { applicationPageMetadataVersion: metadataVersion } : {}),
   });
+  return projectRoleMetadata(merged).job;
 }
 
 function create(listing: ProcessedListing, externalId: string, now: string, baseline: boolean, applicationUrlValidatedAt?: string, metadataVersion?: number): Internship {
@@ -207,7 +212,7 @@ function create(listing: ProcessedListing, externalId: string, now: string, base
   const key = fingerprint(listing.company, listing.title, listing.location, listing.season);
   const reference = { ...occurrence(listing, externalId), firstAttachedAt: now, firstAttachedAtPrecision: 'exact' as const };
   const admission = deriveCanonicalAdmission([reference], now);
-  return {
+  const created: Internship = {
     jobId: listing.postingIdentity?.canonicalJobId
       ?? (listing.postingIdentityDecision?.status === 'unconfirmed'
         ? stableSourceOccurrenceJobId(listing.sourceId, externalId)
@@ -241,6 +246,7 @@ function create(listing: ProcessedListing, externalId: string, now: string, base
     lastSeenAt: now,
     notification: { smsPending: true, digestPending: true },
   };
+  return projectRoleMetadata(created).job;
 }
 
 export function newJobNotificationEvent(sourceId: string, externalId: string, job: Internship, now: string): NotificationEvent {
@@ -367,7 +373,11 @@ export class CatalogReconciler {
         sourceId: input.sourceId,
         externalId,
         jobId: job.jobId,
-        occurrence: { ...occurrence(listing, externalId), firstAttachedAt, firstAttachedAtPrecision },
+        occurrence: mergeSourceOccurrence(prior?.occurrence, {
+          ...occurrence(listing, externalId),
+          firstAttachedAt,
+          firstAttachedAtPrecision,
+        }),
         present: true,
         consecutiveOmissions: 0,
         changedSnapshotHash: input.snapshotHash,

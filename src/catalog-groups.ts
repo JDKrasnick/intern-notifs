@@ -345,6 +345,7 @@ export function catalogGroupDetails(group: BuiltGroup): CatalogGroupDetails {
 }
 
 function catalogGroupRole(job: Internship): CatalogGroupRole {
+  const identityProgramType = provenancedText(identityFor(job)?.programType) as Internship['programType'];
   return {
     jobId: job.jobId, company: job.company, title: titleFor(job), location: job.location, season: seasonFor(job),
     locations: locationsFor(job), visibleAt: catalogVisibleAt(job),
@@ -357,7 +358,7 @@ function catalogGroupRole(job: Internship): CatalogGroupRole {
     compensation: job.compensation, workAuthorizationStatus: job.workAuthorizationStatus ?? 'unknown',
     ...(job.applicationDeadline ? { applicationDeadline: job.applicationDeadline } : {}),
     ...(job.graduationWindow ? { graduationWindow: job.graduationWindow } : {}),
-    ...(job.programType ? { programType: job.programType } : {}),
+    ...(job.programType ?? identityProgramType ? { programType: job.programType ?? identityProgramType } : {}),
     firstSeenAt: job.firstSeenAt, lastSeenAt: job.lastSeenAt,
     sourceReferences: job.sourceReferences,
     ...(job.applicationUrlValidatedAt ? { applicationUrlValidatedAt: job.applicationUrlValidatedAt } : {}),

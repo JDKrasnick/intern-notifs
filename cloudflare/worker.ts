@@ -23,7 +23,7 @@ import { queueHasBacklog } from './queue-backlog.js';
 import type { D1Database, MessageBatch, Queue, R2Bucket, ScheduledController } from './types.js';
 import { disconnectGmail, gmailApi, gmailCallback, GmailStore, processGmailWork, recordGmailFailure, type GmailWorkMessage } from './gmail.js';
 import { D1EmployerStore } from './employer-store.js';
-import { D1CatalogAdmissionStore } from './catalog-admission-store.js';
+import { D1CatalogAdmissionStore, ROLE_METADATA_REVALIDATION_MS } from './catalog-admission-store.js';
 import { handleCatalogAdmissionOperations } from './catalog-admission-api.js';
 import { handleEmployerApi } from './employer-api.js';
 import { closeEmployerOccurrence, handleEmployerOperations, runEmployerMaintenance } from './employer-operations-api.js';
@@ -36,6 +36,7 @@ import type { BrowserWorker } from '@cloudflare/puppeteer';
 import { destinationVerificationMessage, enqueueDueDestinationVerifications, processDestinationVerificationBatch } from './destination-verification.js';
 import { cleanupDlqRecords, handleDlqOperations, recordQueueFailureBestEffort, resolveQueueFailures, type DlqDependencies, type DlqName, type PeekedMessage } from './dlq-operations.js';
 import type { CatalogAdmissionResolver } from '../src/destination-verification.js';
+import { ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
 import {
   catalogProviderDefinitions,
   catalogProviderIds,
@@ -592,6 +593,57 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
       return withCors(Response.json({ ...result, applied: apply }));
     } catch (error) {
       return withCors(Response.json({ message: error instanceof Error ? error.message : 'Notification recovery failed' }, { status: 409 }));
+    }
+  }
+  if (url.pathname === '/internal/role-metadata/audit' && request.method === 'GET') {
+    if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
+    return withCors(Response.json(await new D1CatalogAdmissionStore(env.DB).roleMetadataAudit(), { headers: { 'Cache-Control': 'no-store' } }));
+  }
+  if (url.pathname === '/internal/role-metadata/backfill' && request.method === 'POST') {
+    if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
+    const input = await request.json().catch(() => ({})) as {
+      action?: 'collect' | 'dry-run' | 'apply'; limit?: number; collectionToken?: string;
+      repairToken?: string; expectedJobs?: number; expectedOccurrences?: number;
+    };
+    const operations = new D1CatalogAdmissionStore(env.DB);
+    try {
+      if (input.action === 'collect') {
+        const limit = input.limit ?? 100;
+        if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error('limit must be an integer from 1 to 500');
+        const collectionToken = input.collectionToken?.trim() || crypto.randomUUID();
+        const candidates = await operations.metadataVerificationCandidates(limit, {
+          observedBefore: new Date(Date.now() - ROLE_METADATA_REVALIDATION_MS).toISOString(),
+        });
+        await sendQueueMessages(env.DESTINATION_VERIFICATION_QUEUE, candidates.map((candidate) => destinationVerificationMessage({
+          ...candidate,
+          reason: 'historical-backfill',
+          metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+          metadataBackfillToken: collectionToken,
+        })));
+        return withCors(Response.json({ collectionToken, queued: candidates.length, extractionVersion: ROLE_METADATA_EXTRACTION_VERSION }));
+      }
+      if (input.action === 'apply') {
+        if (typeof input.repairToken !== 'string' || !/^[a-f0-9]{64}$/u.test(input.repairToken)) throw new Error('repairToken is invalid');
+        if (!Number.isInteger(input.expectedJobs) || (input.expectedJobs ?? -1) < 0 || !Number.isInteger(input.expectedOccurrences) || input.expectedOccurrences !== 0) {
+          throw new Error('expectedJobs and expectedOccurrences must exactly match the dry-run');
+        }
+        const result = await operations.applyRoleMetadataRepair(input.repairToken, input.expectedJobs!, input.expectedOccurrences!, new Date().toISOString());
+        if (result.projectionRefreshRequired) await refreshCatalogProjection(new D1InternshipStore(env.DB));
+        return withCors(Response.json({ ...result, applied: true, verification: await operations.roleMetadataAudit() }));
+      }
+      if (input.action && input.action !== 'dry-run') throw new Error('action must be collect, dry-run, or apply');
+      const report = await operations.stageRoleMetadataRepair(new Date().toISOString());
+      const audit = await operations.roleMetadataAudit();
+      return withCors(Response.json({
+        ...report,
+        verificationOutcomes: audit.verificationOutcomes,
+        collectionCoverage: audit.collectionCoverage,
+        projectionOnlyOmissions: audit.projectionOnlyOmissions,
+        supportedRoleSpecificDisclosedMetadataMisses: audit.supportedRoleSpecificDisclosedMetadataMisses,
+        applied: false,
+      }, { status: report.conflicts.length || !audit.collectionCoverage.complete ? 409 : 200 }));
+    } catch (error) {
+      return withCors(Response.json({ message: error instanceof Error ? error.message : 'Role metadata backfill failed' }, { status: 409 }));
     }
   }
   if (request.method === 'POST' && url.pathname === '/internal/catalog-quality-backfill') {

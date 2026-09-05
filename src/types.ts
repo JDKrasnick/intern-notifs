@@ -305,6 +305,14 @@ export interface SourceReference {
   providerTimestamp?: ProviderTimestamp;
   /** Source-declared workplace arrangement; absent when the source does not declare one. */
   workMode?: 'remote' | 'hybrid' | 'onsite';
+  /** Compact normalized facts extracted from this occurrence's already-fetched artifacts. */
+  metadataEvidence?: RoleMetadataEvidence[];
+  metadataExtraction?: {
+    version: number;
+    artifactHash: string;
+    observedAt: string;
+    outcome: 'extracted' | 'no-explicit-metadata';
+  };
 }
 
 export type OccurrenceProvenance =
@@ -662,6 +670,75 @@ export interface Compensation {
   maxHourlyUSD?: number;
   minAnnualUSD?: number;
   maxAnnualUSD?: number;
+  /** Distinct disclosed ranges; applicability is never collapsed into global extrema. */
+  ranges?: CompensationRange[];
+}
+
+export type CompensationPeriod = 'hourly' | 'annual' | 'daily' | 'weekly' | 'monthly' | 'other';
+
+export interface CompensationRange {
+  minAmount: number;
+  maxAmount: number;
+  currency: string;
+  period: CompensationPeriod;
+  applicableLocations?: string[];
+  applicableEducationLevels?: EducationLevel[];
+  /** Pay-only, whitespace-bounded excerpt; never a job-description excerpt. */
+  sourceText: string;
+  provenance: FieldProvenance[];
+}
+
+export type RoleMetadataField =
+  | 'compensation'
+  | 'education'
+  | 'graduation-window'
+  | 'locations'
+  | 'work-mode'
+  | 'application-deadline'
+  | 'employer-published-at'
+  | 'employer-updated-at';
+
+/** Versioned, provider-neutral evidence extracted from one exact posting artifact. */
+export interface RoleMetadataEvidence {
+  schemaVersion: 1;
+  extractionVersion: number;
+  artifactHash: string;
+  sourceClass: EvidenceSource;
+  sourceId: string;
+  sourceUrl: string;
+  observedAt: string;
+  exactPosting: true;
+  compensationRanges?: CompensationRange[];
+  education?: EducationAudience;
+  locations?: InternshipLocation[];
+  workMode?: ProvenancedValue<Exclude<WorkMode, 'unspecified'>>;
+  applicationDeadline?: ProvenancedValue<ApplicationDeadline>;
+  employerPublishedAt?: ProvenancedValue<string>;
+  employerUpdatedAt?: ProvenancedValue<string>;
+  /** Bounded field excerpts only. Full posting text is intentionally excluded. */
+  excerpts?: Partial<Record<RoleMetadataField, string>>;
+}
+
+export interface MetadataConflict {
+  field: RoleMetadataField;
+  applicabilityKey?: string;
+  evidenceHashes: string[];
+  values: string[];
+}
+
+/** Compact canonical result. Evidence history and conflicts live in operations tables. */
+export interface ReconciledRoleMetadata {
+  schemaVersion: 1;
+  extractionVersion: number;
+  evidenceHashes: string[];
+  compensationRanges?: CompensationRange[];
+  education?: EducationAudience;
+  locations?: InternshipLocation[];
+  workMode?: ProvenancedValue<Exclude<WorkMode, 'unspecified'>>;
+  applicationDeadline?: ProvenancedValue<ApplicationDeadline>;
+  graduationWindow?: ProvenancedValue<GraduationDateWindow>;
+  employerPublishedAt?: ProvenancedValue<string>;
+  employerUpdatedAt?: ProvenancedValue<string>;
 }
 
 /** Source-declared constraints; absence never implies that a constraint does not exist. */
@@ -872,12 +949,16 @@ export interface Internship {
   invalidApplicationUrl?: string;
   fingerprint: string;
   compensation: Compensation;
+  /** Reconciled employer-disclosed metadata; full evidence history is stored separately. */
+  roleMetadata?: ReconciledRoleMetadata;
   /** Provider-neutral status. Missing legacy values are rendered as `unknown`. */
   workAuthorizationStatus?: WorkAuthorizationStatus;
   applicationDeadline?: ApplicationDeadline;
   graduationWindow?: GraduationDateWindow;
   programType?: InternshipProgramType;
   workMode?: WorkMode;
+  employerPublishedAt?: string;
+  employerUpdatedAt?: string;
   /** Employer co-attribution for accepted field-level evidence; history remains in proposal/audit tables. */
   employerMetadataAttribution?: Record<string, Array<{ organizationId: string; proposalId: string; evidenceAt: string }>>;
   requirements?: JobRequirements;

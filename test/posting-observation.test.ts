@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { buildPostingIdentity } from '../src/identity/posting.js';
 import { postingObservationProjection } from '../src/identity/projection.js';
-import { sourceOccurrenceKey } from '../src/identity/source-occurrence.js';
+import { mergeSourceOccurrence, sourceOccurrenceKey } from '../src/identity/source-occurrence.js';
+import { extractPostingMetadataEvidence } from '../src/role-metadata.js';
 import { MemoryInternshipStore } from '../src/store.js';
 import type { CatalogAdmission, Internship, PostingIdentityDecision, SourceOccurrenceState } from '../src/types.js';
 
@@ -133,6 +134,30 @@ describe('atomic posting observation commit', () => {
         'https://jobs.lever.co/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/apply',
       ], provider: 'lever', tenant: 'acme', postingId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', sourceId: 'community-list' },
     })]);
+  });
+
+  it('replaces page-derived evidence as one snapshot during source occurrence merging', () => {
+    const identity = buildPostingIdentity({
+      applicationUrl: 'https://jobs.ashbyhq.com/acme/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    });
+    const base = observation(identity.canonicalJobId, 'community-list', 'stable-role', identity).occurrence.occurrence;
+    const previousEvidence = extractPostingMetadataEvidence({
+      artifact: { title: base.title, compensationText: 'USD $40-$50/hour' }, sourceClass: 'official-json-ld',
+      sourceId: base.sourceId, sourceUrl: base.applyUrl, observedAt: '2026-08-28T00:00:00Z', exactPosting: true,
+    });
+    const currentEvidence = extractPostingMetadataEvidence({
+      artifact: { title: base.title }, sourceClass: 'official-page', sourceId: base.sourceId,
+      sourceUrl: base.applyUrl, observedAt: '2026-08-29T00:00:00Z', exactPosting: true,
+    });
+
+    const merged = mergeSourceOccurrence(
+      { ...base, metadataEvidence: previousEvidence },
+      { ...base, metadataEvidence: currentEvidence, metadataExtraction: {
+        version: 1, artifactHash: 'current-page', observedAt: '2026-08-29T00:00:00Z', outcome: 'no-explicit-metadata',
+      } },
+    );
+
+    expect(merged.metadataEvidence?.map((item) => item.sourceClass)).toEqual(['official-page']);
   });
 
   it('preserves newer browser admission when a stale source observation commits later', () => {

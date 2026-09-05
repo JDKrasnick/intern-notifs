@@ -8,6 +8,7 @@ import { metadataCompleteness } from '../catalog-admission.js';
 import { normalizeListing, normalizeLocations, locationSummary } from '../catalog-quality.js';
 import { applicationUrlRejection } from '../sources/quality.js';
 import { providerPostingReference } from '../identity/posting.js';
+import { extractPostingMetadataEvidence } from '../role-metadata.js';
 import type {
   JobRequirements,
   PostingDecision,
@@ -109,6 +110,24 @@ export function processPosting(
     ...(posting.publishedAt ? { postedAt: posting.publishedAt } : {}),
     ...(posting.providerTimestamp ? { providerTimestamp: posting.providerTimestamp } : {}),
     ...(workMode ? { workMode } : {}),
+    metadataEvidence: extractPostingMetadataEvidence({
+      artifact: {
+        title,
+        text: content,
+        ...(posting.compensationText ? { compensationText: posting.compensationText } : {}),
+        locations: sourceLocations,
+        ...(posting.declaredWorkMode ? { workMode: posting.declaredWorkMode } : workMode ? { workMode } : {}),
+        ...(posting.providerTimestamp?.semantics === 'published' ? { publishedAt: posting.providerTimestamp.value }
+          : posting.publishedAt ? { publishedAt: posting.publishedAt } : {}),
+        ...(posting.providerTimestamp?.semantics === 'updated' ? { updatedAt: posting.providerTimestamp.value } : {}),
+      },
+      sourceClass: posting.provenance === 'reviewed-community' ? 'reviewed-community'
+        : posting.provenance === 'official-structured' ? 'official-json-ld' : 'official-ats',
+      sourceId: posting.sourceId,
+      sourceUrl: posting.sourceUrl,
+      observedAt: posting.fetchedAt,
+      exactPosting: true,
+    }),
     internshipIdentity: buildInternshipIdentity({
       sourceId: posting.sourceId,
       sourceUrl: posting.sourceUrl,
