@@ -56,6 +56,15 @@ with main's PR #160 recovery and PR #159 trusted-source changes retained. Deploy
 preserves the existing unconfirmed-publication setting and 70% identity floor.
 The public jobs endpoint returned HTTP 200 after deployment.
 
+Post-deployment at 18:37:32 UTC, the catalog still contained 1,720 roles: 267
+retained pay text, 262 had normalized USD values, and 93 had role metadata from
+normal processing. Five legacy Skydio/Notion records retained their separate pay
+amounts but no longer had one flattened USD minimum/maximum: the existing
+normalizer deliberately does not combine multiple distinct candidates. The
+22.0% estimate above describes possible pay-text coverage, not one comparable
+USD range for every role. Deployed code revision: `1f28d5c`; Worker version:
+`e241f4bd-b058-4000-a21a-6c5c3c5f60c6`.
+
 Historical collection, guarded dry-run/apply and post-apply verification remain
 pending: the existing operations credential is unavailable in this workspace.
 Do not replace the credential or bypass the exact token/count guards. The
