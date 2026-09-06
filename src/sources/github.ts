@@ -52,6 +52,43 @@ export class GitHubMarkdownAdapter implements SourceAdapter, SourceConnector {
   private readonly fetchImpl: typeof fetch;
   constructor(private readonly options: GitHubAdapterOptions) { this.id = options.id; this.fetchImpl = options.fetchImpl ?? platformFetch; }
 
+  private async fetchDocument(url: string, path: string, knownEtag?: string) {
+    const controller = new AbortController();
+    let expired = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = () => new SourceFetchError(`${this.id}: ${path} fetch timed out`, 'transport');
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        expired = true;
+        reject(timedOut());
+        controller.abort();
+      }, 15_000);
+    });
+    try {
+      const read = async () => {
+        const response = await this.fetchImpl(url, {
+          headers: knownEtag ? { 'If-None-Match': knownEtag } : {},
+          signal: controller.signal,
+        });
+        if (expired || response.status === 304 || !response.ok) {
+          // Do not await cancellation: an uncooperative stream must not hold
+          // the queue consumer after the deadline or an HTTP failure.
+          void response.body?.cancel().catch(() => undefined);
+          if (expired) throw timedOut();
+          if (response.status !== 304) throw new SourceFetchError(`${this.id}: ${path} fetch failed (${response.status})`, 'http', response.status);
+          return { response, markdown: '' };
+        }
+        return { response, markdown: await response.text() };
+      };
+      // The same deadline covers headers and body, including fetchers that
+      // fail to settle when their AbortSignal is aborted.
+      return await Promise.race([read(), deadline]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      controller.abort();
+    }
+  }
+
   async fetch(previous?: SourceCheckpoint): Promise<TransitionalMarkdownResult> {
     const rawListings: RawListing[] = []; const rejectedApplicationUrls: Array<{ row: number; url: string; reason: string }> = []; const documentEtags = { ...previous?.documentEtags }; let etag: string | undefined; let allUnchanged = true;
     for (const document of this.options.documents) {
@@ -61,12 +98,11 @@ export class GitHubMarkdownAdapter implements SourceAdapter, SourceConnector {
       const knownEtag = this.options.documents.length === 1
         ? previous?.documentEtags?.[document.path] ?? previous?.etag
         : undefined;
-      const response = await this.fetchImpl(url, { headers: knownEtag ? { 'If-None-Match': knownEtag } : {} });
+      const { response, markdown } = await this.fetchDocument(url, document.path, knownEtag);
       if (response.status === 304) continue;
-      if (!response.ok) throw new SourceFetchError(`${this.id}: ${document.path} fetch failed (${response.status})`, 'http', response.status);
       allUnchanged = false; etag = response.headers.get('etag') ?? etag;
       const documentEtag = response.headers.get('etag'); if (documentEtag) documentEtags[document.path] = documentEtag;
-      const parsed = (this.options.parser ?? parseInternshipMarkdown)(await response.text(), { sourceId: this.id, document: document.path, sourceUrl: url, season: document.season });
+      const parsed = (this.options.parser ?? parseInternshipMarkdown)(markdown, { sourceId: this.id, document: document.path, sourceUrl: url, season: document.season });
       for (const listing of parsed) {
         const rejection = applicationUrlRejection(listing.applyUrl);
         if (rejection) rejectedApplicationUrls.push({ row: listing.row, url: listing.applyUrl, reason: rejection });
