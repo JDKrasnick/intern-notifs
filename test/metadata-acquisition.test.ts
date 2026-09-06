@@ -95,6 +95,25 @@ describe('identity-bound public metadata APIs', () => {
     expect(metadataApiRoute(identity('workday'))).toBeUndefined();
     expect(metadataApiRoute({ ...identity('greenhouse', '123'), tenant: undefined })).toBeUndefined();
   });
+  it('accepts dotted Ashby board names without allowing path traversal', () => {
+    expect(metadataApiRoute({ ...identity('ashby'), tenant: 'persona.ai' })?.url)
+      .toBe('https://api.ashbyhq.com/posting-api/job-board/persona.ai?includeCompensation=true');
+    for (const tenant of ['..', '.', '../acme', 'acme/other', 'acme%2fother', 'acme..other', 'acme?foo=bar']) {
+      expect(metadataApiRoute({ ...identity('ashby'), tenant })).toBeUndefined();
+    }
+    expect(metadataApiRoute({ ...identity('greenhouse', '123'), tenant: 'persona.ai' })).toBeUndefined();
+  });
+  it('recovers only an exact observed Greenhouse embed identity', () => {
+    const id = { ...identity('greenhouse', '8044334'), tenant: undefined };
+    const url = 'https://job-boards.greenhouse.io/embed/job_app?for=towerresearchcapital&token=8044334&validityToken=transient';
+    expect(metadataApiRoute(id, url)).toMatchObject({ method: 'greenhouse-api', identity: { tenant: 'towerresearchcapital', postingId: '8044334' } });
+    expect(metadataApiRoute(id, url)?.url).not.toContain('transient');
+    for (const candidate of [url.replace('8044334', '999'), url.replace('job-boards.greenhouse.io', 'evil.test'),
+      `${url}&for=another`, `${url}&token=999`, url.replace('towerresearchcapital', '..%2Facme')]) {
+      expect(metadataApiRoute(id, candidate)).toBeUndefined();
+    }
+    expect(metadataApiRoute({ ...id, tenant: 'another' }, url)?.identity).toBeUndefined();
+  });
   it('coalesces duplicate batch requests, but validates each posting separately', async () => {
     const fetchImpl = vi.fn(async () => Response.json({ jobs: [{ id: uuid, title: 'Intern', descriptionPlain: 'Build', jobUrl: `https://jobs.ashbyhq.com/acme/${uuid}` }] }));
     const acquire = createMetadataAcquirer(fetchImpl);

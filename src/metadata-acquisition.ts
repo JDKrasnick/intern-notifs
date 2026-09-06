@@ -26,6 +26,19 @@ export function metadataApiRoute(identity: ProviderIdentity, candidateUrl?: stri
     try {
       const url = new URL(candidateUrl);
       if (url.protocol !== 'https:' || url.username || url.password || url.port) return undefined;
+      // Embedded Greenhouse forms expose the board and immutable posting in
+      // `for`/`token`. Recover only that observed identity, not the signed form
+      // token, and reject duplicate parameters or disagreement with known IDs.
+      const board = url.searchParams.get('for');
+      const embeddedId = url.searchParams.get('token');
+      if (provider === 'greenhouse' && ['boards.greenhouse.io', 'job-boards.greenhouse.io'].includes(url.hostname)
+        && url.pathname === '/embed/job_app' && board && /^[a-z0-9_-]{1,100}$/iu.test(board)
+        && embeddedId === postingId && /^\d+$/u.test(embeddedId)
+        && url.searchParams.getAll('for').length === 1 && url.searchParams.getAll('token').length === 1
+        && (!tenant || tenant.toLowerCase() === board.toLowerCase())) return {
+        method: 'greenhouse-api', url: `https://boards-api.greenhouse.io/v1/boards/${board}/jobs/${postingId}?pay_transparency=true&pay_input_ranges=true`,
+        identity: { ...identity, tenant: board },
+      };
       const smart = /^\/([a-z0-9_-]+)\/(\d+)(?:-[^/]*)?\/?$/iu.exec(url.pathname);
       if (url.hostname === 'jobs.smartrecruiters.com' && smart) return {
         method: 'smartrecruiters-api', url: `https://api.smartrecruiters.com/v1/companies/${smart[1]}/postings/${smart[2]}`,
@@ -39,7 +52,11 @@ export function metadataApiRoute(identity: ProviderIdentity, candidateUrl?: stri
       };
     } catch { return undefined; }
   }
-  if (!tenant || !/^[a-z0-9_-]{1,100}$/iu.test(tenant) || !postingId) return undefined;
+  // Ashby board names can contain dots (for example persona.ai). Dots are
+  // literal path-segment characters, never a host or traversal instruction.
+  const validTenant = tenant && tenant.length <= 100 && (provider === 'ashby'
+    ? /^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$/iu.test(tenant) : /^[a-z0-9_-]+$/iu.test(tenant));
+  if (!validTenant || !postingId) return undefined;
   if (provider === 'greenhouse' && /^\d+$/u.test(postingId)) return {
     method: 'greenhouse-api', url: `https://boards-api.greenhouse.io/v1/boards/${tenant}/jobs/${postingId}?pay_transparency=true&pay_input_ranges=true`,
   };
