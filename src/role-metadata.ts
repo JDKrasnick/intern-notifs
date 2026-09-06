@@ -884,6 +884,15 @@ export function projectRoleMetadata(job: Internship, evidence = job.sourceRefere
   const result = reconcileRoleMetadata(evidence, job);
   const identity = structuredIdentity(job);
   const previousMetadata = job.roleMetadata;
+  // A parser rollout is not a source withdrawal. Sources refresh independently:
+  // projecting one current snapshot must not erase accepted fields whose
+  // contributing snapshot is still awaiting re-extraction. Keep the accepted
+  // projection (including its old version/provenance) until those snapshots
+  // are replaced or removed; never promote stale evidence into a new result.
+  const acceptedHashes = new Set(previousMetadata?.evidenceHashes ?? []);
+  if (evidence.some(item => item.schemaVersion === 1 && item.exactPosting
+    && item.extractionVersion !== ROLE_METADATA_EXTRACTION_VERSION
+    && acceptedHashes.has(item.artifactHash))) return { job, conflicts: result.conflicts };
   // A conflict is not a withdrawal. Retain the accepted projection and its
   // provenance so later resolution or withdrawal can still replace it cleanly.
   if (result.metadata && previousMetadata) {

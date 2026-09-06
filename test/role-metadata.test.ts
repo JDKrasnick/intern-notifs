@@ -37,6 +37,37 @@ function job(overrides: Partial<Internship> = {}): Internship {
 }
 
 describe('provider-neutral role metadata', () => {
+  it('retains accepted metadata while a contributing source awaits re-extraction', () => {
+    const pay = evidence({ compensationRanges: extractCompensationRanges('USD $60/hour', { provenance: field }),
+      housing: extractHousingDetails('USD $900 monthly housing stipend.', { provenance: field }),
+      workMode: { value: 'remote', provenance: [field] } });
+    const accepted = projectRoleMetadata(job(), [pay]).job;
+    const stale = { ...pay, extractionVersion: ROLE_METADATA_EXTRACTION_VERSION - 1 };
+    const prior = { ...accepted, roleMetadata: { ...accepted.roleMetadata!, extractionVersion: stale.extractionVersion } };
+    const otherSource = evidence({ sourceId: 'other-source', artifactHash: 'other',
+      workMode: { value: 'hybrid', provenance: [{ ...field, sourceId: 'other-source', contentHash: 'other' }] } });
+    expect(projectRoleMetadata(prior, [stale, otherSource]).job).toEqual(prior);
+    // A successful empty refresh of the pay source really can withdraw pay.
+    const withdrawn = projectRoleMetadata(prior, [evidence({}), otherSource]).job;
+    expect(withdrawn.compensation).toEqual({ raw: '' });
+    expect(withdrawn.housing).toBeUndefined();
+    expect(withdrawn.workMode).toBe('hybrid');
+    expect(withdrawn.roleMetadata?.extractionVersion).toBe(ROLE_METADATA_EXTRACTION_VERSION);
+    expect(withdrawn.notification).toEqual(prior.notification);
+    expect(projectRoleMetadata(prior, [otherSource]).job.compensation).toEqual({ raw: '' });
+  });
+
+  it('does not promote unaccepted stale evidence or let it block a current projection', () => {
+    const stale = evidence({ extractionVersion: ROLE_METADATA_EXTRACTION_VERSION - 1,
+      compensationRanges: extractCompensationRanges('USD $60/hour', { provenance: field }) });
+    const current = evidence({ artifactHash: 'current', sourceId: 'current', workMode: { value: 'remote', provenance: [field] } });
+    const projected = projectRoleMetadata(job(), [stale, current]).job;
+    expect(projected.compensation).toEqual({ raw: '' });
+    expect(projected.workMode).toBe('remote');
+    expect(projected.roleMetadata?.evidenceHashes).toEqual(['current']);
+    expect(projectRoleMetadata(projected, [stale, current]).job).toEqual(projected);
+  });
+
   it('keeps a full-time salary reference separate from the internship offer', () => {
     const ranges = extractCompensationRanges('Salary=$75,000\nPrimary Location Full Time Salary Range:\n$60,000.00 - $110,000.00', { provenance: field });
     expect(ranges).toHaveLength(2);
