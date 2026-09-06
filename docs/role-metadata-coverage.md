@@ -68,8 +68,8 @@ normalizer deliberately does not combine multiple distinct candidates. The
 USD range for every role. Deployed code revision: `1f28d5c`; Worker version:
 `e241f4bd-b058-4000-a21a-6c5c3c5f60c6`.
 
-Historical collection, guarded dry-run/apply and post-apply verification remain
-pending: the existing operations credential is unavailable in this workspace.
+At that deployment, historical collection, guarded dry-run/apply and post-apply
+verification remained pending because the operations credential was unavailable.
 Do not replace the credential or bypass the exact token/count guards. The
 zero-supported-misses objective is not yet established. Next priorities are the
 445 pay-language cases and inaccessible/browser-only destinations, followed by
@@ -145,8 +145,8 @@ distinguish extracted, pending inspection, failure, incomplete artifacts,
 ambiguity, conflict and projection omission; only independent review can declare
 `no-disclosure-found`.
 
-The expansion has **not** been deployed or applied to historical production
-records. The operations credential and exact repair approval remain required.
+At the read-only API pass, the expansion had **not** been deployed or applied to
+historical production records. See the September 6 rollout update below.
 Independent review of the remaining browser/pay-language cohort remains open in
 [the delivery plan](metadata-coverage-plan.md).
 
@@ -156,3 +156,67 @@ export and OpenTofu formatting/validation. The iOS Simulator build launches;
 native pay-detail acceptance remains open because the test deep link showed a
 role-unavailable state despite the public detail endpoint returning HTTP 200.
 No native screenshot is counted as successful pay-display verification.
+
+## Production rollout — 2026-09-06
+
+The existing operations credential now authenticates successfully; it was not
+rotated. Migration `0017_metadata_acquisition.sql` is applied. Worker version
+`7427b669-cd52-469f-8ed3-3ca504dff9e7` serves revision `13a89ec` at 100%.
+The previous dashboard versions had the same script hash as the deployed GitHub
+timeout fix `7fc3073`; that fix is merged and retained. Publication remains
+enabled with the 70% confirmed-identity floor; trusted-community publication
+remains disabled. GitHub full-cycle freshness is still not validated.
+
+Web deployment `39baac25` serves the shared pay formatter at `internnotifs.app`.
+An actual browser check confirmed Salesforce's USD 54/hour on both the card and
+role detail, with the official-application action available. No native release
+or successful native pay-detail acceptance is claimed.
+
+Production canary testing exposed a Worker runtime incompatibility with Fetch
+`redirect: 'error'`: API calls failed before reaching employers, despite passing
+in Node. Acquisition now uses `manual` and rejects redirects without following
+them; a local Worker probe verifies an exact Greenhouse response. Extraction
+version 5 revisits the affected browser-only records. Collection and audit now
+share eligibility, including open withheld jobs and legacy occurrences whose
+confirmed immutable posting key exactly matches their official URL. Neither
+change grants new employer authority or alters admission decisions.
+
+The version-5 collection denominator is 4,647 job/source pairs, up from 2,621;
+this is not the 1,723-role public catalog denominator. Historical collection is
+staging-only. The first production dry run exceeded the 900-record atomic limit;
+dry runs now stage at most 900 jobs and report `remainingJobs`, while retaining
+global collection, evidence and conflict guards. Every batch needs independent
+owner approval of its exact token/counts. No historical repair has been applied.
+
+Public snapshot at 06:25:54 UTC: 1,723 roles, 273 with pay (15.8%), 647 with some
+enriched metadata (37.6%), 139 employer publication dates, 21 deadlines, 28
+explicit work modes and 29 graduation windows. These include normal ingestion
+changes, not historical repair gains or measured disclosure recall.
+
+Version 5's 110 queued pairs produced 41 successful Workday API reports, 21
+Greenhouse, five Lever and five SmartRecruiters. Browser reports comprised 32
+complete and six incomplete acquisitions. The audit retained 105 current pairs
+(one had earlier complete evidence), not 110 successful acquisitions. Aggregate
+destinations and truncated/unfinished pages remain unresolved.
+
+Browser inspection of Cohere's exact posting found that its three geographic
+salary bands lost their labels when body text was flattened, and `CA$` amounts
+were split. Extraction version 6 preserves visible list rows immediately under
+explicit compensation headings, recognizes qualified dollar symbols, and keeps
+unstated periods unknown. The live DOM supplied a regression that clears the
+false conflict through guarded database repair in tests. The same page requires
+five years' experience; its eligibility needs separate source-quality review,
+not an admission change through metadata backfill.
+
+The version-6 production canary completed all ten pairs. A read-only D1 check
+confirmed all three labeled Cohere bands for both source references, including
+CAD 140,000–175,000 with unknown period. Its acquisition reports changed from
+`conflicting` to `ambiguous` (unstated periods/currencies remain unknown), without
+applying a public repair. Collection continues in bounded batches; the 4,647-pair
+cohort is not yet complete.
+
+Validation for `13a89ec`: 1,286 backend tests passed, 284 skipped; type checks,
+lint, Worker dry-run build and all PR checks passed. Regressions cover the Worker
+redirect mode, confirmed legacy identity, version-aware retry backoff, and
+901-job repairs with a conflict outside the selected atomic batch. Local rollout
+reports are under `.context/reviews/metadata-rollout-2026-09-06/` (gitignored).

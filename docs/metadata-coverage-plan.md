@@ -1,6 +1,6 @@
 # Plan: maximize supported employer metadata coverage
 
-Status: implementation expanded in PR #161, 2026-09-05. The owner authorized
+Status: expanded Worker and web deployed from PR #161, 2026-09-06. The owner authorized
 implementation; production repair still requires its exact dry-run approval.
 
 ## Delivery status
@@ -12,15 +12,15 @@ formatter, field-level acquisition reporting, durable fair scheduling, host
 backoff and a resumable read-only coverage CLI. Exact API evidence uses a separate
 `official-api` slot so a board-list refresh cannot erase detail-only disclosures.
 
-Migration `0017_metadata_acquisition.sql` must precede deployment. The destination
+Migration `0017_metadata_acquisition.sql` is applied. The destination
 consumer runs one batch at a time, five messages per batch. Historical API
 collection avoids browser use when an exact-role response succeeds; normal
 admission verification remains independent. Failed acquisition never supplies
 new destination or employer authority.
 
-Remaining operational acceptance is explicit: deploy the expanded revision,
-finish independent browser/field review, collect production evidence with the
-existing credential, approve and apply the exact repair, then verify public
+Remaining operational acceptance is explicit: finish independent browser/field
+review and production collection (the existing credential now works), approve
+and apply each exact repair batch, then verify public
 coverage and unchanged IDs/notifications. API acquisition counts and parser
 fixtures do not establish independently measured 95% disclosure recall. Oracle
 uses the existing HTML/browser fallback; no undocumented Oracle API is enabled.
