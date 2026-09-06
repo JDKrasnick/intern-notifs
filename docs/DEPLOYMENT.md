@@ -174,6 +174,13 @@ corrections by field/source class, every conflict, unsupported currencies/pay pe
 blocked/inconclusive/aggregate outcomes. Unknown values must remain unknown.
 Apply only after owner approval, copying all three guards from the same dry run:
 
+Each dry run stages at most 900 jobs in stable job-ID order and reports
+`remainingJobs` separately. Field fill/correction counts describe only that batch;
+conflicts, evidence freshness and collection completeness still cover the entire
+cohort. After an approved batch applies, run a new dry run and obtain approval of
+its new token/counts. Repeat until `remainingJobs` and `expectedJobs` are zero;
+never increase the atomic limit or reuse approval across batches.
+
 ```bash
 npm run migrate:role-metadata -- apply \
   --repair-token EXACT_TOKEN \

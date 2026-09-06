@@ -2,7 +2,7 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
-import { D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
+import { ATOMIC_REPAIR_RECORD_LIMIT, D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 import { extractPostingMetadataEvidence, projectRoleMetadata } from '../src/role-metadata.js';
@@ -263,6 +263,52 @@ describe('D1 role metadata evidence and guarded repair', () => {
     });
     expect(current.database.prepare("SELECT count(*) AS count FROM catalog_items WHERE kind = 'notification-event'").get()).toEqual({ count: 1 });
     expect((await current.operations.roleMetadataAudit()).projectionOnlyOmissions).toEqual([]);
+  });
+
+  it.each([false, true])('keeps large repair batches atomic with an outside-batch conflict: %s', async (hasConflict) => {
+    const current = subject();
+    const observedAt = '2026-09-04T12:00:00.000Z';
+    const original = job();
+    const evidence = extractPostingMetadataEvidence({
+      artifact: { title: original.title, compensationText: 'USD $45/hour' }, sourceClass: 'official-page', sourceId: 'community-acme',
+      sourceUrl: original.applyUrl, observedAt, exactPosting: true,
+    });
+    for (let index = 0; index <= ATOMIC_REPAIR_RECORD_LIMIT; index += 1) {
+      const jobId = `batch-${String(index).padStart(4, '0')}`;
+      await current.jobs.putInternship({ ...original, jobId });
+      await current.operations.recordRoleMetadataEvidence(jobId, evidence, [], observedAt);
+    }
+    if (hasConflict) {
+      const conflictId = 'z-conflict';
+      await current.jobs.putInternship({ ...original, jobId: conflictId, sourceReferences: [
+        original.sourceReferences[0]!, { ...original.sourceReferences[0]!, sourceId: 'second-source' },
+      ] });
+      await current.operations.recordRoleMetadataEvidence(conflictId, evidence, [], observedAt);
+      await current.operations.recordRoleMetadataEvidence(conflictId, extractPostingMetadataEvidence({
+        artifact: { title: original.title, compensationText: 'USD $60/hour' }, sourceClass: 'official-page', sourceId: 'second-source',
+        sourceUrl: 'https://second.example.test/jobs/123', observedAt, exactPosting: true,
+      }), [], observedAt);
+    }
+    const first = await current.operations.stageRoleMetadataRepair(observedAt);
+    expect(first).toMatchObject({ expectedJobs: ATOMIC_REPAIR_RECORD_LIMIT, remainingJobs: 1,
+      expectedOccurrences: 0, fillsByField: { compensation: ATOMIC_REPAIR_RECORD_LIMIT } });
+    if (hasConflict) {
+      expect(first.conflicts).toMatchObject([{ field: 'compensation' }]);
+      await expect(current.operations.applyRoleMetadataRepair(first.repairToken, first.expectedJobs, 0, observedAt))
+        .rejects.toThrow('conflicts must be resolved');
+      expect((await current.jobs.getJob('batch-0000'))?.compensation.raw).toBe('');
+      return;
+    }
+    await expect(current.operations.applyRoleMetadataRepair(first.repairToken, ATOMIC_REPAIR_RECORD_LIMIT + 1, 0, observedAt))
+      .rejects.toThrow('plan changed');
+    await current.operations.applyRoleMetadataRepair(first.repairToken, first.expectedJobs, 0, observedAt);
+    expect((await current.jobs.getJob('batch-0900'))?.compensation.raw).toBe('');
+    const second = await current.operations.stageRoleMetadataRepair(observedAt);
+    expect(second).toMatchObject({ expectedJobs: 1, remainingJobs: 0, fillsByField: { compensation: 1 } });
+    expect(second.repairToken).not.toBe(first.repairToken);
+    await current.operations.applyRoleMetadataRepair(second.repairToken, second.expectedJobs, 0, observedAt);
+    expect((await current.operations.stageRoleMetadataRepair(observedAt)).expectedJobs).toBe(0);
+    expect((await current.jobs.getJob('batch-0900'))?.notification).toEqual(original.notification);
   });
 
   it('rejects a stale original JSON guard', async () => {

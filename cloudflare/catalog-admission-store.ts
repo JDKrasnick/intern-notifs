@@ -495,6 +495,7 @@ export class D1CatalogAdmissionStore {
   async stageRoleMetadataRepair(createdAt: string): Promise<{
     repairToken: string;
     expectedJobs: number;
+    remainingJobs: number;
     expectedOccurrences: 0;
     fillsByField: Record<string, number>;
     correctionsByField: Record<string, number>;
@@ -512,6 +513,7 @@ export class D1CatalogAdmissionStore {
     for (const row of evidenceRows.results) evidenceByJob.set(row.job_id,
       [...(evidenceByJob.get(row.job_id) ?? []), JSON.parse(row.evidence) as RoleMetadataEvidence]);
     const staged: Array<{ jobId: string; original: string; proposed: string }> = [];
+    let remainingJobs = 0;
     const fillsByField: Record<string, number> = {}; const correctionsByField: Record<string, number> = {};
     const changesBySourceClass: Record<string, number> = {}; const unsupportedCurrencies: Record<string, number> = {};
     const unsupportedPeriods: Record<string, number> = {};
@@ -536,15 +538,15 @@ export class D1CatalogAdmissionStore {
       const result = projectRoleMetadata({ ...job, sourceReferences });
       conflicts.push(...result.conflicts);
       if (result.conflicts.length || JSON.stringify(result.job) === row.value) continue;
+      // Each approved plan remains one bounded atomic transaction. Continue
+      // inspecting the full cohort so conflicts outside this batch still block it.
+      if (staged.length >= ATOMIC_REPAIR_RECORD_LIMIT) { remainingJobs += 1; continue; }
       for (const field of fields) if (JSON.stringify(result.job[field]) !== JSON.stringify(job[field])) {
         const target = job[field] === undefined || field === 'compensation' && !job.compensation.raw ? fillsByField : correctionsByField;
         target[field] = (target[field] ?? 0) + 1;
       }
       for (const sourceClass of new Set(historical.map((item) => item.sourceClass))) changesBySourceClass[sourceClass] = (changesBySourceClass[sourceClass] ?? 0) + 1;
       staged.push({ jobId: job.jobId, original: row.value, proposed: JSON.stringify(result.job) });
-    }
-    if (staged.length > ATOMIC_REPAIR_RECORD_LIMIT) {
-      throw new Error(`Role metadata repair exceeds the atomic D1 limit of ${ATOMIC_REPAIR_RECORD_LIMIT} records`);
     }
     const evidenceSnapshot = roleMetadataEvidenceSnapshot(evidenceRows.results);
     const collectionCoverage = await this.roleMetadataCollectionCoverage(
@@ -574,7 +576,7 @@ export class D1CatalogAdmissionStore {
         collection_complete=excluded.collection_complete, created_at=excluded.created_at`)
       .bind(repairToken, staged.length, conflicts.length, evidenceSnapshot, collectionSnapshot,
         collectionCoverage.complete ? 1 : 0, createdAt).run();
-    return { repairToken, expectedJobs: staged.length, expectedOccurrences: 0, fillsByField, correctionsByField,
+    return { repairToken, expectedJobs: staged.length, remainingJobs, expectedOccurrences: 0, fillsByField, correctionsByField,
       changesBySourceClass, conflicts, unsupportedCurrencies, unsupportedPeriods };
   }
 
