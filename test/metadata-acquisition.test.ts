@@ -84,6 +84,15 @@ describe('identity-bound public metadata APIs', () => {
       expect(['failed', 'incomplete']).toContain(result?.outcome); expect(result?.artifact).toBeUndefined();
     }
   });
+  it('uses the Worker-supported manual redirect mode and rejects redirect responses', async () => {
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      expect(init?.redirect).toBe('manual');
+      return new Response(null, { status: 302, headers: { Location: 'https://unrelated.test/job' } });
+    });
+    expect(await createMetadataAcquirer(fetchImpl)(identity('greenhouse', '123')))
+      .toMatchObject({ outcome: 'failed', status: 302 });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('coverage accounting and moved postings', () => {

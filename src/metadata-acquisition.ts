@@ -148,7 +148,9 @@ export function createMetadataAcquirer(fetchImpl: typeof fetch = fetch, hooks: {
       try {
         const host = new URL(route.url).hostname;
         if (throttled.has(host) || (hooks.canRequest && !await hooks.canRequest(host))) return { outcome: 'failed' as const, status: 429 };
-        const response = await fetchImpl(route.url, { headers: { Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(12_000) });
+        // workerd rejects redirect:'error' before issuing the request. Manual
+        // mode plus the non-2xx check below rejects redirects without following.
+        const response = await fetchImpl(route.url, { headers: { Accept: 'application/json' }, redirect: 'manual', signal: AbortSignal.timeout(12_000) });
         if (response.status === 429) {
           throttled.add(host);
           const header = response.headers.get('retry-after');

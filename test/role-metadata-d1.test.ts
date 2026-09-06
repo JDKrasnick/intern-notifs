@@ -127,6 +127,19 @@ describe('D1 role metadata evidence and guarded repair', () => {
     expect((await current.operations.metadataVerificationCandidates(1, { ...options, reserveAt: '2026-09-05T01:31:00.000Z' })).map((row) => row.jobId)).toEqual(['a']);
   });
 
+  it('collects withheld open roles and ignores only superseded-version retry backoff', async () => {
+    const current = subject(); const original = jobWithVerifiedDestination();
+    const withheld = { ...original, admission: { ...original.admission!, catalogEligible: false, alertEligible: false } };
+    await current.jobs.putInternship(withheld);
+    await current.jobs.putInternship({ ...original, jobId: 'closed', open: false });
+    await current.operations.recordMetadataAcquisition(original.jobId, 'community-acme', '2026-09-05T00:00:00.000Z',
+      { extractionVersion: ROLE_METADATA_EXTRACTION_VERSION - 1, complete: true }, '2026-10-05T00:00:00.000Z');
+    expect((await current.operations.roleMetadataAudit()).collectionCoverage.eligible).toBe(1);
+    expect((await current.operations.metadataVerificationCandidates(10, { reserveAt: '2026-09-06T00:00:00.000Z' })).map(row => row.jobId)).toEqual([original.jobId]);
+    expect(await current.operations.metadataVerificationCandidates(10, { reserveAt: '2026-09-06T00:01:00.000Z' })).toEqual([]);
+    expect((await current.jobs.getJob(original.jobId))?.admission?.catalogEligible).toBe(false);
+  });
+
   it('backs off failed acquisitions without calling them complete or starving other jobs', async () => {
     const current = subject();
     for (const id of ['a', 'b']) await current.jobs.putInternship({ ...jobWithVerifiedDestination(), jobId: id });

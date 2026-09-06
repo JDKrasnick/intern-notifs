@@ -364,7 +364,9 @@ export class D1CatalogAdmissionStore {
     metadataArtifactHash?: string;
   }>> {
     const [rows, attempts, evidence, reservations] = await Promise.all([
-      this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'internship' AND catalog_state = 'OPEN' ORDER BY pk").all<JsonRow>(),
+      // Match collectionCoverage's open-role cohort, including withheld roles.
+      // Metadata collection must not require or grant catalog admission.
+      this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'internship' AND json_extract(value, '$.open') = 1 ORDER BY pk").all<JsonRow>(),
       this.db.prepare(`SELECT job_id, source_id, observed_at, artifact_hash
         FROM role_metadata_extraction_attempts WHERE extraction_version = ?`)
         .bind(ROLE_METADATA_EXTRACTION_VERSION)
@@ -374,11 +376,12 @@ export class D1CatalogAdmissionStore {
           AND source_class IN ('official-page', 'official-json-ld')`)
         .bind(ROLE_METADATA_EXTRACTION_VERSION)
         .all<{ job_id: string; source_id: string; observed_at: string; artifact_hash: string }>(),
-      this.db.prepare('SELECT job_id, source_id, lease_until, retry_after FROM role_metadata_acquisition')
-        .all<{ job_id: string; source_id: string; lease_until: string; retry_after: string }>(),
+      this.db.prepare("SELECT job_id, source_id, lease_until, retry_after, json_extract(report, '$.extractionVersion') AS version FROM role_metadata_acquisition")
+        .all<{ job_id: string; source_id: string; lease_until: string; retry_after: string; version: number | null }>(),
     ]);
     const now = options.reserveAt ?? new Date().toISOString();
-    const unavailable = new Set(reservations.results.filter((item) => item.lease_until > now || item.retry_after > now)
+    const unavailable = new Set(reservations.results.filter((item) => item.lease_until > now
+      || (item.retry_after > now && (item.version === null || item.version >= ROLE_METADATA_EXTRACTION_VERSION)))
       .map((item) => `${item.job_id}\0${item.source_id}`));
     const latest = new Map<string, { observedAt: string; artifactHash: string }>();
     for (const item of [...attempts.results, ...evidence.results]) {
@@ -444,8 +447,10 @@ export class D1CatalogAdmissionStore {
         const lease = new Date(Date.parse(options.reserveAt) + 30 * 60_000).toISOString();
         const reserved = await this.db.prepare(`INSERT INTO role_metadata_acquisition(job_id, source_id, lease_until)
           VALUES (?, ?, ?) ON CONFLICT(job_id, source_id) DO UPDATE SET lease_until=excluded.lease_until
-          WHERE role_metadata_acquisition.lease_until <= ? AND role_metadata_acquisition.retry_after <= ?`)
-          .bind(candidate.jobId, candidate.sourceId, lease, options.reserveAt, options.reserveAt).run();
+          WHERE role_metadata_acquisition.lease_until <= ? AND (role_metadata_acquisition.retry_after <= ?
+            OR coalesce(json_extract(role_metadata_acquisition.report, '$.extractionVersion'), ?) < ?)`)
+          .bind(candidate.jobId, candidate.sourceId, lease, options.reserveAt, options.reserveAt,
+            ROLE_METADATA_EXTRACTION_VERSION, ROLE_METADATA_EXTRACTION_VERSION).run();
         if (reserved.meta?.changes !== 1) continue;
       }
       selected.push(candidate);
