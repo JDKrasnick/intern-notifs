@@ -12,7 +12,7 @@ export function decodeMetadataCursor(cursor: string | undefined): string {
   return decoded;
 }
 
-export const METADATA_AUDIT_FIELDS = ['compensation', 'education', 'graduation-window', 'locations', 'work-mode', 'application-deadline', 'employer-published-at', 'employer-updated-at'] as const;
+export const METADATA_AUDIT_FIELDS = ['compensation', 'housing', 'education', 'graduation-window', 'locations', 'work-mode', 'application-deadline', 'employer-published-at', 'employer-updated-at'] as const;
 export type MetadataAuditOutcome = 'extracted' | 'inspection-pending' | 'acquisition-failed' | 'incomplete-artifact' | 'no-disclosure-found' | 'ambiguous' | 'conflicting' | 'projection-missing';
 
 /** Absence in parser output is never ground truth for employer non-disclosure.
@@ -28,6 +28,7 @@ export function metadataFieldOutcomes(input: {
     const found = input.evidence.some((item) => {
       switch (field) {
         case 'compensation': return !!item.compensationRanges?.length;
+        case 'housing': return !!item.housing?.length;
         case 'education': return !!item.education;
         case 'graduation-window': return !!item.education?.graduationDateWindow;
         case 'locations': return !!item.locations?.length;

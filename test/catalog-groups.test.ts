@@ -35,6 +35,14 @@ function identity(options: {
 }
 
 describe('grouped catalog domain', () => {
+  it('preserves housing separately from compensation in featured and detailed roles', () => {
+    const housing = [{ kind: 'stipend', minAmount: 2500, maxAmount: 2500, currency: 'USD', period: 'monthly',
+      sourceText: 'Monthly housing stipend.', provenance: [] }];
+    const details = catalogGroupDetails(groupCatalogJobs([job('housing', 0, { housing, compensation: { raw: 'USD 8,500/month' } })])[0]!);
+    expect(details.roles[0]?.housing).toEqual(housing);
+    expect(details.group.featuredRole.housing).toEqual(housing);
+    expect(details.group.compensations).toEqual(['USD 8,500/month']);
+  });
   it('uses an eight-second employer burst and does not absorb a later unrelated program', () => {
     const jobs = [job('one', 0), job('two', 2), job('three', 4), job('four', 8), job('later', 20, { season: 'fall-2027' })];
     const groups = groupCatalogJobs(jobs);

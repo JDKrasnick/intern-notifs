@@ -23,12 +23,13 @@ import type {
   RoleMetadataEvidence,
   RoleMetadataField,
   WorkMode,
+  HousingDetail,
 } from './types.js';
 
 // Increment whenever a parser change can produce a different result from an
 // unchanged artifact. This makes the collection scheduler revisit both a
 // previous negative result and an already-enriched posting.
-export const ROLE_METADATA_EXTRACTION_VERSION = 7;
+export const ROLE_METADATA_EXTRACTION_VERSION = 8;
 export const VERIFIED_PAGE_METADATA_SOURCES = ['official-json-ld', 'official-page'] as const;
 const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   // Exact-role detail retrieval owns its own slot; a later board-list poll
@@ -205,6 +206,15 @@ export function roleMetadataArtifactHash(artifact: RoleMetadataArtifact): string
   return createHash('sha256').update(stable(artifact)).digest('hex');
 }
 
+/** Re-observing identical evidence keeps a review; any content/version change expires it. */
+export function roleMetadataReviewFingerprint(evidence: readonly RoleMetadataEvidence[]): string {
+  const withoutObservation = (value: unknown): unknown => Array.isArray(value) ? value.map(withoutObservation)
+    : record(value) ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'observedAt').map(([key, child]) => [key, withoutObservation(child)])) : value;
+  return createHash('sha256').update(stable({ extractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+    evidence: evidence.filter(item => item.extractionVersion === ROLE_METADATA_EXTRACTION_VERSION && item.exactPosting)
+      .map(item => stable(withoutObservation(item))).sort() })).digest('hex');
+}
+
 function provenance(input: ExtractRoleMetadataInput, artifactHash: string, evidenceCode: string): FieldProvenance {
   return {
     source: input.sourceClass,
@@ -226,6 +236,22 @@ function educationLevels(value: string): EducationLevel[] {
 }
 
 function minimumDegree(value: string): MinimumDegree | undefined {
+  const clauses = value.split(/(?<=[.!?;])\s+|\n+/u).filter(clause =>
+    !/\b(?:not required|no\s+(?:[\w’'-]+\s+){0,3}degree\s+(?:is\s+)?required)\b/iu.test(clause));
+  // An OR-list states alternatives, not that its highest degree is mandatory.
+  const degreeNames = String.raw`associate(?:['’]s|s)?|bachelor(?:['’]s|s)?|master(?:['’]s|s)?|Ph\.?D\.?|doctorate|doctoral`;
+  for (const clause of clauses) {
+    const alternatives = new RegExp(String.raw`\b(${degreeNames})(?:\s+degree)?\s+(?:or|and/or)\s+(${degreeNames})(?:\s+degree)?`, 'iu').exec(clause);
+    if (!alternatives) continue;
+    const before = clause.slice(0, alternatives.index);
+    const after = clause.slice(alternatives.index + alternatives[0].length);
+    if (!/^\s+(?:is\s+|are\s+)?required\b/iu.test(after)
+      && !/\bmust (?:have|hold|possess)\s+(?:an?\s+)?$/iu.test(before)) continue;
+    const choices = alternatives.slice(1).map(name => /^associate/iu.test(name) ? 'associates' as const
+      : /^bachelor/iu.test(name) ? 'bachelors' as const : /^master/iu.test(name) ? 'masters' as const : 'doctoral' as const);
+    return (['associates', 'bachelors', 'masters', 'doctoral'] as const).find(degree => choices.includes(degree));
+  }
+  value = clauses.join(' ');
   const required = (degree: string) => new RegExp(
     `(?:\\b${degree}(?: degree)?\\s+(?:is\\s+)?required\\b|\\bmust\\s+(?:have|hold|possess)\\s+(?:an?\\s+)?${degree}(?: degree)?\\b|\\bminimum(?: education| degree)?[^.;]{0,30}\\b${degree}\\b)`,
     'iu',
@@ -245,11 +271,14 @@ const MONTH: Record<string, string> = {
 };
 
 function graduationWindow(value: string): GraduationDateWindow | undefined {
-  const markers = [...value.matchAll(/\b(?:graduat(?:e|es|ed|ing|ion)|class of|degree completion)\b/giu)];
-  if (!markers.length) return undefined;
-  // Bind dates to the graduation phrase. Job pages often contain unrelated
-  // posting/deadline dates elsewhere in one large HTML-derived text block.
-  const context = markers.map((match) => value.slice(Math.max(0, (match.index ?? 0) - 80), (match.index ?? 0) + 280)).join(' ');
+  // Keep graduation dates inside their own clause. "Graduate students" is an
+  // audience, not a graduation event; nearby application/start dates are not
+  // evidence of a graduation window.
+  const marker = /\b(?:graduat(?:es|ed|ing|ion)|graduate(?!\s+(?:students?|school|degree|program|intern|level)\b)|class of|degree completion)\b/iu;
+  const context = value.split(/(?<=[.!?;])\s+|\n+/u)
+    .map(clause => clause.split(/\b(?:applications? (?:close|deadline)|apply by|(?:internship|program) (?:starts?|begins?))\b/iu)[0] ?? '')
+    .filter(clause => marker.test(clause)).map(clause => clause.slice(0, 400)).join(' ');
+  if (!context) return undefined;
   const dates = [
     ...[...context.matchAll(/\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(20\d{2})\b/giu)]
       .map((match) => `${match[2]}-${MONTH[match[1]!.toLowerCase()]}`),
@@ -269,6 +298,13 @@ function explicitWorkMode(value: string | undefined): Exclude<WorkMode, 'unspeci
   if (/\b(?:remote|telecommute|work from home)\b/iu.test(value)) return 'remote';
   if (/\b(?:on[ -]?site|in[ -]?person)\b/iu.test(value)) return 'onsite';
   return undefined;
+}
+
+function titleWorkMode(value: string): Exclude<WorkMode, 'unspecified'> | undefined {
+  // Technical topics such as "Remote Sensing" and "Hybrid Systems" are not
+  // workplace promises. Title-only evidence needs a separate mode qualifier.
+  const qualifier = /(?:^|[-–—|]|\()\s*(?:fully\s+)?(remote|hybrid|on[ -]?site|in[ -]?person)\s*(?:$|\)|[-–—|])/iu.exec(value)?.[1];
+  return explicitWorkMode(qualifier);
 }
 
 function amount(value: string, suffix?: string): number {
@@ -310,17 +346,23 @@ function applicability(segment: string, knownLocations: readonly string[]): Pick
     const terms = location.toLowerCase().split(/[^a-z0-9]+/u).filter((term) => term.length > 2 && !['remote', 'united', 'states'].includes(term));
     return terms.length > 0 && terms.every((term) => segment.toLowerCase().includes(term));
   });
-  const prefix = /^\s*([A-Za-z][A-Za-z0-9 .,&/()-]{2,100})\s*:/u.exec(segment)?.[1]?.trim()
+  const regional = /\bspecific work locations,?\s+(?:within|in)\s+(.{1,250}?),?\s+and the base pay range\b/iu.exec(segment)?.[1]
+    ?? /\b(?:salary|pay) range for (?:this|the) role in (.{1,250}?)\s+is\b/iu.exec(segment)?.[1]
+    ?? /\bpay range for (?!this\b|the\b)(.{1,250}?)\s+is\b/iu.exec(segment)?.[1];
+  const starting = /\b(?:starts? at|starting at)\s*[$€£]/iu.test(segment);
+  const prefix = regional?.replace(/,\s*$/u, '').trim() ?? /^\s*([A-Za-z][A-Za-z0-9 .,&/()-]{2,100})\s*:/u.exec(segment)?.[1]?.trim()
     ?? /^\s*([A-Za-z][A-Za-z0-9 .,&/()-]{1,100}?)\s*[-–—]\s*Minimum\b/iu.exec(segment)?.[1]?.trim()
     ?? /\bfor (?:the )?([\w. -]{1,60}\blevel)\b/iu.exec(segment)?.[1]?.trim()
     ?? /\bfor ((?:undergrad(?:uate)?|graduate|PhD)(?: students?)?)\b/iu.exec(segment)?.[1]?.trim();
-  const compensationLabel = prefix && /\b(?:salary|pay|compensation|wages?|earnings?|rate|range)\b/iu.test(prefix);
+  const compensationLabel = prefix && /\b(?:salary|pay|compensation|wages?|earnings?|rate|range)\b/iu.test(prefix)
+    && !/\bfull[ -]time\b/iu.test(prefix);
   const genericHeading = prefix && /^(?:base|required skills|additional requirements|what we offer|requirements|qualifications)$/iu.test(prefix);
   const levels = educationLevels(segment);
   return {
     ...(locations.length ? { applicableLocations: normalizeLocations(locations) } : {}),
     ...(levels.length ? { applicableEducationLevels: levels } : {}),
-    ...(!locations.length && prefix && !compensationLabel && !genericHeading ? { applicabilityLabel: prefix } : {}),
+    ...(starting ? { applicabilityLabel: 'Starting rate (lower bound)' }
+      : !locations.length && prefix && !compensationLabel && !genericHeading ? { applicabilityLabel: boundedText(prefix, 120) } : {}),
   };
 }
 
@@ -331,10 +373,21 @@ export function extractCompensationRanges(
   const ranges: CompensationRange[] = [];
   // Qualified dollar symbols are explicit currencies, including on both ends
   // of a range. Normalize the notation before matching, never infer from pay size.
-  const qualified = value.replace(/\b(US|CA|AU|NZ|SG|HK)\$/gu, (_, code: string) =>
+  const qualified = value.replace(/\bUS\s+D\b(?=\s*(?:to\b|[-–—.,]|$))/gu, 'USD').replace(/\b(US|CA|AU|NZ|SG|HK)\$/gu, (_, code: string) =>
     `${({ US: 'USD', CA: 'CAD', AU: 'AUD', NZ: 'NZD', SG: 'SGD', HK: 'HKD' } as Record<string, string>)[code]} $`);
-  const normalized = qualified.replace(new RegExp(String.raw`([$€£]?\s*${MONEY_AMOUNT}\s*[kK]?)\s+(${CURRENCY_CODE})(?=\s*(?:[-–—]|to)\s*)`, 'giu'), '$2 $1')
-    .replace(/([-–—]|\bto\b)\s*(?:maximum|max\.?)\s*(?=[$€£\d])/giu, '$1 ');
+  const normalized = qualified.replace(/(\d)\s+,\s*(?=\d{3}\b)/gu, '$1,')
+    .replace(/\b((?:primary location\s+)?full[ -]time\s+(?:salary|pay)\s+range)\s*:\s*\n\s*(?=[$€£])/giu, '$1: ')
+    // Adjacent employer min/max fields describe one range, not two offers.
+    // Require the same label and currency notation on both endpoints.
+    .replace(new RegExp(String.raw`\b(salary\s*\/\s*rate)\s+minimum\s*:\s*((?:${CURRENCY_CODE}\s*)?[$€£])\s*(${MONEY_AMOUNT})\s*\n\s*\1\s+maximum\s*:\s*\2\s*(${MONEY_AMOUNT})`, 'giu'), '$1: $2$3 - $2$4')
+    .replace(new RegExp(String.raw`\bminimum\s+(pay|salary)\s*:\s*((?:${CURRENCY_CODE}\s*)?[$€£])\s*(${MONEY_AMOUNT})\s*\n\s*maximum\s+\1\s*:\s*\2\s*(${MONEY_AMOUNT})`, 'giu'), '$1: $2$3 - $2$4')
+    .replace(new RegExp(String.raw`\bpay range\s*[-–—]\s*start\s*:\s*((?:${CURRENCY_CODE}\s*)?[$€£])\s*(${MONEY_AMOUNT})\s*\n\s*pay range\s*[-–—]\s*end\s*:\s*\1\s*(${MONEY_AMOUNT})`, 'giu'), 'Pay range: $1$2 - $1$3')
+    .replace(new RegExp(String.raw`([$€£]\s*${MONEY_AMOUNT})\s+through\s+(?=[$€£]\s*\d)`, 'giu'), '$1 - ')
+    .replace(/\bD\.C\./gu, 'DC')
+    .replace(new RegExp(String.raw`([$€£]?\s*${MONEY_AMOUNT}\s*[kK]?)\s+(${CURRENCY_CODE})(?=\s*(?:[-–—]|to)\s*)`, 'giu'), '$2 $1')
+    .replace(/([-–—]|\bto\b)\s*(?:maximum|max\.?)\s*(?=[$€£\d])/giu, '$1 ')
+    .replace(/(\d)\s+MIN\s*(?=[-–—])/giu, '$1 ')
+    .replace(new RegExp(String.raw`\bbetween\s+((?:${CURRENCY_CODE}\s*)?[$€£]\s*${MONEY_AMOUNT}\s*[kK]?)\s+and\s+(?=(?:${CURRENCY_CODE}\s*)?[$€£]\s*\d)`, 'giu'), 'between $1 - ');
   const payContext = /\b(?:salary|pays?|compensation|base rate|market range|hourly rate|annual range|hiring range|internships? (?:is|are) paid)\b/iu;
   const segments = normalized.split(/(?<=[.;\n])\s+|\s*[;\n]\s*/u).filter(Boolean).flatMap(segment => {
     // Inline degree tiers are separate disclosures, not range endpoints. Keep
@@ -451,8 +504,37 @@ export function compensationFromRanges(ranges: readonly CompensationRange[]): Co
   return result;
 }
 
+export function extractHousingDetails(value: string, input: { provenance: FieldProvenance; knownLocations?: readonly string[] }): HousingDetail[] {
+  const details: HousingDetail[] = [];
+  for (const raw of value.split(/(?<=[.!?;])\s+|\n+/u)) {
+    const clause = raw.replace(/^\s*[-•]\s*/u, '').trim();
+    if (!/\b(?:housing|accommodation|rent)\b/iu.test(clause)
+      || /\b(?:reasonable accommodation|disabilit(?:y|ies)|accessibility|interviews?)\b/iu.test(clause)
+      || /\b(?:not|no|cannot|unavailable|without)\b/iu.test(clause.replace(/\bat no cost\b/giu, 'free'))) continue;
+    const kind: HousingDetail['kind'] | undefined = /\b(?:stipend|allowance)\b/iu.test(clause) ? 'stipend'
+      : /\b(?:free|company[ -]paid|employer[ -]paid)\s+(?:housing|accommodation)\b|\b(?:housing|accommodation|rent)(?:\s+(?:is|are|will be|provided|costs?))*\s+(?:free|at no cost|fully covered by (?:us|the company)|paid for by (?:us|the company))\b/iu.test(clause) ? 'employer-paid'
+        : !/\b(?:covered|reimbursed|reimbursement|assistance)\b/iu.test(clause)
+          && /\b(?:you|interns?|employees?|residents?)\s+(?:must |will )?(?:pay|cover)\s+(?:for |their )?(?:housing|accommodation|rent)\b|\b(?:housing|accommodation|rent)\s+(?:costs?|charges?)\s*:?\s*(?:[A-Z]{3}\s*)?[$€£]\s*\d/iu.test(clause) ? 'employee-cost'
+          : /\b(?:housing|accommodation)\s+(?:is |will be )?(?:provided|available)|\b(?:provide|offer)\s+(?:company\s+)?housing\b/iu.test(clause) ? 'available' : undefined;
+    if (!kind) continue;
+    // An amount belongs to housing only in a clause with one monetary range
+    // and no competing salary, meal or relocation component.
+    const amounts = /\b(?:salary|base pay|meals?|relocation|deposit|up to|starting at)\b/iu.test(clause) ? []
+      : extractCompensationRanges(clause.replace(/\b(?:stipend|allowance)\b/giu, 'support'), { ...input, requirePayContext: false });
+    const range = amounts.length === 1 ? amounts[0] : undefined;
+    details.push({ kind, ...(range ? { minAmount: range.minAmount, maxAmount: range.maxAmount, currency: range.currency,
+      period: range.period, ...(range.periodLabel ? { periodLabel: range.periodLabel } : {}) } : {}),
+      ...(/\b(?:may|eligible|depending|subject to|up to|if)\b/iu.test(clause) ? { conditional: true } : {}),
+      sourceText: boundedText(clause, 240), provenance: [input.provenance] });
+  }
+  return [...new Map(details.map(detail => [stable({ ...detail, sourceText: undefined, provenance: undefined }), detail])).values()];
+}
+
 function isoInstant(value: string | undefined): string | undefined {
   if (!value || !Number.isFinite(Date.parse(value))) return undefined;
+  const calendar = /^\s*(\d{4}-\d{2}-\d{2})(?:[T ]|$)/u.exec(value)?.[1];
+  if (calendar && (!Number.isFinite(Date.parse(`${calendar}T00:00:00Z`))
+    || new Date(`${calendar}T00:00:00Z`).toISOString().slice(0, 10) !== calendar)) return undefined;
   return new Date(value).toISOString();
 }
 
@@ -465,9 +547,14 @@ function deadline(value: string | undefined, timezone?: string): ApplicationDead
   const date = iso ? iso[0]
     : named ? `${named[3]}-${MONTH[named[1]!.toLowerCase()]}-${named[2]!.padStart(2, '0')}`
       : dayNamed ? `${dayNamed[3]}-${MONTH[dayNamed[2]!.toLowerCase()]}-${dayNamed[1]!.padStart(2, '0')}` : undefined;
-  if (!date || !Number.isFinite(Date.parse(`${date}T00:00:00Z`))) return undefined;
-  const explicitZone = timezone ?? (/Z$/u.test(value.trim()) ? 'UTC' : /[+-]\d{2}:\d{2}$/u.exec(value.trim())?.[0]);
-  return { kind: 'date', date, ...(explicitZone ? { timezone: explicitZone === 'UTC' ? explicitZone : `UTC${explicitZone}` } : {}) };
+  if (!date || !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) return undefined;
+  let explicitZone = timezone ?? (/Z$/u.test(value.trim()) ? 'UTC' : /[+-]\d{2}:\d{2}$/u.exec(value.trim())?.[0]);
+  if (explicitZone) {
+    const offset = /^([+-])(\d{2}):(\d{2})$/u.exec(explicitZone);
+    if (offset) { if (Number(offset[2]) > 23 || Number(offset[3]) > 59) explicitZone = undefined; }
+    else { try { new Intl.DateTimeFormat('en', { timeZone: explicitZone }); } catch { explicitZone = undefined; } }
+  }
+  return { kind: 'date', date, ...(explicitZone ? { timezone: /^[+-]\d{2}:\d{2}$/u.test(explicitZone) ? `UTC${explicitZone}` : explicitZone } : {}) };
 }
 
 function fieldExcerpt(value: string, pattern: RegExp): string | undefined {
@@ -476,13 +563,13 @@ function fieldExcerpt(value: string, pattern: RegExp): string | undefined {
 }
 
 function explicitPageWorkMode(value: string): Exclude<WorkMode, 'unspecified'> | undefined {
-  const labeled = /\b(?:work(?:place| location| arrangement)?|location type|work mode)\s*:\s*(remote|hybrid|on[ -]?site|in[ -]?person)\b/iu.exec(value)?.[1];
+  const labeled = /\b(?:work(?:place| location| arrangement)?|location type|work mode)\s*(?::|\n)\s*(remote|hybrid|on[ -]?site|in[ -]?person)\b/iu.exec(value)?.[1];
   const sentence = /\b(?:this|the)\s+(?:role|position|job)\s+is\s+(?:fully\s+)?(remote|hybrid|on[ -]?site|in[ -]?person)\b/iu.exec(value)?.[1];
   return explicitWorkMode(labeled ?? sentence);
 }
 
 function labeledLocations(value: string): string[] {
-  const match = /\b(?:job\s+)?locations?\s*:\s*([^.;|\n]{2,120})/iu.exec(value)?.[1];
+  const match = /\b(?:job\s+)?locations?\s*(?::|\n)\s*([^.;|\n]{2,120})/iu.exec(value)?.[1];
   if (!match || /^(?:remote|hybrid|on[ -]?site|in[ -]?person)$/iu.test(match.trim())) return [];
   return normalizeLocations([match]);
 }
@@ -522,8 +609,18 @@ export function extractRoleMetadataEvidence(input: ExtractRoleMetadataInput): Ro
     const ranges = extractCompensationRanges(`Salary: ${band.currency} ${band.minAmount} - ${band.maxAmount}${periodText ? ` per ${periodText}` : ''}`, {
       provenance: field('compensation-range'), requirePayContext: false,
     });
-    compensationRanges.push(...ranges.map((range) => ({ ...range, sourceText: boundedText(band.sourceText, 160),
-      ...(band.label ? { applicabilityLabel: boundedText(band.label, 120) } : {}) })));
+    const bandRanges = ranges.map((range) => ({ ...range, sourceText: boundedText(band.sourceText, 160),
+      ...(band.label ? { applicabilityLabel: boundedText(band.label, 120) } : {}) }));
+    // Structured employer bands also appear in the description. Prefer their
+    // explicit label/unit over an otherwise identical unlabeled body amount.
+    for (let index = compensationRanges.length - 1; index >= 0; index -= 1) {
+      const candidate = compensationRanges[index]!;
+      if (!candidate.applicabilityLabel && !candidate.applicableLocations?.length && !candidate.applicableEducationLevels?.length
+        && bandRanges.some(range => range.minAmount === candidate.minAmount && range.maxAmount === candidate.maxAmount
+          && (range.period === candidate.period || candidate.period === 'unknown')
+          && (range.currency === candidate.currency || candidate.currency === 'XXX'))) compensationRanges.splice(index, 1);
+    }
+    compensationRanges.push(...bandRanges);
   }
   for (const section of input.titleOnly ? [] : input.artifact.compensationSections ?? []) {
     const sectionRanges = extractCompensationRanges(section.text, {
@@ -540,6 +637,7 @@ export function extractRoleMetadataEvidence(input: ExtractRoleMetadataInput): Ro
     compensationRanges.push(...sectionRanges);
   }
   const levels = educationLevels(text);
+  const housing = input.titleOnly ? [] : extractHousingDetails(text, { provenance: field('housing-explicit'), knownLocations: normalizedLocations });
   const window = graduationWindow(text);
   const degree = minimumDegree(text);
   const education = levels.length || window || degree ? mergeEducationEvidence([{
@@ -547,7 +645,7 @@ export function extractRoleMetadataEvidence(input: ExtractRoleMetadataInput): Ro
     provenance: [field(input.titleOnly ? 'education-title-explicit' : 'education-explicit')],
   }]) : undefined;
   const mode = input.titleOnly
-    ? explicitWorkMode(title)
+    ? titleWorkMode(title)
     : explicitWorkMode(input.artifact.workMode) ?? explicitPageWorkMode(input.artifact.text ?? '');
   const locations: InternshipLocation[] = normalizedLocations.map((name) => ({ name,
     workMode: explicitWorkMode(name) ?? mode ?? 'unspecified', provenance: [field('location-explicit')] }));
@@ -556,15 +654,16 @@ export function extractRoleMetadataEvidence(input: ExtractRoleMetadataInput): Ro
   const applicationDeadline = directDeadline ?? textDeadline;
   const publishedAt = input.titleOnly ? undefined : isoInstant(input.artifact.publishedAt) ?? labeledInstant(input.artifact.text ?? '', 'posted');
   const updatedAt = input.titleOnly ? undefined : isoInstant(input.artifact.updatedAt) ?? labeledInstant(input.artifact.text ?? '', 'updated');
-  if (!compensationRanges.length && !education && !locations.length && !mode && !applicationDeadline && !publishedAt && !updatedAt) return undefined;
+  if (!compensationRanges.length && !housing.length && !education && !locations.length && !mode && !applicationDeadline && !publishedAt && !updatedAt) return undefined;
   const excerpts: Partial<Record<RoleMetadataField, string>> = {};
   if (compensationRanges.length) excerpts.compensation = boundedText([...new Set(compensationRanges.map((range) => range.sourceText))].join(' · '), 240);
+  if (housing.length) excerpts.housing = housing[0]!.sourceText;
   if (education) excerpts.education = fieldExcerpt(text, /\b(?:bachelor|undergrad|master|graduate student|mba|ph\.?d\.?|doctoral?|graduat(?:e|ing|ion)|class of)\b/iu);
   if (applicationDeadline) excerpts['application-deadline'] = fieldExcerpt(input.artifact.text ?? input.artifact.deadline ?? '', /\b(?:deadline|closes?|apply by|rolling)\b/iu);
   return {
     schemaVersion: 1, extractionVersion: ROLE_METADATA_EXTRACTION_VERSION, artifactHash,
     sourceClass: input.sourceClass, sourceId: input.sourceId, sourceUrl: input.sourceUrl, observedAt: input.observedAt, exactPosting: true,
-    ...(compensationRanges.length ? { compensationRanges } : {}), ...(education ? { education } : {}), ...(locations.length ? { locations } : {}),
+    ...(compensationRanges.length ? { compensationRanges } : {}), ...(housing.length ? { housing } : {}), ...(education ? { education } : {}), ...(locations.length ? { locations } : {}),
     ...(mode ? { workMode: { value: mode, provenance: [field(input.titleOnly ? 'work-mode-title-explicit' : 'work-mode-explicit')] } } : {}),
     ...(applicationDeadline ? { applicationDeadline: { value: applicationDeadline, provenance: [field('application-deadline-explicit')] } } : {}),
     ...(publishedAt ? { employerPublishedAt: { value: publishedAt, provenance: [field('employer-published-at')] } } : {}),
@@ -593,7 +692,7 @@ export function extractPostingMetadataEvidence(input: Omit<ExtractRoleMetadataIn
 }
 
 export function roleMetadataEvidenceHasFields(value: RoleMetadataEvidence): boolean {
-  return Boolean(value.compensationRanges?.length || value.education || value.locations?.length || value.workMode
+  return Boolean(value.compensationRanges?.length || value.housing?.length || value.education || value.locations?.length || value.workMode
     || value.applicationDeadline || value.employerPublishedAt || value.employerUpdatedAt);
 }
 
@@ -692,6 +791,18 @@ export function reconcileRoleMetadata(
   const conflicts: MetadataConflict[] = [];
   const ranges = reconcileRanges(usable, existing?.compensation.ranges);
   conflicts.push(...ranges.conflicts);
+  const housing: HousingDetail[] = [];
+  for (const kind of ['stipend', 'employer-paid', 'employee-cost', 'available'] as const) {
+    const values = usable.flatMap(item => (item.housing ?? []).filter(detail => detail.kind === kind).map(detail => ({
+      value: { ...detail, provenance: undefined, sourceText: undefined }, provenance: detail.provenance, artifactHash: item.artifactHash, detail,
+    })));
+    const result = scalar('housing', values);
+    if (result.conflict) conflicts.push({ ...result.conflict, applicabilityKey: kind });
+    else if (result.value) {
+      const winner = values.find(item => stable(item.value) === stable(result.value!.value))!;
+      housing.push({ ...winner.detail, provenance: result.value.provenance });
+    }
+  }
   const bestEducation = usable.filter((item) => item.education).map((item) => ({ ...item.education!, artifactHash: item.artifactHash }));
   let education: EducationAudience | undefined;
   if (bestEducation.length) {
@@ -736,6 +847,7 @@ export function reconcileRoleMetadata(
     schemaVersion: 1, extractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
     evidenceHashes: [...new Set(usable.map((item) => item.artifactHash))].sort(),
     ...(ranges.ranges.length ? { compensationRanges: ranges.ranges } : {}), ...(education ? { education } : {}),
+    ...(housing.length ? { housing } : {}),
     ...(locations?.length ? { locations } : {}), ...(workMode.value?.provenance.length ? { workMode: workMode.value } : {}),
     ...(applicationDeadline.value?.provenance.length ? { applicationDeadline: applicationDeadline.value } : {}),
     ...(graduation ? { graduationWindow: graduation } : {}),
@@ -757,6 +869,17 @@ function structuredIdentity(job: Internship): InternshipIdentity | undefined {
 export function projectRoleMetadata(job: Internship, evidence = job.sourceReferences.flatMap((item) => item.metadataEvidence ?? [])): {
   job: Internship; conflicts: MetadataConflict[];
 } {
+  const omission = job.metadataOmission;
+  if (omission?.field === 'compensation' && omission.action === 'omit'
+    && omission.evidenceFingerprint === roleMetadataReviewFingerprint(evidence)) {
+    const withoutPay = evidence.map(item => ({ ...item, compensationRanges: undefined }));
+    // Clear accepted and legacy pay too; a reviewed omission must never fall
+    // back to a stale salary. Retain the original evidence in source references.
+    const result = projectRoleMetadata({ ...job, metadataOmission: undefined, compensation: { raw: '' },
+      ...(job.roleMetadata ? { roleMetadata: { ...job.roleMetadata, compensationRanges: undefined } } : {}) }, withoutPay);
+    return { ...result, job: { ...result.job, metadataOmission: omission } };
+  }
+  if (omission) job = { ...job, metadataOmission: undefined };
   const result = reconcileRoleMetadata(evidence, job);
   const identity = structuredIdentity(job);
   const previousMetadata = job.roleMetadata;
@@ -773,6 +896,7 @@ export function projectRoleMetadata(job: Internship, evidence = job.sourceRefere
     preserve('applicationDeadline', 'application-deadline');
     preserve('employerPublishedAt', 'employer-published-at');
     preserve('employerUpdatedAt', 'employer-updated-at');
+    preserve('housing', 'housing');
   }
   if (!result.metadata && !identity?.programType?.value && !previousMetadata) return { job, conflicts: result.conflicts };
   const metadataLocations = result.metadata?.locations;
@@ -793,6 +917,7 @@ export function projectRoleMetadata(job: Internship, evidence = job.sourceRefere
     ...job,
     ...(updatedIdentity ? { internshipIdentity: updatedIdentity } : {}),
     ...(result.metadata ? { roleMetadata: result.metadata } : {}),
+    ...(result.metadata?.housing ? { housing: result.metadata.housing } : {}),
     ...(result.compensation ? { compensation: result.compensation } : previousCompensationWasProjected ? { compensation: { raw: '' } } : {}),
     ...(locationNames?.length ? { locations: locationNames, location: locationSummary(locationNames) } : {}),
     ...(result.metadata?.workMode ? { workMode: result.metadata.workMode.value } : {}),
@@ -803,6 +928,7 @@ export function projectRoleMetadata(job: Internship, evidence = job.sourceRefere
     ...(result.metadata?.employerUpdatedAt ? { employerUpdatedAt: result.metadata.employerUpdatedAt.value } : {}),
   };
   if (!result.metadata) delete projected.roleMetadata;
+  if (previousMetadata?.housing && stable(previousMetadata.housing) === stable(job.housing) && !result.metadata?.housing) delete projected.housing;
   if (previousMetadata?.workMode?.value === job.workMode && !result.metadata?.workMode) delete projected.workMode;
   if (stable(previousMetadata?.applicationDeadline?.value) === stable(job.applicationDeadline) && !result.metadata?.applicationDeadline) delete projected.applicationDeadline;
   if (stable(previousMetadata?.graduationWindow?.value) === stable(job.graduationWindow) && !result.metadata?.graduationWindow) delete projected.graduationWindow;

@@ -23,6 +23,23 @@ describe('identity-bound public metadata APIs', () => {
     ]));
     expect(result.compensation?.minHourlyUSD).toBeUndefined();
   });
+  it('uses explicitly labeled structured units without duplicate global body bands', () => {
+    const artifact = parseMetadataApiResponse(identity('greenhouse', '123'), 'greenhouse-api', { id: 123, title: 'Engineering Intern',
+      content: '<p>SF Bay Area Hourly Rate</p><p>$54 — $60 USD</p><p>Bellevue, Washington Hourly Rate</p><p>$51.50 — $60 USD</p>',
+      pay_input_ranges: [
+        { min_cents: 5400, max_cents: 6000, currency_type: 'USD', title: 'SF Bay Area Hourly Rate' },
+        { min_cents: 5150, max_cents: 6000, currency_type: 'USD', title: 'Bellevue, Washington Hourly Rate' },
+      ],
+    });
+    const result = reconcileRoleMetadata(extract(artifact!));
+    expect(result.conflicts).toEqual([]);
+    expect(result.compensation?.ranges).toHaveLength(2);
+    expect(result.compensation?.ranges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ minAmount: 54, maxAmount: 60, currency: 'USD', period: 'hourly', applicabilityLabel: 'SF Bay Area Hourly Rate' }),
+      expect.objectContaining({ minAmount: 51.5, maxAmount: 60, currency: 'USD', period: 'hourly', applicabilityLabel: 'Bellevue, Washington Hourly Rate' }),
+    ]));
+    expect(result.compensation?.minHourlyUSD).toBeUndefined();
+  });
   it('retains encoded ranges and publisher level labels without inventing periods', () => {
     for (const [content, expected] of [
       ['<h3>US Salary Range</h3><p>$90,000 &amp;mdash; $110,000 USD</p>', [{ minAmount: 90000, maxAmount: 110000, currency: 'USD' }]],

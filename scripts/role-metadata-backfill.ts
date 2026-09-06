@@ -43,6 +43,23 @@ async function main() {
     console.log(JSON.stringify(await request('/internal/role-metadata/backfill', { method: 'POST', body: JSON.stringify({ action: 'dry-run' }) }), null, 2));
     return;
   }
+  if (command === 'preview-omission') {
+    const jobId = option('--job-id');
+    if (!jobId) throw new Error('preview-omission requires --job-id');
+    console.log(JSON.stringify(await request('/internal/role-metadata/review', {
+      method: 'POST', body: JSON.stringify({ action: command, jobId }),
+    }), null, 2));
+    return;
+  }
+  if (command === 'approve-omission') {
+    const reviewToken = option('--review-token');
+    const expectedDecisions = integer('--expected-decisions');
+    if (!reviewToken || expectedDecisions !== 1) throw new Error('approve-omission requires the exact --review-token and --expected-decisions 1 from an approved preview');
+    console.log(JSON.stringify(await request('/internal/role-metadata/review', {
+      method: 'POST', body: JSON.stringify({ action: command, reviewToken, expectedDecisions }),
+    }), null, 2));
+    return;
+  }
   if (command === 'apply') {
     const repairToken = option('--repair-token');
     const expectedJobs = integer('--expected-jobs');
@@ -55,7 +72,7 @@ async function main() {
     }), null, 2));
     return;
   }
-  throw new Error('Usage: role-metadata-backfill.ts audit | collect [--limit N] | dry-run | apply --repair-token TOKEN --expected-jobs N --expected-occurrences N');
+  throw new Error('Usage: role-metadata-backfill.ts audit | collect [--limit N] | dry-run | preview-omission --job-id ID | approve-omission --review-token TOKEN --expected-decisions 1 | apply --repair-token TOKEN --expected-jobs N --expected-occurrences N');
 }
 
 void main();

@@ -18,8 +18,9 @@ import type {
   SourceOccurrenceState,
   MetadataConflict,
   RoleMetadataEvidence,
+  RoleMetadataOmission,
 } from '../src/types.js';
-import { projectRoleMetadata, replaceVerifiedPageMetadataEvidence, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION, unsupportedMetadataCurrencies, unsupportedMetadataPeriods } from '../src/role-metadata.js';
+import { projectRoleMetadata, reconcileRoleMetadata, replaceVerifiedPageMetadataEvidence, roleMetadataEvidenceHasFields, roleMetadataReviewFingerprint, ROLE_METADATA_EXTRACTION_VERSION, unsupportedMetadataCurrencies, unsupportedMetadataPeriods } from '../src/role-metadata.js';
 import type { D1Database } from './types.js';
 
 export const ATOMIC_REPAIR_RECORD_LIMIT = 900;
@@ -314,7 +315,7 @@ export class D1CatalogAdmissionStore {
         return { ...reference, metadataEvidence: replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, matching, reference.sourceId) };
       });
       const projected = projectRoleMetadata({ ...job, sourceReferences }).job;
-      const fields = ['compensation', 'programType', 'workMode', 'applicationDeadline', 'graduationWindow', 'locations', 'employerPublishedAt', 'employerUpdatedAt']
+      const fields = ['compensation', 'housing', 'programType', 'workMode', 'applicationDeadline', 'graduationWindow', 'locations', 'employerPublishedAt', 'employerUpdatedAt']
         .filter((field) => JSON.stringify(projected[field as keyof Internship]) !== JSON.stringify(job[field as keyof Internship]));
       if (fields.length) projectionOnlyOmissions.push({ jobId: job.jobId, fields });
     }
@@ -345,7 +346,7 @@ export class D1CatalogAdmissionStore {
     for (const job of jobs) for (const reference of job.sourceReferences) {
       const report = byReference.get(`${job.jobId}\0${reference.sourceId}`);
       const fields = report?.fields as Record<string, string> | undefined;
-      for (const field of ['compensation', 'education', 'graduation-window', 'locations', 'work-mode', 'application-deadline', 'employer-published-at', 'employer-updated-at']) {
+      for (const field of ['compensation', 'housing', 'education', 'graduation-window', 'locations', 'work-mode', 'application-deadline', 'employer-published-at', 'employer-updated-at']) {
         const key = `${reference.admission?.destination.provider ?? 'unknown'}/${String(report?.method ?? 'unobserved')}/${field}`;
         const counts = fieldOutcomes[key] ?? {};
         const projectionField = ({ 'graduation-window': 'graduationWindow', 'work-mode': 'workMode', 'application-deadline': 'applicationDeadline',
@@ -492,6 +493,61 @@ export class D1CatalogAdmissionStore {
       .bind(host, retryAfter).run();
   }
 
+  private async metadataRevision(): Promise<number> {
+    const row = await this.db.prepare('SELECT revision FROM role_metadata_revision WHERE id = 1').first<{ revision: number }>();
+    if (!row) throw new Error('Metadata review migration is required');
+    return Number(row.revision);
+  }
+
+  private async metadataReviewSubject(jobId: string) {
+    const row = await this.db.prepare("SELECT value FROM catalog_items WHERE pk = ? AND sk = 'META' AND kind = 'internship'")
+      .bind(`JOB#${jobId}`).first<JsonRow>();
+    if (!row) throw new Error('Role not found');
+    const historical = await this.db.prepare('SELECT evidence FROM role_metadata_evidence WHERE job_id = ? AND is_current = 1')
+      .bind(jobId).all<{ evidence: string }>();
+    const job = JSON.parse(row.value) as Internship;
+    const all = historical.results.map(item => JSON.parse(item.evidence) as RoleMetadataEvidence);
+    const evidence = job.sourceReferences.flatMap(reference => replaceVerifiedPageMetadataEvidence(reference.metadataEvidence,
+      all.filter(item => item.sourceId === reference.sourceId), reference.sourceId));
+    return { original: row.value, job, evidence };
+  }
+
+  async stageRoleMetadataOmission(jobId: string, createdAt: string) {
+    const revision = await this.metadataRevision();
+    const subject = await this.metadataReviewSubject(jobId);
+    const conflicts = reconcileRoleMetadata(subject.evidence, subject.job).conflicts.filter(item => item.field === 'compensation');
+    if (!conflicts.length) throw new Error('Only currently conflicting compensation may be reviewed for omission');
+    const evidenceFingerprint = roleMetadataReviewFingerprint(subject.evidence);
+    const decision = { field: 'compensation' as const, action: 'omit' as const, reason: 'publisher-inconsistent' as const, evidenceFingerprint };
+    const reviewToken = hash(`${jobId}\0${subject.original}\0${JSON.stringify(decision)}\0${revision}`);
+    if (await this.metadataRevision() !== revision) throw new Error('Metadata changed during review; preview again');
+    const receipt: RoleMetadataOmission = { ...decision, reviewToken };
+    await this.db.prepare(`INSERT INTO role_metadata_review_plans
+      (token, job_id, original_value, decision, metadata_revision, created_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(token) DO NOTHING`).bind(reviewToken, jobId, subject.original, JSON.stringify(receipt), revision, createdAt).run();
+    return { reviewToken, expectedDecisions: 1, jobId, company: subject.job.company, title: subject.job.title,
+      decision: receipt, conflicts, publicJobsChanged: 0, requiresSeparateRepairApproval: true };
+  }
+
+  async approveRoleMetadataOmission(token: string, expectedDecisions: number, approvedAt: string) {
+    if (expectedDecisions !== 1) throw new Error('expectedDecisions must match the review preview exactly');
+    const plan = await this.db.prepare('SELECT * FROM role_metadata_review_plans WHERE token = ?').bind(token)
+      .first<{ job_id: string; original_value: string; decision: string; metadata_revision: number; approved_at: string | null }>();
+    if (!plan || plan.approved_at) throw new Error('Review plan is missing or already approved; preview again');
+    const guard = this.db.prepare(`INSERT INTO role_metadata_review_guards(token, ok, approved_at)
+      SELECT ?, CASE WHEN (SELECT revision FROM role_metadata_revision WHERE id = 1) = ?
+        AND EXISTS (SELECT 1 FROM catalog_items WHERE pk = ? AND sk = 'META' AND kind = 'internship' AND value = ?)
+        AND EXISTS (SELECT 1 FROM role_metadata_review_plans WHERE token = ? AND approved_at IS NULL)
+      THEN 1 ELSE 0 END, ?`).bind(token, plan.metadata_revision, `JOB#${plan.job_id}`, plan.original_value, token, approvedAt);
+    await this.db.batch([guard,
+      this.db.prepare(`INSERT INTO role_metadata_review_decisions(job_id, token, decision, approved_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(job_id) DO UPDATE SET token=excluded.token, decision=excluded.decision, approved_at=excluded.approved_at`)
+        .bind(plan.job_id, token, plan.decision, approvedAt),
+      this.db.prepare('UPDATE role_metadata_review_plans SET approved_at = ? WHERE token = ?').bind(approvedAt, token),
+    ]);
+    return { approvedDecisions: 1, publicJobsChanged: 0, requiresSeparateRepairApproval: true };
+  }
+
   async stageRoleMetadataRepair(createdAt: string): Promise<{
     repairToken: string;
     expectedJobs: number;
@@ -503,12 +559,17 @@ export class D1CatalogAdmissionStore {
     conflicts: MetadataConflict[];
     unsupportedCurrencies: Record<string, number>;
     unsupportedPeriods: Record<string, number>;
+    reviewedOmissions: Array<{ jobId: string; reviewToken: string }>;
   }> {
-    const [jobRows, evidenceRows] = await Promise.all([
+    const revision = await this.metadataRevision();
+    const [jobRows, evidenceRows, reviewRows] = await Promise.all([
       this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'internship' ORDER BY pk").all<JsonRow>(),
       this.db.prepare('SELECT job_id, evidence FROM role_metadata_evidence WHERE is_current = 1 ORDER BY job_id, source_class')
         .all<{ job_id: string; evidence: string }>(),
+      this.db.prepare('SELECT job_id, decision FROM role_metadata_review_decisions').all<{ job_id: string; decision: string }>(),
     ]);
+    const reviews = new Map(reviewRows.results.map(row => [row.job_id, JSON.parse(row.decision) as RoleMetadataOmission]));
+    const reviewedOmissions: Array<{ jobId: string; reviewToken: string }> = [];
     const evidenceByJob = new Map<string, RoleMetadataEvidence[]>();
     for (const row of evidenceRows.results) evidenceByJob.set(row.job_id,
       [...(evidenceByJob.get(row.job_id) ?? []), JSON.parse(row.evidence) as RoleMetadataEvidence]);
@@ -526,7 +587,7 @@ export class D1CatalogAdmissionStore {
         unsupportedPeriods[period] = (unsupportedPeriods[period] ?? 0) + 1;
       }
     }
-    const fields: Array<keyof Internship> = ['compensation', 'programType', 'workMode', 'applicationDeadline', 'graduationWindow', 'locations', 'employerPublishedAt', 'employerUpdatedAt'];
+    const fields: Array<keyof Internship> = ['compensation', 'housing', 'programType', 'workMode', 'applicationDeadline', 'graduationWindow', 'locations', 'employerPublishedAt', 'employerUpdatedAt'];
     for (const row of jobRows.results) {
       const job = JSON.parse(row.value) as Internship;
       const historical = evidenceByJob.get(job.jobId) ?? [];
@@ -535,7 +596,11 @@ export class D1CatalogAdmissionStore {
         const matching = historical.filter((item) => item.sourceId === reference.sourceId);
         return { ...reference, metadataEvidence: replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, matching, reference.sourceId) };
       });
-      const result = projectRoleMetadata({ ...job, sourceReferences });
+      const evidence = sourceReferences.flatMap(reference => reference.metadataEvidence ?? []);
+      const review = reviews.get(job.jobId);
+      const validReview = review?.evidenceFingerprint === roleMetadataReviewFingerprint(evidence) ? review : undefined;
+      if (validReview) reviewedOmissions.push({ jobId: job.jobId, reviewToken: validReview.reviewToken });
+      const result = projectRoleMetadata({ ...job, sourceReferences, metadataOmission: validReview });
       conflicts.push(...result.conflicts);
       if (result.conflicts.length || JSON.stringify(result.job) === row.value) continue;
       // Each approved plan remains one bounded atomic transaction. Continue
@@ -560,24 +625,29 @@ export class D1CatalogAdmissionStore {
       `evidence\0${evidenceSnapshot}`,
       `collection\0${collectionSnapshot}`,
       `conflicts\0${hash(conflictSnapshot)}`,
+      `revision\0${revision}`,
     ].sort().join('\n')).digest('hex');
+    if (await this.metadataRevision() !== revision) throw new Error('Metadata changed during the dry-run; run it again');
     const statements = staged.map((item) => this.db.prepare(`INSERT INTO role_metadata_repair_stage
       (token, job_id, original_value, proposed_value, created_at) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(token, job_id) DO UPDATE SET original_value=excluded.original_value,
         proposed_value=excluded.proposed_value, created_at=excluded.created_at`)
       .bind(repairToken, item.jobId, item.original, item.proposed, createdAt));
     for (let offset = 0; offset < statements.length; offset += 50) await this.db.batch(statements.slice(offset, offset + 50));
+    const reviewed = reviewedOmissions.map(item => this.db.prepare(`INSERT INTO role_metadata_repair_review_stage(token, job_id, decision_token)
+      VALUES (?, ?, ?) ON CONFLICT(token, job_id) DO NOTHING`).bind(repairToken, item.jobId, item.reviewToken));
+    for (let offset = 0; offset < reviewed.length; offset += 50) await this.db.batch(reviewed.slice(offset, offset + 50));
     await this.db.prepare(`INSERT INTO role_metadata_repair_plans
-      (token, expected_jobs, expected_occurrences, conflict_count, evidence_snapshot, collection_snapshot, collection_complete, created_at)
-      VALUES (?, ?, 0, ?, ?, ?, ?, ?)
+      (token, expected_jobs, expected_occurrences, conflict_count, evidence_snapshot, collection_snapshot, collection_complete, created_at, metadata_revision)
+      VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(token) DO UPDATE SET expected_jobs=excluded.expected_jobs,
         expected_occurrences=excluded.expected_occurrences, conflict_count=excluded.conflict_count,
         evidence_snapshot=excluded.evidence_snapshot, collection_snapshot=excluded.collection_snapshot,
-        collection_complete=excluded.collection_complete, created_at=excluded.created_at`)
+        collection_complete=excluded.collection_complete, created_at=excluded.created_at, metadata_revision=excluded.metadata_revision`)
       .bind(repairToken, staged.length, conflicts.length, evidenceSnapshot, collectionSnapshot,
-        collectionCoverage.complete ? 1 : 0, createdAt).run();
+        collectionCoverage.complete ? 1 : 0, createdAt, revision).run();
     return { repairToken, expectedJobs: staged.length, remainingJobs, expectedOccurrences: 0, fillsByField, correctionsByField,
-      changesBySourceClass, conflicts, unsupportedCurrencies, unsupportedPeriods };
+      changesBySourceClass, conflicts, unsupportedCurrencies, unsupportedPeriods, reviewedOmissions };
   }
 
   async applyRoleMetadataRepair(token: string, expectedJobs: number, expectedOccurrences: number, appliedAt: string): Promise<{
@@ -587,10 +657,10 @@ export class D1CatalogAdmissionStore {
     const rows = await this.db.prepare('SELECT * FROM role_metadata_repair_stage WHERE token = ? ORDER BY job_id').bind(token)
       .all<{ job_id: string; original_value: string; proposed_value: string }>();
     const plan = await this.db.prepare(`SELECT expected_jobs, expected_occurrences, conflict_count, evidence_snapshot,
-        collection_snapshot, collection_complete
+        collection_snapshot, collection_complete, metadata_revision
       FROM role_metadata_repair_plans WHERE token = ?`).bind(token)
       .first<{ expected_jobs: number; expected_occurrences: number; conflict_count: number; evidence_snapshot: string;
-        collection_snapshot: string; collection_complete: number }>();
+        collection_snapshot: string; collection_complete: number; metadata_revision: number }>();
     if (!plan || Number(plan.expected_jobs) !== expectedJobs || Number(plan.expected_occurrences) !== expectedOccurrences) {
       throw new Error('Role metadata repair plan changed; run the dry-run again');
     }
@@ -609,10 +679,20 @@ export class D1CatalogAdmissionStore {
     if (rows.results.length > ATOMIC_REPAIR_RECORD_LIMIT) {
       throw new Error(`Role metadata repair exceeds the atomic D1 limit of ${ATOMIC_REPAIR_RECORD_LIMIT} records`);
     }
-    const conflicts = await this.db.prepare("SELECT count(*) AS count FROM role_metadata_conflicts WHERE state = 'open'").first<{ count: number }>();
+    if (await this.metadataRevision() !== Number(plan.metadata_revision)) throw new Error('Metadata or reviews changed; run the dry-run again');
+    // The only exception is an exact, approved field omission validated over
+    // the full cohort during this plan. Unrelated jobs/fields still block all batches.
+    const unreviewedConflictSql = `SELECT 1 FROM role_metadata_conflicts AS conflict WHERE state = 'open'
+      AND NOT (field = 'compensation' AND EXISTS (
+        SELECT 1 FROM role_metadata_repair_review_stage AS reviewed
+        JOIN role_metadata_review_decisions AS decision ON decision.job_id = reviewed.job_id AND decision.token = reviewed.decision_token
+        WHERE reviewed.token = ? AND reviewed.job_id = conflict.job_id))`;
+    const conflicts = await this.db.prepare(`SELECT count(*) AS count FROM (${unreviewedConflictSql})`).bind(token).first<{ count: number }>();
     if (Number(conflicts?.count ?? 0) > 0) throw new Error('Role metadata conflicts must be resolved before apply');
     const guard = this.db.prepare(`INSERT INTO role_metadata_repair_guards (token, ok, applied_at)
       SELECT ?, CASE WHEN (SELECT count(*) FROM role_metadata_repair_stage WHERE token = ?) = ?
+        AND (SELECT revision FROM role_metadata_revision WHERE id = 1) = ?
+        AND NOT EXISTS (${unreviewedConflictSql})
         AND EXISTS (SELECT 1 FROM role_metadata_repair_plans WHERE token = ? AND conflict_count = 0
           AND expected_jobs = ? AND expected_occurrences = ? AND collection_complete = 1 AND collection_snapshot = ?)
         AND NOT EXISTS (
@@ -620,7 +700,7 @@ export class D1CatalogAdmissionStore {
           LEFT JOIN catalog_items AS item ON item.pk = 'JOB#' || stage.job_id AND item.sk = 'META' AND item.kind = 'internship'
           WHERE stage.token = ? AND (item.value IS NULL OR item.value <> stage.original_value)
         ) THEN 1 ELSE 0 END, ?`)
-      .bind(token, token, expectedJobs, token, expectedJobs, expectedOccurrences, plan.collection_snapshot, token, appliedAt);
+      .bind(token, token, expectedJobs, plan.metadata_revision, token, token, expectedJobs, expectedOccurrences, plan.collection_snapshot, token, appliedAt);
     const updates = rows.results.map((row) => {
       const proposed = JSON.parse(row.proposed_value) as Internship;
       return this.db.prepare(`UPDATE catalog_items SET value = ?, search_text = ?
@@ -634,6 +714,7 @@ export class D1CatalogAdmissionStore {
     }
     await this.db.prepare('DELETE FROM role_metadata_repair_stage WHERE token = ?').bind(token).run();
     await this.db.prepare('DELETE FROM role_metadata_repair_plans WHERE token = ?').bind(token).run();
+    await this.db.prepare('DELETE FROM role_metadata_repair_review_stage WHERE token = ?').bind(token).run();
     return { changed: rows.results.length, occurrencesChanged: 0, projectionRefreshRequired: rows.results.length > 0 };
   }
 

@@ -139,6 +139,7 @@ documentation.
 
 Apply `0015_role_metadata_enrichment.sql`, `0016_role_metadata_repair_plans.sql`
 and `0017_metadata_acquisition.sql` before deploying the enrichment Worker.
+Extraction v8 additionally requires `0018_metadata_review.sql` before deployment.
 The migrations are additive: they store compact versioned field evidence,
 historical artifact versions, extraction outcomes, conflicts, and guarded repair
 staging, acquisition leases and host backoff. Full job descriptions are never
@@ -189,7 +190,10 @@ npm run migrate:role-metadata -- apply \
 ```
 
 The transaction compares every original job JSON value, emits no outbox event,
-and refuses stale counts or any open metadata conflict. A conflict-free apply
+and refuses stale counts or any unreviewed metadata conflict. Migration 0018 adds
+an atomic revision guard covering evidence, extraction attempts, conflicts,
+reviews and catalog mutations, including changes outside the selected batch.
+A conflict-free apply
 refreshes grouped projections and returns a verification audit. Run `audit` and
 `dry-run` again; `projectionOnlyOmissions` must be empty.
 `supportedRoleSpecificDisclosedMetadataMisses` and `disclosureRecall` remain null
@@ -199,6 +203,34 @@ group detail results to confirm unchanged job IDs, occurrences, saves,
 applications, receipts, notification flags/tombstones, visibility timestamps,
 and lifecycle state. Roll back exposure with a new reviewed repair; retain the
 evidence and conflict history.
+
+### Reviewed omission of disputed pay
+
+When exact employer evidence genuinely contradicts itself, an operator can
+propose leaving compensation blank while preserving separately verified fields
+such as housing. This does not authorize choosing a salary or rewriting evidence:
+
+```bash
+npm run migrate:role-metadata -- preview-omission --job-id EXACT_JOB_ID
+```
+
+Inspect the returned evidence conflicts and obtain owner approval for its exact
+`reviewToken` and `expectedDecisions: 1`. Only then run:
+
+```bash
+npm run migrate:role-metadata -- approve-omission \
+  --review-token EXACT_REVIEW_TOKEN --expected-decisions 1
+```
+
+Approval records an auditable decision but changes **zero public jobs**. Run a
+fresh repair dry-run and obtain separate approval of its repair token/counts.
+`reviewedOmissions` lists the exact decisions used by that plan. Every other
+field/job conflict and the full collection-completeness gate remain blocking.
+Conflict rows remain in history, not silently marked resolved. The activated
+receipt keeps pay blank during ordinary projection only while its versioned
+evidence fingerprint matches; changed evidence expires the omission and reopens
+review. A concurrent evidence, review or catalog change rejects the whole repair.
+Stale previews must be regenerated, not force-applied.
 
 After projection, the daily destination-verification scheduler rechecks up to
 100 eligible destinations, including never-inspected roles and old extraction

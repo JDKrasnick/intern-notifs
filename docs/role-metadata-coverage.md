@@ -1,5 +1,39 @@
 # Employer metadata coverage audit — 2026-09-05
 
+## Latest implementation: extraction v8 — 2026-09-06
+
+V8 adds separately provenanced housing stipends, employer-paid housing, intern-paid
+housing costs and availability with unconfirmed cost. Amounts retain their stated
+currency and period; conditional or combined benefit amounts remain in the
+bounded employer wording when they cannot be isolated safely. Housing never
+becomes base salary. Interview/disability accommodations are excluded. The role
+detail UI displays housing independently, including conditions and the excerpt.
+
+General correctness fixes keep graduate audiences separate from graduation dates,
+preserve degree alternatives and waived requirements, reject impossible calendar
+dates, retain explicit deadline timezones, and distinguish technical titles such
+as “Remote Sensing” from actual remote-work qualifiers.
+
+Additional pay regressions cover regional exceptions, structured Greenhouse band
+units, spaced thousands/currency codes, adjacent minimum/maximum fields, Workday
+start/end labels and explicit lower-bound starting rates. The original 53-posting
+API replay still retains pay on every posting with zero reproduced conflicts.
+In a second 38-response API sample, only two Melius postings retain conflicts:
+the API declares USD 11,000/month while the description separately declares
+8,500 salary and 2,500 housing stipend. No salary winner is inferred.
+
+An operations-only reviewed-omission workflow requires an exact approved review
+token, then a separately approved repair token/counts. Review approval changes no
+public job. Activated omissions expire when versioned evidence changes. Migration
+0018 adds the ledger and an atomic revision guard; unrelated conflicts and the
+full collection gate remain blocking. See [deployment instructions](DEPLOYMENT.md#reviewed-omission-of-disputed-pay).
+
+These are implementation and sample-validation results, not achieved historical
+coverage or catalog-wide disclosure recall. The v7 collection pass reached
+4,430/4,670 current source-posting pairs with 240 unresolved at its last audit;
+cursor exhaustion is not completion. V8 requires its own fresh collection.
+Historical repair remains unapplied pending complete evidence and exact approval.
+
 ## Scope and result
 
 The public catalog contained 1,720 roles, including 267 with normalized USD pay

@@ -600,6 +600,26 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
     return withCors(Response.json(await new D1CatalogAdmissionStore(env.DB).roleMetadataAudit(), { headers: { 'Cache-Control': 'no-store' } }));
   }
+  if (url.pathname === '/internal/role-metadata/review' && request.method === 'POST') {
+    if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
+    const input = await request.json().catch(() => ({})) as { action?: string; jobId?: string; reviewToken?: string; expectedDecisions?: number };
+    const operations = new D1CatalogAdmissionStore(env.DB);
+    try {
+      if (input.action === 'preview-omission') {
+        if (typeof input.jobId !== 'string' || !input.jobId || input.jobId.length > 512) throw new Error('jobId is invalid');
+        return withCors(Response.json(await operations.stageRoleMetadataOmission(input.jobId, new Date().toISOString()), { headers: { 'Cache-Control': 'no-store' } }));
+      }
+      if (input.action === 'approve-omission') {
+        if (typeof input.reviewToken !== 'string' || !/^[a-f0-9]{64}$/u.test(input.reviewToken) || input.expectedDecisions !== 1) {
+          throw new Error('reviewToken and expectedDecisions must exactly match the review preview');
+        }
+        return withCors(Response.json(await operations.approveRoleMetadataOmission(input.reviewToken, input.expectedDecisions, new Date().toISOString())));
+      }
+      throw new Error('action must be preview-omission or approve-omission');
+    } catch (error) {
+      return withCors(Response.json({ message: error instanceof Error ? error.message : 'Metadata review failed' }, { status: 409 }));
+    }
+  }
   if (url.pathname === '/internal/role-metadata/backfill' && request.method === 'POST') {
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
     const input = await request.json().catch(() => ({})) as {

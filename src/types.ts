@@ -695,6 +695,7 @@ export interface CompensationRange {
 
 export type RoleMetadataField =
   | 'compensation'
+  | 'housing'
   | 'education'
   | 'graduation-window'
   | 'locations'
@@ -702,6 +703,19 @@ export type RoleMetadataField =
   | 'application-deadline'
   | 'employer-published-at'
   | 'employer-updated-at';
+
+/** Employer-disclosed housing support or employee expense, never base salary. */
+export interface HousingDetail {
+  kind: 'stipend' | 'employer-paid' | 'employee-cost' | 'available';
+  minAmount?: number;
+  maxAmount?: number;
+  currency?: string;
+  period?: CompensationPeriod;
+  periodLabel?: string;
+  conditional?: boolean;
+  sourceText: string;
+  provenance: FieldProvenance[];
+}
 
 /** Versioned, provider-neutral evidence extracted from one exact posting artifact. */
 export interface RoleMetadataEvidence {
@@ -714,6 +728,7 @@ export interface RoleMetadataEvidence {
   observedAt: string;
   exactPosting: true;
   compensationRanges?: CompensationRange[];
+  housing?: HousingDetail[];
   education?: EducationAudience;
   locations?: InternshipLocation[];
   workMode?: ProvenancedValue<Exclude<WorkMode, 'unspecified'>>;
@@ -731,12 +746,22 @@ export interface MetadataConflict {
   values: string[];
 }
 
+/** Operations-approved omission, activated only by the guarded repair path. */
+export interface RoleMetadataOmission {
+  field: 'compensation';
+  action: 'omit';
+  reason: 'publisher-inconsistent';
+  evidenceFingerprint: string;
+  reviewToken: string;
+}
+
 /** Compact canonical result. Evidence history and conflicts live in operations tables. */
 export interface ReconciledRoleMetadata {
   schemaVersion: 1;
   extractionVersion: number;
   evidenceHashes: string[];
   compensationRanges?: CompensationRange[];
+  housing?: HousingDetail[];
   education?: EducationAudience;
   locations?: InternshipLocation[];
   workMode?: ProvenancedValue<Exclude<WorkMode, 'unspecified'>>;
@@ -937,6 +962,9 @@ export interface Internship {
   title: string;
   location: string;
   locations?: string[];
+  housing?: HousingDetail[];
+  /** Trusted operations receipt; source parsers must never create this. */
+  metadataOmission?: RoleMetadataOmission;
   season: string;
   applyUrl: string;
   normalizedUrl: string;

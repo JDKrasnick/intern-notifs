@@ -112,9 +112,12 @@ export function parseMetadataApiResponse(identity: ProviderIdentity, method: Met
       if (!record(range) || typeof range.min_cents !== 'number' || typeof range.max_cents !== 'number') return [];
       const band = bandText({ min: range.min_cents / 100, max: range.max_cents / 100, currency: range.currency_type });
       // Greenhouse does not supply a period in the structured range contract.
-      // Retain the publisher label/blurb; never assume these cents mean annual.
+      // Only an explicit period in its publisher label supplies a unit.
+      const label = text(range.title);
+      const period = /\bhourly (?:rate|pay|salary)\b/iu.test(label) ? 'hourly' as const
+        : /\bannual (?:rate|pay|salary)\b/iu.test(label) ? 'annual' as const : undefined;
       return band ? [{ minAmount: range.min_cents / 100, maxAmount: range.max_cents / 100,
-        currency: text(range.currency_type), label: text(range.title) || undefined,
+        currency: text(range.currency_type), period, label: label || undefined,
         sourceText: `${text(range.title)}: ${band}. ${text(range.blurb)}` }] : [];
     }) : [];
     return { title: text(payload.title), text: description(payload.content), compensationBands: ranges,

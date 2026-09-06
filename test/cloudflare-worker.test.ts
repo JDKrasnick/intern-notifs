@@ -30,6 +30,14 @@ describe('Cloudflare scheduled dispatch cost guard', () => {
 });
 
 describe('Cloudflare DLQ route authentication', () => {
+  it('hides metadata omission preview and approval without the operations key', async () => {
+    for (const action of ['preview-omission', 'approve-omission']) {
+      const response = await cloudflareWorker.fetch(new Request('https://intern-notifs.test/internal/role-metadata/review', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, jobId: 'test' }),
+      }), { OPERATIONS_SHARED_SECRET: 'secret', DB: { prepare: () => ({ async first() { return null; } }) } } as unknown as Environment);
+      expect(response.status).toBe(404);
+    }
+  });
   it('hides the internal operation when the operations key is absent or wrong', async () => {
     const request = new Request('https://intern-notifs.test/internal/operations/dlq', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Operations-Key': 'wrong' },

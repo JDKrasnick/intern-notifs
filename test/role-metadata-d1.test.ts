@@ -5,7 +5,7 @@ import { ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
 import { ATOMIC_REPAIR_RECORD_LIMIT, D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
-import { extractPostingMetadataEvidence, projectRoleMetadata } from '../src/role-metadata.js';
+import { extractPostingMetadataEvidence, projectRoleMetadata, reconcileRoleMetadata } from '../src/role-metadata.js';
 import { persistDestinationAdmission } from '../cloudflare/destination-verification.js';
 import { parseMetadataApiResponse } from '../src/metadata-acquisition.js';
 import { mergeSourceOccurrence } from '../src/identity/source-occurrence.js';
@@ -31,11 +31,11 @@ function sqliteD1(database: DatabaseSync): D1Database {
 
 function subject() {
   const database = new DatabaseSync(':memory:');
-  for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql', '0017_metadata_acquisition.sql']) {
+  for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql', '0017_metadata_acquisition.sql', '0018_metadata_review.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   const db = sqliteD1(database);
-  return { database, operations: new D1CatalogAdmissionStore(db), jobs: new D1InternshipStore(db) };
+  return { database, db, operations: new D1CatalogAdmissionStore(db), jobs: new D1InternshipStore(db) };
 }
 
 function job(): Internship {
@@ -75,6 +75,103 @@ function jobWithVerifiedDestination(): Internship {
   return { ...current, admission, sourceReferences: [{ ...current.sourceReferences[0]!, admission }] };
 }
 
+async function disputedPay(current: ReturnType<typeof subject>, jobId = 'job-1', changed = false) {
+  const original = { ...jobWithVerifiedDestination(), jobId };
+  if (!await current.jobs.getJob(jobId)) await current.jobs.putInternship(original);
+  const observedAt = '2026-09-06T12:00:00.000Z';
+  const evidence = extractPostingMetadataEvidence({ artifact: { title: original.title,
+    text: `${changed ? 'Revised employer wording. ' : ''}USD $8500 monthly salary.\nUSD $2500 monthly housing stipend.`,
+    compensationText: 'USD $11000 monthly salary.' }, sourceClass: 'official-api', sourceId: 'community-acme',
+    sourceUrl: original.applyUrl, observedAt, exactPosting: true });
+  await current.operations.recordRoleMetadataEvidence(jobId, evidence, reconcileRoleMetadata(evidence).conflicts, observedAt);
+  await current.operations.recordRoleMetadataExtraction({ jobId, sourceId: 'community-acme', sourceUrl: original.applyUrl,
+    artifactHash: evidence[0]!.artifactHash, extractionVersion: ROLE_METADATA_EXTRACTION_VERSION, outcome: 'extracted', observedAt });
+  return { original, evidence, observedAt };
+}
+
+describe('auditable compensation omissions', () => {
+  it('rolls back a repair when its approved review changes between preflight and the atomic guard', async () => {
+    const current = subject(); const { observedAt } = await disputedPay(current);
+    const review = await current.operations.stageRoleMetadataOmission('job-1', observedAt);
+    await current.operations.approveRoleMetadataOmission(review.reviewToken, 1, observedAt);
+    const plan = await current.operations.stageRoleMetadataRepair(observedAt);
+    const batch = current.db.batch.bind(current.db);
+    current.db.batch = async statements => {
+      current.database.prepare('DELETE FROM role_metadata_review_decisions').run();
+      return batch(statements);
+    };
+    await expect(current.operations.applyRoleMetadataRepair(plan.repairToken, 1, 0, observedAt)).rejects.toThrow();
+    expect((await current.jobs.getJob('job-1'))?.housing).toBeUndefined();
+    expect(current.database.prepare('SELECT count(*) AS count FROM role_metadata_repair_guards').get()).toMatchObject({ count: 0 });
+  });
+  it('requires separate exact approvals, keeps disputed pay blank, and repairs only verified metadata', async () => {
+    const current = subject(); const { original, evidence, observedAt } = await disputedPay(current);
+    const before = await current.jobs.getJob(original.jobId);
+    const blocked = await current.operations.stageRoleMetadataRepair(observedAt);
+    expect(blocked.conflicts).toMatchObject([{ field: 'compensation' }]);
+    const review = await current.operations.stageRoleMetadataOmission(original.jobId, observedAt);
+    expect(review).toMatchObject({ expectedDecisions: 1, publicJobsChanged: 0, requiresSeparateRepairApproval: true });
+    await expect(current.operations.approveRoleMetadataOmission(review.reviewToken, 2, observedAt)).rejects.toThrow('exactly');
+    await expect(current.operations.approveRoleMetadataOmission('wrong', 1, observedAt)).rejects.toThrow('missing');
+    expect(await current.jobs.getJob(original.jobId)).toEqual(before);
+    await current.operations.approveRoleMetadataOmission(review.reviewToken, 1, observedAt);
+    expect(await current.jobs.getJob(original.jobId)).toEqual(before);
+    const plan = await current.operations.stageRoleMetadataRepair(observedAt);
+    expect(plan.conflicts).toEqual([]);
+    expect(plan.reviewedOmissions).toEqual([{ jobId: original.jobId, reviewToken: review.reviewToken }]);
+    expect(plan.fillsByField.housing).toBe(1);
+    await current.operations.applyRoleMetadataRepair(plan.repairToken, 1, 0, observedAt);
+    const repaired = (await current.jobs.getJob(original.jobId))!;
+    expect(repaired.compensation).toEqual({ raw: '' });
+    expect(repaired.housing?.[0]?.minAmount).toBe(2500);
+    expect(repaired.notification).toEqual(original.notification);
+    expect(repaired.admission).toEqual(original.admission);
+    expect(repaired.open).toBe(original.open);
+    expect(repaired.sourceReferences[0]?.admission).toEqual(original.sourceReferences[0]?.admission);
+    expect(projectRoleMetadata(repaired).job.compensation).toEqual({ raw: '' });
+    expect(projectRoleMetadata(repaired, evidence.map(item => ({ ...item, observedAt: '2026-09-07T12:00:00Z' }))).conflicts).toEqual([]);
+    const changed = await disputedPay(current, original.jobId, true);
+    expect(projectRoleMetadata(repaired, changed.evidence).conflicts).toMatchObject([{ field: 'compensation' }]);
+    expect((await current.operations.stageRoleMetadataRepair(observedAt)).conflicts).toMatchObject([{ field: 'compensation' }]);
+    expect(current.database.prepare('SELECT count(*) AS count FROM role_metadata_review_guards').get()).toMatchObject({ count: 1 });
+    expect(current.database.prepare('SELECT approved_at FROM role_metadata_review_plans WHERE token = ?').get(review.reviewToken)).toMatchObject({ approved_at: observedAt });
+  });
+
+  it('rejects stale review evidence atomically without recording an approval', async () => {
+    const current = subject(); const { observedAt } = await disputedPay(current);
+    const review = await current.operations.stageRoleMetadataOmission('job-1', observedAt);
+    await disputedPay(current, 'job-1', true);
+    await expect(current.operations.approveRoleMetadataOmission(review.reviewToken, 1, observedAt)).rejects.toThrow();
+    expect(current.database.prepare('SELECT count(*) AS count FROM role_metadata_review_decisions').get()).toMatchObject({ count: 0 });
+    expect(current.database.prepare('SELECT count(*) AS count FROM role_metadata_review_guards').get()).toMatchObject({ count: 0 });
+  });
+
+  it('does not excuse a different job or a different field, and never applies an incomplete collection', async () => {
+    const current = subject(); const { observedAt } = await disputedPay(current);
+    await disputedPay(current, 'other-job');
+    const review = await current.operations.stageRoleMetadataOmission('job-1', observedAt);
+    await current.operations.approveRoleMetadataOmission(review.reviewToken, 1, observedAt);
+    const plan = await current.operations.stageRoleMetadataRepair(observedAt);
+    expect(plan.conflicts.length).toBeGreaterThan(0);
+    await expect(current.operations.applyRoleMetadataRepair(plan.repairToken, plan.expectedJobs, 0, observedAt)).rejects.toThrow('conflicts');
+    current.database.prepare("DELETE FROM role_metadata_extraction_attempts WHERE job_id = 'job-1'").run();
+    current.database.prepare("DELETE FROM role_metadata_evidence WHERE job_id = 'job-1'").run();
+    const incomplete = await current.operations.stageRoleMetadataRepair(observedAt);
+    await expect(current.operations.applyRoleMetadataRepair(incomplete.repairToken, incomplete.expectedJobs, 0, observedAt)).rejects.toThrow();
+  });
+
+  it('rejects a review change after staging a repair, before any public update', async () => {
+    const current = subject(); const { observedAt } = await disputedPay(current);
+    const review = await current.operations.stageRoleMetadataOmission('job-1', observedAt);
+    await current.operations.approveRoleMetadataOmission(review.reviewToken, 1, observedAt);
+    const plan = await current.operations.stageRoleMetadataRepair(observedAt);
+    current.database.prepare('DELETE FROM role_metadata_review_decisions').run();
+    await expect(current.operations.applyRoleMetadataRepair(plan.repairToken, plan.expectedJobs, 0, observedAt)).rejects.toThrow('reviews changed');
+    expect((await current.jobs.getJob('job-1'))?.housing).toBeUndefined();
+    expect(current.database.prepare('SELECT count(*) AS count FROM role_metadata_repair_guards').get()).toMatchObject({ count: 0 });
+  });
+});
+
 describe('D1 role metadata evidence and guarded repair', () => {
   it('replaces flattened salary conflicts with labeled browser evidence before guarded repair', async () => {
     const current = subject(); const original = jobWithVerifiedDestination();
@@ -109,12 +206,12 @@ describe('D1 role metadata evidence and guarded repair', () => {
     const identity = { provider, tenant: 'acme', postingId, sourceId: 'community-acme', sourceUrl: original.applyUrl };
     const method = `${provider}-api` as const;
     const payload = provider === 'greenhouse' ? { id: 123, title: original.title,
-      content: 'The salary for this role is USD 4500 - 5800 per week.', location: { name: 'New York, NY' } }
+      content: 'The salary for this role is USD 4500 - 5800 per week.\nUSD $2500 monthly housing stipend.', location: { name: 'New York, NY' } }
       : provider === 'lever' ? { id: postingId, text: original.title, hostedUrl: `https://jobs.lever.co/acme/${postingId}`,
-        descriptionPlain: 'Build software.', salaryRange: { currency: 'USD', min: 4500, max: 5800, interval: 'per-week-salary' },
+        descriptionPlain: 'Build software.\nUSD $2500 monthly housing stipend.', salaryRange: { currency: 'USD', min: 4500, max: 5800, interval: 'per-week-salary' },
         lists: [{ text: 'Requirements', content: 'Must hold a bachelors degree.' }] }
         : { jobs: [{ id: postingId, title: original.title, jobUrl: `https://jobs.ashbyhq.com/acme/${postingId}`,
-          descriptionPlain: 'Build software.', compensation: { scrapeableCompensationSalarySummary: 'Salary USD 4500 - 5800 per week' } }] };
+          descriptionPlain: 'Build software.\nUSD $2500 monthly housing stipend.', compensation: { scrapeableCompensationSalarySummary: 'Salary USD 4500 - 5800 per week' } }] };
     const artifact = parseMetadataApiResponse(identity, method, payload);
     const observedAt = '2026-09-05T12:00:00.000Z';
     await persistDestinationAdmission({ jobs: current.jobs, operations: current.operations, job: original, reference: original.sourceReferences[0]!,
@@ -125,9 +222,11 @@ describe('D1 role metadata evidence and guarded repair', () => {
     expect(await current.jobs.getJob(original.jobId)).toEqual(before);
     const plan = await current.operations.stageRoleMetadataRepair(observedAt);
     expect(plan.expectedJobs).toBe(1);
+    expect(plan.fillsByField.housing).toBe(1);
     await current.operations.applyRoleMetadataRepair(plan.repairToken, 1, 0, observedAt);
     const repaired = await current.jobs.getJob(original.jobId);
     expect(repaired?.compensation.ranges).toMatchObject([{ minAmount: 4500, maxAmount: 5800, period: 'weekly', currency: 'USD' }]);
+    expect(repaired?.housing).toMatchObject([{ kind: 'stipend', minAmount: 2500, maxAmount: 2500, currency: 'USD', period: 'monthly' }]);
     expect(repaired?.notification).toEqual(original.notification);
     expect(repaired?.sourceReferences[0]?.admission).toEqual(original.sourceReferences[0]?.admission);
     expect(repaired?.applyUrl).toBe(original.applyUrl);
