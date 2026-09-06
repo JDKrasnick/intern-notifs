@@ -1,16 +1,20 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
 import { ATOMIC_REPAIR_RECORD_LIMIT, D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 import { extractPostingMetadataEvidence, projectRoleMetadata, reconcileRoleMetadata } from '../src/role-metadata.js';
-import { persistDestinationAdmission } from '../cloudflare/destination-verification.js';
+import { persistDestinationAdmission, processDestinationVerificationBatch } from '../cloudflare/destination-verification.js';
 import { parseMetadataApiResponse } from '../src/metadata-acquisition.js';
 import { mergeSourceOccurrence } from '../src/identity/source-occurrence.js';
 import type { Internship } from '../src/types.js';
 import { combineRenderedFrameEvidence } from '../src/rendered-destination-evidence.js';
+
+const browserMocks = vi.hoisted(() => ({ launch: vi.fn() }));
+vi.mock('@cloudflare/puppeteer', () => ({ default: { launch: browserMocks.launch } }));
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); browserMocks.launch.mockReset(); });
 
 function sqliteD1(database: DatabaseSync): D1Database {
   const prepared = (query: string, values: SQLInputValue[] = []): D1PreparedStatement => ({
@@ -88,6 +92,76 @@ async function disputedPay(current: ReturnType<typeof subject>, jobId = 'job-1',
     artifactHash: evidence[0]!.artifactHash, extractionVersion: ROLE_METADATA_EXTRACTION_VERSION, outcome: 'extracted', observedAt });
   return { original, evidence, observedAt };
 }
+
+describe('staged browser-to-API collection', () => {
+  it.each([
+    ['exact embed', '8044334', '8044334', false, 1, true],
+    ['wrong embed ID', '9999999', '8044334', false, 0, false],
+    ['wrong API ID', '8044334', '9999999', false, 1, false],
+    ['colliding rendered evidence', '8044334', '8044334', true, 0, false],
+  ] as const)('%s keeps publication staging-only', async (_name, embeddedId, returnedId, collision, requests, acquired) => {
+    const current = subject();
+    const original = job();
+    const candidateUrl = 'https://tower-research.com/open-positions/?gh_jid=8044334';
+    const embed = `https://job-boards.greenhouse.io/embed/job_app?for=towerresearchcapital&token=${embeddedId}`;
+    const snapshot = { url: embed, title: original.title,
+      visibleText: `${original.title} 8044334`, jobPostingCount: 0, distinctJobLinkCount: 0,
+      applicationFormPresent: true, loadingShell: true };
+    const renderedHash = combineRenderedFrameEvidence({ role: original.title, expectedPostingId: '8044334', frames: [snapshot] })!.renderedEvidenceHash;
+    original.applyUrl = candidateUrl;
+    original.sourceReferences[0]!.applyUrl = candidateUrl;
+    await current.jobs.putInternship(original);
+    const other = { ...jobWithVerifiedDestination(), jobId: 'other-job' };
+    other.sourceReferences[0]!.admission!.destination = { ...other.sourceReferences[0]!.admission!.destination,
+      expectedPostingId: '9999999', renderedEvidenceHash: renderedHash };
+    await current.jobs.putInternship(other);
+    const before = await current.jobs.getJob(original.jobId);
+    const otherBefore = await current.jobs.getJob(other.jobId);
+    const collisions = vi.spyOn(D1CatalogAdmissionStore.prototype, 'renderedEvidenceCollisionJobIds')
+      .mockResolvedValue(collision ? [other.jobId] : []);
+    const frame = {
+      waitForFunction: vi.fn().mockResolvedValue({ dispose: vi.fn() }),
+      parentFrame: () => null,
+      evaluate: vi.fn().mockResolvedValue(snapshot),
+    };
+    const page = { goto: vi.fn().mockResolvedValue({ status: () => 200 }), url: () => candidateUrl,
+      frames: () => [frame], evaluate: vi.fn().mockResolvedValue([]), close: vi.fn() };
+    const browser = { newPage: vi.fn().mockResolvedValue(page), close: vi.fn() };
+    browserMocks.launch.mockResolvedValue(browser);
+    const apiFetch = vi.fn().mockResolvedValue(Response.json({ id: returnedId, title: original.title,
+      content: '<p>Salary: USD $3500 to $5700 per week.</p><p>USD $900 monthly housing stipend.</p>' }));
+    vi.stubGlobal('fetch', apiFetch);
+    const ack = vi.fn(); const retry = vi.fn();
+    const inspectedAt = '2026-09-06T19:00:00.000Z';
+    await processDestinationVerificationBatch({ queue: 'test', messages: [{ id: 'message-1', body: {
+      version: 1, jobId: original.jobId, sourceId: 'community-acme', externalId: 'row-1', candidateUrl,
+      providerIdentity: { provider: 'greenhouse', postingId: '8044334', sourceId: 'community-acme', sourceUrl: candidateUrl },
+      reason: 'historical-backfill', queuedAt: inspectedAt, metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+      metadataBackfillToken: 'staged-embed',
+    }, ack, retry }] }, {
+      DB: current.db, DESTINATION_BROWSER: { fetch: vi.fn() }, DESTINATION_VERIFICATION_QUEUE: { send: vi.fn(), sendBatch: vi.fn() },
+    }, () => new Date(inspectedAt));
+    expect(ack).toHaveBeenCalledOnce(); expect(retry).not.toHaveBeenCalled();
+    expect(apiFetch).toHaveBeenCalledTimes(requests);
+    if (requests) expect(apiFetch).toHaveBeenCalledWith(
+      'https://boards-api.greenhouse.io/v1/boards/towerresearchcapital/jobs/8044334?pay_transparency=true&pay_input_ranges=true',
+      expect.objectContaining({ redirect: 'manual' }));
+    expect(page.close).toHaveBeenCalledOnce(); expect(browser.close).toHaveBeenCalledOnce();
+    expect(collisions).toHaveBeenCalledOnce();
+    expect(await current.jobs.getJob(original.jobId)).toEqual(before);
+    expect(await current.jobs.getJob(other.jobId)).toEqual(otherBefore);
+    const audit = await current.operations.roleMetadataAudit(new Date(inspectedAt));
+    expect(audit.acquisitionReports).toHaveLength(1);
+    expect(audit.acquisitionReports[0]?.report).toMatchObject({ complete: acquired, apiRouteAttempts: requests,
+      method: acquired ? 'greenhouse-api' : 'browser' });
+    if (acquired) {
+      const plan = await current.operations.stageRoleMetadataRepair(inspectedAt);
+      expect(plan.fillsByField.compensation).toBe(1);
+      expect(plan.fillsByField.housing).toBe(1);
+    }
+    expect(current.database.prepare('SELECT count(*) AS count FROM admission_incidents').get()).toMatchObject({ count: 0 });
+  });
+});
 
 describe('auditable compensation omissions', () => {
   it('keeps a posting review valid across unrelated collection updates', async () => {

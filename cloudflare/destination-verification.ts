@@ -12,7 +12,7 @@ import type { CatalogAdmissionReason, Internship, ProcessedListing, ProviderIden
 import { D1CatalogAdmissionStore, ROLE_METADATA_REVALIDATION_MS } from './catalog-admission-store.js';
 import { D1InternshipStore } from './d1-store.js';
 import { extractPostingMetadataEvidence, extractVerifiedPageMetadataEvidence, projectRoleMetadata, replaceVerifiedPageMetadataEvidence, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION, VERIFIED_PAGE_METADATA_SOURCES } from '../src/role-metadata.js';
-import { createMetadataAcquirer, type MetadataAcquisition } from '../src/metadata-acquisition.js';
+import { createMetadataAcquirer, metadataApiRoute, type MetadataAcquisition } from '../src/metadata-acquisition.js';
 import { metadataFieldOutcomes } from '../src/metadata-audit.js';
 import type { D1Database, MessageBatch, Queue } from './types.js';
 
@@ -329,7 +329,7 @@ export async function processDestinationVerificationBatch(
         if (!job) { queued.ack(); continue; }
         const reference = job.sourceReferences.find((item) => item.sourceId === message.sourceId && item.externalId === message.externalId);
         if (!reference || (matchingBrowserDestination(job, message, message.queuedAt) && metadataExtractionCurrent(reference, message))) { queued.ack(); continue; }
-        const apiAcquisition = await acquireMetadata(message.providerIdentity, message.candidateUrl);
+        let apiAcquisition = await acquireMetadata(message.providerIdentity, message.candidateUrl);
         // Historical collection cannot change admission, URL or notifications.
         // An identity-checked full API artifact needs no browser for that task.
         if (message.metadataBackfillToken && apiAcquisition?.artifact) {
@@ -441,8 +441,19 @@ export async function processDestinationVerificationBatch(
         } finally {
           await page.close();
         }
+        // An employer-hosted page may reveal its Greenhouse board only in a
+        // rendered embed. Historical collection gets one fixed-host API attempt
+        // using that observed URL; the route still requires the known posting
+        // ID and rejects conflicting tenants/duplicate identity parameters.
+        if (message.metadataBackfillToken && !apiAcquisition && reachability === 'live'
+          && evidence && !evidence.identicalEvidenceForDifferentPosting
+          && metadataApiRoute(message.providerIdentity, evidence.url)?.method === 'greenhouse-api') {
+          apiAcquisition = await acquireMetadata(message.providerIdentity, evidence.url);
+        }
         const inspectedAt = now().toISOString();
-        for (const collisionJobId of collisionJobIds) {
+        // Staged collection must not mutate another job's admission as a side
+        // effect of collision detection. Keep the collision in its own evidence.
+        for (const collisionJobId of message.metadataBackfillToken ? [] : collisionJobIds) {
           const collisionJob = await jobs.getJob(collisionJobId);
           const collisionReference = collisionJob?.sourceReferences.find((item) => item.externalId
             && item.admission?.destination.renderedEvidenceHash === evidence?.renderedEvidenceHash);
