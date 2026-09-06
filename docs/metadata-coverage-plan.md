@@ -18,10 +18,14 @@ collection avoids browser use when an exact-role response succeeds; normal
 admission verification remains independent. Failed acquisition never supplies
 new destination or employer authority.
 
-Extraction v12 adds explicit endpoint ISO-currency ranges, fixes lower-bound
+Extraction v13 adds explicit endpoint ISO-currency ranges, fixes lower-bound
 salary authority, and stops guessing currency from locations and bare dollar
 signs. V11 already preserves official pay over same-audience community estimates
-and corrects housing eligibility. Large-cohort audits and catalog reads now page
+and corrects housing eligibility. Housing cadence survives absent amounts;
+application-scoped rolling deadlines, unambiguous numeric dates and explicit
+role-scoped work-mode phrasing are covered without interpreting conditional
+language as a guarantee. Publisher timestamps require an explicit year.
+Large-cohort audits and catalog reads now page
 D1 records; metadata repair is bounded to 250 jobs / 8 MiB with separate
 post-apply verification. Historical collection remains staging-only.
 
@@ -76,6 +80,13 @@ official disclosure. The 30-role holdout resolves 26; among its 15 comparable
 pay-present roles, six agree on amount, ten on currency and 14 on period.
 Fourteen targeted authority cases pass the offline v12 replay; this is not live
 publication validation. Recollection and approved repair must precede rescoring.
+
+All 21 housing-positive roles have exact official evidence for the displayed
+offer and any amount. Separate field scoring identifies two inferred-currency
+cases, four missing monthly cadences and one missing eligibility flag. The
+holdout's claimed generic-relocation false positive is a reader-label error:
+the exact Palantir artifact lacks the quoted text and public housing is absent.
+These findings are tracked individually, not hidden by an overall score.
 
 ## Capture boundaries
 

@@ -29,7 +29,7 @@ import type {
 // Increment whenever a parser change can produce a different result from an
 // unchanged artifact. This makes the collection scheduler revisit both a
 // previous negative result and an already-enriched posting.
-export const ROLE_METADATA_EXTRACTION_VERSION = 12;
+export const ROLE_METADATA_EXTRACTION_VERSION = 13;
 export const VERIFIED_PAGE_METADATA_SOURCES = ['official-json-ld', 'official-page'] as const;
 const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   // Exact-role detail retrieval owns its own slot; a later board-list poll
@@ -555,8 +555,14 @@ export function extractHousingDetails(value: string, input: { provenance: FieldP
     const amounts = /\b(?:salary|base pay|hourly pay|wages?|meals?|relocation|travel|bonus|deposit|up to|starting at)\b|\b(?:plus|and|with|including)\s+(?:an?\s+)?(?:eligible for\s+)?(?:housing|accommodation)\b/iu.test(clause) ? []
       : extractCompensationRanges(clause.replace(/\b(?:stipend|allowance)\b/giu, 'support'), { ...input, requirePayContext: false });
     const range = amounts.length === 1 ? amounts[0] : undefined;
+    // A benefit can disclose cadence without disclosing its amount. Bind the
+    // unit to the housing label, never a nearby salary or another benefit.
+    const labeledPeriods = [...clause.matchAll(/\b(hourly|daily|weekly|monthly|annual|yearly)\s+(?:(?:housing|accommodation|rent)\s+(?:stipend|allowance|costs?)|(?:stipend|allowance)\s+for\s+(?:housing|accommodation|rent))\b/giu)]
+      .map(match => compensationPeriod(match[1]!));
+    const unpricedPeriod = new Set(labeledPeriods).size === 1 ? labeledPeriods[0] : undefined;
     details.push({ kind, ...(range ? { minAmount: range.minAmount, maxAmount: range.maxAmount, currency: range.currency,
-      period: range.period, ...(range.periodLabel ? { periodLabel: range.periodLabel } : {}) } : {}),
+      period: range.period, ...(range.periodLabel ? { periodLabel: range.periodLabel } : {}) }
+      : unpricedPeriod ? { period: unpricedPeriod } : {}),
       ...(/\b(?:may|eligible|depending|dependent|subject to|up to|if|when|either|qualif\w*|relocat\w*|permanent residence|overseas applicants?)\b/iu.test(clause) ? { conditional: true } : {}),
       sourceText: boundedText(clause, 240), provenance: [input.provenance] });
   }
@@ -564,7 +570,18 @@ export function extractHousingDetails(value: string, input: { provenance: FieldP
 }
 
 function isoInstant(value: string | undefined): string | undefined {
-  if (!value || !Number.isFinite(Date.parse(value))) return undefined;
+  // Date.parse supplies the runtime's current/default year for fragments such
+  // as "May 22". A publisher timestamp must state its own four-digit year.
+  if (!value || !/\b\d{4}\b/u.test(value) || !Number.isFinite(Date.parse(value))) return undefined;
+  const named = /^\s*(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\s*$/iu.exec(value);
+  const dayNamed = /^\s*(\d{1,2})(?:st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(\d{4})\s*$/iu.exec(value);
+  const namedCalendar = named ? `${named[3]}-${MONTH[named[1]!.toLowerCase()]}-${named[2]!.padStart(2, '0')}`
+    : dayNamed ? `${dayNamed[3]}-${MONTH[dayNamed[2]!.toLowerCase()]}-${dayNamed[1]!.padStart(2, '0')}` : undefined;
+  if (namedCalendar) {
+    const instant = `${namedCalendar}T00:00:00Z`;
+    return Number.isFinite(Date.parse(instant)) && new Date(instant).toISOString().slice(0, 10) === namedCalendar
+      ? new Date(instant).toISOString() : undefined;
+  }
   const calendar = /^\s*(\d{4}-\d{2}-\d{2})(?:[T ]|$)/u.exec(value)?.[1];
   if (calendar && (!Number.isFinite(Date.parse(`${calendar}T00:00:00Z`))
     || new Date(`${calendar}T00:00:00Z`).toISOString().slice(0, 10) !== calendar)) return undefined;
@@ -577,9 +594,17 @@ function deadline(value: string | undefined, timezone?: string): ApplicationDead
   const iso = /\b(20\d{2})-(\d{2})-(\d{2})(?!\d)/u.exec(value);
   const named = /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d{2})\b/iu.exec(value);
   const dayNamed = /\b(\d{1,2})(?:st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(20\d{2})\b/iu.exec(value);
+  const slash = /\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/u.exec(value);
+  const slashFirst = Number(slash?.[1]); const slashSecond = Number(slash?.[2]);
+  // Without an explicit locale, accept a slash date only when one ordering is
+  // impossible. Never silently choose between month/day and day/month.
+  const slashDate = slash && slashFirst <= 12 && slashSecond > 12
+    ? `${slash[3]}-${slash[1]!.padStart(2, '0')}-${slash[2]!.padStart(2, '0')}`
+    : slash && slashFirst > 12 && slashSecond <= 12
+      ? `${slash[3]}-${slash[2]!.padStart(2, '0')}-${slash[1]!.padStart(2, '0')}` : undefined;
   const date = iso ? iso[0]
     : named ? `${named[3]}-${MONTH[named[1]!.toLowerCase()]}-${named[2]!.padStart(2, '0')}`
-      : dayNamed ? `${dayNamed[3]}-${MONTH[dayNamed[2]!.toLowerCase()]}-${dayNamed[1]!.padStart(2, '0')}` : undefined;
+      : dayNamed ? `${dayNamed[3]}-${MONTH[dayNamed[2]!.toLowerCase()]}-${dayNamed[1]!.padStart(2, '0')}` : slashDate;
   if (!date || !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) return undefined;
   let explicitZone = timezone ?? (/Z$/u.test(value.trim()) ? 'UTC' : /[+-]\d{2}:\d{2}$/u.exec(value.trim())?.[0]);
   if (explicitZone) {
@@ -595,10 +620,38 @@ function fieldExcerpt(value: string, pattern: RegExp): string | undefined {
   return sentence ? boundedText(sentence, 240) : undefined;
 }
 
+function sentenceAt(value: string, index: number, length: number): string {
+  const before = value.slice(0, index);
+  const start = Math.max(before.lastIndexOf('.'), before.lastIndexOf('!'), before.lastIndexOf('?'), before.lastIndexOf(';'), before.lastIndexOf('\n')) + 1;
+  const after = value.slice(index + length);
+  const boundary = after.search(/[.!?;\n]/u);
+  return value.slice(start, boundary < 0 ? value.length : index + length + boundary);
+}
+
 function explicitPageWorkMode(value: string): Exclude<WorkMode, 'unspecified'> | undefined {
   const labeled = /\b(?:work(?:place| location| arrangement)?|location type|work mode)\s*(?::|\n)\s*(remote|hybrid|on[ -]?site|in[ -]?person)\b/iu.exec(value)?.[1];
-  const sentence = /\b(?:this|the)\s+(?:role|position|job)\s+is\s+(?:fully\s+)?(remote|hybrid|on[ -]?site|in[ -]?person)\b/iu.exec(value)?.[1];
-  return explicitWorkMode(labeled ?? sentence);
+  if (labeled) return explicitWorkMode(labeled);
+  const asserted = /\b(?:this|the)\s+(?:role|position|job|internship)\s+is\s+((?:a\s+full[ -]time\s+position,?\s+|based\s+|a\s+|fully\s+){0,2})(remote|hybrid|on[ -]?site|in[ -]?person)\b(?:\s+position\b)?/giu;
+  for (const match of value.matchAll(asserted)) {
+    const sentence = sentenceAt(value, match.index ?? 0, match[0].length);
+    if (/\b(?:not|may|might|could|would|depending|conditional(?:ly)?|potentially|if|unless|subject to)\b/iu.test(sentence)) continue;
+    return explicitWorkMode(match[2]);
+  }
+  return undefined;
+}
+
+function textApplicationDeadline(value: string): ApplicationDeadline | undefined {
+  for (const sentence of value.split(/(?<=[.!?;\n])\s+/u)) {
+    const rolling = /\bapplications?\s+(?:are\s+)?(?:reviewed|accepted|considered|processed) on (?:a )?rolling basis\b/iu.test(sentence);
+    if (rolling) {
+      if (/\b(?:no applications?|not|never|only if|if|unless|subject to|may|might|could)\b/iu.test(sentence)) continue;
+      return { kind: 'rolling' };
+    }
+    if (!/\b(?:(?:application )?(?:deadline|closes?|apply by)|applications? (?:must be )?submitted by)\b/iu.test(sentence)) continue;
+    const parsed = deadline(sentence);
+    if (parsed) return parsed;
+  }
+  return undefined;
 }
 
 function labeledLocations(value: string): string[] {
@@ -683,7 +736,7 @@ export function extractRoleMetadataEvidence(input: ExtractRoleMetadataInput): Ro
   const locations: InternshipLocation[] = normalizedLocations.map((name) => ({ name,
     workMode: explicitWorkMode(name) ?? mode ?? 'unspecified', provenance: [field('location-explicit')] }));
   const directDeadline = input.titleOnly ? undefined : deadline(input.artifact.deadline, input.artifact.deadlineTimezone);
-  const textDeadline = input.titleOnly ? undefined : deadline(fieldExcerpt(input.artifact.text ?? '', /\b(?:application )?(?:deadline|closes?|apply by)\b/iu));
+  const textDeadline = input.titleOnly ? undefined : textApplicationDeadline(input.artifact.text ?? '');
   const applicationDeadline = directDeadline ?? textDeadline;
   const publishedAt = input.titleOnly ? undefined : isoInstant(input.artifact.publishedAt) ?? labeledInstant(input.artifact.text ?? '', 'posted');
   const updatedAt = input.titleOnly ? undefined : isoInstant(input.artifact.updatedAt) ?? labeledInstant(input.artifact.text ?? '', 'updated');

@@ -37,6 +37,19 @@ function job(overrides: Partial<Internship> = {}): Internship {
 }
 
 describe('provider-neutral role metadata', () => {
+  it('retains explicit housing cadence without inventing an amount or borrowing salary cadence', () => {
+    expect(extractHousingDetails('Monthly housing stipend', { provenance: field })).toEqual([
+      { kind: 'stipend', period: 'monthly', sourceText: 'Monthly housing stipend', provenance: [field] },
+    ]);
+    expect(extractHousingDetails('Weekly allowance for accommodation', { provenance: field })[0])
+      .toMatchObject({ kind: 'stipend', period: 'weekly' });
+    for (const text of ['Monthly salary and housing stipend', 'Housing stipend with monthly meals',
+      'Monthly housing stipend or weekly housing allowance']) {
+      expect(extractHousingDetails(text, { provenance: field })[0]?.period).toBeUndefined();
+    }
+    expect(extractHousingDetails('No monthly housing stipend', { provenance: field })).toEqual([]);
+  });
+
   it('treats a starting-rate qualifier as an amount qualifier, not a distinct audience', () => {
     const official = evidence({ compensationRanges: extractCompensationRanges(
       'The minimum annualized base salary starts at $145,000.', { provenance: field },
@@ -513,6 +526,53 @@ describe('provider-neutral role metadata', () => {
     expect(extract('2026-10-01', 'not-a-timezone')).toEqual({ kind: 'date', date: '2026-10-01' });
   });
 
+  it('extracts only application-scoped rolling language', () => {
+    const extract = (text: string) => extractPostingMetadataEvidence({ artifact: { title: 'Engineering Intern', text },
+      sourceClass: 'official-page', sourceId: 'official', sourceUrl: 'https://example.test/job', observedAt, exactPosting: true })[0]?.applicationDeadline?.value;
+    expect(extract('Applications are reviewed on a rolling basis, so we encourage you to apply early.')).toEqual({ kind: 'rolling' });
+    expect(extract('Applications are accepted on a rolling basis.')).toEqual({ kind: 'rolling' });
+    expect(extract('Use the rolling equipment cart during the internship.')).toBeUndefined();
+    expect(extract('No applications are reviewed on a rolling basis.')).toBeUndefined();
+    expect(extract('Applications are reviewed on a rolling basis only if headcount is approved.')).toBeUndefined();
+  });
+
+  it('extracts slash deadlines only when their calendar ordering is unambiguous', () => {
+    const extract = (text: string) => extractPostingMetadataEvidence({ artifact: { title: 'Engineering Intern', text },
+      sourceClass: 'official-page', sourceId: 'official', sourceUrl: 'https://example.test/job', observedAt, exactPosting: true })[0]?.applicationDeadline?.value;
+    expect(extract('Application submitted by 9/20/2026')).toEqual({ kind: 'date', date: '2026-09-20' });
+    expect(extract('Applications submitted by 9/20/2026')).toEqual({ kind: 'date', date: '2026-09-20' });
+    expect(extract('Applications must be submitted by 9/20/2026')).toEqual({ kind: 'date', date: '2026-09-20' });
+    expect(extract('Expenses submitted by 9/20/2026')).toBeUndefined();
+    expect(extract('Apply by 20/9/2026')).toEqual({ kind: 'date', date: '2026-09-20' });
+    expect(extract('Apply by 9/10/2026')).toBeUndefined();
+    expect(extract('Apply by 20/20/2026')).toBeUndefined();
+    expect(extract('Apply by 2/30/2026')).toBeUndefined();
+  });
+
+  it.each([
+    ['This role is based on-site 5 days per week in San Mateo, CA.', 'onsite'],
+    ['This internship is a full-time position, in-person at our office.', 'onsite'],
+    ['This role is a hybrid position in Hartford, CT.', 'hybrid'],
+  ])('extracts narrow role-scoped work mode: %s', (text, expected) => {
+    const [item] = extractPostingMetadataEvidence({ artifact: { title: 'Engineering Intern', text }, sourceClass: 'official-page',
+      sourceId: 'official', sourceUrl: 'https://example.test/job', observedAt, exactPosting: true });
+    expect(item?.workMode?.value).toBe(expected);
+  });
+
+  it.each([
+    'Our infrastructure team is hybrid and distributed.',
+    'This role is not remote.',
+    'This role may be remote.',
+    'This internship could be a hybrid position.',
+    'This role is a hybrid position only if approved.',
+    'This role is remote subject to manager approval.',
+    'This role is onsite unless an accommodation is approved.',
+  ])('does not infer conditional, negated, or unrelated work mode: %s', (text) => {
+    const [item] = extractPostingMetadataEvidence({ artifact: { title: 'Engineering Intern', text }, sourceClass: 'official-page',
+      sourceId: 'official', sourceUrl: 'https://example.test/job', observedAt, exactPosting: true });
+    expect(item?.workMode).toBeUndefined();
+  });
+
   it('projects native-currency ranges without inventing USD scalar bounds', () => {
     const [item] = extractPostingMetadataEvidence({
       artifact: { title: 'Software Intern', compensationText: 'CAD $30-$40/hour' }, sourceClass: 'official-ats',
@@ -589,6 +649,17 @@ describe('provider-neutral role metadata', () => {
     expect(item?.locations).toMatchObject([{ name: 'Houston, TX' }]);
     expect(item?.employerPublishedAt).toBeUndefined();
     expect(item?.employerUpdatedAt).toBeUndefined();
+  });
+
+  it('requires publisher timestamps to state an explicit four-digit year', () => {
+    const extract = (publishedAt: string) => extractPostingMetadataEvidence({ artifact: { title: 'Engineering Intern', publishedAt },
+      sourceClass: 'reviewed-community', sourceId: 'community', sourceUrl: 'https://example.test/job', observedAt, exactPosting: true })[0]?.employerPublishedAt?.value;
+    expect(extract('May 22')).toBeUndefined();
+    expect(extract('7/7')).toBeUndefined();
+    expect(extract('2026-05-22T14:30:00Z')).toBe('2026-05-22T14:30:00.000Z');
+    expect(extract('May 22, 2026')).toBe('2026-05-22T00:00:00.000Z');
+    expect(extract('22 May 2026')).toBe('2026-05-22T00:00:00.000Z');
+    expect(extract('February 30, 2026')).toBeUndefined();
   });
 
   it('matches role-specific JSON-LD by immutable posting ID and rejects an aggregate mismatch', () => {
