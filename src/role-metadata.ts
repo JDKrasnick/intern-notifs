@@ -29,7 +29,7 @@ import type {
 // Increment whenever a parser change can produce a different result from an
 // unchanged artifact. This makes the collection scheduler revisit both a
 // previous negative result and an already-enriched posting.
-export const ROLE_METADATA_EXTRACTION_VERSION = 10;
+export const ROLE_METADATA_EXTRACTION_VERSION = 11;
 export const VERIFIED_PAGE_METADATA_SOURCES = ['official-json-ld', 'official-page'] as const;
 const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   // Exact-role detail retrieval owns its own slot; a later board-list poll
@@ -539,9 +539,12 @@ export function extractHousingDetails(value: string, input: { provenance: FieldP
   const details: HousingDetail[] = [];
   for (const raw of value.split(/(?<=[.!?;])\s+|\n+|\s*[•|]\s*/u)) {
     const clause = raw.replace(/^\s*[-•]\s*/u, '').trim();
+    // Negated remote-work eligibility is a condition on who receives housing,
+    // not a denial of the benefit. Preserve the complete condition in evidence.
+    const benefitPolarity = clause.replace(/\bnot\s+(?:working\s+)?(?:100\s*%|fully|entirely)\s+remote\b/giu, 'onsite');
     if (!/\b(?:housing|accommodation|rent)\b/iu.test(clause)
       || /\b(?:reasonable accommodation|disabilit(?:y|ies)|accessibility|interviews?)\b/iu.test(clause)
-      || /\b(?:not|no|cannot|unavailable|without)\b/iu.test(clause.replace(/\bat no cost\b/giu, 'free'))) continue;
+      || /\b(?:not|no|cannot|unavailable|without)\b/iu.test(benefitPolarity.replace(/\bat no cost\b/giu, 'free'))) continue;
     const kind: HousingDetail['kind'] | undefined = /\b(?:stipend|allowance)\b/iu.test(clause) ? 'stipend'
       : /\b(?:free|company[ -]paid|employer[ -]paid)\s+(?:housing|accommodation)\b|\b(?:housing|accommodation|rent)(?:\s+(?:is|are|will be|provided|costs?))*\s+(?:free|at no cost|fully covered by (?:us|the company)|paid for by (?:us|the company))\b/iu.test(clause) ? 'employer-paid'
         : !/\b(?:covered|reimbursed|reimbursement|assistance)\b/iu.test(clause)
@@ -556,7 +559,7 @@ export function extractHousingDetails(value: string, input: { provenance: FieldP
     const range = amounts.length === 1 ? amounts[0] : undefined;
     details.push({ kind, ...(range ? { minAmount: range.minAmount, maxAmount: range.maxAmount, currency: range.currency,
       period: range.period, ...(range.periodLabel ? { periodLabel: range.periodLabel } : {}) } : {}),
-      ...(/\b(?:may|eligible|depending|dependent|subject to|up to|if|when|either|qualif\w*|relocat\w*|permanent residence)\b/iu.test(clause) ? { conditional: true } : {}),
+      ...(/\b(?:may|eligible|depending|dependent|subject to|up to|if|when|either|qualif\w*|relocat\w*|permanent residence|overseas applicants?)\b/iu.test(clause) ? { conditional: true } : {}),
       sourceText: boundedText(clause, 240), provenance: [input.provenance] });
   }
   return [...new Map(details.map(detail => [stable({ ...detail, sourceText: undefined, provenance: undefined }), detail])).values()];
@@ -785,9 +788,28 @@ function rangeValue(range: CompensationRange): string {
   return stable({ minAmount: range.minAmount, maxAmount: range.maxAmount });
 }
 
+function rangeAudience(range: CompensationRange): string {
+  return stable({
+    label: range.applicabilityLabel?.trim().toLowerCase() || undefined,
+    locations: [...(range.applicableLocations ?? [])].map(item => item.trim().toLowerCase()).sort(),
+    education: [...(range.applicableEducationLevels ?? [])].sort(),
+  });
+}
+
 function reconcileRanges(evidence: readonly RoleMetadataEvidence[], existing: readonly CompensationRange[] = []): { ranges: CompensationRange[]; conflicts: MetadataConflict[] } {
   const groups = new Map<string, Array<CompensationRange & { artifactHash: string }>>();
+  // Community estimates are fallback evidence for an audience, not another
+  // employer pay band just because their currency or unit differs. Keep all
+  // official bands and distinct regional/education/label scopes; never convert
+  // amounts or infer an unstated currency. An unresolved official pay period
+  // is insufficient to withdraw a more specific community disclosure.
+  const officialAudiences = new Set(evidence.flatMap(item => item.compensationRanges ?? [])
+    .filter(range => priority(range) < SOURCE_PRIORITY['reviewed-community'] && range.period !== 'unknown')
+    .map(rangeAudience));
+  const eligible = (range: CompensationRange) => priority(range) < SOURCE_PRIORITY['reviewed-community']
+    || !officialAudiences.has(rangeAudience(range));
   for (const item of evidence) for (const range of item.compensationRanges ?? []) {
+    if (!eligible(range)) continue;
     const key = rangeApplicability(range); const values = groups.get(key) ?? []; values.push({ ...range, artifactHash: item.artifactHash }); groups.set(key, values);
   }
   const ranges: CompensationRange[] = []; const conflicts: MetadataConflict[] = [];
@@ -796,7 +818,7 @@ function reconcileRanges(evidence: readonly RoleMetadataEvidence[], existing: re
     const candidates = values.filter((value) => priority(value) === best);
     const distinct = new Map(candidates.map((value) => [rangeValue(value), value]));
     if (distinct.size > 1) {
-      const preserved = existing.find((range) => rangeApplicability(range) === key);
+      const preserved = existing.find((range) => rangeApplicability(range) === key && eligible(range));
       if (preserved) ranges.push(preserved);
       conflicts.push({ field: 'compensation', applicabilityKey: key,
         evidenceHashes: [...new Set(candidates.map((item) => item.artifactHash))].sort(), values: [...distinct.keys()].sort() });

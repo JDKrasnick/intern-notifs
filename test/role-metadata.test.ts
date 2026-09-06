@@ -37,6 +37,86 @@ function job(overrides: Partial<Internship> = {}): Internship {
 }
 
 describe('provider-neutral role metadata', () => {
+  it('retains the overseas eligibility condition without inventing accommodation costs', () => {
+    const sentence = 'Flight and accommodation will be provided to all successful overseas applicants.';
+    expect(extractHousingDetails(sentence, { provenance: field })).toEqual([
+      { kind: 'available', conditional: true, sourceText: sentence, provenance: [field] },
+    ]);
+  });
+
+  it('does not restore superseded community pay when official sources conflict', () => {
+    const community = evidence({ sourceClass: 'reviewed-community', artifactHash: 'community', sourceId: 'community',
+      compensationRanges: extractCompensationRanges('USD $60/hour', { provenance: { ...field, source: 'reviewed-community' } }) });
+    const accepted = projectRoleMetadata(job(), [community]).job;
+    const official = [40, 50].map(amount => evidence({ artifactHash: `official-${amount}`, sourceId: `official-${amount}`,
+      compensationRanges: extractCompensationRanges(`USD $${amount}/hour`, { provenance: field }) }));
+    for (const items of [[community, ...official], [...official].reverse(), [...official, community]]) {
+      const reconciled = reconcileRoleMetadata(items, accepted);
+      expect(reconciled.compensation).toBeUndefined();
+      expect(reconciled.conflicts).toHaveLength(1);
+      expect(reconciled.conflicts[0]?.field).toBe('compensation');
+      const projected = projectRoleMetadata(accepted, items);
+      expect(projected.job.compensation).toEqual({ raw: '' });
+      expect(projected.job.roleMetadata?.compensationRanges).toBeUndefined();
+      expect(projected.conflicts).toEqual(reconciled.conflicts);
+    }
+    // Community-only conflicts still retain their accepted fallback.
+    const otherCommunity = evidence({ ...community, artifactHash: 'other-community', sourceId: 'other-community',
+      compensationRanges: extractCompensationRanges('USD $70/hour', { provenance: { ...field, source: 'reviewed-community' } }) });
+    expect(projectRoleMetadata(accepted, [community, otherCommunity]).job.compensation).toEqual(accepted.compensation);
+  });
+
+  it('retains housing eligibility for interns who are not fully remote without ignoring benefit denials', () => {
+    const sentence = 'Interns who are not working 100% remote may also be eligible for housing allowance.';
+    expect(extractHousingDetails(sentence, { provenance: field })).toEqual([
+      { kind: 'stipend', conditional: true, sourceText: sentence, provenance: [field] },
+    ]);
+    expect(extractHousingDetails('Interns who are not working 100% remote are not eligible for housing allowance.', { provenance: field })).toEqual([]);
+    expect(extractHousingDetails('No housing allowance is provided.', { provenance: field })).toEqual([]);
+  });
+
+  it.each([
+    ['The hourly rate range for this position in the selected city is $42.75- $42.75.', 42.75, 42.75, 'hourly'],
+    ['The hourly rate range for this position in the selected city is $45- $60.', 45, 60, 'hourly'],
+    ['The estimated base salary for this role is $250,000 per year.', 250000, 250000, 'annual'],
+  ] as const)('uses official pay rather than a community amount in different units: %s', (text, minAmount, maxAmount, period) => {
+    const official = evidence({ compensationRanges: extractCompensationRanges(text, { provenance: field }) });
+    const community = evidence({ sourceClass: 'reviewed-community', sourceId: 'community-list', artifactHash: 'community',
+      compensationRanges: extractCompensationRanges('USD $60/hour', { provenance: { ...field, source: 'reviewed-community' } }) });
+    for (const items of [[official, community], [community, official]]) {
+      const result = reconcileRoleMetadata(items);
+      expect(result.conflicts).toEqual([]);
+      expect(result.compensation?.ranges).toMatchObject([{ minAmount, maxAmount, period, currency: 'XXX' }]);
+      expect(result.compensation?.ranges).toHaveLength(1);
+      expect(result.compensation?.minHourlyUSD).toBeUndefined();
+    }
+    expect(community.compensationRanges).toHaveLength(1); // Preserve source evidence.
+  });
+
+  it('preserves distinct community audiences and all employer periods', () => {
+    const official = evidence({ compensationRanges: extractCompensationRanges('USD $40/hour; USD $90000/year', { provenance: field }) });
+    const communityRange = extractCompensationRanges('USD $60/hour', { provenance: { ...field, source: 'reviewed-community' } })[0]!;
+    const community = evidence({ sourceClass: 'reviewed-community', compensationRanges: [
+      { ...communityRange, applicableLocations: ['New York, NY'] },
+      { ...communityRange, applicableEducationLevels: ['doctoral'] },
+      { ...communityRange, applicabilityLabel: 'Returning interns' },
+    ] });
+    const result = reconcileRoleMetadata([official, community]);
+    expect(result.conflicts).toEqual([]);
+    expect(result.compensation?.ranges).toHaveLength(5);
+    expect(result.compensation?.ranges?.filter(range => range.minAmount === 60)).toHaveLength(3);
+  });
+
+  it('does not use an unknown official period or outdated evidence to displace community pay', () => {
+    const official = evidence({ compensationRanges: extractCompensationRanges('Base salary USD $90000', { provenance: field }) });
+    const community = evidence({ sourceClass: 'reviewed-community', compensationRanges: extractCompensationRanges('USD $60/hour', {
+      provenance: { ...field, source: 'reviewed-community' },
+    }) });
+    expect(reconcileRoleMetadata([official, community]).compensation?.ranges).toHaveLength(2);
+    const stale = { ...official, extractionVersion: ROLE_METADATA_EXTRACTION_VERSION - 1 };
+    expect(reconcileRoleMetadata([stale, community]).compensation?.ranges).toMatchObject([{ minAmount: 60, currency: 'USD' }]);
+  });
+
   it('retains accepted metadata while a contributing source awaits re-extraction', () => {
     const pay = evidence({ compensationRanges: extractCompensationRanges('USD $60/hour', { provenance: field }),
       housing: extractHousingDetails('USD $900 monthly housing stipend.', { provenance: field }),
