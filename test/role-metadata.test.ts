@@ -258,6 +258,46 @@ describe('provider-neutral role metadata', () => {
       .toMatchObject([{ minAmount: 40, maxAmount: 85, currency: 'USD', period: 'hourly' }]);
   });
 
+  it('excludes Varda cell-phone reimbursement while retaining the adjacent hourly rate', () => {
+    const ranges = extractCompensationRanges(
+      'Hourly Rate: $33.00/hour $20/pay period cell phone reimbursement',
+      { provenance: field, requirePayContext: true, knownLocations: ['United States'] },
+    );
+    expect(ranges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ minAmount: 33, maxAmount: 33, currency: 'USD', period: 'hourly' }),
+    ]));
+    expect(ranges).not.toEqual(expect.arrayContaining([expect.objectContaining({ minAmount: 20, maxAmount: 20 })]));
+  });
+
+  it.each([
+    'Hourly Rate: $33/hour; $20/pay period cell phone reimbursement',
+    'Hourly Rate: $33/hour. Cell phone reimbursement: $20 per pay period.',
+    'Hourly Rate: $33/hour $20 reimbursement for mobile phone expenses',
+    'Cell phone reimbursement: $20 per pay period and salary: $33/hour',
+    'Salary: $33/hour and cell phone reimbursement: $20 per pay period',
+    'Salary: $33/hour plus reimbursement for phone expenses',
+    'Hourly Rate: $33.00\n$20/pay period cell phone reimbursement',
+  ])('keeps genuine adjacent wages for nearby reimbursement wording: %s', text => {
+    const ranges = extractCompensationRanges(text, { provenance: field, requirePayContext: true, knownLocations: ['United States'] });
+    expect(ranges).toEqual(expect.arrayContaining([expect.objectContaining({ minAmount: 33, period: 'hourly' })]));
+    expect(ranges).not.toEqual(expect.arrayContaining([expect.objectContaining({ minAmount: 20 })]));
+  });
+
+  it.each([
+    'USD $20/pay period cell phone reimbursement and salary: $33/hour',
+    'Salary: $33/hour plus USD $20/pay period cell phone reimbursement and salary: $40/hour for graduates',
+  ])('does not let a reimbursement tail hide a later salary clause: %s', text => {
+    const ranges = extractCompensationRanges(text, { provenance: field, requirePayContext: true, knownLocations: ['United States'] });
+    expect(ranges.filter(range => range.minAmount === 20)).toEqual([]);
+    expect(ranges).toEqual(expect.arrayContaining([expect.objectContaining({ minAmount: 33, period: 'hourly' })]));
+    if (text.includes('$40/hour')) expect(ranges).toEqual(expect.arrayContaining([expect.objectContaining({ minAmount: 40, period: 'hourly' })]));
+  });
+
+  it('does not exclude a genuine pay-period wage merely because the period is named', () => {
+    expect(extractCompensationRanges('Pay: $20 per pay period.', { provenance: field, requirePayContext: true }))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ minAmount: 20, period: 'unknown' })]));
+  });
+
   it('deduplicates repeated between endpoints and preserves explicit trailing currencies', () => {
     expect(extractCompensationRanges('The expected pay range is between $23.50 per hour and $52.50 per hour.', { provenance: field, requirePayContext: true }))
       .toMatchObject([{ minAmount: 23.5, maxAmount: 52.5, period: 'hourly' }]);

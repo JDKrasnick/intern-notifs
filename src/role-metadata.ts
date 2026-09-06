@@ -29,7 +29,7 @@ import type {
 // Increment whenever a parser change can produce a different result from an
 // unchanged artifact. This makes the collection scheduler revisit both a
 // previous negative result and an already-enriched posting.
-export const ROLE_METADATA_EXTRACTION_VERSION = 9;
+export const ROLE_METADATA_EXTRACTION_VERSION = 10;
 export const VERIFIED_PAGE_METADATA_SOURCES = ['official-json-ld', 'official-page'] as const;
 const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   // Exact-role detail retrieval owns its own slot; a later board-list poll
@@ -366,6 +366,36 @@ function applicability(segment: string, knownLocations: readonly string[]): Pick
   };
 }
 
+// Employer pages frequently flatten salary and benefits into one paragraph.
+// Keep benefit amounts out of compensation without discarding a genuine wage
+// earlier in that same paragraph (for example, Varda's hourly rate followed by
+// a cell-phone reimbursement).
+function isBenefitAmount(segment: string, start: number, end: number): boolean {
+  const amountMarker = /(?:[$€£]\s*\d[\d,.]*|\b(?:USD|CAD|AUD|EUR|GBP)\s+\d[\d,.]*)/giu;
+  let previousAmountEnd = Math.max(0, start - 120);
+  for (const marker of segment.matchAll(amountMarker)) {
+    if ((marker.index ?? 0) >= start) break;
+    previousAmountEnd = (marker.index ?? 0) + marker[0].length;
+  }
+  const before = segment.slice(previousAmountEnd, start);
+  const after = segment.slice(end, end + 180);
+  // Stop the forward context at the next monetary amount. This makes the
+  // exclusion clause-aware even when the source omitted punctuation/newlines.
+  const nextAmount = after.search(/(?:[$€£]\s*\d|\b(?:USD|CAD|AUD|EUR|GBP)\s+\d)/iu);
+  const beforeNextAmount = nextAmount < 0 ? after : after.slice(0, nextAmount);
+  const benefitMatches = [...before.matchAll(/\b(?:reimburse(?:d|ment|s)?|allowance|benefit)\b/giu)];
+  const lastBenefit = benefitMatches.at(-1)?.index;
+  const laterPayLabel = lastBenefit !== undefined
+    && /\b(?:salary|pay|wage|rate|compensation)\b/iu.test(before.slice(lastBenefit));
+  const priorBenefit = lastBenefit !== undefined && !laterPayLabel;
+  if (priorBenefit) return true;
+  // A forward reimbursement belongs to this amount only when no next amount
+  // starts the clause; otherwise the label is associated with that next value.
+  return nextAmount < 0
+    && /\b(?:reimburse(?:d|ment|s)?|allowance|benefit)\b/iu.test(beforeNextAmount)
+    && /\b(?:pay\s+period|per\s+(?:pay\s+)?period)\b/iu.test(beforeNextAmount);
+}
+
 export function extractCompensationRanges(
   value: string,
   input: { provenance: FieldProvenance; knownLocations?: readonly string[]; requirePayContext?: boolean } ,
@@ -398,7 +428,8 @@ export function extractCompensationRanges(
   });
   let inheritedPayContext = false;
   let currentPayContext = false;
-  const append = (segment: string, raw: string, first: number, second: number, periodText: string, currency: string) => {
+  const append = (segment: string, raw: string, first: number, second: number, periodText: string, currency: string, matchStart = segment.indexOf(raw)) => {
+    if (matchStart >= 0 && isBenefitAmount(segment, matchStart, matchStart + raw.length)) return;
     if (input.requirePayContext && !currentPayContext) return;
     const period = compensationPeriod(periodText);
     const minAmount = Math.min(first, second); const maxAmount = Math.max(first, second);
@@ -431,7 +462,7 @@ export function extractCompensationRanges(
       if (new RegExp(String.raw`^\s*(?:/|per\s+)(${PERIOD})\b`, 'iu').test(segment.slice((match.index ?? 0) + match[0].length))) continue;
       const currency = match[2]?.toUpperCase() ?? match[8]?.toUpperCase()
         ?? CURRENCY_SYMBOL[match[3]!] ?? dollarCurrency(input.knownLocations ?? []);
-      append(segment, match[0], amount(match[4]!, match[5]), match[6] ? amount(match[6], match[7]) : amount(match[4]!, match[5]), match[1]!, currency);
+      append(segment, match[0], amount(match[4]!, match[5]), match[6] ? amount(match[6], match[7]) : amount(match[4]!, match[5]), match[1]!, currency, match.index);
     }
     const splitPatterns = [SPLIT_PERIOD_PAY, ...( /\bbetween\b/iu.test(segment)
       ? [new RegExp(SPLIT_PERIOD_PAY.source.replace('(?:-|–|—|to)', 'and'), 'giu')] : [])];
@@ -441,11 +472,11 @@ export function extractCompensationRanges(
       if (leftPeriod !== rightPeriod) continue;
       const currency = match[1]?.toUpperCase() ?? match[6]?.toUpperCase()
         ?? CURRENCY_SYMBOL[match[2]!] ?? (match[2] === '$' ? dollarCurrency(input.knownLocations ?? []) : 'XXX');
-      append(segment, match[0], amount(match[3]!, match[4]), amount(match[7]!, match[8]), match[5]!, currency);
+      append(segment, match[0], amount(match[3]!, match[4]), amount(match[7]!, match[8]), match[5]!, currency, match.index);
     }
     for (const match of segment.matchAll(BETWEEN_RANGE_AND_PERIOD_CURRENCY_PAY)) {
       const currency = match[6]!.toUpperCase() ?? CURRENCY_SYMBOL[match[1]!] ?? 'XXX';
-      append(segment, match[0], amount(match[2]!, match[3]), amount(match[4]!, match[5]), match[7]!, currency);
+      append(segment, match[0], amount(match[2]!, match[3]), amount(match[4]!, match[5]), match[7]!, currency, match.index);
     }
     for (const match of segment.matchAll(PAY)) {
       const explicit = match[1]?.toUpperCase();
@@ -455,10 +486,10 @@ export function extractCompensationRanges(
       const nearbyPrefix = segment.slice(Math.max(0, (match.index ?? 0) - 8), match.index).match(new RegExp(String.raw`\b(${CURRENCY_CODE})\s*$`, 'iu'))?.[1]?.toUpperCase();
       const nearbySuffix = segment.slice((match.index ?? 0) + match[0].length, (match.index ?? 0) + match[0].length + 8).match(new RegExp(String.raw`^\s*(${CURRENCY_CODE})\b`, 'iu'))?.[1]?.toUpperCase();
       const currency = explicit ?? trailing ?? nearbyPrefix ?? nearbySuffix ?? symbolCurrency;
-      append(segment, match[0], amount(match[3]!, match[4]), match[6] ? amount(match[6], match[7]) : amount(match[3]!, match[4]), match[8]!, currency);
+      append(segment, match[0], amount(match[3]!, match[4]), match[6] ? amount(match[6], match[7]) : amount(match[3]!, match[4]), match[8]!, currency, match.index);
     }
     for (const match of segment.matchAll(USD_TEXT_PAY)) {
-      append(segment, match[0], amount(match[2]!, match[3]), match[4] ? amount(match[4], match[5]) : amount(match[2]!, match[3]), match[6]!, 'USD');
+      append(segment, match[0], amount(match[2]!, match[3]), match[4] ? amount(match[4], match[5]) : amount(match[2]!, match[3]), match[6]!, 'USD', match.index);
     }
     // A clearly labelled disclosed amount is useful even without a period.
     // Do not downgrade a malformed/mixed explicit-period expression to unknown.
@@ -469,7 +500,7 @@ export function extractCompensationRanges(
         const codes = [match[1], match[6], match[9]].filter(Boolean).map((value) => value!.toUpperCase());
         if (new Set(codes).size > 1) continue;
         const currency = codes[0] ?? CURRENCY_SYMBOL[match[2] ?? match[3] ?? ''] ?? dollarCurrency(input.knownLocations ?? []);
-        append(segment, match[0], amount(match[4]!, match[5]), match[7] ? amount(match[7], match[8]) : amount(match[4]!, match[5]), 'unknown', currency);
+        append(segment, match[0], amount(match[4]!, match[5]), match[7] ? amount(match[7], match[8]) : amount(match[4]!, match[5]), 'unknown', currency, match.index);
       }
     }
   }
