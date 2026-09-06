@@ -183,7 +183,8 @@ checkpoints require a full successful refresh after extraction/preprocessing
 upgrades, without treating HTTP 304s or admission migration slices as completion.
 Do not clear evidence or bypass the deferral guard to make the audit pass.
 
-Each dry run stages at most 900 jobs in stable job-ID order and reports
+Each dry run stages at most 250 jobs and 8 MiB of original/proposed UTF-8 JSON
+in stable job-ID order and reports
 `remainingJobs` separately. Field fill/correction counts describe only that batch;
 conflicts, evidence freshness and collection completeness still cover the entire
 cohort. After an approved batch applies, run a new dry run and obtain approval of
@@ -201,8 +202,9 @@ The transaction compares every original job JSON value, emits no outbox event,
 and refuses stale counts or any unreviewed metadata conflict. Migration 0018 adds
 an atomic revision guard covering evidence, extraction attempts, conflicts,
 reviews and catalog mutations, including changes outside the selected batch.
-A conflict-free apply
-refreshes grouped projections and returns a verification audit. Run `audit` and
+A conflict-free apply refreshes grouped projections and returns an apply receipt
+with `verificationRequired: true`. Full verification runs in a separate request
+to stay within the Worker memory and D1 query budgets. Run `audit` and
 `dry-run` again; `projectionOnlyOmissions` must be empty.
 `supportedRoleSpecificDisclosedMetadataMisses` and `disclosureRecall` remain null
 until an independent disclosure benchmark exists; do not interpret them as zero.

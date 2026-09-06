@@ -656,7 +656,11 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
         }
         const result = await operations.applyRoleMetadataRepair(input.repairToken, input.expectedJobs!, input.expectedOccurrences!, new Date().toISOString());
         if (result.projectionRefreshRequired) await refreshCatalogProjection(new D1InternshipStore(env.DB));
-        return withCors(Response.json({ ...result, applied: true, verification: await operations.roleMetadataAudit() }));
+        // Full verification is a separate read-only request. Repeating the
+        // paged whole-cohort audit after the guarded transaction and grouped
+        // projection refresh can exceed D1's per-invocation query budget.
+        return withCors(Response.json({ ...result, applied: true, verificationRequired: true,
+          verificationPath: '/internal/role-metadata/audit' }));
       }
       if (input.action && input.action !== 'dry-run') throw new Error('action must be collect, dry-run, or apply');
       const report = await operations.stageRoleMetadataRepair(new Date().toISOString());

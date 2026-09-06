@@ -554,9 +554,24 @@ export class D1InternshipStore implements InternshipStore {
       .sort(compareCatalogRecency).map(withEmployerCategory);
   }
   async listCatalog(): Promise<Internship[]> {
-    const result = await this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'internship'").all<JsonRow>();
-    return result.results.map((row) => JSON.parse(row.value) as Internship)
-      .filter((job) => job.technical !== false && catalogEligible(job) && !isPastSeason(job.season))
+    const jobs: Internship[] = [];
+    let cursor: { pk: string; sk: string } | undefined;
+    while (true) {
+      const query = cursor
+        ? this.db.prepare(`SELECT pk, sk, value FROM catalog_items
+            WHERE kind = 'internship' AND (pk > ? OR (pk = ? AND sk > ?))
+            ORDER BY pk, sk LIMIT 100`).bind(cursor.pk, cursor.pk, cursor.sk)
+        : this.db.prepare("SELECT pk, sk, value FROM catalog_items WHERE kind = 'internship' ORDER BY pk, sk LIMIT 100");
+      const page = await query.all<{ pk: string; sk: string; value: string }>();
+      for (const row of page.results) {
+        const job = JSON.parse(row.value) as Internship;
+        if (job.technical !== false && catalogEligible(job) && !isPastSeason(job.season)) jobs.push(job);
+      }
+      if (page.results.length < 100) break;
+      const last = page.results.at(-1)!;
+      cursor = { pk: last.pk, sk: last.sk };
+    }
+    return jobs
       .sort(compareCatalogRecency).map(withEmployerCategory);
   }
   async putCatalogProjection(groups: CatalogGroupDetails[], generatedAt: string): Promise<void> {

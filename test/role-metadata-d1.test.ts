@@ -1,8 +1,9 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
-import { ATOMIC_REPAIR_RECORD_LIMIT, D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
+import { ATOMIC_REPAIR_BYTE_LIMIT, METADATA_REPAIR_RECORD_LIMIT, D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 import { extractPostingMetadataEvidence, projectRoleMetadata, reconcileRoleMetadata } from '../src/role-metadata.js';
@@ -16,12 +17,18 @@ const browserMocks = vi.hoisted(() => ({ launch: vi.fn() }));
 vi.mock('@cloudflare/puppeteer', () => ({ default: { launch: browserMocks.launch } }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); browserMocks.launch.mockReset(); });
 
-function sqliteD1(database: DatabaseSync): D1Database {
+function sqliteD1(database: DatabaseSync, inspectRows?: (query: string, rows: unknown[]) => void,
+  queryExecuted?: (query: string) => void): D1Database {
   const prepared = (query: string, values: SQLInputValue[] = []): D1PreparedStatement => ({
     bind(...next: unknown[]) { return prepared(query, next as SQLInputValue[]); },
-    async first<T>() { return database.prepare(query).get(...values) as T | null; },
-    async all<T>() { return { results: database.prepare(query).all(...values) as T[] }; },
-    async run() { const result = database.prepare(query).run(...values); return { meta: { changes: Number(result.changes) } }; },
+    async first<T>() { queryExecuted?.(query); return database.prepare(query).get(...values) as T | null; },
+    async all<T>() {
+      queryExecuted?.(query);
+      const results = database.prepare(query).all(...values) as T[];
+      inspectRows?.(query, results);
+      return { results };
+    },
+    async run() { queryExecuted?.(query); const result = database.prepare(query).run(...values); return { meta: { changes: Number(result.changes) } }; },
   });
   return {
     prepare: (query) => prepared(query),
@@ -94,6 +101,100 @@ async function disputedPay(current: ReturnType<typeof subject>, jobId = 'job-1',
 }
 
 describe('staged browser-to-API collection', () => {
+  it('keeps production-sized metadata preflight and atomic writes within the D1 query budget', async () => {
+    const current = subject(); const observedAt = '2026-09-06T19:00:00.000Z';
+    const original = job();
+    const evidence = extractPostingMetadataEvidence({ artifact: { title: original.title, text: 'USD $45/hour salary.' },
+      sourceClass: 'official-page', sourceId: 'community-acme', sourceUrl: original.applyUrl, observedAt, exactPosting: true })[0]!;
+    current.database.prepare(`WITH RECURSIVE sequence(n) AS (VALUES(0) UNION ALL SELECT n + 1 FROM sequence WHERE n < 7044)
+      INSERT INTO catalog_items(pk, sk, kind, value)
+      SELECT 'JOB#budget-' || printf('%05d', n), 'META', 'internship',
+        json_set(?, '$.jobId', 'budget-' || printf('%05d', n)) FROM sequence`).run(JSON.stringify(original));
+    current.database.prepare(`WITH RECURSIVE sequence(n) AS (VALUES(0) UNION ALL SELECT n + 1 FROM sequence WHERE n < 11086)
+      INSERT INTO role_metadata_evidence(job_id, source_class, source_id, source_url, artifact_hash, extraction_version, evidence, observed_at, is_current)
+      SELECT CASE WHEN n < 7045 THEN 'budget-' ELSE 'orphan-' END || printf('%05d', n),
+        'official-page', 'community-acme', ?, ?, ?, ?, ?, 1 FROM sequence`)
+      .run(original.applyUrl, evidence.artifactHash, ROLE_METADATA_EXTRACTION_VERSION, JSON.stringify(evidence), observedAt);
+    current.database.prepare(`INSERT INTO role_metadata_acquisition(job_id, source_id, report)
+      SELECT json_extract(value, '$.jobId'), 'community-acme', ? FROM catalog_items WHERE kind = 'internship' ORDER BY pk LIMIT 4923`)
+      .run(JSON.stringify({ method: 'browser', complete: true, fields: { compensation: 'extracted' } }));
+    let queries = 0;
+    const bounded = new D1CatalogAdmissionStore(sqliteD1(current.database, (query, rows) => {
+      if (/SELECT[\s\S]*\bvalue\b[\s\S]*FROM catalog_items/iu.test(query)) expect(rows.length).toBeLessThanOrEqual(100);
+    }, () => { queries += 1; expect(queries).toBeLessThanOrEqual(1000); }));
+    const plan = await bounded.stageRoleMetadataRepair(observedAt);
+    expect(plan.expectedJobs).toBe(METADATA_REPAIR_RECORD_LIMIT);
+    expect(plan.remainingJobs).toBe(7045 - METADATA_REPAIR_RECORD_LIMIT);
+    queries = 0;
+    await bounded.applyRoleMetadataRepair(plan.repairToken, plan.expectedJobs, 0, observedAt);
+    // Leave a measured reserve for the route's grouped projection refresh.
+    // Full post-apply verification deliberately uses a new GET invocation.
+    expect(queries).toBeLessThan(800);
+  }, 15000);
+
+  it.each([null, false, 0, ''])('does not count falsy stored optional fields as an extraction: %s', async value => {
+    const current = subject(); const observedAt = '2026-09-06T19:00:00.000Z';
+    const original = jobWithVerifiedDestination();
+    await current.jobs.putInternship(original);
+    const evidence = extractPostingMetadataEvidence({ artifact: { title: '' }, sourceClass: 'official-page',
+      sourceId: 'community-acme', sourceUrl: original.applyUrl, observedAt, exactPosting: true });
+    await current.operations.recordRoleMetadataEvidence(original.jobId, evidence, [], observedAt);
+    const stored = { ...evidence[0], compensationRanges: [], housing: [], locations: [],
+      education: value, workMode: value, applicationDeadline: value, employerPublishedAt: value, employerUpdatedAt: value };
+    // Legacy JSON can explicitly store null/falsy optional fields even though
+    // current typed evidence omits them. SQL aggregation must match Boolean().
+    current.database.prepare('UPDATE role_metadata_evidence SET evidence = ?').run(JSON.stringify(stored));
+    expect((await current.operations.roleMetadataAudit(new Date(observedAt))).collectionCoverage)
+      .toMatchObject({ current: 1, outcomes: { 'no-explicit-metadata': 1 } });
+  });
+
+  it('audits across bounded catalog pages without dropping late records or orphan evidence', async () => {
+    const current = subject(); const observedAt = '2026-09-06T19:00:00.000Z';
+    const evidence = extractPostingMetadataEvidence({ artifact: { title: 'Software Engineering Intern',
+      text: 'EUR 50/hour salary. EUR 900 monthly housing stipend.' }, sourceClass: 'official-page',
+      sourceId: 'community-acme', sourceUrl: job().applyUrl, observedAt, exactPosting: true });
+    for (let index = 0; index < 257; index++) {
+      const original = { ...jobWithVerifiedDestination(), jobId: `bounded-${String(index).padStart(3, '0')}`, open: index !== 256 };
+      await current.jobs.putInternship(original);
+      await current.operations.recordRoleMetadataEvidence(original.jobId, evidence, [], observedAt);
+      await current.operations.recordMetadataAcquisition(original.jobId, 'community-acme', observedAt,
+        { method: 'browser', complete: true, fields: { compensation: 'extracted', housing: 'extracted' } }, observedAt);
+    }
+    // Evidence not currently attached to a stored job still belongs in global
+    // evidence statistics, but cannot increase collection eligibility.
+    await current.operations.recordRoleMetadataEvidence('orphan-evidence', evidence, [], observedAt);
+    const pageSizes: number[] = [];
+    const bounded = new D1CatalogAdmissionStore(sqliteD1(current.database, (query, rows) => {
+      if (/SELECT[\s\S]*\bvalue\b[\s\S]*FROM catalog_items/iu.test(query)) {
+        pageSizes.push(rows.length);
+        expect(rows.length, 'do not materialize the entire catalog in a Worker').toBeLessThanOrEqual(100);
+      }
+    }));
+    const audit = await bounded.roleMetadataAudit(new Date(observedAt));
+    expect(pageSizes.filter(size => size > 0).length).toBeGreaterThan(2);
+    expect(audit.scanned).toBe(257);
+    expect(audit.enriched).toBe(0);
+    expect(audit.projectionOnlyOmissions).toHaveLength(257);
+    expect(audit.projectionOnlyOmissions.at(-1)?.jobId).toBe('bounded-256');
+    expect(audit.currentEvidenceBySourceClass['official-page']).toBe(258);
+    expect(audit.unsupportedCurrencies.EUR).toBe(258);
+    expect(audit.collectionCoverage).toMatchObject({ eligible: 256, current: 256, pendingOrUnobserved: 0, stale: 0, complete: true });
+    expect(audit.fieldOutcomeDenominator.count).toBe(257);
+    expect(audit.fieldOutcomes['github/browser/compensation']).toEqual({ 'projection-missing': 257 });
+    expect(audit.acquisitionReports).toHaveLength(257);
+    expect(audit.deferredProjections).toEqual([]);
+    expect(audit.disclosureRecall).toBeNull();
+    expect((await current.jobs.getJob('bounded-256'))?.compensation.raw).toBe('');
+    current.database.prepare(`INSERT INTO catalog_items(pk, sk, kind, value)
+      SELECT pk, 'SECOND', kind, value FROM catalog_items WHERE pk = 'JOB#bounded-099' AND sk = 'META'`).run();
+    // A composite primary-key boundary must not silently skip a row sharing
+    // the final pk of a page, even if a legacy row uses another sk.
+    const withSharedPk = await bounded.roleMetadataAudit(new Date(observedAt));
+    expect(withSharedPk.scanned).toBe(258);
+    expect(withSharedPk.fieldOutcomeDenominator.count).toBe(258);
+    expect(withSharedPk.projectionOnlyOmissions).toHaveLength(258);
+  });
+
   it('reports and blocks deferred projections even when destination collection is complete', async () => {
     const current = subject(); const original = job(); const observedAt = '2026-09-06T19:00:00.000Z';
     const community = extractPostingMetadataEvidence({ artifact: { title: original.title, compensationText: 'USD $60/hour' },
@@ -490,8 +591,8 @@ describe('D1 role metadata evidence and guarded repair', () => {
       observedAt: '2026-09-03T12:00:00.000Z', exactPosting: true,
     });
     const evidence = extractPostingMetadataEvidence({
-      artifact: { title: original.title, text: 'Location: New York, NY. Pay is $45-$55/hour. This role is hybrid.',
-        compensationText: '$45-$55/hour', locations: ['New York, NY'], workMode: 'Hybrid' },
+      artifact: { title: original.title, text: 'Location: New York, NY. Pay is USD $45-$55/hour. This role is hybrid.',
+        compensationText: 'USD $45-$55/hour', locations: ['New York, NY'], workMode: 'Hybrid' },
       sourceClass: 'official-page', sourceId: 'community-acme', sourceUrl: original.applyUrl,
       observedAt: '2026-09-04T12:00:00.000Z', exactPosting: true,
     });
@@ -520,7 +621,7 @@ describe('D1 role metadata evidence and guarded repair', () => {
       artifact: { title: original.title, compensationText: 'USD $45/hour' }, sourceClass: 'official-page', sourceId: 'community-acme',
       sourceUrl: original.applyUrl, observedAt, exactPosting: true,
     });
-    for (let index = 0; index <= ATOMIC_REPAIR_RECORD_LIMIT; index += 1) {
+    for (let index = 0; index <= METADATA_REPAIR_RECORD_LIMIT; index += 1) {
       const jobId = `batch-${String(index).padStart(4, '0')}`;
       await current.jobs.putInternship({ ...original, jobId });
       await current.operations.recordRoleMetadataEvidence(jobId, evidence, [], observedAt);
@@ -537,8 +638,8 @@ describe('D1 role metadata evidence and guarded repair', () => {
       }), [], observedAt);
     }
     const first = await current.operations.stageRoleMetadataRepair(observedAt);
-    expect(first).toMatchObject({ expectedJobs: ATOMIC_REPAIR_RECORD_LIMIT, remainingJobs: 1,
-      expectedOccurrences: 0, fillsByField: { compensation: ATOMIC_REPAIR_RECORD_LIMIT } });
+    expect(first).toMatchObject({ expectedJobs: METADATA_REPAIR_RECORD_LIMIT, remainingJobs: 1,
+      expectedOccurrences: 0, fillsByField: { compensation: METADATA_REPAIR_RECORD_LIMIT } });
     if (hasConflict) {
       expect(first.conflicts).toMatchObject([{ field: 'compensation' }]);
       await expect(current.operations.applyRoleMetadataRepair(first.repairToken, first.expectedJobs, 0, observedAt))
@@ -546,16 +647,16 @@ describe('D1 role metadata evidence and guarded repair', () => {
       expect((await current.jobs.getJob('batch-0000'))?.compensation.raw).toBe('');
       return;
     }
-    await expect(current.operations.applyRoleMetadataRepair(first.repairToken, ATOMIC_REPAIR_RECORD_LIMIT + 1, 0, observedAt))
+    await expect(current.operations.applyRoleMetadataRepair(first.repairToken, METADATA_REPAIR_RECORD_LIMIT + 1, 0, observedAt))
       .rejects.toThrow('plan changed');
     await current.operations.applyRoleMetadataRepair(first.repairToken, first.expectedJobs, 0, observedAt);
-    expect((await current.jobs.getJob('batch-0900'))?.compensation.raw).toBe('');
+    expect((await current.jobs.getJob('batch-0250'))?.compensation.raw).toBe('');
     const second = await current.operations.stageRoleMetadataRepair(observedAt);
     expect(second).toMatchObject({ expectedJobs: 1, remainingJobs: 0, fillsByField: { compensation: 1 } });
     expect(second.repairToken).not.toBe(first.repairToken);
     await current.operations.applyRoleMetadataRepair(second.repairToken, second.expectedJobs, 0, observedAt);
     expect((await current.operations.stageRoleMetadataRepair(observedAt)).expectedJobs).toBe(0);
-    expect((await current.jobs.getJob('batch-0900'))?.notification).toEqual(original.notification);
+    expect((await current.jobs.getJob('batch-0250'))?.notification).toEqual(original.notification);
   });
 
   it('rejects a stale original JSON guard', async () => {
@@ -626,5 +727,56 @@ describe('D1 role metadata evidence and guarded repair', () => {
     await expect(current.operations.metadataVerificationCandidates(10, {
       observedBefore: '2026-06-01T00:00:00.000Z', includeUnobserved: false, requireProjectedEvidence: true,
     })).resolves.toEqual([]);
+  });
+
+  it('bounds staged repair bytes while retaining conflicts beyond the byte-limited prefix', async () => {
+    const current = subject();
+    const observedAt = '2026-09-04T12:00:00.000Z';
+    const padding = 'x'.repeat(2_200_000);
+    const evidence = extractPostingMetadataEvidence({
+      artifact: { title: job().title, compensationText: 'USD $45/hour' }, sourceClass: 'official-page', sourceId: 'community-acme',
+      sourceUrl: job().applyUrl, observedAt, exactPosting: true,
+    });
+    for (const jobId of ['a-large', 'b-large']) {
+      await current.jobs.putInternship({ ...job(), jobId, location: padding });
+      await current.operations.recordRoleMetadataEvidence(jobId, evidence, [], observedAt);
+    }
+    const conflicting = { ...job(), jobId: 'z-conflict', sourceReferences: [
+      job().sourceReferences[0]!, { ...job().sourceReferences[0]!, sourceId: 'second-source' },
+    ] };
+    await current.jobs.putInternship(conflicting);
+    await current.operations.recordRoleMetadataEvidence(conflicting.jobId, evidence, [], observedAt);
+    await current.operations.recordRoleMetadataEvidence(conflicting.jobId, extractPostingMetadataEvidence({
+      artifact: { title: conflicting.title, compensationText: 'USD $60/hour' }, sourceClass: 'official-page', sourceId: 'second-source',
+      sourceUrl: 'https://second.example.test/jobs/123', observedAt, exactPosting: true,
+    }), [], observedAt);
+
+    const plan = await current.operations.stageRoleMetadataRepair(observedAt);
+    expect(plan).toMatchObject({ expectedJobs: 1, remainingJobs: 1, conflicts: [{ field: 'compensation' }] });
+    const staged = current.database.prepare(`SELECT count(*) AS count,
+      sum(length(CAST(original_value AS BLOB)) + length(CAST(proposed_value AS BLOB))) AS bytes
+      FROM role_metadata_repair_stage WHERE token = ?`).get(plan.repairToken) as { count: number; bytes: number };
+    expect(staged.count).toBe(1);
+    expect(staged.bytes).toBeLessThanOrEqual(ATOMIC_REPAIR_BYTE_LIMIT);
+    await expect(current.operations.applyRoleMetadataRepair(plan.repairToken, 1, 0, observedAt)).rejects.toThrow('conflicts must be resolved');
+  });
+
+  it('preserves the legacy sorted job-and-evidence hash snapshot', async () => {
+    const current = subject();
+    const observedAt = '2026-09-04T12:00:00.000Z';
+    for (const jobId of ['b-job', 'a-job']) {
+      await current.jobs.putInternship({ ...job(), jobId });
+      await current.operations.recordRoleMetadataEvidence(jobId, extractPostingMetadataEvidence({
+        artifact: { title: job().title, compensationText: `USD $${jobId === 'a-job' ? 45 : 55}/hour` },
+        sourceClass: 'official-page', sourceId: 'community-acme', sourceUrl: job().applyUrl, observedAt, exactPosting: true,
+      }), [], observedAt);
+    }
+    const plan = await current.operations.stageRoleMetadataRepair(observedAt);
+    const rows = current.database.prepare(`SELECT job_id, evidence FROM role_metadata_evidence
+      WHERE is_current = 1 ORDER BY job_id, source_class`).all() as Array<{ job_id: string; evidence: string }>;
+    const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+    const legacySnapshot = hash(rows.map(row => `${row.job_id}\0${hash(row.evidence)}`).sort().join('\n'));
+    expect(current.database.prepare('SELECT evidence_snapshot FROM role_metadata_repair_plans WHERE token = ?')
+      .get(plan.repairToken)).toEqual({ evidence_snapshot: legacySnapshot });
   });
 });

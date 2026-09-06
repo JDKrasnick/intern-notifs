@@ -18,11 +18,12 @@ collection avoids browser use when an exact-role response succeeds; normal
 admission verification remains independent. Failed acquisition never supplies
 new destination or employer authority.
 
-Worker source `cdda7f6` is deployed with extraction v7. Live validation adds
-paragraph/list boundary preservation, degree/job-level rates, encoded ranges,
-dotted Ashby boards and exact Greenhouse embed recovery. The 53-posting replay
-retains pay for every posting and removes its 52 reproduced conflicts; it is not
-a full-cohort recall benchmark. Historical collection remains staging-only.
+Extraction v12 adds explicit endpoint ISO-currency ranges, fixes lower-bound
+salary authority, and stops guessing currency from locations and bare dollar
+signs. V11 already preserves official pay over same-audience community estimates
+and corrects housing eligibility. Large-cohort audits and catalog reads now page
+D1 records; metadata repair is bounded to 250 jobs / 8 MiB with separate
+post-apply verification. Historical collection remains staging-only.
 
 Remaining operational acceptance is explicit: finish independent browser/field
 review and production collection (the existing credential now works), approve
@@ -64,6 +65,17 @@ housing. These are field-presence counts, not accuracy estimates.
 The frame, blind batches, original responses and independently checked labels
 are archived under `.context/accuracy-20260906/`. Sampling and publication
 acceptance remain in progress; no accuracy percentage is certified yet.
+
+The independently adjudicated first pass resolves 94/100 roles, leaving six
+unresolved. Among 46 resolved blank roles, 12 disclose official pay and 34 do
+not. Of 47 resolved pay-present roles with official disclosures, 32 agree on
+amount, 25 on currency and 41 on period. These are raw frozen-sample comparisons,
+not population estimates: currency fallback and historical publication lag are
+separate from parser errors. One further role has community-only pay without an
+official disclosure. The 30-role holdout resolves 26; among its 15 comparable
+pay-present roles, six agree on amount, ten on currency and 14 on period.
+Fourteen targeted authority cases pass the offline v12 replay; this is not live
+publication validation. Recollection and approved repair must precede rescoring.
 
 ## Capture boundaries
 

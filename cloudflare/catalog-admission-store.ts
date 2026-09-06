@@ -20,10 +20,14 @@ import type {
   RoleMetadataEvidence,
   RoleMetadataOmission,
 } from '../src/types.js';
-import { projectRoleMetadata, reconcileRoleMetadata, replaceVerifiedPageMetadataEvidence, roleMetadataEvidenceHasFields, roleMetadataReviewFingerprint, ROLE_METADATA_EXTRACTION_VERSION, unsupportedMetadataCurrencies, unsupportedMetadataPeriods } from '../src/role-metadata.js';
+import { projectRoleMetadata, reconcileRoleMetadata, replaceVerifiedPageMetadataEvidence, roleMetadataReviewFingerprint, ROLE_METADATA_EXTRACTION_VERSION, unsupportedMetadataCurrencies, unsupportedMetadataPeriods } from '../src/role-metadata.js';
 import type { D1Database } from './types.js';
 
 export const ATOMIC_REPAIR_RECORD_LIMIT = 900;
+// Metadata apply performs bounded preflight scans before its atomic batch.
+// Leave headroom under D1's 1,000-query invocation limit for those guards.
+export const METADATA_REPAIR_RECORD_LIMIT = 250;
+export const ATOMIC_REPAIR_BYTE_LIMIT = 8 * 1024 * 1024;
 export const ROLE_METADATA_REVALIDATION_MS = 30 * 24 * 60 * 60_000;
 
 export interface RoleMetadataCollectionCoverage {
@@ -54,8 +58,16 @@ function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function roleMetadataEvidenceSnapshot(rows: Array<{ job_id: string; evidence: string }>): string {
-  return hash(rows.map((row) => `${row.job_id}\0${hash(row.evidence)}`).sort().join('\n'));
+function roleMetadataEvidenceDigest(row: { job_id: string; evidence: string }): string {
+  return `${row.job_id}\0${hash(row.evidence)}`;
+}
+
+function roleMetadataEvidenceSnapshot(digests: Iterable<string>): string {
+  return hash([...digests].sort().join('\n'));
+}
+
+function utf8Bytes(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
 }
 
 function roleMetadataSchemaMissing(error: unknown): boolean {
@@ -154,8 +166,39 @@ function preserveDurableFields(current: Internship, change: RepairChange): Inter
 export class D1CatalogAdmissionStore {
   constructor(private readonly db: D1Database) {}
 
+  private async *catalogInternshipPages(limit = 100, openOnly = false): AsyncGenerator<Array<{ pk: string; sk: string; value: string }>> {
+    let after = ['', ''];
+    while (true) {
+      const page = await this.db.prepare(`SELECT pk, sk, value FROM catalog_items
+        WHERE kind = 'internship' ${openOnly ? "AND json_extract(value, '$.open') = 1" : ''}
+          AND (pk, sk) > (?, ?) ORDER BY pk, sk LIMIT ?`)
+        .bind(...after, limit).all<{ pk: string; sk: string; value: string }>();
+      if (!page.results.length) return;
+      const last = page.results[page.results.length - 1];
+      after = [last.pk, last.sk];
+      yield page.results;
+    }
+  }
+
+  private async *currentRoleMetadataEvidencePages(limit = 100): AsyncGenerator<Array<{
+    job_id: string; source_class: string; source_id: string; source_url: string; artifact_hash: string; evidence: string;
+  }>> {
+    let after = ['', '', '', '', ''];
+    while (true) {
+      const page = await this.db.prepare(`SELECT job_id, source_class, source_id, source_url, artifact_hash, evidence
+        FROM role_metadata_evidence WHERE is_current = 1
+          AND (job_id, source_class, source_id, source_url, artifact_hash) > (?, ?, ?, ?, ?)
+        ORDER BY job_id, source_class, source_id, source_url, artifact_hash LIMIT ?`).bind(...after, limit)
+        .all<{ job_id: string; source_class: string; source_id: string; source_url: string; artifact_hash: string; evidence: string }>();
+      if (!page.results.length) return;
+      const last = page.results[page.results.length - 1];
+      after = [last.job_id, last.source_class, last.source_id, last.source_url, last.artifact_hash];
+      yield page.results;
+    }
+  }
+
   private async roleMetadataCollectionCoverage(
-    jobs: readonly Internship[],
+    jobsOrEligible: readonly Internship[] | Set<string>,
     observedAfter: string,
   ): Promise<RoleMetadataCollectionCoverage> {
     const [attempts, evidence] = await Promise.all([
@@ -163,11 +206,20 @@ export class D1CatalogAdmissionStore {
         FROM role_metadata_extraction_attempts WHERE extraction_version = ?`)
         .bind(ROLE_METADATA_EXTRACTION_VERSION)
         .all<{ job_id: string; source_id: string; observed_at: string; outcome: string; backfill_token: string | null }>(),
-      this.db.prepare(`SELECT job_id, source_id, observed_at, evidence
+      this.db.prepare(`SELECT job_id, source_id, observed_at,
+          CASE WHEN coalesce(json_array_length(json_extract(evidence, '$.compensationRanges')), 0) > 0
+            OR coalesce(json_array_length(json_extract(evidence, '$.housing')), 0) > 0
+            OR coalesce(json_extract(evidence, '$.education'), '') NOT IN ('', 0)
+            OR coalesce(json_array_length(json_extract(evidence, '$.locations')), 0) > 0
+            OR coalesce(json_extract(evidence, '$.workMode'), '') NOT IN ('', 0)
+            OR coalesce(json_extract(evidence, '$.applicationDeadline'), '') NOT IN ('', 0)
+            OR coalesce(json_extract(evidence, '$.employerPublishedAt'), '') NOT IN ('', 0)
+            OR coalesce(json_extract(evidence, '$.employerUpdatedAt'), '') NOT IN ('', 0)
+          THEN 1 ELSE 0 END AS has_fields
         FROM role_metadata_evidence WHERE extraction_version = ? AND is_current = 1
           AND source_class IN ('official-page', 'official-json-ld')`)
         .bind(ROLE_METADATA_EXTRACTION_VERSION)
-        .all<{ job_id: string; source_id: string; observed_at: string; evidence: string }>(),
+        .all<{ job_id: string; source_id: string; observed_at: string; has_fields: number }>(),
     ]);
     const latest = new Map<string, { observedAt: string; outcome: string; backfillToken?: string }>();
     const recordLatest = (key: string, value: { observedAt: string; outcome: string; backfillToken?: string }) => {
@@ -180,18 +232,21 @@ export class D1CatalogAdmissionStore {
       ...(item.backfill_token ? { backfillToken: item.backfill_token } : {}),
     });
     for (const item of evidence.results) {
-      const parsed = JSON.parse(item.evidence) as RoleMetadataEvidence;
       recordLatest(`${item.job_id}\0${item.source_id}`, {
         observedAt: item.observed_at,
-        outcome: roleMetadataEvidenceHasFields(parsed) ? 'extracted' : 'no-explicit-metadata',
+        outcome: item.has_fields ? 'extracted' : 'no-explicit-metadata',
       });
     }
     const eligible = new Set<string>();
-    for (const job of jobs) {
-      if (!job.open) continue;
-      for (const reference of job.sourceReferences) {
-        if (metadataCollectionTarget(reference)) {
-          eligible.add(`${job.jobId}\0${reference.sourceId}`);
+    if (jobsOrEligible instanceof Set) {
+      for (const key of jobsOrEligible) eligible.add(key);
+    } else {
+      for (const job of jobsOrEligible) {
+        if (!job.open) continue;
+        for (const reference of job.sourceReferences) {
+          if (metadataCollectionTarget(reference)) {
+            eligible.add(`${job.jobId}\0${reference.sourceId}`);
+          }
         }
       }
     }
@@ -299,70 +354,87 @@ export class D1CatalogAdmissionStore {
     acquisitionReports: Array<{ jobId: string; sourceId: string; report: unknown }>;
     disclosureRecall: null;
   }> {
-    const [rows, current] = await Promise.all([
-      this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'internship'").all<JsonRow>(),
-      this.db.prepare('SELECT job_id, source_class, evidence FROM role_metadata_evidence WHERE is_current = 1')
-        .all<{ job_id: string; source_class: string; evidence: string }>(),
-    ]);
-    const jobs = rows.results.map((row) => JSON.parse(row.value) as Internship);
-    const evidenceByJob = new Map<string, RoleMetadataEvidence[]>();
-    for (const row of current.results) evidenceByJob.set(row.job_id,
-      [...(evidenceByJob.get(row.job_id) ?? []), JSON.parse(row.evidence) as RoleMetadataEvidence]);
+    const acquisitionReports: Array<{ jobId: string; sourceId: string; report: unknown }> = [];
+    const byReference = new Map<string, Record<string, unknown>>();
+    let reportAfter = ['', ''];
+    while (true) {
+      const reports = await this.db.prepare(`SELECT job_id, source_id, report FROM role_metadata_acquisition
+        WHERE report IS NOT NULL AND (job_id, source_id) > (?, ?) ORDER BY job_id, source_id LIMIT 100`)
+        .bind(...reportAfter).all<{ job_id: string; source_id: string; report: string }>();
+      if (!reports.results.length) break;
+      for (const row of reports.results) {
+        reportAfter = [row.job_id, row.source_id];
+        const report = JSON.parse(row.report) as Record<string, unknown>;
+        acquisitionReports.push({ jobId: row.job_id, sourceId: row.source_id, report });
+        byReference.set(`${row.job_id}\0${row.source_id}`, report);
+      }
+    }
     const projectionOnlyOmissions: Array<{ jobId: string; fields: string[] }> = [];
     const deferredProjections: Array<{ jobId: string; evidenceHashes: string[] }> = [];
-    for (const job of jobs) {
-      const historical = evidenceByJob.get(job.jobId) ?? [];
-      const sourceReferences = job.sourceReferences.map((reference) => {
-        const matching = historical.filter((item) => item.sourceId === reference.sourceId);
-        return { ...reference, metadataEvidence: replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, matching, reference.sourceId) };
-      });
-      const result = projectRoleMetadata({ ...job, sourceReferences });
-      if (result.deferredEvidenceHashes?.length) deferredProjections.push({ jobId: job.jobId, evidenceHashes: result.deferredEvidenceHashes });
-      const projected = result.job;
-      const fields = ['compensation', 'housing', 'programType', 'workMode', 'applicationDeadline', 'graduationWindow', 'locations', 'employerPublishedAt', 'employerUpdatedAt']
-        .filter((field) => JSON.stringify(projected[field as keyof Internship]) !== JSON.stringify(job[field as keyof Internship]));
-      if (fields.length) projectionOnlyOmissions.push({ jobId: job.jobId, fields });
+    const eligibleTargets = new Set<string>();
+    const fieldOutcomes: Record<string, Record<string, number>> = {};
+    let scanned = 0; let enriched = 0; let sourceOccurrenceCount = 0;
+    for await (const page of this.catalogInternshipPages()) {
+      const jobs = page.map((row) => JSON.parse(row.value) as Internship);
+      const placeholders = jobs.map(() => '?').join(', ');
+      const current = await this.db.prepare(`SELECT job_id, evidence FROM role_metadata_evidence
+        WHERE is_current = 1 AND job_id IN (${placeholders})`).bind(...jobs.map((job) => job.jobId))
+        .all<{ job_id: string; evidence: string }>();
+      const evidenceByJob = new Map<string, RoleMetadataEvidence[]>();
+      for (const row of current.results) evidenceByJob.set(row.job_id,
+        [...(evidenceByJob.get(row.job_id) ?? []), JSON.parse(row.evidence) as RoleMetadataEvidence]);
+      for (const job of jobs) {
+        scanned += 1; if (job.roleMetadata) enriched += 1;
+        const historical = evidenceByJob.get(job.jobId) ?? [];
+        const sourceReferences = job.sourceReferences.map((reference) => {
+          const matching = historical.filter((item) => item.sourceId === reference.sourceId);
+          return { ...reference, metadataEvidence: replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, matching, reference.sourceId) };
+        });
+        const result = projectRoleMetadata({ ...job, sourceReferences });
+        if (result.deferredEvidenceHashes?.length) deferredProjections.push({ jobId: job.jobId, evidenceHashes: result.deferredEvidenceHashes });
+        const projected = result.job;
+        const fields = ['compensation', 'housing', 'programType', 'workMode', 'applicationDeadline', 'graduationWindow', 'locations', 'employerPublishedAt', 'employerUpdatedAt']
+          .filter((field) => JSON.stringify(projected[field as keyof Internship]) !== JSON.stringify(job[field as keyof Internship]));
+        if (fields.length) projectionOnlyOmissions.push({ jobId: job.jobId, fields });
+        const missing = new Set(fields);
+        for (const reference of job.sourceReferences) {
+          sourceOccurrenceCount += 1;
+          if (job.open && metadataCollectionTarget(reference)) eligibleTargets.add(`${job.jobId}\0${reference.sourceId}`);
+          const report = byReference.get(`${job.jobId}\0${reference.sourceId}`);
+          const reportedFields = report?.fields as Record<string, string> | undefined;
+          for (const field of ['compensation', 'housing', 'education', 'graduation-window', 'locations', 'work-mode', 'application-deadline', 'employer-published-at', 'employer-updated-at']) {
+            const key = `${reference.admission?.destination.provider ?? 'unknown'}/${String(report?.method ?? 'unobserved')}/${field}`;
+            const counts = fieldOutcomes[key] ?? {};
+            const projectionField = ({ 'graduation-window': 'graduationWindow', 'work-mode': 'workMode', 'application-deadline': 'applicationDeadline',
+              'employer-published-at': 'employerPublishedAt', 'employer-updated-at': 'employerUpdatedAt' } as Record<string, string>)[field] ?? field;
+            const outcome = reportedFields?.[field] === 'extracted' && missing.has(projectionField)
+              ? 'projection-missing' : reportedFields?.[field] ?? 'inspection-pending';
+            counts[outcome] = (counts[outcome] ?? 0) + 1; fieldOutcomes[key] = counts;
+          }
+        }
+      }
     }
     const currentEvidenceBySourceClass: Record<string, number> = {};
     const unsupportedCurrencies: Record<string, number> = {};
     const unsupportedPeriods: Record<string, number> = {};
-    for (const row of current.results) {
-      currentEvidenceBySourceClass[row.source_class] = (currentEvidenceBySourceClass[row.source_class] ?? 0) + 1;
-      for (const currency of unsupportedMetadataCurrencies([JSON.parse(row.evidence) as RoleMetadataEvidence])) {
-        unsupportedCurrencies[currency] = (unsupportedCurrencies[currency] ?? 0) + 1;
-      }
-      for (const period of unsupportedMetadataPeriods([JSON.parse(row.evidence) as RoleMetadataEvidence])) {
-        unsupportedPeriods[period] = (unsupportedPeriods[period] ?? 0) + 1;
+    for await (const current of this.currentRoleMetadataEvidencePages()) {
+      for (const row of current) {
+        currentEvidenceBySourceClass[row.source_class] = (currentEvidenceBySourceClass[row.source_class] ?? 0) + 1;
+        const parsed = JSON.parse(row.evidence) as RoleMetadataEvidence;
+        for (const currency of unsupportedMetadataCurrencies([parsed])) unsupportedCurrencies[currency] = (unsupportedCurrencies[currency] ?? 0) + 1;
+        for (const period of unsupportedMetadataPeriods([parsed])) unsupportedPeriods[period] = (unsupportedPeriods[period] ?? 0) + 1;
       }
     }
     const conflicts = await this.db.prepare("SELECT count(*) AS count FROM role_metadata_conflicts WHERE state = 'open'").first<{ count: number }>();
     const outcomes = await this.db.prepare(`SELECT coalesce(classification, state) AS outcome, count(*) AS count
       FROM destination_verification_attempts GROUP BY coalesce(classification, state)`).all<{ outcome: string; count: number }>();
     const collectionCoverage = await this.roleMetadataCollectionCoverage(
-      jobs,
+      eligibleTargets,
       new Date(now.getTime() - ROLE_METADATA_REVALIDATION_MS).toISOString(),
     );
-    const reports = await this.db.prepare('SELECT job_id, source_id, report FROM role_metadata_acquisition WHERE report IS NOT NULL')
-      .all<{ job_id: string; source_id: string; report: string }>();
-    const acquisitionReports = reports.results.map((row) => ({ jobId: row.job_id, sourceId: row.source_id, report: JSON.parse(row.report) as Record<string, unknown> }));
-    const byReference = new Map(acquisitionReports.map((row) => [`${row.jobId}\0${row.sourceId}`, row.report]));
-    const fieldOutcomes: Record<string, Record<string, number>> = {};
-    for (const job of jobs) for (const reference of job.sourceReferences) {
-      const report = byReference.get(`${job.jobId}\0${reference.sourceId}`);
-      const fields = report?.fields as Record<string, string> | undefined;
-      for (const field of ['compensation', 'housing', 'education', 'graduation-window', 'locations', 'work-mode', 'application-deadline', 'employer-published-at', 'employer-updated-at']) {
-        const key = `${reference.admission?.destination.provider ?? 'unknown'}/${String(report?.method ?? 'unobserved')}/${field}`;
-        const counts = fieldOutcomes[key] ?? {};
-        const projectionField = ({ 'graduation-window': 'graduationWindow', 'work-mode': 'workMode', 'application-deadline': 'applicationDeadline',
-          'employer-published-at': 'employerPublishedAt', 'employer-updated-at': 'employerUpdatedAt' } as Record<string, string>)[field] ?? field;
-        const projectionMissing = fields?.[field] === 'extracted' && projectionOnlyOmissions.some((row) => row.jobId === job.jobId && row.fields.includes(projectionField));
-        const outcome = projectionMissing ? 'projection-missing' : fields?.[field] ?? 'inspection-pending';
-        counts[outcome] = (counts[outcome] ?? 0) + 1; fieldOutcomes[key] = counts;
-      }
-    }
     return {
-      scanned: jobs.length,
-      enriched: jobs.filter((job) => Boolean(job.roleMetadata)).length,
+      scanned,
+      enriched,
       projectionOnlyOmissions,
       deferredProjections,
       supportedRoleSpecificDisclosedMetadataMisses: null,
@@ -373,7 +445,7 @@ export class D1CatalogAdmissionStore {
       verificationOutcomes: Object.fromEntries(outcomes.results.map((row) => [row.outcome, Number(row.count)])),
       collectionCoverage,
       fieldOutcomes,
-      fieldOutcomeDenominator: { unit: 'source-occurrence', count: jobs.reduce((sum, job) => sum + job.sourceReferences.length, 0), scope: 'all-stored-roles' },
+      fieldOutcomeDenominator: { unit: 'source-occurrence', count: sourceOccurrenceCount, scope: 'all-stored-roles' },
       acquisitionReports,
       // A projection delta is not an independently measured extraction recall.
       disclosureRecall: null,
@@ -390,10 +462,7 @@ export class D1CatalogAdmissionStore {
     jobId: string; sourceId: string; externalId: string; candidateUrl: string; providerIdentity: ProviderIdentity;
     metadataArtifactHash?: string;
   }>> {
-    const [rows, attempts, evidence, reservations] = await Promise.all([
-      // Match collectionCoverage's open-role cohort, including withheld roles.
-      // Metadata collection must not require or grant catalog admission.
-      this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'internship' AND json_extract(value, '$.open') = 1 ORDER BY pk").all<JsonRow>(),
+    const [attempts, evidence, reservations] = await Promise.all([
       this.db.prepare(`SELECT job_id, source_id, observed_at, artifact_hash
         FROM role_metadata_extraction_attempts WHERE extraction_version = ?`)
         .bind(ROLE_METADATA_EXTRACTION_VERSION)
@@ -418,24 +487,28 @@ export class D1CatalogAdmissionStore {
     }
     const candidates: Array<{ jobId: string; sourceId: string; externalId: string; candidateUrl: string;
       providerIdentity: ProviderIdentity; metadataArtifactHash?: string }> = [];
-    for (const row of rows.results) {
-      const job = JSON.parse(row.value) as Internship;
-      for (const reference of job.sourceReferences) {
-        const key = `${job.jobId}\0${reference.sourceId}`;
-        if (unavailable.has(key) || (options.after && key <= options.after)) continue;
-        const target = metadataCollectionTarget(reference);
-        if (!target || !reference.externalId) continue;
-        const current = reference.metadataEvidence?.some((item) => ['official-page', 'official-json-ld'].includes(item.sourceClass)
-          && item.extractionVersion === ROLE_METADATA_EXTRACTION_VERSION) === true;
-        if (options.requireProjectedEvidence && !current) continue;
-        const observation = latest.get(`${job.jobId}\0${reference.sourceId}`);
-        if (!observation && options.includeUnobserved === false) continue;
-        if (observation && (!options.observedBefore || observation.observedAt > options.observedBefore)) continue;
-        candidates.push({
-          jobId: job.jobId, sourceId: reference.sourceId, externalId: reference.externalId,
-          ...target,
-          ...(observation ? { metadataArtifactHash: observation.artifactHash } : {}),
-        });
+    // Match collectionCoverage's open-role cohort, including withheld roles.
+    // Metadata collection must not require or grant catalog admission.
+    for await (const page of this.catalogInternshipPages(100, true)) {
+      for (const row of page) {
+        const job = JSON.parse(row.value) as Internship;
+        for (const reference of job.sourceReferences) {
+          const key = `${job.jobId}\0${reference.sourceId}`;
+          if (unavailable.has(key) || (options.after && key <= options.after)) continue;
+          const target = metadataCollectionTarget(reference);
+          if (!target || !reference.externalId) continue;
+          const current = reference.metadataEvidence?.some((item) => ['official-page', 'official-json-ld'].includes(item.sourceClass)
+            && item.extractionVersion === ROLE_METADATA_EXTRACTION_VERSION) === true;
+          if (options.requireProjectedEvidence && !current) continue;
+          const observation = latest.get(key);
+          if (!observation && options.includeUnobserved === false) continue;
+          if (observation && (!options.observedBefore || observation.observedAt > options.observedBefore)) continue;
+          candidates.push({
+            jobId: job.jobId, sourceId: reference.sourceId, externalId: reference.externalId,
+            ...target,
+            ...(observation ? { metadataArtifactHash: observation.artifactHash } : {}),
+          });
+        }
       }
     }
     // Lexicographic cursors support manual resumption. Automated batches
@@ -573,60 +646,87 @@ export class D1CatalogAdmissionStore {
     reviewedOmissions: Array<{ jobId: string; reviewToken: string }>;
   }> {
     const revision = await this.metadataRevision();
-    const [jobRows, evidenceRows, reviewRows] = await Promise.all([
-      this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'internship' ORDER BY pk").all<JsonRow>(),
-      this.db.prepare('SELECT job_id, evidence FROM role_metadata_evidence WHERE is_current = 1 ORDER BY job_id, source_class')
-        .all<{ job_id: string; evidence: string }>(),
-      this.db.prepare('SELECT job_id, decision FROM role_metadata_review_decisions').all<{ job_id: string; decision: string }>(),
-    ]);
+    const reviewRows = await this.db.prepare('SELECT job_id, decision FROM role_metadata_review_decisions')
+      .all<{ job_id: string; decision: string }>();
     const reviews = new Map(reviewRows.results.map(row => [row.job_id, JSON.parse(row.decision) as RoleMetadataOmission]));
     const reviewedOmissions: Array<{ jobId: string; reviewToken: string }> = [];
-    const evidenceByJob = new Map<string, RoleMetadataEvidence[]>();
-    for (const row of evidenceRows.results) evidenceByJob.set(row.job_id,
-      [...(evidenceByJob.get(row.job_id) ?? []), JSON.parse(row.evidence) as RoleMetadataEvidence]);
     const staged: Array<{ jobId: string; original: string; proposed: string }> = [];
-    let remainingJobs = 0;
+    let remainingJobs = 0; let stagedBytes = 0; let stagingFull = false;
     const fillsByField: Record<string, number> = {}; const correctionsByField: Record<string, number> = {};
     const changesBySourceClass: Record<string, number> = {}; const unsupportedCurrencies: Record<string, number> = {};
     const unsupportedPeriods: Record<string, number> = {};
     const conflicts: MetadataConflict[] = [];
-    for (const evidence of evidenceByJob.values()) {
+    const evidenceDigests: string[] = [];
+    let statisticsJobId: string | undefined; let statisticsEvidence: RoleMetadataEvidence[] = [];
+    const recordEvidenceStatistics = (evidence: RoleMetadataEvidence[]) => {
       for (const currency of unsupportedMetadataCurrencies(evidence)) {
         unsupportedCurrencies[currency] = (unsupportedCurrencies[currency] ?? 0) + 1;
       }
       for (const period of unsupportedMetadataPeriods(evidence)) {
         unsupportedPeriods[period] = (unsupportedPeriods[period] ?? 0) + 1;
       }
-    }
-    const fields: Array<keyof Internship> = ['compensation', 'housing', 'programType', 'workMode', 'applicationDeadline', 'graduationWindow', 'locations', 'employerPublishedAt', 'employerUpdatedAt'];
-    for (const row of jobRows.results) {
-      const job = JSON.parse(row.value) as Internship;
-      const historical = evidenceByJob.get(job.jobId) ?? [];
-      if (!historical.length) continue;
-      const sourceReferences = job.sourceReferences.map((reference) => {
-        const matching = historical.filter((item) => item.sourceId === reference.sourceId);
-        return { ...reference, metadataEvidence: replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, matching, reference.sourceId) };
-      });
-      const evidence = sourceReferences.flatMap(reference => reference.metadataEvidence ?? []);
-      const review = reviews.get(job.jobId);
-      const validReview = review && review.evidenceFingerprint === roleMetadataReviewFingerprint(evidence) ? review : undefined;
-      if (validReview) reviewedOmissions.push({ jobId: job.jobId, reviewToken: validReview.reviewToken });
-      const result = projectRoleMetadata({ ...job, sourceReferences, metadataOmission: validReview });
-      conflicts.push(...result.conflicts);
-      if (result.conflicts.length || JSON.stringify(result.job) === row.value) continue;
-      // Each approved plan remains one bounded atomic transaction. Continue
-      // inspecting the full cohort so conflicts outside this batch still block it.
-      if (staged.length >= ATOMIC_REPAIR_RECORD_LIMIT) { remainingJobs += 1; continue; }
-      for (const field of fields) if (JSON.stringify(result.job[field]) !== JSON.stringify(job[field])) {
-        const target = job[field] === undefined || field === 'compensation' && !job.compensation.raw ? fillsByField : correctionsByField;
-        target[field] = (target[field] ?? 0) + 1;
+    };
+    for await (const page of this.currentRoleMetadataEvidencePages()) {
+      for (const row of page) {
+        evidenceDigests.push(roleMetadataEvidenceDigest(row));
+        if (statisticsJobId !== undefined && row.job_id !== statisticsJobId) {
+          recordEvidenceStatistics(statisticsEvidence); statisticsEvidence = [];
+        }
+        statisticsJobId = row.job_id;
+        statisticsEvidence.push(JSON.parse(row.evidence) as RoleMetadataEvidence);
       }
-      for (const sourceClass of new Set(historical.map((item) => item.sourceClass))) changesBySourceClass[sourceClass] = (changesBySourceClass[sourceClass] ?? 0) + 1;
-      staged.push({ jobId: job.jobId, original: row.value, proposed: JSON.stringify(result.job) });
     }
-    const evidenceSnapshot = roleMetadataEvidenceSnapshot(evidenceRows.results);
+    if (statisticsEvidence.length) recordEvidenceStatistics(statisticsEvidence);
+    const fields: Array<keyof Internship> = ['compensation', 'housing', 'programType', 'workMode', 'applicationDeadline', 'graduationWindow', 'locations', 'employerPublishedAt', 'employerUpdatedAt'];
+    const eligibleTargets = new Set<string>();
+    for await (const page of this.catalogInternshipPages()) {
+      const jobs = page.map(row => JSON.parse(row.value) as Internship);
+      for (const job of jobs) if (job.open) for (const reference of job.sourceReferences) {
+        if (metadataCollectionTarget(reference)) eligibleTargets.add(`${job.jobId}\0${reference.sourceId}`);
+      }
+      const placeholders = jobs.map(() => '?').join(', ');
+      const current = await this.db.prepare(`SELECT job_id, evidence FROM role_metadata_evidence
+        WHERE is_current = 1 AND job_id IN (${placeholders}) ORDER BY job_id, source_class`)
+        .bind(...jobs.map(job => job.jobId)).all<{ job_id: string; evidence: string }>();
+      const evidenceByJob = new Map<string, RoleMetadataEvidence[]>();
+      for (const item of current.results) evidenceByJob.set(item.job_id,
+        [...(evidenceByJob.get(item.job_id) ?? []), JSON.parse(item.evidence) as RoleMetadataEvidence]);
+      for (let index = 0; index < jobs.length; index += 1) {
+        const job = jobs[index]; const row = page[index];
+        const historical = evidenceByJob.get(job.jobId) ?? [];
+        if (!historical.length) continue;
+        const sourceReferences = job.sourceReferences.map((reference) => {
+          const matching = historical.filter((item) => item.sourceId === reference.sourceId);
+          return { ...reference, metadataEvidence: replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, matching, reference.sourceId) };
+        });
+        const evidence = sourceReferences.flatMap(reference => reference.metadataEvidence ?? []);
+        const review = reviews.get(job.jobId);
+        const validReview = review && review.evidenceFingerprint === roleMetadataReviewFingerprint(evidence) ? review : undefined;
+        if (validReview) reviewedOmissions.push({ jobId: job.jobId, reviewToken: validReview.reviewToken });
+        const result = projectRoleMetadata({ ...job, sourceReferences, metadataOmission: validReview });
+        conflicts.push(...result.conflicts);
+        const proposed = JSON.stringify(result.job);
+        if (result.conflicts.length || proposed === row.value) continue;
+        const jobBytes = utf8Bytes(row.value) + utf8Bytes(proposed);
+        if (!staged.length && jobBytes > ATOMIC_REPAIR_BYTE_LIMIT) {
+          throw new Error(`Role metadata repair job ${job.jobId} exceeds the atomic byte limit of ${ATOMIC_REPAIR_BYTE_LIMIT}`);
+        }
+        // Keep a contiguous stable prefix. Continue inspecting the full cohort
+        // so conflicts outside the bounded transaction still block it.
+        if (stagingFull || staged.length >= METADATA_REPAIR_RECORD_LIMIT || stagedBytes + jobBytes > ATOMIC_REPAIR_BYTE_LIMIT) {
+          stagingFull = true; remainingJobs += 1; continue;
+        }
+        for (const field of fields) if (JSON.stringify(result.job[field]) !== JSON.stringify(job[field])) {
+          const target = job[field] === undefined || field === 'compensation' && !job.compensation.raw ? fillsByField : correctionsByField;
+          target[field] = (target[field] ?? 0) + 1;
+        }
+        for (const sourceClass of new Set(historical.map((item) => item.sourceClass))) changesBySourceClass[sourceClass] = (changesBySourceClass[sourceClass] ?? 0) + 1;
+        staged.push({ jobId: job.jobId, original: row.value, proposed }); stagedBytes += jobBytes;
+      }
+    }
+    const evidenceSnapshot = roleMetadataEvidenceSnapshot(evidenceDigests);
     const collectionCoverage = await this.roleMetadataCollectionCoverage(
-      jobRows.results.map((row) => JSON.parse(row.value) as Internship),
+      eligibleTargets,
       new Date(Date.parse(createdAt) - ROLE_METADATA_REVALIDATION_MS).toISOString(),
     );
     const collectionSnapshot = roleMetadataCollectionSnapshot(collectionCoverage);
@@ -665,8 +765,6 @@ export class D1CatalogAdmissionStore {
     changed: number; occurrencesChanged: 0; projectionRefreshRequired: boolean;
   }> {
     if (expectedOccurrences !== 0) throw new Error('Role metadata repair does not rewrite source occurrences');
-    const rows = await this.db.prepare('SELECT * FROM role_metadata_repair_stage WHERE token = ? ORDER BY job_id').bind(token)
-      .all<{ job_id: string; original_value: string; proposed_value: string }>();
     const plan = await this.db.prepare(`SELECT expected_jobs, expected_occurrences, conflict_count, evidence_snapshot,
         collection_snapshot, collection_complete, metadata_revision
       FROM role_metadata_repair_plans WHERE token = ?`).bind(token)
@@ -675,6 +773,18 @@ export class D1CatalogAdmissionStore {
     if (!plan || Number(plan.expected_jobs) !== expectedJobs || Number(plan.expected_occurrences) !== expectedOccurrences) {
       throw new Error('Role metadata repair plan changed; run the dry-run again');
     }
+    const stagedSize = await this.db.prepare(`SELECT count(*) AS count,
+        coalesce(sum(length(CAST(original_value AS BLOB)) + length(CAST(proposed_value AS BLOB))), 0) AS bytes
+      FROM role_metadata_repair_stage WHERE token = ?`).bind(token).first<{ count: number; bytes: number }>();
+    if (Number(stagedSize?.bytes ?? 0) > ATOMIC_REPAIR_BYTE_LIMIT) {
+      throw new Error(`Role metadata repair exceeds the atomic byte limit of ${ATOMIC_REPAIR_BYTE_LIMIT}; run the dry-run again`);
+    }
+    if (Number(stagedSize?.count ?? 0) !== expectedJobs) throw new Error('Role metadata repair count changed; run the dry-run again');
+    if (expectedJobs > METADATA_REPAIR_RECORD_LIMIT) {
+      throw new Error(`Role metadata repair exceeds the guarded metadata limit of ${METADATA_REPAIR_RECORD_LIMIT} records; run the dry-run again`);
+    }
+    const rows = await this.db.prepare('SELECT * FROM role_metadata_repair_stage WHERE token = ? ORDER BY job_id').bind(token)
+      .all<{ job_id: string; original_value: string; proposed_value: string }>();
     if (Number(plan.conflict_count) > 0) throw new Error('Role metadata conflicts must be resolved before apply');
     if (Number(plan.collection_complete) !== 1) throw new Error('Role metadata collection was incomplete during the dry-run; collect and run the dry-run again');
     const audit = await this.roleMetadataAudit(new Date(appliedAt));
@@ -683,15 +793,14 @@ export class D1CatalogAdmissionStore {
     if (!collection.complete || roleMetadataCollectionSnapshot(collection) !== plan.collection_snapshot) {
       throw new Error('Role metadata collection changed or is incomplete; collect and run the dry-run again');
     }
-    const currentEvidence = await this.db.prepare('SELECT job_id, evidence FROM role_metadata_evidence WHERE is_current = 1 ORDER BY job_id, source_class')
-      .all<{ job_id: string; evidence: string }>();
-    if (roleMetadataEvidenceSnapshot(currentEvidence.results) !== plan.evidence_snapshot) {
+    const evidenceDigests: string[] = [];
+    for await (const page of this.currentRoleMetadataEvidencePages()) {
+      for (const row of page) evidenceDigests.push(roleMetadataEvidenceDigest(row));
+    }
+    if (roleMetadataEvidenceSnapshot(evidenceDigests) !== plan.evidence_snapshot) {
       throw new Error('Role metadata evidence changed; run the dry-run again');
     }
     if (rows.results.length !== expectedJobs) throw new Error('Role metadata repair count changed; run the dry-run again');
-    if (rows.results.length > ATOMIC_REPAIR_RECORD_LIMIT) {
-      throw new Error(`Role metadata repair exceeds the atomic D1 limit of ${ATOMIC_REPAIR_RECORD_LIMIT} records`);
-    }
     if (await this.metadataRevision() !== Number(plan.metadata_revision)) throw new Error('Metadata or reviews changed; run the dry-run again');
     // The only exception is an exact, approved field omission validated over
     // the full cohort during this plan. Unrelated jobs/fields still block all batches.

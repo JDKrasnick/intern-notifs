@@ -6,6 +6,8 @@ import type { Environment } from '../cloudflare/worker.js';
 import type { PostingIdentityRepairPlan } from '../src/posting-identity-repair.js';
 import type { Queue } from '../cloudflare/types.js';
 import { catalogProviderIds, integrationRegistry } from '../src/integration-registry.js';
+import { D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
+import { D1InternshipStore } from '../cloudflare/d1-store.js';
 
 const queue = (metrics: Queue['metrics']): Queue => ({
   async send() {},
@@ -30,6 +32,26 @@ describe('Cloudflare scheduled dispatch cost guard', () => {
 });
 
 describe('Cloudflare DLQ route authentication', () => {
+  it('returns the guarded metadata apply receipt and requires a separate verification request', async () => {
+    const apply = vi.spyOn(D1CatalogAdmissionStore.prototype, 'applyRoleMetadataRepair')
+      .mockResolvedValue({ changed: 1, occurrencesChanged: 0, projectionRefreshRequired: true });
+    const audit = vi.spyOn(D1CatalogAdmissionStore.prototype, 'roleMetadataAudit');
+    vi.spyOn(D1InternshipStore.prototype, 'listCatalog').mockResolvedValue([]);
+    const projection = vi.spyOn(D1InternshipStore.prototype, 'putCatalogProjection').mockResolvedValue();
+    try {
+      const response = await cloudflareWorker.fetch(new Request('https://intern-notifs.test/internal/role-metadata/backfill', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Operations-Key': 'secret' },
+        body: JSON.stringify({ action: 'apply', repairToken: 'a'.repeat(64), expectedJobs: 1, expectedOccurrences: 0 }),
+      }), { OPERATIONS_SHARED_SECRET: 'secret', DB: { prepare: () => ({ async first() { return null; } }) } } as unknown as Environment);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ applied: true, changed: 1, verificationRequired: true,
+        verificationPath: '/internal/role-metadata/audit' });
+      expect(apply).toHaveBeenCalledOnce();
+      expect(projection).toHaveBeenCalledOnce();
+      expect(audit).not.toHaveBeenCalled();
+    } finally { vi.restoreAllMocks(); }
+  });
+
   it('hides metadata omission preview and approval without the operations key', async () => {
     for (const action of ['preview-omission', 'approve-omission']) {
       const response = await cloudflareWorker.fetch(new Request('https://intern-notifs.test/internal/role-metadata/review', {
