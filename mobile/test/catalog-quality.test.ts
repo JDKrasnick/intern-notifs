@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { boundedCatalogText, compactLocations, presentCatalogRole, seasonLabel } from "../src/catalog-quality.js";
 
 describe("catalog presentation hardening", () => {
+  it("uses explicit currency, period and applicability on every role surface", () => {
+    const role = { compensation: { raw: "legacy", ranges: [
+      { minAmount: 2000, maxAmount: 4000, currency: "JPY", period: "hourly", applicableLocations: ["Tokyo"] },
+      { minAmount: 123500, maxAmount: 170000, currency: "USD", period: "unknown", applicableLocations: ["New York"] },
+      { minAmount: 3500, maxAmount: 5700, currency: "USD", period: "weekly" },
+    ] } };
+    expect(presentCatalogRole(role).compensation).toBe("JPY 2,000–4,000/hour (Tokyo) · USD 123,500–170,000 · period not stated (New York) · USD 3,500–5,700/week");
+    expect(presentCatalogRole({ compensation: { raw: "" } }).compensation).toBe("");
+  });
   it("bounds legacy API and cache values without splitting emoji", () => {
     const value = `👩🏽‍💻 ${"engineer ".repeat(80)}`;
     expect([...boundedCatalogText(value, 40)].length).toBeLessThanOrEqual(40);

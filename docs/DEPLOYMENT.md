@@ -137,14 +137,18 @@ documentation.
 
 ## Employer metadata enrichment (#134)
 
-Apply `0015_role_metadata_enrichment.sql` and
-`0016_role_metadata_repair_plans.sql` before deploying the enrichment Worker.
+Apply `0015_role_metadata_enrichment.sql`, `0016_role_metadata_repair_plans.sql`
+and `0017_metadata_acquisition.sql` before deploying the enrichment Worker.
 The migrations are additive: they store compact versioned field evidence,
 historical artifact versions, extraction outcomes, conflicts, and guarded repair
-staging. Full job descriptions are never written to these tables.
+staging, acquisition leases and host backoff. Full job descriptions are never
+written to these tables. Preserve the active production publication flags:
+`IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED=true` and
+`IDENTITY_CONFIRMED_COVERAGE_FLOOR=0.70`; local defaults differ.
 
-After deployment, use the existing destination-verification queue and Browser
-Rendering binding to collect historical exact-posting evidence. Collection is
+After deployment, use the existing destination-verification queue to collect
+historical exact-posting evidence. Identity-checked public APIs run first;
+Browser Rendering covers unsupported or unsuccessful API routes. Collection is
 staging-only and does not rewrite public jobs:
 
 ```bash
@@ -156,11 +160,14 @@ npm run migrate:role-metadata -- dry-run
 ```
 
 After each queued batch drains, repeat collection with
-`--collection-token TOKEN_FROM_FIRST_RESPONSE` until the audit reports
+`--collection-token TOKEN_FROM_FIRST_RESPONSE` and
+`--cursor NEXT_CURSOR_FROM_PREVIOUS_RESPONSE` until the audit reports
 `collectionCoverage.complete: true`, with both `pendingOrUnobserved` and
 `stale` at zero. Queued or in-flight verifications remain pending until their
 extraction attempt is recorded. The dry run returns HTTP 409 and apply refuses
-to run while collection is incomplete.
+to run while collection is incomplete. Cursor exhaustion only means no more
+eligible rows in this pass, not that queued work completed. Restart without a
+cursor after pending leases (30 minutes) or retry backoffs expire when needed.
 
 Archive the complete collection and dry-run reports. Review fills and
 corrections by field/source class, every conflict, unsupported currencies/pay periods, and
@@ -177,15 +184,19 @@ npm run migrate:role-metadata -- apply \
 The transaction compares every original job JSON value, emits no outbox event,
 and refuses stale counts or any open metadata conflict. A conflict-free apply
 refreshes grouped projections and returns a verification audit. Run `audit` and
-`dry-run` again; `supportedRoleSpecificDisclosedMetadataMisses` and
-`projectionOnlyOmissions` must both be zero. Sample `/jobs`, `/catalog`, and
+`dry-run` again; `projectionOnlyOmissions` must be empty.
+`supportedRoleSpecificDisclosedMetadataMisses` and `disclosureRecall` remain null
+until an independent disclosure benchmark exists; do not interpret them as zero.
+Sample `/jobs`, `/catalog`, and
 group detail results to confirm unchanged job IDs, occurrences, saves,
 applications, receipts, notification flags/tombstones, visibility timestamps,
 and lifecycle state. Roll back exposure with a new reviewed repair; retain the
 evidence and conflict history.
 
 After projection, the daily destination-verification scheduler rechecks up to
-100 exact pages whose metadata observation is at least 30 days old. The queued
+100 eligible destinations, including never-inspected roles and old extraction
+versions, then the oldest observations beyond the revalidation cutoff. Host
+rotation and reservations prevent repeated selection of the same batch. The queued
 artifact hash prevents an older extraction from satisfying that revalidation.
 
 ## Catalog admission rollout (#120)

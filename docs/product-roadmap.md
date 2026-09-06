@@ -84,6 +84,8 @@
   - [x] Add additive D1 evidence/history, conflict and guarded repair tables plus operations-only collection, dry-run, apply, verification, and CLI workflows.
   - [x] Apply migrations `0015_role_metadata_enrichment.sql` and `0016_role_metadata_repair_plans.sql` and deploy the Worker while preserving production publication settings (2026-09-05).
   - [x] Audit all 1,453 public roles missing pay and add regressions for confirmed disclosure formats; record recoverability and acquisition limits in [the coverage audit](role-metadata-coverage.md).
+  - [x] Expand exact-role API acquisition to Greenhouse, Lever, Ashby, Workday and SmartRecruiters; retain native/unknown-period pay and publisher range labels; add shared display formatting, fair reserved scheduling, host backoff and resumable coverage reports in PR #161.
+  - [ ] Deploy migration `0017_metadata_acquisition.sql` and the expanded Worker/client, finish the independently reviewed cohort, and verify provider canaries and native rendering. See [the delivery plan](metadata-coverage-plan.md).
   - [ ] Archive the authenticated production collection/dry-run, obtain owner approval for its exact token/counts, apply, and verify zero supported role-specific misses or projection-only omissions. Existing operations credential required; no guarded backfill has been applied.
 - [ ] Complete issue #99 catalog quality hardening and backfill.
   - [x] Add shared catalog normalization, structured locations/pay, defensive mobile presentation, and the guarded D1 repair workflow.

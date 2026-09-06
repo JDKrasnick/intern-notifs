@@ -743,7 +743,7 @@ function CatalogGroupSheet({
                       <Text style={styles.catalogGroupRoleTitle} numberOfLines={2}>{boundedCatalogText(item.title, 240)}</Text>
                       <Text style={styles.catalogGroupRoleMeta} numberOfLines={2}>{compactLocations(item.locations, item.location)} · {seasonLabel(item.season)}</Text>
                       {item.postingIdentityStatus === "unconfirmed" ? <IdentityTrustLabel /> : null}
-                      {item.compensation?.raw ? <Text style={styles.catalogGroupRolePay} numberOfLines={2}>{boundedCatalogText(item.compensation.raw, 160)}</Text> : null}
+                      {presentCatalogRole(item).compensation ? <Text style={styles.catalogGroupRolePay} numberOfLines={2}>{presentCatalogRole(item).compensation}</Text> : null}
                     </View>
                     <Ionicons name="chevron-forward" size={18} color={colors.signal} />
                   </TouchableOpacity>
