@@ -32,6 +32,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { ApiError, api, authenticatedRead, responseCache, sessionStorage } from "./src/api";
 import { appendGroupedCatalogPage, catalogCardKind, type GroupedCatalogPage } from "./src/catalog";
 import { boundedCatalogText, compactLocations, presentCatalogRole, seasonLabel } from "./src/catalog-quality";
+import { housingLabels, type DisplayHousingDetail } from "../shared/housing-display";
 import { catalogGroupAvailabilityLabel, groupedCatalogParameters } from "./src/catalog-filters";
 import { createLatestRequestGuard } from "./src/latest-request";
 import { uploadDocumentContent } from "./src/document-upload";
@@ -97,6 +98,7 @@ type Job = {
   season: string;
   applyUrl: string;
   compensation: { raw: string };
+  housing?: DisplayHousingDetail[];
   employerCategory?: EmployerCategory;
   requirements?: { requiresUsCitizenship: boolean; advancedDegreeRequired: boolean };
   open: boolean;
@@ -158,6 +160,7 @@ type CatalogGroupRole = {
   requiresUsCitizenship?: boolean;
   advancedDegreeRequired?: boolean;
   compensation: { raw: string };
+  housing?: DisplayHousingDetail[];
   firstSeenAt: string;
   lastSeenAt: string;
   sourceReferences: Job["sourceReferences"];
@@ -597,6 +600,7 @@ function catalogRoleJob(role: CatalogGroupRole): Job {
     season: role.season,
     applyUrl: role.officialApplyUrl,
     compensation: role.compensation ?? { raw: "" },
+    housing: role.housing,
     employerCategory: role.employerCategory,
     requirements: {
       requiresUsCitizenship: Boolean(role.requiresUsCitizenship),
@@ -930,6 +934,12 @@ function JobDetailSheet({
               <Text style={styles.sheetTitle}>{roleDisplay?.title}</Text>
               <Text style={styles.sheetCompany}>{roleDisplay?.company}</Text>
               <Text style={styles.sheetDetail}>{details}</Text>
+              {housingLabels(role.housing).map((housing, index) => (
+                <View key={`${housing.label}-${index}`} style={styles.sheetTrustBlock}>
+                  <Text style={styles.sheetTrustPrimary}>{housing.label}</Text>
+                  {housing.detail ? <Text style={styles.sheetTrustSecondary}>{housing.detail}</Text> : null}
+                </View>
+              ))}
               <View style={styles.sheetTrustBlock}>
                 <Text style={styles.sheetTrustPrimary}>{source.primary}</Text>
                 {source.corroboration ? <Text style={styles.sheetTrustSecondary}>{source.corroboration}</Text> : null}
