@@ -1045,7 +1045,7 @@ function ApplyNowButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityHint={hint}
-      accessibilityState={{ disabled }}
+      aria-disabled={disabled}
       disabled={disabled}
       onPress={onPress}
       style={[styles.applyNowButton, disabled && styles.actionButtonDisabled]}
@@ -1103,12 +1103,12 @@ function EmployerCategoryFilter({
 }) {
   const options: Array<EmployerCategory | "all"> = ["all", "faang", "startup", "normal"];
   return (
-    <View style={styles.companyFilter} accessibilityRole="radiogroup">
+    <View style={styles.companyFilter} accessibilityRole="radiogroup" accessibilityLabel="Company type">
       {options.map((option) => (
         <TouchableOpacity
           key={option}
           accessibilityRole="radio"
-          accessibilityState={{ selected: selected === option }}
+          aria-checked={selected === option}
           style={[styles.chip, selected === option && styles.chipOn]}
           onPress={() => onChange(option)}
         >
@@ -1129,12 +1129,12 @@ function JobStatusFilter({
   onChange: (value: "open" | "closed") => void;
 }) {
   return (
-    <View style={styles.companyFilter} accessibilityRole="radiogroup">
+    <View style={styles.companyFilter} accessibilityRole="radiogroup" accessibilityLabel="Availability">
       {(["open", "closed"] as const).map((option) => (
         <TouchableOpacity
           key={option}
           accessibilityRole="radio"
-          accessibilityState={{ selected: status === option }}
+          aria-checked={status === option}
           style={[styles.chip, status === option && styles.chipOn]}
           onPress={() => onChange(option)}
         >
@@ -1168,7 +1168,7 @@ function RequirementFilter({
         <TouchableOpacity
           key={option.key}
           accessibilityRole="checkbox"
-          accessibilityState={{ checked: option.selected }}
+          aria-checked={option.selected}
           style={[styles.chip, option.selected && styles.chipOn]}
           onPress={option.onPress}
         >
@@ -1225,7 +1225,7 @@ function RoleFilters({
       <View style={styles.filterBar}>
         <TouchableOpacity
           accessibilityRole="button"
-          accessibilityState={{ expanded }}
+          aria-expanded={expanded}
           onPress={onToggle}
           style={styles.filterToggle}
         >
@@ -1247,9 +1247,9 @@ function RoleFilters({
           <Text style={styles.filterLabel}>Availability</Text>
           <JobStatusFilter status={jobStatus} onChange={onJobStatusChange} />
           <Text style={styles.filterLabel}>Source</Text>
-          <View style={styles.companyFilter}>
+          <View style={styles.companyFilter} accessibilityRole="radiogroup" accessibilityLabel="Source">
             {([['all', 'All'], ['direct', 'Direct'], ['community', 'Community'], ['corroborated', 'Direct + community']] as const).map(([value, label]) => (
-              <TouchableOpacity key={value} accessibilityRole="radio" accessibilityState={{ selected: sourceFilter === value }} style={[styles.chip, sourceFilter === value && styles.chipOn]} onPress={() => onSourceFilterChange(value)}>
+              <TouchableOpacity key={value} accessibilityRole="radio" aria-checked={sourceFilter === value} style={[styles.chip, sourceFilter === value && styles.chipOn]} onPress={() => onSourceFilterChange(value)}>
                 <Text style={[styles.chipLabel, sourceFilter === value && styles.chipLabelOn]}>{label}</Text>
               </TouchableOpacity>
             ))}
@@ -1309,11 +1309,11 @@ function CompanyCoverageDisclosure() {
     <View style={styles.coverageRegion}>
       <TouchableOpacity
         accessibilityRole="button"
-        accessibilityState={{ expanded }}
+        aria-expanded={expanded}
         onPress={() => setExpanded((value) => !value)}
         style={styles.coverageToggle}
       >
-        <View>
+        <View style={styles.coverageToggleCopy}>
           <Text style={styles.coverageToggleTitle}>Company coverage</Text>
           <Text style={styles.coverageToggleSummary}>
             {coverage
@@ -1409,7 +1409,7 @@ function TabNavigation({
           <TouchableOpacity
             key={item.key}
             accessibilityRole="tab"
-            accessibilityState={{ selected }}
+            aria-selected={selected}
             accessibilityLabel={item.label}
             onPress={() => onChange(item.key)}
             style={[styles.navItem, rail && styles.navRailItem]}
@@ -1445,7 +1445,7 @@ function ActionButton({
   return (
     <TouchableOpacity
       accessibilityRole="button"
-      accessibilityState={{ disabled }}
+      aria-disabled={disabled}
       disabled={disabled}
       onPress={onPress}
       style={[
@@ -1562,7 +1562,7 @@ function ChoiceOption({
   return (
     <TouchableOpacity
       accessibilityRole="radio"
-      accessibilityState={{ selected }}
+      aria-checked={selected}
       onPress={onPress}
       style={[styles.choiceOption, selected && styles.choiceOptionSelected]}
     >
@@ -3105,7 +3105,7 @@ function EmployerPortal({ initialSection }: { initialSection: EmployerWorkspaceS
             <TouchableOpacity
               key={item.id}
               accessibilityRole="tab"
-              accessibilityState={{ selected: section === item.id }}
+              aria-selected={section === item.id}
               accessibilityHint={item.description}
               onPress={() => changeSection(item.id)}
               style={[styles.employerNavItem, section === item.id && styles.employerNavItemActive]}
@@ -3137,7 +3137,7 @@ function EmployerPortal({ initialSection }: { initialSection: EmployerWorkspaceS
             <View style={styles.employerEvidence}>
               <Text style={styles.inputLabel}>Organization</Text>
               {organizations.map((candidate) => <TouchableOpacity key={candidate.organizationId} accessibilityRole="button"
-                accessibilityState={{ selected: candidate.organizationId === organization?.organizationId }}
+                aria-selected={candidate.organizationId === organization?.organizationId}
                 onPress={() => { setOrganization(candidate); void loadWorkspace(candidate.organizationId); }} style={styles.employerInlineAction}>
                 <Text style={styles.employerInlineActionText}>{candidate.name}{candidate.organizationId === organization?.organizationId ? " · selected" : ""}</Text>
               </TouchableOpacity>)}
@@ -3345,7 +3345,7 @@ function GuestExperience({
   return (
     <View style={styles.guestRoot}>
       <SafeAreaView
-        style={styles.screen}
+        style={[styles.screen, showAccount && Platform.OS === "web" && styles.hiddenScreen]}
         accessibilityElementsHidden={showAccount}
         importantForAccessibility={showAccount ? "no-hide-descendants" : "auto"}
       >
@@ -3537,7 +3537,7 @@ function Onboarding({
               <TouchableOpacity
                 key={category}
                 accessibilityRole="checkbox"
-                accessibilityState={{ checked: selected.includes(category) }}
+                aria-checked={selected.includes(category)}
                 style={[
                   styles.chip,
                   selected.includes(category) && styles.chipOn,
@@ -4520,7 +4520,7 @@ function Profile({
           <TouchableOpacity
             key={`employer-${category}`}
             accessibilityRole="checkbox"
-            accessibilityState={{ checked: includeEmployerCategories.includes(category) }}
+            aria-checked={includeEmployerCategories.includes(category)}
             style={[styles.chip, includeEmployerCategories.includes(category) && styles.chipOn]}
             onPress={() => {
               markJobPreferencesDirty();
@@ -4646,7 +4646,7 @@ function Profile({
               includeCategories.includes(category) && styles.chipOn,
             ]}
             accessibilityRole="checkbox"
-            accessibilityState={{ checked: includeCategories.includes(category) }}
+            aria-checked={includeCategories.includes(category)}
             onPress={() => {
               markJobPreferencesDirty();
               toggleCategory(category, includeCategories, setIncludeCategories);
@@ -4685,7 +4685,7 @@ function Profile({
               excludeCategories.includes(category) && styles.chipExclude,
             ]}
             accessibilityRole="checkbox"
-            accessibilityState={{ checked: excludeCategories.includes(category) }}
+            aria-checked={excludeCategories.includes(category)}
             onPress={() => {
               markJobPreferencesDirty();
               toggleCategory(category, excludeCategories, setExcludeCategories);
@@ -4936,7 +4936,7 @@ function AuthButton({
   return (
     <TouchableOpacity
       accessibilityRole="button"
-      accessibilityState={{ disabled }}
+      aria-disabled={disabled}
       disabled={disabled}
       onPress={onPress}
       style={[
@@ -5135,7 +5135,7 @@ function SignIn({
                   <View style={styles.consentGroup}>
                     <TouchableOpacity
                       accessibilityRole="checkbox"
-                      accessibilityState={{ checked: ageAttested }}
+                      aria-checked={ageAttested}
                       onPress={() => setAgeAttested((current) => !current)}
                       style={styles.consentRow}
                     >
@@ -5146,7 +5146,7 @@ function SignIn({
                     </TouchableOpacity>
                     <TouchableOpacity
                       accessibilityRole="checkbox"
-                      accessibilityState={{ checked: policiesAccepted }}
+                      aria-checked={policiesAccepted}
                       onPress={() => setPoliciesAccepted((current) => !current)}
                       style={styles.consentRow}
                     >
@@ -5215,7 +5215,11 @@ function SignIn({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.canvas },
   guestRoot: { flex: 1 },
-  hiddenScreen: { ...StyleSheet.absoluteFillObject, opacity: 0 },
+  // Keep native list state/layout intact. On web, opacity and pointerEvents
+  // alone leave invisible descendants in the keyboard tab order.
+  hiddenScreen: Platform.OS === "web"
+    ? { display: "none" }
+    : { ...StyleSheet.absoluteFillObject, opacity: 0 },
   authOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.canvas },
   appShell: { flex: 1 },
   appShellWide: { flexDirection: "row" },
@@ -5699,7 +5703,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     minHeight: 58,
     paddingVertical: 8,
+    gap: 12,
   },
+  coverageToggleCopy: { flex: 1, minWidth: 0 },
   coverageToggleTitle: { color: colors.ink, fontSize: 15, fontWeight: "700" },
   coverageToggleSummary: { color: colors.muted, fontSize: 13, lineHeight: 19, marginTop: 2 },
   coveragePanel: { paddingBottom: 12 },
