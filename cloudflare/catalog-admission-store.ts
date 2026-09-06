@@ -512,19 +512,25 @@ export class D1CatalogAdmissionStore {
     return { original: row.value, job, evidence };
   }
 
+  private async metadataJobRevision(jobId: string): Promise<number> {
+    const row = await this.db.prepare('SELECT revision FROM role_metadata_job_revision WHERE job_id = ?')
+      .bind(jobId).first<{ revision: number }>();
+    return Number(row?.revision ?? 0);
+  }
+
   async stageRoleMetadataOmission(jobId: string, createdAt: string) {
-    const revision = await this.metadataRevision();
+    const revision = await this.metadataJobRevision(jobId);
     const subject = await this.metadataReviewSubject(jobId);
     const conflicts = reconcileRoleMetadata(subject.evidence, subject.job).conflicts.filter(item => item.field === 'compensation');
     if (!conflicts.length) throw new Error('Only currently conflicting compensation may be reviewed for omission');
     const evidenceFingerprint = roleMetadataReviewFingerprint(subject.evidence);
     const decision = { field: 'compensation' as const, action: 'omit' as const, reason: 'publisher-inconsistent' as const, evidenceFingerprint };
     const reviewToken = hash(`${jobId}\0${subject.original}\0${JSON.stringify(decision)}\0${revision}`);
-    if (await this.metadataRevision() !== revision) throw new Error('Metadata changed during review; preview again');
+    if (await this.metadataJobRevision(jobId) !== revision) throw new Error('Posting metadata changed during review; preview again');
     const receipt: RoleMetadataOmission = { ...decision, reviewToken };
     await this.db.prepare(`INSERT INTO role_metadata_review_plans
-      (token, job_id, original_value, decision, metadata_revision, created_at) VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(token) DO NOTHING`).bind(reviewToken, jobId, subject.original, JSON.stringify(receipt), revision, createdAt).run();
+      (token, job_id, original_value, decision, metadata_revision, job_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(token) DO NOTHING`).bind(reviewToken, jobId, subject.original, JSON.stringify(receipt), await this.metadataRevision(), revision, createdAt).run();
     return { reviewToken, expectedDecisions: 1, jobId, company: subject.job.company, title: subject.job.title,
       decision: receipt, conflicts, publicJobsChanged: 0, requiresSeparateRepairApproval: true };
   }
@@ -532,13 +538,13 @@ export class D1CatalogAdmissionStore {
   async approveRoleMetadataOmission(token: string, expectedDecisions: number, approvedAt: string) {
     if (expectedDecisions !== 1) throw new Error('expectedDecisions must match the review preview exactly');
     const plan = await this.db.prepare('SELECT * FROM role_metadata_review_plans WHERE token = ?').bind(token)
-      .first<{ job_id: string; original_value: string; decision: string; metadata_revision: number; approved_at: string | null }>();
+      .first<{ job_id: string; original_value: string; decision: string; job_revision: number; approved_at: string | null }>();
     if (!plan || plan.approved_at) throw new Error('Review plan is missing or already approved; preview again');
     const guard = this.db.prepare(`INSERT INTO role_metadata_review_guards(token, ok, approved_at)
-      SELECT ?, CASE WHEN (SELECT revision FROM role_metadata_revision WHERE id = 1) = ?
+      SELECT ?, CASE WHEN coalesce((SELECT revision FROM role_metadata_job_revision WHERE job_id = ?), 0) = ?
         AND EXISTS (SELECT 1 FROM catalog_items WHERE pk = ? AND sk = 'META' AND kind = 'internship' AND value = ?)
         AND EXISTS (SELECT 1 FROM role_metadata_review_plans WHERE token = ? AND approved_at IS NULL)
-      THEN 1 ELSE 0 END, ?`).bind(token, plan.metadata_revision, `JOB#${plan.job_id}`, plan.original_value, token, approvedAt);
+      THEN 1 ELSE 0 END, ?`).bind(token, plan.job_id, plan.job_revision, `JOB#${plan.job_id}`, plan.original_value, token, approvedAt);
     await this.db.batch([guard,
       this.db.prepare(`INSERT INTO role_metadata_review_decisions(job_id, token, decision, approved_at) VALUES (?, ?, ?, ?)
         ON CONFLICT(job_id) DO UPDATE SET token=excluded.token, decision=excluded.decision, approved_at=excluded.approved_at`)
@@ -598,7 +604,7 @@ export class D1CatalogAdmissionStore {
       });
       const evidence = sourceReferences.flatMap(reference => reference.metadataEvidence ?? []);
       const review = reviews.get(job.jobId);
-      const validReview = review?.evidenceFingerprint === roleMetadataReviewFingerprint(evidence) ? review : undefined;
+      const validReview = review && review.evidenceFingerprint === roleMetadataReviewFingerprint(evidence) ? review : undefined;
       if (validReview) reviewedOmissions.push({ jobId: job.jobId, reviewToken: validReview.reviewToken });
       const result = projectRoleMetadata({ ...job, sourceReferences, metadataOmission: validReview });
       conflicts.push(...result.conflicts);

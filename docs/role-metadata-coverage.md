@@ -18,15 +18,17 @@ Additional pay regressions cover regional exceptions, structured Greenhouse band
 units, spaced thousands/currency codes, adjacent minimum/maximum fields, Workday
 start/end labels and explicit lower-bound starting rates. The original 53-posting
 API replay still retains pay on every posting with zero reproduced conflicts.
-In a second 38-response API sample, only two Melius postings retain conflicts:
+In the final 44-response API sample, only two Melius postings retain conflicts:
 the API declares USD 11,000/month while the description separately declares
 8,500 salary and 2,500 housing stipend. No salary winner is inferred.
 
 An operations-only reviewed-omission workflow requires an exact approved review
 token, then a separately approved repair token/counts. Review approval changes no
 public job. Activated omissions expire when versioned evidence changes. Migration
-0018 adds the ledger and an atomic revision guard; unrelated conflicts and the
-full collection gate remain blocking. See [deployment instructions](DEPLOYMENT.md#reviewed-omission-of-disputed-pay).
+0018 adds the ledger and an atomic revision guard. Migration 0019 scopes review
+approval to the posting's revision without weakening the catalog-wide repair
+guard; unrelated conflicts and the full collection gate remain blocking. See
+[deployment instructions](DEPLOYMENT.md#reviewed-omission-of-disputed-pay).
 
 These are implementation and sample-validation results, not achieved historical
 coverage or catalog-wide disclosure recall. The v7 collection pass reached

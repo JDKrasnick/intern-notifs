@@ -139,7 +139,8 @@ documentation.
 
 Apply `0015_role_metadata_enrichment.sql`, `0016_role_metadata_repair_plans.sql`
 and `0017_metadata_acquisition.sql` before deploying the enrichment Worker.
-Extraction v8 additionally requires `0018_metadata_review.sql` before deployment.
+Extraction v8 additionally requires `0018_metadata_review.sql` and
+`0019_metadata_job_review_revision.sql` before deployment.
 The migrations are additive: they store compact versioned field evidence,
 historical artifact versions, extraction outcomes, conflicts, and guarded repair
 staging, acquisition leases and host backoff. Full job descriptions are never
@@ -224,6 +225,10 @@ npm run migrate:role-metadata -- approve-omission \
 
 Approval records an auditable decision but changes **zero public jobs**. Run a
 fresh repair dry-run and obtain separate approval of its repair token/counts.
+Migration 0019 binds review approval to the exact posting's catalog/evidence
+revision, so unrelated collection does not expire the preview. Same-posting
+changes still reject approval atomically; the separate repair remains guarded
+by the catalog-wide revision. Pre-0019 previews must be regenerated.
 `reviewedOmissions` lists the exact decisions used by that plan. Every other
 field/job conflict and the full collection-completeness gate remain blocking.
 Conflict rows remain in history, not silently marked resolved. The activated

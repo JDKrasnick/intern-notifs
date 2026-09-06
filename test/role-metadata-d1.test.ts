@@ -31,7 +31,7 @@ function sqliteD1(database: DatabaseSync): D1Database {
 
 function subject() {
   const database = new DatabaseSync(':memory:');
-  for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql', '0017_metadata_acquisition.sql', '0018_metadata_review.sql']) {
+  for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql', '0017_metadata_acquisition.sql', '0018_metadata_review.sql', '0019_metadata_job_review_revision.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   const db = sqliteD1(database);
@@ -90,6 +90,27 @@ async function disputedPay(current: ReturnType<typeof subject>, jobId = 'job-1',
 }
 
 describe('auditable compensation omissions', () => {
+  it('keeps a posting review valid across unrelated collection updates', async () => {
+    const current = subject(); const { observedAt } = await disputedPay(current);
+    const review = await current.operations.stageRoleMetadataOmission('job-1', observedAt);
+    await disputedPay(current, 'other-job');
+    await expect(current.operations.approveRoleMetadataOmission(review.reviewToken, 1, observedAt))
+      .resolves.toMatchObject({ approvedDecisions: 1, publicJobsChanged: 0 });
+  });
+
+  it('rejects a same-posting evidence race at the atomic approval guard', async () => {
+    const current = subject(); const { observedAt } = await disputedPay(current);
+    const review = await current.operations.stageRoleMetadataOmission('job-1', observedAt);
+    const batch = current.db.batch.bind(current.db);
+    current.db.batch = async statements => {
+      current.database.prepare("DELETE FROM role_metadata_evidence WHERE job_id = 'job-1'").run();
+      return batch(statements);
+    };
+    await expect(current.operations.approveRoleMetadataOmission(review.reviewToken, 1, observedAt)).rejects.toThrow();
+    expect(current.database.prepare('SELECT count(*) AS count FROM role_metadata_review_decisions').get()).toMatchObject({ count: 0 });
+    expect(current.database.prepare('SELECT count(*) AS count FROM role_metadata_review_guards').get()).toMatchObject({ count: 0 });
+  });
+
   it('rolls back a repair when its approved review changes between preflight and the atomic guard', async () => {
     const current = subject(); const { observedAt } = await disputedPay(current);
     const review = await current.operations.stageRoleMetadataOmission('job-1', observedAt);
