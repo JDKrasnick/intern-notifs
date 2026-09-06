@@ -161,7 +161,8 @@ No native screenshot is counted as successful pay-display verification.
 
 The existing operations credential now authenticates successfully; it was not
 rotated. Migration `0017_metadata_acquisition.sql` is applied. Worker version
-`7427b669-cd52-469f-8ed3-3ca504dff9e7` serves revision `13a89ec` at 100%.
+`de22f8fe-5dbf-48cf-823a-35000a3201e0` serves revision `cdda7f6` at 100%
+(16:56:51 UTC), with extraction version 7.
 The previous dashboard versions had the same script hash as the deployed GitHub
 timeout fix `7fc3073`; that fix is merged and retained. Publication remains
 enabled with the 70% confirmed-identity floor; trusted-community publication
@@ -220,3 +221,30 @@ lint, Worker dry-run build and all PR checks passed. Regressions cover the Worke
 redirect mode, confirmed legacy identity, version-aware retry backoff, and
 901-job repairs with a conflict outside the selected atomic batch. Local rollout
 reports are under `.context/reviews/metadata-rollout-2026-09-06/` (gitignored).
+
+### Afternoon validation
+
+Version 7 preserves paragraph/list boundaries in API, JSON-LD and rendered
+descriptions; decodes encoded range dashes; and keeps degree/job-level rates
+separate. A 53-posting live API corpus reproduced 52 conflicts with the old
+parser and zero with the new parser, with pay retained for every posting.
+Production evidence confirms J&J's USD 23.50–52.50/hour, Freeform's three
+degree-specific hourly rates, and Univera's two labeled ranges with unstated
+period/currency. These checks do not establish catalog-wide disclosure recall.
+
+Exact acquisition also supports dotted Ashby board names and observed Greenhouse
+embed identities. Live API checks recover Persona's education requirements and
+Tower Research's 3,500–5,700/week disclosure (currency not stated). A local browser
+confirms Citadel's 4,500–5,800/week disclosure, but production browser acquisition
+still fails there. Failed/partial acquisitions retain their retry backoff and
+remain unresolved; no guard is relaxed to complete the repair.
+
+At 16:58:37 UTC the public catalog contains 1,682 roles: 270 with pay (16.1%) and
+1,007 with enriched metadata (59.9%). The changing public cohort includes normal
+ingestion/lifecycle updates, not historical repair gains. Version-7 collection
+has restarted across 4,657 eligible job/source pairs and remains incomplete.
+The D1 repair-guard table still records zero applied repairs.
+
+Validation for `cdda7f6`: 1,295 backend tests passed, 284 skipped; typecheck, lint,
+Worker dry-run build and all PR checks passed. Native acceptance and the
+independent disclosure benchmark remain open.

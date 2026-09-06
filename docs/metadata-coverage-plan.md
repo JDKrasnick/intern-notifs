@@ -18,6 +18,12 @@ collection avoids browser use when an exact-role response succeeds; normal
 admission verification remains independent. Failed acquisition never supplies
 new destination or employer authority.
 
+Worker source `cdda7f6` is deployed with extraction v7. Live validation adds
+paragraph/list boundary preservation, degree/job-level rates, encoded ranges,
+dotted Ashby boards and exact Greenhouse embed recovery. The 53-posting replay
+retains pay for every posting and removes its 52 reproduced conflicts; it is not
+a full-cohort recall benchmark. Historical collection remains staging-only.
+
 Remaining operational acceptance is explicit: finish independent browser/field
 review and production collection (the existing credential now works), approve
 and apply each exact repair batch, then verify public
