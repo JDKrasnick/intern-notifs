@@ -140,7 +140,8 @@ export async function persistDestinationAdmission(input: {
       expectedTitle: reference.title,
       expectedPostingId: message.providerIdentity.postingId,
       page: { title: evidence.title ?? reference.title,
-        text: evidence.contentSource === 'json-ld' ? undefined : evidence.contentExcerpt },
+        text: evidence.contentSource === 'json-ld' ? undefined : evidence.contentExcerpt,
+        compensationSections: evidence.compensationSections },
       jsonLdArtifacts: evidence.metadataArtifacts,
       sourceId: message.sourceId,
       sourceUrl: evidence.url,
@@ -398,13 +399,19 @@ export async function processDestinationVerificationBatch(
                     } catch { return false; }
                   });
                   const description = document.querySelector('meta[name="description"],meta[property="og:description"]')?.getAttribute('content') ?? undefined;
+                  const compensationRows = [...document.querySelectorAll<HTMLElement>('h2,h3')]
+                    .filter((heading) => visible(heading) && /^(?:compensation|salary|pay range)$/iu.test(heading.innerText.trim()))
+                    .flatMap((heading) => [...(heading.nextElementSibling?.matches('ul,ol') ? heading.nextElementSibling.children : [])])
+                    .filter(visible).map((row) => (row as HTMLElement).innerText.trim());
                   const fullText = (document.querySelector('main')?.innerText ?? document.body?.innerText ?? '').replace(/\s+/g, ' ').trim();
                   const main = fullText.slice(0, 40_000);
                   return {
                     url: location.href, title: document.title || undefined, description,
                     visibleText: main || undefined, structuredJobText: structuredJobText.join(' ').slice(0, 40_000) || undefined,
                     structuredJobDocuments: structuredJobText,
-                    inspectionTruncated: fullText.length > 40_000 || structuredNodes.length > 20 || structuredNodes.some((node) => (node.textContent?.length ?? 0) > 20_000),
+                    compensationRows: compensationRows.slice(0, 20).map((row) => row.slice(0, 1000)),
+                    inspectionTruncated: fullText.length > 40_000 || structuredNodes.length > 20 || structuredNodes.some((node) => (node.textContent?.length ?? 0) > 20_000)
+                      || compensationRows.length > 20 || compensationRows.some((row) => row.length > 1000),
                     loadingShell: fullText.length < 500 || /^(?:loading[.…\s]*)$/i.test(fullText),
                     jobPostingCount, distinctJobLinkCount: distinctJobLinks.size,
                     applicationFormPresent: actionableApply || [...document.querySelectorAll<Element>(

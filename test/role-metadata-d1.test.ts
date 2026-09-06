@@ -10,6 +10,7 @@ import { persistDestinationAdmission } from '../cloudflare/destination-verificat
 import { parseMetadataApiResponse } from '../src/metadata-acquisition.js';
 import { mergeSourceOccurrence } from '../src/identity/source-occurrence.js';
 import type { Internship } from '../src/types.js';
+import { combineRenderedFrameEvidence } from '../src/rendered-destination-evidence.js';
 
 function sqliteD1(database: DatabaseSync): D1Database {
   const prepared = (query: string, values: SQLInputValue[] = []): D1PreparedStatement => ({
@@ -75,6 +76,31 @@ function jobWithVerifiedDestination(): Internship {
 }
 
 describe('D1 role metadata evidence and guarded repair', () => {
+  it('replaces flattened salary conflicts with labeled browser evidence before guarded repair', async () => {
+    const current = subject(); const original = jobWithVerifiedDestination();
+    await current.jobs.putInternship(original);
+    const rows = ['Region One\n$120K – $150K', 'Region Two\n$95K – $120K', 'Canada\nCA$140K – CA$175K'];
+    for (const labeled of [false, true]) {
+      const inspectedAt = labeled ? '2026-09-06T07:00:00.000Z' : '2026-09-06T06:00:00.000Z';
+      const evidence = combineRenderedFrameEvidence({ role: original.title, frames: [{ url: original.applyUrl,
+        title: original.title, visibleText: `${original.title}. Compensation ${rows.join(' ')}`,
+        ...(labeled ? { compensationRows: rows } : {}), jobPostingCount: 1, distinctJobLinkCount: 0, applicationFormPresent: true }] })!;
+      await persistDestinationAdmission({ jobs: current.jobs, operations: current.operations, job: original,
+        reference: original.sourceReferences[0]!, reachability: 'live', inspectedAt, evidence, browserVisible: true,
+        message: { version: 1, jobId: original.jobId, sourceId: 'community-acme', externalId: 'row-1',
+          providerIdentity: { provider: 'github', sourceId: 'community-acme', sourceUrl: original.applyUrl },
+          candidateUrl: original.applyUrl, queuedAt: inspectedAt, reason: 'historical-backfill',
+          metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION, metadataBackfillToken: 'label-repair' } });
+      const plan = await current.operations.stageRoleMetadataRepair(inspectedAt);
+      if (!labeled) { expect(plan.conflicts.length).toBeGreaterThan(0); continue; }
+      expect(plan.conflicts).toEqual([]);
+      expect((await current.jobs.getJob(original.jobId))?.compensation.raw).toBe('');
+      await current.operations.applyRoleMetadataRepair(plan.repairToken, plan.expectedJobs, 0, inspectedAt);
+    }
+    expect((await current.jobs.getJob(original.jobId))?.compensation.ranges).toHaveLength(3);
+    expect((await current.jobs.getJob(original.jobId))?.notification).toEqual(original.notification);
+  });
+
   it.each(['greenhouse', 'lever', 'ashby'] as const)('stages %s API evidence on a GitHub discovery and publishes it only through exact repair guards', async (provider) => {
     const current = subject(); const original = jobWithVerifiedDestination();
     await current.jobs.putInternship(original);

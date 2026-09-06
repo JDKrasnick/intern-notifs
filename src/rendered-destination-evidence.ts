@@ -10,6 +10,7 @@ export interface RenderedFrameSnapshot {
   visibleText?: string;
   structuredJobText?: string;
   structuredJobDocuments?: string[];
+  compensationRows?: string[];
   jobPostingCount: number;
   distinctJobLinkCount: number;
   applicationFormPresent: boolean;
@@ -82,6 +83,12 @@ function frameEvidence(frame: RenderedFrameSnapshot, expectedPostingId?: string)
   const renderedPostingText = [contentExcerpt, frame.structuredJobText].filter(Boolean).join(' ');
   const postingIdPresent = includesPostingId(renderedPostingText, expectedPostingId);
   const metadataArtifacts = applicationMetadataArtifactsFromJsonDocuments(frame.structuredJobDocuments ?? []);
+  const compensationSections = (frame.compensationRows ?? []).slice(0, 20).flatMap((row) => {
+    // Rows come only from a visible list under an explicit compensation heading.
+    // Keep publisher labels verbatim rather than guessing geography or education.
+    const match = /^([^$€£\d]{0,120}?)((?:(?:US|CA|AU|NZ|SG|HK)\$|[$€£]|[A-Z]{3}\s+)\s*\d[\s\S]*)$/u.exec(row.trim());
+    return match ? [{ label: match[1]!.trim(), text: match[2]!.trim() }] : [];
+  });
   return {
     url: frame.url,
     ...(frame.inspectionTruncated ? { inspectionTruncated: true } : {}),
@@ -95,6 +102,7 @@ function frameEvidence(frame: RenderedFrameSnapshot, expectedPostingId?: string)
     applicationFormPresent: frame.applicationFormPresent,
     ...(contentExcerpt ? { contentExcerpt, contentHash: hash(withoutExpectedPostingId(renderedPostingText, expectedPostingId)), contentSource: 'body' as const } : {}),
     ...(metadataArtifacts.length ? { metadataArtifacts } : {}),
+    ...(compensationSections.length ? { compensationSections } : {}),
     confidence: { score: 100, level: 'high', recommendation: 'alert-eligible', signals: ['browser-visible evidence'] },
   };
 }

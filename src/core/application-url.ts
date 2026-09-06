@@ -75,6 +75,7 @@ export interface ApplicationPageEvidence {
   contentSource?: 'json-ld' | 'main' | 'body';
   /** Transient normalized JSON-LD artifacts. Callers persist only extracted field evidence. */
   metadataArtifacts?: ApplicationMetadataArtifact[];
+  compensationSections?: Array<{ label: string; text: string }>;
   confidence: ApplicationPageConfidence;
 }
 

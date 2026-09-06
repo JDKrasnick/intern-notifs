@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applicationMetadataArtifactsFromJsonDocuments, extractVerifiedPageMetadataEvidence, projectRoleMetadata } from '../src/role-metadata.js';
 import type { Internship } from '../src/types.js';
+import { combineRenderedFrameEvidence } from '../src/rendered-destination-evidence.js';
 
 // Minimal disclosure clauses observed in the 2026-09-05 public-catalog audit.
 // The synthetic posting envelope keeps employer content out of unrelated tests.
@@ -38,11 +39,34 @@ describe('employer disclosure formats from the coverage audit', () => {
     ['Base Salary Range $123,500 - $170,000 USD', 123500, 170000, 'USD', 'unknown'],
     ['Salary JPY 2,000 - 4,000 per hour', 2000, 4000, 'JPY', 'hourly'],
     ['Salary KRW 30,000,000 - 40,000,000 per year', 30000000, 40000000, 'KRW', 'annual'],
+    ['Salary CA$140K – CA$175K', 140000, 175000, 'CAD', 'unknown'],
+    ['Salary AU$30 – AU$40 per hour', 30, 40, 'AUD', 'hourly'],
   ])('preserves disclosed native amounts without a USD or annual guess: %s', (text, min, max, currency, period) => {
     const result = project(String(text));
     expect(result.job.compensation.ranges).toMatchObject([{ minAmount: min, maxAmount: max, currency, period }]);
     expect(result.job.compensation.minAnnualUSD).toBeUndefined();
     expect(result.job.compensation.minHourlyUSD).toBeUndefined();
+  });
+
+  it('keeps rendered geographic salary rows separate without guessing their periods', () => {
+    const title = 'Early Careers & Interns Specialist';
+    const rows = ['California, New York & Washington States\n$120K – $150K • Offers Equity',
+      'All other US States\n$95K – $120K • Offers Equity', 'Canada\nCA$140K – CA$175K • Offers Equity'];
+    const rendered = combineRenderedFrameEvidence({ role: title, frames: [{ url: 'https://example.test/jobs/123', title,
+      visibleText: `${title} Compensation ${rows.join(' ')}`, compensationRows: rows,
+      jobPostingCount: 1, distinctJobLinkCount: 0, applicationFormPresent: true }] })!;
+    const evidence = extractVerifiedPageMetadataEvidence({ expectedTitle: title, expectedPostingId: '123',
+      page: { title, text: rendered.contentExcerpt, compensationSections: rendered.compensationSections },
+      sourceId: 'fixture', sourceUrl: rendered.url, observedAt: '2026-09-06T06:28:00Z', exactPosting: true });
+    const result = projectRoleMetadata({ title, compensation: { raw: '' }, sourceReferences: [] } as unknown as Internship, evidence);
+    expect(result.conflicts).toEqual([]);
+    expect(result.job.compensation.ranges).toHaveLength(3);
+    expect(result.job.compensation.ranges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ minAmount: 120000, maxAmount: 150000, currency: 'XXX', period: 'unknown', applicabilityLabel: 'California, New York & Washington States' }),
+      expect.objectContaining({ minAmount: 95000, maxAmount: 120000, currency: 'XXX', period: 'unknown', applicabilityLabel: 'All other US States' }),
+      expect.objectContaining({ minAmount: 140000, maxAmount: 175000, currency: 'CAD', period: 'unknown', applicabilityLabel: 'Canada' }),
+    ]));
+    expect(result.job.compensation.minAnnualUSD).toBeUndefined();
   });
 
   it.each(['Salary USD $30 - CAD $40 per hour', 'Desired salary: USD $50 per hour', 'Sign-on bonus USD $10000 per year'])('rejects ambiguous or unrelated pay: %s', (text) => {

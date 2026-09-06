@@ -27,7 +27,7 @@ import type {
 // Increment whenever a parser change can produce a different result from an
 // unchanged artifact. This makes the collection scheduler revisit both a
 // previous negative result and an already-enriched posting.
-export const ROLE_METADATA_EXTRACTION_VERSION = 5;
+export const ROLE_METADATA_EXTRACTION_VERSION = 6;
 export const VERIFIED_PAGE_METADATA_SOURCES = ['official-json-ld', 'official-page'] as const;
 const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   // Exact-role detail retrieval owns its own slot; a later board-list poll
@@ -44,6 +44,7 @@ export interface RoleMetadataArtifact {
   title: string;
   text?: string;
   compensationText?: string;
+  compensationSections?: Array<{ label: string; text: string }>;
   compensationBands?: Array<{ minAmount: number; maxAmount: number; currency: string; period?: CompensationPeriod; label?: string; sourceText: string }>;
   locations?: string[];
   workMode?: string;
@@ -323,7 +324,11 @@ export function extractCompensationRanges(
   input: { provenance: FieldProvenance; knownLocations?: readonly string[]; requirePayContext?: boolean } ,
 ): CompensationRange[] {
   const ranges: CompensationRange[] = [];
-  const segments = value.split(/(?<=[.;\n])\s+|\s*[;\n]\s*/u).filter(Boolean);
+  // Qualified dollar symbols are explicit currencies, including on both ends
+  // of a range. Normalize the notation before matching, never infer from pay size.
+  const qualified = value.replace(/\b(US|CA|AU|NZ|SG|HK)\$/gu, (_, code: string) =>
+    `${({ US: 'USD', CA: 'CAD', AU: 'AUD', NZ: 'NZD', SG: 'SGD', HK: 'HKD' } as Record<string, string>)[code]} $`);
+  const segments = qualified.split(/(?<=[.;\n])\s+|\s*[;\n]\s*/u).filter(Boolean);
   const append = (segment: string, raw: string, first: number, second: number, periodText: string, currency: string) => {
     if (input.requirePayContext && !/\b(?:salary|pays?|compensation|base rate|market range|hourly rate|annual range|hiring range|internships? (?:is|are) paid)\b/iu.test(segment)) return;
     const period = compensationPeriod(periodText);
@@ -488,6 +493,20 @@ export function extractRoleMetadataEvidence(input: ExtractRoleMetadataInput): Ro
     });
     compensationRanges.push(...ranges.map((range) => ({ ...range, sourceText: boundedText(band.sourceText, 160),
       ...(band.label ? { applicabilityLabel: boundedText(band.label, 120) } : {}) })));
+  }
+  for (const section of input.titleOnly ? [] : input.artifact.compensationSections ?? []) {
+    const sectionRanges = extractCompensationRanges(section.text, {
+      provenance: field('compensation-range'), knownLocations: normalizedLocations, requirePayContext: false,
+    }).map((range) => ({ ...range, ...(section.label ? { applicabilityLabel: boundedText(section.label, 120) } : {}) }));
+    // The same visible amount also occurs in flattened body text. Keep its
+    // explicit row label instead of manufacturing a conflicting global band.
+    for (let index = compensationRanges.length - 1; index >= 0; index -= 1) {
+      const candidate = compensationRanges[index]!;
+      if (!candidate.applicabilityLabel && sectionRanges.some((range) =>
+        range.minAmount === candidate.minAmount && range.maxAmount === candidate.maxAmount && range.period === candidate.period
+        && (range.currency === candidate.currency || candidate.currency === 'XXX'))) compensationRanges.splice(index, 1);
+    }
+    compensationRanges.push(...sectionRanges);
   }
   const levels = educationLevels(text);
   const window = graduationWindow(text);
