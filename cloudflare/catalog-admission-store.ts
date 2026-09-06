@@ -525,7 +525,7 @@ export class D1CatalogAdmissionStore {
     if (!conflicts.length) throw new Error('Only currently conflicting compensation may be reviewed for omission');
     const evidenceFingerprint = roleMetadataReviewFingerprint(subject.evidence);
     const decision = { field: 'compensation' as const, action: 'omit' as const, reason: 'publisher-inconsistent' as const, evidenceFingerprint };
-    const reviewToken = hash(`${jobId}\0${subject.original}\0${JSON.stringify(decision)}\0${revision}`);
+    const reviewToken = hash(`posting-review-v2\0${jobId}\0${subject.original}\0${JSON.stringify(decision)}\0${revision}`);
     if (await this.metadataJobRevision(jobId) !== revision) throw new Error('Posting metadata changed during review; preview again');
     const receipt: RoleMetadataOmission = { ...decision, reviewToken };
     await this.db.prepare(`INSERT INTO role_metadata_review_plans
