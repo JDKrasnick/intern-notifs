@@ -70,11 +70,12 @@ The frame, blind batches, original responses and independently checked labels
 are archived under `.context/accuracy-20260906/`. Sampling and publication
 acceptance remain in progress; no accuracy percentage is certified yet.
 
-The independently adjudicated first pass resolves 94/100 roles, leaving six
+The independently adjudicated first pass resolves 95/100 roles, leaving five
 unresolved. Among 46 resolved blank roles, 12 disclose official pay and 34 do
-not. Of 47 resolved pay-present roles with official disclosures, 32 agree on
-amount, 25 on currency and 41 on period. These are raw frozen-sample comparisons,
-not population estimates: currency fallback and historical publication lag are
+not. Of 48 resolved pay-present roles with official disclosures, 32 agree on
+amount, 24 on currency and 40 on period. These are symmetric unique-value-set
+comparisons (extra public values fail), not joint-band/applicability precision
+or population estimates: currency fallback and historical publication lag are
 separate from parser errors. One further role has community-only pay without an
 official disclosure. The 30-role holdout resolves 26; among its 15 comparable
 pay-present roles, six agree on amount, ten on currency and 14 on period.

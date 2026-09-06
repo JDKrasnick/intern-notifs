@@ -3,6 +3,7 @@ import simplifyBaselineReport from '../docs/trusted-community/simplify-summer-20
 import { deriveCanonicalAdmission, evaluateCatalogAdmission } from '../src/catalog-admission.js';
 import { CatalogReconciler } from '../src/ingestion/catalog-reconciler.js';
 import { Poller } from '../src/poll.js';
+import { ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
 import { MemoryInternshipStore, MemoryUserStore } from '../src/store.js';
 import { createApiHandler } from '../src/api.js';
 import { trustedCommunityBaselineReport } from '../src/sources/trusted-community-baseline.js';
@@ -725,8 +726,9 @@ describe('trusted rollout repair boundaries', { timeout: 20_000 }, () => {
     const changedOccurrence = (await store.getSourceOccurrences(sourceId)).find(item => item.externalId === rows[50]!.externalId)!;
     expect(changedOccurrence.occurrence.title).toBe('Data Engineering Intern');
     expect((await store.getCheckpoint(sourceId))!.admissionConfigurationVersion).not.toBe(oldVersion);
-    // Finishing an admission slice is not a complete metadata-parser replay.
-    expect((await store.getCheckpoint(sourceId))!.metadataExtractionVersion).toBe(0);
+    // The shared bounded pass inspected every current row before either
+    // checkpoint advanced, so the parser version is now certified too.
+    expect((await store.getCheckpoint(sourceId))!.metadataExtractionVersion).toBe(ROLE_METADATA_EXTRACTION_VERSION);
     expect(store.notificationEvents.size).toBe(0);
   });
 

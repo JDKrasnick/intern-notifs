@@ -183,6 +183,17 @@ checkpoints require a full successful refresh after extraction/preprocessing
 upgrades, without treating HTTP 304s or admission migration slices as completion.
 Do not clear evidence or bypass the deferral guard to make the audit pass.
 
+Existing GitHub sources refresh stale parser/preprocessing versions through the
+Worker's 20-row continuation limit. A versioned per-row material ledger resumes
+successful work, including explicit negative decisions; occurrence stamps alone
+do not certify completion because evidence writes can fail after the job commit.
+Missing-occurrence work uses separate bounded progress, and reappearing rows
+must reconcile before completion. Partial runs retain the previous successful
+source timestamp and fetch count. Verify all seven published GitHub checkpoints
+reach the current extraction/processing versions and a new complete success;
+destination collection is independent and cannot supply that proof. Do not
+clear source checkpoints, replay DLQs or bypass backoffs to force completion.
+
 Each dry run stages at most 250 jobs and 8 MiB of original/proposed UTF-8 JSON
 in stable job-ID order and reports
 `remainingJobs` separately. Field fill/correction counts describe only that batch;

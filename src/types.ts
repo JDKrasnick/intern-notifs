@@ -133,6 +133,19 @@ export interface SourceCheckpoint {
   metadataExtractionVersion?: number;
   /** Source preprocessing revision, separate from API/page extraction. */
   metadataProcessingRevision?: number;
+  /** Successfully processed current rows while a bounded parser refresh is incomplete. */
+  pendingMetadataProcessedRows?: Array<{
+    externalId: string;
+    sourceMaterialHash: string;
+    extractionVersion: number;
+    processingRevision: number;
+  }>;
+  /** Missing occurrences whose one lifecycle step was durably applied during this refresh. */
+  pendingMetadataOmissions?: Array<{
+    externalId: string;
+    extractionVersion: number;
+    processingRevision: number;
+  }>;
   lastSuccessAt?: string;
   successfulFetches: number;
   lastRowCount?: number;
@@ -785,6 +798,12 @@ export interface SourceOccurrence extends SourceReference {
   externalId?: string;
   /** Admission rules applied to this row, so interrupted source migrations can resume safely. */
   admissionConfigurationVersion?: string;
+  /** Source-row parser work applied to this exact raw material. */
+  sourceMetadataProcessing?: {
+    extractionVersion: number;
+    processingRevision: number;
+    sourceMaterialHash: string;
+  };
   /** Reviewed provider facts retained for identity repair and audit. */
   providerEvidence?: ProviderPostingEvidence;
   /** Durable identity decision for this occurrence. Missing means legacy-unclassified. */
