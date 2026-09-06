@@ -23,7 +23,7 @@ execFileSync(
   ["expo", "export", "--clear", "--platform", "web", "--output-dir", outputDirectory],
   {
     cwd: mobileRoot,
-    env: { ...process.env, EXPO_PUBLIC_API_URL: publicApiUrl },
+    env: { ...process.env, EXPO_PUBLIC_API_URL: publicApiUrl, INTERNNOTIFS_PAGES_EXPORT: '1' },
     stdio: "inherit",
   },
 );
@@ -43,5 +43,12 @@ const bundleText = (await Promise.all(bundles.map((name) => readFile(resolve(bun
 if (!bundleText.includes(publicApiUrl)) {
   throw new Error(`Web export did not embed the expected API origin ${publicApiUrl}`);
 }
+const assetPaths = [...bundleText.matchAll(/"(\/assets\/[^"?]+)"/gu)].map((match) => match[1]);
+if (!assetPaths.length) throw new Error('Web export did not expose any verifiable runtime assets');
+await Promise.all([...new Set(assetPaths)].map(async (assetPath) => {
+  if (assetPath.split('/').includes('node_modules')) throw new Error(`Pages would exclude ${assetPath}`);
+  const exportedAsset = await readFile(resolve(outputDirectory, `.${assetPath}`));
+  if (!exportedAsset.byteLength) throw new Error(`Web export produced an empty runtime asset ${assetPath}`);
+}));
 
 console.log(`Verified deployable web export at ${outputDirectory} using API ${publicApiUrl}`);
