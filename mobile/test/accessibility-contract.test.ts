@@ -10,6 +10,28 @@ const require = createRequire(import.meta.url);
 const { Text, TouchableOpacity } = require('react-native-web') as typeof import('react-native');
 
 describe('cross-platform accessibility state contract', () => {
+  it('lets the primary application label wrap without overlapping its icon at large text sizes', () => {
+    const source = ts.createSourceFile('App.tsx', readFileSync(new URL('../App.tsx', import.meta.url), 'utf8'),
+      ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const styles = new Map<string, Map<string, string>>();
+    const visit = (node: ts.Node) => {
+      if (ts.isPropertyAssignment(node) && ts.isObjectLiteralExpression(node.initializer)) {
+        const name = node.name.getText(source);
+        if (['applyNowButton', 'applyNowTitle', 'applyNowArrow'].includes(name)) {
+          styles.set(name, new Map(node.initializer.properties.filter(ts.isPropertyAssignment)
+            .map(item => [item.name.getText(source), item.initializer.getText(source)])));
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    expect(styles.get('applyNowButton')?.get('flexDirection')).toBe('"row"');
+    expect(styles.get('applyNowButton')?.has('height')).toBe(false);
+    expect(styles.get('applyNowTitle')?.get('flex')).toBe('1');
+    expect(styles.get('applyNowArrow')?.has('position')).toBe(false);
+    expect(styles.get('applyNowArrow')?.get('flexShrink')).toBe('0');
+  });
+
   it.each([
     ['radio', 'aria-checked', true],
     ['checkbox', 'aria-checked', false],
