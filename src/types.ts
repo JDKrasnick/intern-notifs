@@ -131,6 +131,8 @@ export interface SourceCheckpoint {
   admissionConfigurationVersion?: string;
   /** Parser version applied after a successful full source reconciliation. */
   metadataExtractionVersion?: number;
+  /** Source preprocessing revision, separate from API/page extraction. */
+  metadataProcessingRevision?: number;
   lastSuccessAt?: string;
   successfulFetches: number;
   lastRowCount?: number;

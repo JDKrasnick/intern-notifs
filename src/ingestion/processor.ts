@@ -9,6 +9,7 @@ import { normalizeListing, normalizeLocations, locationSummary } from '../catalo
 import { applicationUrlRejection } from '../sources/quality.js';
 import { providerPostingReference } from '../identity/posting.js';
 import { extractPostingMetadataEvidence } from '../role-metadata.js';
+import { metadataDescriptionText } from '../core/metadata-text.js';
 import type {
   JobRequirements,
   PostingDecision,
@@ -17,6 +18,10 @@ import type {
   SourceSnapshot,
   SourcedPosting,
 } from '../types.js';
+
+// Source preprocessing can change independently of the shared API/page parser.
+// Revisit source snapshots without invalidating complete API acquisitions.
+export const SOURCE_METADATA_PROCESSING_REVISION = 1;
 
 function markdownToText(value: string): string {
   return htmlToText(value
@@ -113,7 +118,10 @@ export function processPosting(
     metadataEvidence: extractPostingMetadataEvidence({
       artifact: {
         title,
-        text: content,
+        text: posting.content.map(part => metadataDescriptionText(part.format === 'markdown'
+          ? part.value.replace(/!\[[^\]]*\]\([^)]*\)/gu, ' ')
+            .replace(/\[([^\]]+)\]\([^)]*\)/gu, '$1').replace(/[*`>#]/gu, ' ')
+          : part.value)).join('\n'),
         ...(posting.compensationText ? { compensationText: posting.compensationText } : {}),
         locations: sourceLocations,
         ...(posting.declaredWorkMode ? { workMode: posting.declaredWorkMode } : workMode ? { workMode } : {}),

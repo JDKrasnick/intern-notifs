@@ -60,7 +60,7 @@ function officialAdmission(employerId: string): CatalogAdmission {
 }
 
 describe('snapshot reconciliation', () => {
-  it('fetches unchanged Markdown once after a parser upgrade, then restores conditional requests', async () => {
+  it.each(['parser', 'preprocessing'] as const)('fetches unchanged Markdown once after a %s upgrade, then restores conditional requests', async upgrade => {
     const store = new MemoryInternshipStore(); const requests: RequestInit[] = [];
     const adapter = new GitHubMarkdownAdapter({ id: 'markdown-fixture', owner: 'owner', repo: 'repo',
       documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }],
@@ -82,7 +82,9 @@ describe('snapshot reconciliation', () => {
     await store.putInternship({ ...original, sourceReferences: [{ ...original.sourceReferences[0]!, metadataEvidence: oldEvidence }] });
     const occurrence = (await store.getSourceOccurrences(adapter.id))[0]!;
     await store.putSourceOccurrence({ ...occurrence, occurrence: { ...occurrence.occurrence, metadataEvidence: oldEvidence } });
-    await store.putCheckpoint({ ...checkpoint, metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION - 1 });
+    await store.putCheckpoint({ ...checkpoint, ...(upgrade === 'parser'
+      ? { metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION - 1 }
+      : { metadataProcessingRevision: 0 }) });
     const report = await runner().run();
     expect(report.failures).toEqual([]);
     expect(new Headers(requests[1]?.headers).has('If-None-Match')).toBe(false);

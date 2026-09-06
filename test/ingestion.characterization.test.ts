@@ -5,6 +5,7 @@ import { mapGreenhouseJob, mapGreenhouseSourcedPosting } from '../src/sources/gr
 import { mapLeverPosting, mapLeverSourcedPosting } from '../src/sources/lever.js';
 import { parseQuantInternshipMarkdown } from '../src/sources/quant.js';
 import { acmeSource, technicalInternship } from './fixtures/greenhouse.js';
+import { reconcileRoleMetadata } from '../src/role-metadata.js';
 
 const fetchedAt = '2026-07-29T12:00:00.000Z';
 const leverPostingId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -22,6 +23,20 @@ const leverPosting = {
 const leverOptions = { id: 'lever-acme', company: 'Acme', site: 'acme' };
 
 describe('legacy ingestion characterization', () => {
+  it.each(['html', 'markdown', 'plain'] as const)('preserves separate pay tiers in %s metadata without changing source classification', format => {
+    const posting = mapGreenhouseSourcedPosting(technicalInternship, acmeSource, fetchedAt, 3)!;
+    const lines = ['COMPENSATION AND BENEFITS:', 'Level 1: $140,000.00 - $175,000.00', 'Level 2: $160,000.00 - $210,000.00',
+      'Your actual level and base salary will be determined on a case-by-case basis.'];
+    const value = format === 'html' ? lines.map(line => `<p>${line}</p>`).join('') : lines.join('\n');
+    const result = processPosting({ ...posting, content: [{ kind: 'description', format, value }] });
+    const metadata = reconcileRoleMetadata(result.listing!.metadataEvidence!);
+    expect(metadata.conflicts).toEqual([]);
+    expect(metadata.compensation?.ranges).toHaveLength(2);
+    expect(metadata.compensation?.ranges?.map(range => range.applicabilityLabel)).toEqual(['Level 1', 'Level 2']);
+    expect(metadata.compensation?.ranges?.map(range => range.period)).toEqual(['unknown', 'unknown']);
+    expect(result.decision).toEqual(processPosting({ ...posting, content: [{ kind: 'description', format: 'plain', value: lines.join(' ') }] }).decision);
+  });
+
   it('preserves the exact Lever listing boundary', () => {
     expect(mapLeverPosting(leverPosting, leverOptions, fetchedAt, 7)).toEqual({
       sourceId: 'lever-acme',

@@ -17,7 +17,7 @@ import { isTechnicalJob, type JobFilter } from './core/filters.js';
 import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
 import { evaluateSourceFreshness } from './ingestion/monitoring.js';
 import { sourceProvider, sourceRegion } from './integration-registry.js';
-import { processSnapshot } from './ingestion/processor.js';
+import { processSnapshot, SOURCE_METADATA_PROCESSING_REVISION } from './ingestion/processor.js';
 import { deriveCanonicalAdmission, evaluateCatalogAdmission } from './catalog-admission.js';
 import { classifyDestination, matchingBrowserDestination, requiresBrowserVerification, type CatalogAdmissionResolver, type DestinationVerificationRequest } from './destination-verification.js';
 import { reviewedBoardIndex } from './sources/index.js';
@@ -1142,7 +1142,8 @@ export class IngestionRunner {
         const configurationChanged = Boolean(prefetched.previous?.pendingAdmissionConfigurationVersion || (prefetched.admissionConfigurationVersion
           && prefetched.previous?.admissionConfigurationVersion
           && prefetched.admissionConfigurationVersion !== prefetched.previous.admissionConfigurationVersion));
-        const metadataVersionChanged = prefetched.previous?.metadataExtractionVersion !== ROLE_METADATA_EXTRACTION_VERSION;
+        const metadataVersionChanged = prefetched.previous?.metadataExtractionVersion !== ROLE_METADATA_EXTRACTION_VERSION
+          || prefetched.previous?.metadataProcessingRevision !== SOURCE_METADATA_PROCESSING_REVISION;
         const fetchCheckpoint = (configurationChanged || metadataVersionChanged) && prefetched.previous ? {
           ...prefetched.previous,
           etag: undefined,
@@ -1203,7 +1204,8 @@ export class IngestionRunner {
         const admissionConfigurationChanged = Boolean(previous?.pendingAdmissionConfigurationVersion || (admissionConfigurationVersion
           && previous?.admissionConfigurationVersion
           && admissionConfigurationVersion !== previous.admissionConfigurationVersion));
-        const metadataVersionChanged = previous?.metadataExtractionVersion !== ROLE_METADATA_EXTRACTION_VERSION;
+        const metadataVersionChanged = previous?.metadataExtractionVersion !== ROLE_METADATA_EXTRACTION_VERSION
+          || previous?.metadataProcessingRevision !== SOURCE_METADATA_PROCESSING_REVISION;
         const fetchCheckpoint = (admissionConfigurationChanged || metadataVersionChanged) && previous ? {
           ...previous,
           etag: undefined,
@@ -1534,12 +1536,13 @@ export class IngestionRunner {
         const checkpointAdmissionConfigurationVersion = admissionMigrationPending
           ? previous?.admissionConfigurationVersion
           : admissionConfigurationVersion;
+        const metadataReconciled = !unchanged304 && migrationLimit === undefined && !admissionMigrationPending && !persistenceFailedJobIds.size;
         await this.store.putCheckpoint({
           ...result.checkpoint,
           // A 304, migration slice or failed persistence cannot certify that
           // unchanged source content has passed the current metadata parser.
-          metadataExtractionVersion: !unchanged304 && migrationLimit === undefined && !admissionMigrationPending && !persistenceFailedJobIds.size
-            ? ROLE_METADATA_EXTRACTION_VERSION : previous?.metadataExtractionVersion,
+          metadataExtractionVersion: metadataReconciled ? ROLE_METADATA_EXTRACTION_VERSION : previous?.metadataExtractionVersion,
+          metadataProcessingRevision: metadataReconciled ? SOURCE_METADATA_PROCESSING_REVISION : previous?.metadataProcessingRevision,
           contentHash: batch.snapshotHash,
           activeExternalIds: [...batch.activeExternalIds],
           pendingAdmissionConfigurationVersion: admissionMigrationPending ? admissionConfigurationVersion : undefined,
