@@ -868,7 +868,7 @@ function structuredIdentity(job: Internship): InternshipIdentity | undefined {
 
 /** Projects reconciled evidence without touching identity, lifecycle, visibility, or notification state. */
 export function projectRoleMetadata(job: Internship, evidence = job.sourceReferences.flatMap((item) => item.metadataEvidence ?? [])): {
-  job: Internship; conflicts: MetadataConflict[];
+  job: Internship; conflicts: MetadataConflict[]; deferredEvidenceHashes?: string[];
 } {
   const omission = job.metadataOmission;
   if (omission?.field === 'compensation' && omission.action === 'omit'
@@ -890,9 +890,10 @@ export function projectRoleMetadata(job: Internship, evidence = job.sourceRefere
   // projection (including its old version/provenance) until those snapshots
   // are replaced or removed; never promote stale evidence into a new result.
   const acceptedHashes = new Set(previousMetadata?.evidenceHashes ?? []);
-  if (evidence.some(item => item.schemaVersion === 1 && item.exactPosting
+  const deferredEvidenceHashes = [...new Set(evidence.filter(item => item.schemaVersion === 1 && item.exactPosting
     && item.extractionVersion !== ROLE_METADATA_EXTRACTION_VERSION
-    && acceptedHashes.has(item.artifactHash))) return { job, conflicts: result.conflicts };
+    && acceptedHashes.has(item.artifactHash)).map(item => item.artifactHash))].sort();
+  if (deferredEvidenceHashes.length) return { job, conflicts: result.conflicts, deferredEvidenceHashes };
   // A conflict is not a withdrawal. Retain the accepted projection and its
   // provenance so later resolution or withdrawal can still replace it cleanly.
   if (result.metadata && previousMetadata) {

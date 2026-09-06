@@ -286,6 +286,7 @@ export class D1CatalogAdmissionStore {
     scanned: number;
     enriched: number;
     projectionOnlyOmissions: Array<{ jobId: string; fields: string[] }>;
+    deferredProjections: Array<{ jobId: string; evidenceHashes: string[] }>;
     supportedRoleSpecificDisclosedMetadataMisses: null;
     currentEvidenceBySourceClass: Record<string, number>;
     unsupportedCurrencies: Record<string, number>;
@@ -308,13 +309,16 @@ export class D1CatalogAdmissionStore {
     for (const row of current.results) evidenceByJob.set(row.job_id,
       [...(evidenceByJob.get(row.job_id) ?? []), JSON.parse(row.evidence) as RoleMetadataEvidence]);
     const projectionOnlyOmissions: Array<{ jobId: string; fields: string[] }> = [];
+    const deferredProjections: Array<{ jobId: string; evidenceHashes: string[] }> = [];
     for (const job of jobs) {
       const historical = evidenceByJob.get(job.jobId) ?? [];
       const sourceReferences = job.sourceReferences.map((reference) => {
         const matching = historical.filter((item) => item.sourceId === reference.sourceId);
         return { ...reference, metadataEvidence: replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, matching, reference.sourceId) };
       });
-      const projected = projectRoleMetadata({ ...job, sourceReferences }).job;
+      const result = projectRoleMetadata({ ...job, sourceReferences });
+      if (result.deferredEvidenceHashes?.length) deferredProjections.push({ jobId: job.jobId, evidenceHashes: result.deferredEvidenceHashes });
+      const projected = result.job;
       const fields = ['compensation', 'housing', 'programType', 'workMode', 'applicationDeadline', 'graduationWindow', 'locations', 'employerPublishedAt', 'employerUpdatedAt']
         .filter((field) => JSON.stringify(projected[field as keyof Internship]) !== JSON.stringify(job[field as keyof Internship]));
       if (fields.length) projectionOnlyOmissions.push({ jobId: job.jobId, fields });
@@ -360,6 +364,7 @@ export class D1CatalogAdmissionStore {
       scanned: jobs.length,
       enriched: jobs.filter((job) => Boolean(job.roleMetadata)).length,
       projectionOnlyOmissions,
+      deferredProjections,
       supportedRoleSpecificDisclosedMetadataMisses: null,
       currentEvidenceBySourceClass,
       unsupportedCurrencies,
@@ -672,7 +677,9 @@ export class D1CatalogAdmissionStore {
     }
     if (Number(plan.conflict_count) > 0) throw new Error('Role metadata conflicts must be resolved before apply');
     if (Number(plan.collection_complete) !== 1) throw new Error('Role metadata collection was incomplete during the dry-run; collect and run the dry-run again');
-    const collection = (await this.roleMetadataAudit(new Date(appliedAt))).collectionCoverage;
+    const audit = await this.roleMetadataAudit(new Date(appliedAt));
+    if (audit.deferredProjections.length) throw new Error('Accepted metadata is awaiting source re-extraction; refresh deferred sources and run the dry-run again');
+    const collection = audit.collectionCoverage;
     if (!collection.complete || roleMetadataCollectionSnapshot(collection) !== plan.collection_snapshot) {
       throw new Error('Role metadata collection changed or is incomplete; collect and run the dry-run again');
     }

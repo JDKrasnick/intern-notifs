@@ -94,6 +94,33 @@ async function disputedPay(current: ReturnType<typeof subject>, jobId = 'job-1',
 }
 
 describe('staged browser-to-API collection', () => {
+  it('reports and blocks deferred projections even when destination collection is complete', async () => {
+    const current = subject(); const original = job(); const observedAt = '2026-09-06T19:00:00.000Z';
+    const community = extractPostingMetadataEvidence({ artifact: { title: original.title, compensationText: 'USD $60/hour' },
+      sourceClass: 'reviewed-community', sourceId: 'community-acme', sourceUrl: original.sourceReferences[0]!.sourceUrl,
+      observedAt, exactPosting: true });
+    const accepted = projectRoleMetadata(original, community).job;
+    const stale = community.map(item => ({ ...item, extractionVersion: ROLE_METADATA_EXTRACTION_VERSION - 1 }));
+    const stored = { ...accepted, sourceReferences: [{ ...original.sourceReferences[0]!, metadataEvidence: stale }] };
+    await current.jobs.putInternship(stored);
+    const before = await current.jobs.getJob(original.jobId);
+    const official = extractPostingMetadataEvidence({ artifact: { title: original.title, compensationText: 'USD $55/hour' },
+      sourceClass: 'official-api', sourceId: 'community-acme', sourceUrl: original.applyUrl, observedAt, exactPosting: true });
+    await current.operations.recordRoleMetadataEvidence(original.jobId, official, [], observedAt);
+    const audit = await current.operations.roleMetadataAudit(new Date(observedAt));
+    expect(audit.collectionCoverage.complete).toBe(true);
+    expect(audit.deferredProjections).toEqual([{ jobId: original.jobId, evidenceHashes: [community[0]!.artifactHash] }]);
+    const plan = await current.operations.stageRoleMetadataRepair(observedAt);
+    await expect(current.operations.applyRoleMetadataRepair(plan.repairToken, plan.expectedJobs, 0, observedAt))
+      .rejects.toThrow('awaiting source re-extraction');
+    expect(await current.jobs.getJob(original.jobId)).toEqual(before);
+    await current.operations.recordRoleMetadataEvidence(original.jobId, community, [], observedAt);
+    expect((await current.operations.roleMetadataAudit(new Date(observedAt))).deferredProjections).toEqual([]);
+    const refreshed = await current.operations.stageRoleMetadataRepair(observedAt);
+    await current.operations.applyRoleMetadataRepair(refreshed.repairToken, refreshed.expectedJobs, 0, observedAt);
+    expect((await current.jobs.getJob(original.jobId))?.compensation.maxHourlyUSD).toBe(55);
+  });
+
   it.each([
     ['exact embed', '8044334', '8044334', false, 1, true],
     ['wrong embed ID', '9999999', '8044334', false, 0, false],
