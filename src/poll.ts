@@ -1142,7 +1142,8 @@ export class IngestionRunner {
         const configurationChanged = Boolean(prefetched.previous?.pendingAdmissionConfigurationVersion || (prefetched.admissionConfigurationVersion
           && prefetched.previous?.admissionConfigurationVersion
           && prefetched.admissionConfigurationVersion !== prefetched.previous.admissionConfigurationVersion));
-        const fetchCheckpoint = configurationChanged && prefetched.previous ? {
+        const metadataVersionChanged = prefetched.previous?.metadataExtractionVersion !== ROLE_METADATA_EXTRACTION_VERSION;
+        const fetchCheckpoint = (configurationChanged || metadataVersionChanged) && prefetched.previous ? {
           ...prefetched.previous,
           etag: undefined,
           documentEtags: undefined,
@@ -1202,7 +1203,8 @@ export class IngestionRunner {
         const admissionConfigurationChanged = Boolean(previous?.pendingAdmissionConfigurationVersion || (admissionConfigurationVersion
           && previous?.admissionConfigurationVersion
           && admissionConfigurationVersion !== previous.admissionConfigurationVersion));
-        const fetchCheckpoint = admissionConfigurationChanged && previous ? {
+        const metadataVersionChanged = previous?.metadataExtractionVersion !== ROLE_METADATA_EXTRACTION_VERSION;
+        const fetchCheckpoint = (admissionConfigurationChanged || metadataVersionChanged) && previous ? {
           ...previous,
           etag: undefined,
           documentEtags: undefined,
@@ -1277,8 +1279,9 @@ export class IngestionRunner {
         const trustedFullBody = sourceAdmissionPolicy(connector.id).trust === 'trusted-community'
           && this.trustedCommunityCatalogEnabled
           && result.unchangedReason !== 'not_modified';
+        const metadataFullBody = metadataVersionChanged && result.unchangedReason !== 'not_modified';
         const listingsToResolve = migrationLimit === undefined
-          ? (batch.unchanged && !trustedFullBody ? [] : batch.processed.listings)
+          ? (batch.unchanged && !trustedFullBody && !metadataFullBody ? [] : batch.processed.listings)
           : migrationCandidates;
         const resolution = await this.resolveListings(
           listingsToResolve,
@@ -1533,6 +1536,10 @@ export class IngestionRunner {
           : admissionConfigurationVersion;
         await this.store.putCheckpoint({
           ...result.checkpoint,
+          // A 304, partial migration or failed persistence cannot certify that
+          // unchanged source content has passed the current metadata parser.
+          metadataExtractionVersion: !unchanged304 && !admissionMigrationPending && !persistenceFailedJobIds.size
+            ? ROLE_METADATA_EXTRACTION_VERSION : previous?.metadataExtractionVersion,
           contentHash: batch.snapshotHash,
           activeExternalIds: [...batch.activeExternalIds],
           pendingAdmissionConfigurationVersion: admissionMigrationPending ? admissionConfigurationVersion : undefined,

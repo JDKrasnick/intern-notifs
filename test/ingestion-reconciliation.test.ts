@@ -3,7 +3,7 @@ import { IngestionRunner } from '../src/poll.js';
 import { GitHubMarkdownAdapter } from '../src/sources/github.js';
 import { MemoryInternshipStore } from '../src/store.js';
 import { buildInternshipIdentity } from '../src/identity/enrichment.js';
-import { extractPostingMetadataEvidence } from '../src/role-metadata.js';
+import { extractPostingMetadataEvidence, ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
 import type { CatalogAdmission, Internship, ProcessedListing, SourceAdapter, SourceCheckpoint, SourceFetchResult, SourceOccurrenceState } from '../src/types.js';
 
 const listing = (sourceId: string, overrides: Partial<ProcessedListing> = {}): ProcessedListing => ({
@@ -60,6 +60,51 @@ function officialAdmission(employerId: string): CatalogAdmission {
 }
 
 describe('snapshot reconciliation', () => {
+  it('fetches unchanged Markdown once after a parser upgrade, then restores conditional requests', async () => {
+    const store = new MemoryInternshipStore(); const requests: RequestInit[] = [];
+    const adapter = new GitHubMarkdownAdapter({ id: 'markdown-fixture', owner: 'owner', repo: 'repo',
+      documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }],
+      fetchImpl: async (_url, init) => {
+        requests.push(init ?? {});
+        if (new Headers(init?.headers).has('If-None-Match')) return new Response(null, { status: 304 });
+        return new Response('| Company | Position | Location | Posting | Salary |\n| --- | --- | --- | --- | --- |\n'
+          + '| Acme | Software Engineering Intern | Remote | [Apply](https://careers.example.test/acme) | $60/hr |',
+        { headers: { ETag: '"unchanged"' } });
+      },
+    });
+    const runner = () => new IngestionRunner([adapter], store, () => new Date('2026-07-29T12:00:00.000Z'));
+    await runner().run();
+    const checkpoint = (await store.getCheckpoint(adapter.id))!;
+    const original = [...store.jobs.values()][0]!;
+    const events = store.notificationEvents.size;
+    const oldEvidence = original.sourceReferences[0]!.metadataEvidence!.map(item => ({ ...item,
+      extractionVersion: ROLE_METADATA_EXTRACTION_VERSION - 1 }));
+    await store.putInternship({ ...original, sourceReferences: [{ ...original.sourceReferences[0]!, metadataEvidence: oldEvidence }] });
+    const occurrence = (await store.getSourceOccurrences(adapter.id))[0]!;
+    await store.putSourceOccurrence({ ...occurrence, occurrence: { ...occurrence.occurrence, metadataEvidence: oldEvidence } });
+    await store.putCheckpoint({ ...checkpoint, metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION - 1 });
+    const report = await runner().run();
+    expect(report.failures).toEqual([]);
+    expect(new Headers(requests[1]?.headers).has('If-None-Match')).toBe(false);
+    expect((await store.getCheckpoint(adapter.id))?.metadataExtractionVersion).toBe(ROLE_METADATA_EXTRACTION_VERSION);
+    expect([...store.jobs.values()][0]?.jobId).toBe(original.jobId);
+    expect([...store.jobs.values()][0]?.sourceReferences[0]?.metadataEvidence?.every(item => item.extractionVersion === ROLE_METADATA_EXTRACTION_VERSION)).toBe(true);
+    expect([...store.jobs.values()][0]?.notification).toEqual(original.notification);
+    expect(store.notificationEvents.size).toBe(events);
+    await runner().run();
+    expect(new Headers(requests[2]?.headers).get('If-None-Match')).toBe('"unchanged"');
+  });
+
+  it('does not mark the new parser applied when a source refresh fails', async () => {
+    const store = new MemoryInternshipStore();
+    const prior = { sourceId: 'source-a', successfulFetches: 1, etag: 'old', metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION - 1 };
+    await store.putCheckpoint(prior);
+    const fetchSource = vi.fn().mockRejectedValue(new Error('source unavailable'));
+    await new IngestionRunner([{ id: 'source-a', fetch: fetchSource }], store).run();
+    expect(await store.getCheckpoint('source-a')).toEqual(prior);
+    expect(fetchSource.mock.calls[0]?.[0]).toMatchObject({ metadataExtractionVersion: prior.metadataExtractionVersion, etag: undefined });
+  });
+
   it('takes the unchanged-occurrence fast path when only metadata observation timestamps change', async () => {
     const store = new MemoryInternshipStore();
     const admissionResolver = {

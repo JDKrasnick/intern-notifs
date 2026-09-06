@@ -129,6 +129,8 @@ export interface SourceCheckpoint {
   contentHash?: string;
   /** Version of the reviewed admission configuration applied to this snapshot. */
   admissionConfigurationVersion?: string;
+  /** Parser version applied after a successful full source reconciliation. */
+  metadataExtractionVersion?: number;
   lastSuccessAt?: string;
   successfulFetches: number;
   lastRowCount?: number;
