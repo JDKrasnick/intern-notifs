@@ -11,7 +11,7 @@ import {
   reconcileRoleMetadata,
   ROLE_METADATA_EXTRACTION_VERSION,
 } from '../src/role-metadata.js';
-import type { FieldProvenance, Internship, RoleMetadataEvidence } from '../src/types.js';
+import type { EducationLevel, FieldProvenance, Internship, RoleMetadataEvidence } from '../src/types.js';
 
 const observedAt = '2026-09-04T12:00:00.000Z';
 const field: FieldProvenance = {
@@ -37,6 +37,44 @@ function job(overrides: Partial<Internship> = {}): Internship {
 }
 
 describe('provider-neutral role metadata', () => {
+  it('treats a starting-rate qualifier as an amount qualifier, not a distinct audience', () => {
+    const official = evidence({ compensationRanges: extractCompensationRanges(
+      'The minimum annualized base salary starts at $145,000.', { provenance: field },
+    ) });
+    const community = evidence({ sourceClass: 'reviewed-community', artifactHash: 'community', sourceId: 'community',
+      compensationRanges: extractCompensationRanges('USD $75/hour', { provenance: { ...field, source: 'reviewed-community' } }) });
+    expect(official.compensationRanges).toMatchObject([{ minAmount: 145000, period: 'annual', applicabilityLabel: 'Starting rate (lower bound)' }]);
+    expect(reconcileRoleMetadata([community, official]).compensation?.ranges).toMatchObject([
+      { minAmount: 145000, period: 'annual' },
+    ]);
+    expect(reconcileRoleMetadata([community, official]).compensation?.ranges).toHaveLength(1);
+
+    const regional = { ...official.compensationRanges![0]!, applicabilityLabel: 'New York candidates' };
+    const degree = { ...official.compensationRanges![0]!, applicabilityLabel: undefined, applicableEducationLevels: ['doctoral'] as EducationLevel[] };
+    expect(reconcileRoleMetadata([community, evidence({ compensationRanges: [regional] })]).compensation?.ranges).toHaveLength(2);
+    expect(reconcileRoleMetadata([community, evidence({ compensationRanges: [degree] })]).compensation?.ranges).toHaveLength(2);
+  });
+
+  it('extracts explicit matching ISO currencies between labeled range endpoints', () => {
+    expect(extractCompensationRanges('The hourly rate for our interns is 38 USD - 94 USD.', { provenance: field }))
+      .toMatchObject([{ minAmount: 38, maxAmount: 94, currency: 'USD', period: 'hourly' }]);
+    expect(extractCompensationRanges('Hourly rate: 38 USD - 94 CAD.', { provenance: field })).toEqual([]);
+    expect(extractCompensationRanges('Hourly rate for New York interns is 38 USD - 94 USD.', {
+      provenance: field, knownLocations: ['New York'],
+    })).toMatchObject([{ minAmount: 38, maxAmount: 94, currency: 'USD', period: 'hourly', applicableLocations: ['New York'] }]);
+    expect(extractCompensationRanges('Hourly rate: 38 USD. Housing stipend: 94 USD.', { provenance: field }))
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ minAmount: 38, maxAmount: 94 })]));
+    const tiers = extractCompensationRanges(
+      'Undergraduate hourly rate: 38 USD - 44 USD; PhD hourly rate: 70 USD - 94 USD.',
+      { provenance: field },
+    );
+    expect(tiers).toHaveLength(2);
+    expect(tiers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ minAmount: 38, maxAmount: 44, currency: 'USD', period: 'hourly', applicableEducationLevels: ['undergraduate'] }),
+      expect.objectContaining({ minAmount: 70, maxAmount: 94, currency: 'USD', period: 'hourly', applicableEducationLevels: ['doctoral'] }),
+    ]));
+  });
+
   it('retains the overseas eligibility condition without inventing accommodation costs', () => {
     const sentence = 'Flight and accommodation will be provided to all successful overseas applicants.';
     expect(extractHousingDetails(sentence, { provenance: field })).toEqual([
@@ -254,18 +292,18 @@ describe('provider-neutral role metadata', () => {
   });
 
   it.each([
-    ['New York, NY', 'USD', 50], ['Toronto, ON', 'XXX', undefined],
-  ])('uses the explicit page location %s to interpret dollar pay', (location, currency, maximum) => {
+    ['New York, NY'], ['Toronto, ON'],
+  ])('does not use the explicit page location %s to infer dollar currency', (location) => {
     const original = job({ title: 'Software Engineering Intern' });
     const extracted = extractVerifiedPageMetadataEvidence({
       expectedTitle: original.title, page: { title: original.title,
         text: `Location: ${location}. The pay range is $40-$50/hour.` },
       sourceId: 'community-acme', sourceUrl: original.applyUrl, observedAt, exactPosting: true,
     });
-    expect(extracted[0]?.compensationRanges?.[0]?.currency).toBe(currency);
+    expect(extracted[0]?.compensationRanges?.[0]?.currency).toBe('XXX');
     const projected = projectRoleMetadata(original, extracted).job;
     expect(projected.locations).toEqual([location]);
-    expect(projected.compensation.maxHourlyUSD).toBe(maximum);
+    expect(projected.compensation.maxHourlyUSD).toBeUndefined();
   });
 
   it('preserves accepted scalars through conflict, resolution, and withdrawal', () => {
@@ -318,10 +356,10 @@ describe('provider-neutral role metadata', () => {
   });
 
   it('does not mistake compensation headings for location applicability', () => {
-    const hourly = extractCompensationRanges('The pay range is: $40-$50/hour.', {
+    const hourly = extractCompensationRanges('The pay range is: USD $40-$50/hour.', {
       provenance: field, knownLocations: ['New York, NY'],
     });
-    const annual = extractCompensationRanges('Base salary: $100,000-$120,000/year.', {
+    const annual = extractCompensationRanges('Base salary: USD $100,000-$120,000/year.', {
       provenance: field, knownLocations: ['New York, NY'],
     });
     const locationSpecific = extractCompensationRanges('New York, NY: $45-$55/hour.', {
@@ -340,7 +378,7 @@ describe('provider-neutral role metadata', () => {
 
   it('excludes Varda cell-phone reimbursement while retaining the adjacent hourly rate', () => {
     const ranges = extractCompensationRanges(
-      'Hourly Rate: $33.00/hour $20/pay period cell phone reimbursement',
+      'Hourly Rate: USD $33.00/hour $20/pay period cell phone reimbursement',
       { provenance: field, requirePayContext: true, knownLocations: ['United States'] },
     );
     expect(ranges).toEqual(expect.arrayContaining([
@@ -488,6 +526,26 @@ describe('provider-neutral role metadata', () => {
     const ranges = extractCompensationRanges('The pay range is $30-$40/hour.', { provenance: field, knownLocations: ['Toronto, ON'] });
     expect(ranges[0]?.currency).toBe('XXX');
     expect(compensationFromRanges(ranges)).toMatchObject({ raw: 'Currency not stated 30–40/hour', ranges: [{ currency: 'XXX', period: 'hourly' }] });
+  });
+
+  it.each([
+    ['Indiana', ['IN']], ['California', ['CA']], ['remote Canada', ['Remote in Canada']],
+    ['mixed US and Canada', ['Seattle, WA', 'Toronto, ON']],
+  ])('keeps bare dollars currency-unknown for %s locations', (_name, knownLocations) => {
+    expect(extractCompensationRanges('The pay range is $30-$40/hour.', { provenance: field, knownLocations }))
+      .toMatchObject([{ minAmount: 30, maxAmount: 40, currency: 'XXX', period: 'hourly' }]);
+  });
+
+  it.each([
+    ['US$30-US$40/hour', 'USD'], ['USD $30-$40/hour', 'USD'], ['CAD $30-$40/hour', 'CAD'],
+  ])('preserves explicit currency notation in %s', (text, currency) => {
+    expect(extractCompensationRanges(`The pay range is ${text}.`, { provenance: field, knownLocations: ['Toronto, ON'] }))
+      .toMatchObject([{ minAmount: 30, maxAmount: 40, currency, period: 'hourly' }]);
+  });
+
+  it('keeps a bare-dollar housing amount currency-unknown even for a US location', () => {
+    expect(extractHousingDetails('$2,500 monthly housing stipend.', { provenance: field, knownLocations: ['San Jose, CA'] }))
+      .toMatchObject([{ kind: 'stipend', minAmount: 2500, maxAmount: 2500, currency: 'XXX', period: 'monthly' }]);
   });
 
   it('projects nonstandard pay periods without using them as legacy scalar bounds', () => {

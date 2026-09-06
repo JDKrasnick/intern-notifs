@@ -29,7 +29,7 @@ import type {
 // Increment whenever a parser change can produce a different result from an
 // unchanged artifact. This makes the collection scheduler revisit both a
 // previous negative result and an already-enriched posting.
-export const ROLE_METADATA_EXTRACTION_VERSION = 11;
+export const ROLE_METADATA_EXTRACTION_VERSION = 12;
 export const VERIFIED_PAGE_METADATA_SOURCES = ['official-json-ld', 'official-page'] as const;
 const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   // Exact-role detail retrieval owns its own slot; a later board-list poll
@@ -336,11 +336,6 @@ function compensationPeriod(value: string): CompensationPeriod {
   return 'other';
 }
 
-function dollarCurrency(knownLocations: readonly string[]): string {
-  const usLocation = /\b(?:United States(?: of America)?|USA|U\.S\.|US|AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\b/iu;
-  return knownLocations.some((location) => usLocation.test(location)) ? 'USD' : 'XXX';
-}
-
 function applicability(segment: string, knownLocations: readonly string[]): Pick<CompensationRange, 'applicableLocations' | 'applicableEducationLevels' | 'applicabilityLabel'> {
   const locations = knownLocations.filter((location) => {
     const terms = location.toLowerCase().split(/[^a-z0-9]+/u).filter((term) => term.length > 2 && !['remote', 'united', 'states'].includes(term));
@@ -405,7 +400,10 @@ export function extractCompensationRanges(
   // of a range. Normalize the notation before matching, never infer from pay size.
   const qualified = value.replace(/\bUS\s+D\b(?=\s*(?:to\b|[-–—.,]|$))/gu, 'USD').replace(/\b(US|CA|AU|NZ|SG|HK)\$/gu, (_, code: string) =>
     `${({ US: 'USD', CA: 'CAD', AU: 'AUD', NZ: 'NZD', SG: 'SGD', HK: 'HKD' } as Record<string, string>)[code]} $`);
-  const normalized = qualified.replace(/(\d)\s+,\s*(?=\d{3}\b)/gu, '$1,')
+  const normalized = qualified.replace(new RegExp(String.raw`\b(hourly|annual(?:ized)?|yearly|daily|weekly|monthly)\s+(?:(?:base|estimated|starting)\s+)?(?:pay|salary|wage|rate|compensation)(?:\s+range)?[^.;$€£\d]{0,100}?(${MONEY_AMOUNT})\s*(${CURRENCY_CODE})\s*(?:-|–|—|to)\s*(${MONEY_AMOUNT})\s*\3\b`, 'giu'),
+    (matched: string, period: string, first: string, currency: string, second: string) =>
+      `${matched.slice(0, matched.indexOf(first))}${currency} $${first} - $${second}/${period}`)
+    .replace(/(\d)\s+,\s*(?=\d{3}\b)/gu, '$1,')
     .replace(/\b((?:primary location\s+)?full[ -]time\s+(?:salary|pay)\s+range)\s*:\s*\n\s*(?=[$€£])/giu, '$1: ')
     // Adjacent employer min/max fields describe one range, not two offers.
     // Require the same label and currency notation on both endpoints.
@@ -461,7 +459,7 @@ export function extractCompensationRanges(
       // An attached unit takes precedence over a generic template heading.
       if (new RegExp(String.raw`^\s*(?:/|per\s+)(${PERIOD})\b`, 'iu').test(segment.slice((match.index ?? 0) + match[0].length))) continue;
       const currency = match[2]?.toUpperCase() ?? match[8]?.toUpperCase()
-        ?? CURRENCY_SYMBOL[match[3]!] ?? dollarCurrency(input.knownLocations ?? []);
+        ?? CURRENCY_SYMBOL[match[3]!] ?? 'XXX';
       append(segment, match[0], amount(match[4]!, match[5]), match[6] ? amount(match[6], match[7]) : amount(match[4]!, match[5]), match[1]!, currency, match.index);
     }
     const splitPatterns = [SPLIT_PERIOD_PAY, ...( /\bbetween\b/iu.test(segment)
@@ -471,7 +469,7 @@ export function extractCompensationRanges(
       const rightPeriod = compensationPeriod(match[9]!);
       if (leftPeriod !== rightPeriod) continue;
       const currency = match[1]?.toUpperCase() ?? match[6]?.toUpperCase()
-        ?? CURRENCY_SYMBOL[match[2]!] ?? (match[2] === '$' ? dollarCurrency(input.knownLocations ?? []) : 'XXX');
+        ?? CURRENCY_SYMBOL[match[2]!] ?? 'XXX';
       append(segment, match[0], amount(match[3]!, match[4]), amount(match[7]!, match[8]), match[5]!, currency, match.index);
     }
     for (const match of segment.matchAll(BETWEEN_RANGE_AND_PERIOD_CURRENCY_PAY)) {
@@ -481,7 +479,7 @@ export function extractCompensationRanges(
     for (const match of segment.matchAll(PAY)) {
       const explicit = match[1]?.toUpperCase();
       if (!explicit && !match[2]) continue;
-      const symbolCurrency = CURRENCY_SYMBOL[match[2]!] ?? (match[2] === '$' ? dollarCurrency(input.knownLocations ?? []) : 'XXX');
+      const symbolCurrency = CURRENCY_SYMBOL[match[2]!] ?? 'XXX';
       const trailing = match[5]?.toUpperCase();
       const nearbyPrefix = segment.slice(Math.max(0, (match.index ?? 0) - 8), match.index).match(new RegExp(String.raw`\b(${CURRENCY_CODE})\s*$`, 'iu'))?.[1]?.toUpperCase();
       const nearbySuffix = segment.slice((match.index ?? 0) + match[0].length, (match.index ?? 0) + match[0].length + 8).match(new RegExp(String.raw`^\s*(${CURRENCY_CODE})\b`, 'iu'))?.[1]?.toUpperCase();
@@ -499,7 +497,7 @@ export function extractCompensationRanges(
       for (const match of segment.matchAll(unknownPay)) {
         const codes = [match[1], match[6], match[9]].filter(Boolean).map((value) => value!.toUpperCase());
         if (new Set(codes).size > 1) continue;
-        const currency = codes[0] ?? CURRENCY_SYMBOL[match[2] ?? match[3] ?? ''] ?? dollarCurrency(input.knownLocations ?? []);
+        const currency = codes[0] ?? CURRENCY_SYMBOL[match[2] ?? match[3] ?? ''] ?? 'XXX';
         append(segment, match[0], amount(match[4]!, match[5]), match[7] ? amount(match[7], match[8]) : amount(match[4]!, match[5]), 'unknown', currency, match.index);
       }
     }
@@ -789,8 +787,11 @@ function rangeValue(range: CompensationRange): string {
 }
 
 function rangeAudience(range: CompensationRange): string {
+  // This parser-generated amount qualifier is not a distinct population.
+  // Regional, education and publisher-supplied audience labels remain scoped.
+  const label = range.applicabilityLabel?.trim().toLowerCase();
   return stable({
-    label: range.applicabilityLabel?.trim().toLowerCase() || undefined,
+    label: label === 'starting rate (lower bound)' ? undefined : label || undefined,
     locations: [...(range.applicableLocations ?? [])].map(item => item.trim().toLowerCase()).sort(),
     education: [...(range.applicableEducationLevels ?? [])].sort(),
   });
