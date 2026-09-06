@@ -690,6 +690,8 @@ describe('trusted rollout repair boundaries', { timeout: 20_000 }, () => {
   it('collects evidence and publishes in bounded slices without probing completed rows again', async () => {
     const { store, rows, state, poll, sourceId } = migrationFixture();
     await poll(false);
+    const parserCheckpoint = (await store.getCheckpoint(sourceId))!;
+    await store.putCheckpoint({ ...parserCheckpoint, metadataExtractionVersion: 0 });
     const oldVersion = (await store.getCheckpoint(sourceId))!.admissionConfigurationVersion;
     const initial = await poll(true, rows.length - 16);
     expect(initial.failures).toEqual([]);
@@ -723,6 +725,8 @@ describe('trusted rollout repair boundaries', { timeout: 20_000 }, () => {
     const changedOccurrence = (await store.getSourceOccurrences(sourceId)).find(item => item.externalId === rows[50]!.externalId)!;
     expect(changedOccurrence.occurrence.title).toBe('Data Engineering Intern');
     expect((await store.getCheckpoint(sourceId))!.admissionConfigurationVersion).not.toBe(oldVersion);
+    // Finishing an admission slice is not a complete metadata-parser replay.
+    expect((await store.getCheckpoint(sourceId))!.metadataExtractionVersion).toBe(0);
     expect(store.notificationEvents.size).toBe(0);
   });
 

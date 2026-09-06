@@ -1536,9 +1536,9 @@ export class IngestionRunner {
           : admissionConfigurationVersion;
         await this.store.putCheckpoint({
           ...result.checkpoint,
-          // A 304, partial migration or failed persistence cannot certify that
+          // A 304, migration slice or failed persistence cannot certify that
           // unchanged source content has passed the current metadata parser.
-          metadataExtractionVersion: !unchanged304 && !admissionMigrationPending && !persistenceFailedJobIds.size
+          metadataExtractionVersion: !unchanged304 && migrationLimit === undefined && !admissionMigrationPending && !persistenceFailedJobIds.size
             ? ROLE_METADATA_EXTRACTION_VERSION : previous?.metadataExtractionVersion,
           contentHash: batch.snapshotHash,
           activeExternalIds: [...batch.activeExternalIds],
