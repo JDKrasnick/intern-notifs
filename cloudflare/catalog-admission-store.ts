@@ -4,7 +4,7 @@ import { alertEligible } from '../src/catalog-admission.js';
 import { openCatalogSortKey } from '../src/catalog-recency.js';
 import { catalogSearchText, catalogSourceClasses } from '../src/catalog-fields.js';
 import { canonicalCompanyKey } from '../src/core/normalize.js';
-import { providerPostingReference } from '../src/identity/posting.js';
+import { providerPostingReference, providerPostingAlias } from '../src/identity/posting.js';
 import type {
   AdmissionIncident,
   CanonicalEmployer,
@@ -59,6 +59,28 @@ function roleMetadataEvidenceSnapshot(rows: Array<{ job_id: string; evidence: st
 
 function roleMetadataSchemaMissing(error: unknown): boolean {
   return error instanceof Error && /no such table:\s*role_metadata_/iu.test(error.message);
+}
+
+function metadataCollectionTarget(reference: SourceOccurrence): { candidateUrl: string; providerIdentity: ProviderIdentity } | undefined {
+  if (!reference.externalId) return undefined;
+  const destination = reference.admission?.destination;
+  if (destination) {
+    if (!['posting-detail', 'application-form'].includes(destination.classification)) return undefined;
+    return { candidateUrl: destination.finalUrl ?? destination.candidateUrl, providerIdentity: {
+      provider: destination.provider, sourceId: reference.sourceId, sourceUrl: reference.sourceUrl,
+      tenant: destination.tenant, postingId: destination.expectedPostingId,
+    } };
+  }
+  // Legacy public roles can have confirmed per-occurrence posting identity but
+  // no admission snapshot. Reuse that exact identity, never a title/tenant guess.
+  const decision = reference.postingIdentityDecision;
+  if (decision?.status !== 'confirmed') return undefined;
+  try {
+    const route = providerPostingReference(reference.applyUrl);
+    if (!route.postingId || decision.exactKey !== providerPostingAlias(route)) return undefined;
+    return { candidateUrl: reference.applyUrl, providerIdentity: { ...route,
+      sourceId: reference.sourceId, sourceUrl: reference.sourceUrl } };
+  } catch { return undefined; }
 }
 
 function roleMetadataCollectionSnapshot(value: RoleMetadataCollectionCoverage): string {
@@ -167,8 +189,7 @@ export class D1CatalogAdmissionStore {
     for (const job of jobs) {
       if (!job.open) continue;
       for (const reference of job.sourceReferences) {
-        const destination = reference.admission?.destination;
-        if (reference.externalId && destination && ['posting-detail', 'application-form'].includes(destination.classification)) {
+        if (metadataCollectionTarget(reference)) {
           eligible.add(`${job.jobId}\0${reference.sourceId}`);
         }
       }
@@ -396,8 +417,8 @@ export class D1CatalogAdmissionStore {
       for (const reference of job.sourceReferences) {
         const key = `${job.jobId}\0${reference.sourceId}`;
         if (unavailable.has(key) || (options.after && key <= options.after)) continue;
-        const destination = reference.admission?.destination;
-        if (!reference.externalId || !destination || !['posting-detail', 'application-form'].includes(destination.classification)) continue;
+        const target = metadataCollectionTarget(reference);
+        if (!target || !reference.externalId) continue;
         const current = reference.metadataEvidence?.some((item) => ['official-page', 'official-json-ld'].includes(item.sourceClass)
           && item.extractionVersion === ROLE_METADATA_EXTRACTION_VERSION) === true;
         if (options.requireProjectedEvidence && !current) continue;
@@ -406,13 +427,8 @@ export class D1CatalogAdmissionStore {
         if (observation && (!options.observedBefore || observation.observedAt > options.observedBefore)) continue;
         candidates.push({
           jobId: job.jobId, sourceId: reference.sourceId, externalId: reference.externalId,
-          candidateUrl: destination.finalUrl ?? destination.candidateUrl,
+          ...target,
           ...(observation ? { metadataArtifactHash: observation.artifactHash } : {}),
-          providerIdentity: {
-            provider: destination.provider, sourceId: reference.sourceId, sourceUrl: reference.sourceUrl,
-            ...(destination.tenant ? { tenant: destination.tenant } : {}),
-            ...(destination.expectedPostingId ? { postingId: destination.expectedPostingId } : {}),
-          },
         });
       }
     }

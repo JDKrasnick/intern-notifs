@@ -140,6 +140,25 @@ describe('D1 role metadata evidence and guarded repair', () => {
     expect((await current.jobs.getJob(original.jobId))?.admission?.catalogEligible).toBe(false);
   });
 
+  it('collects a confirmed legacy Workday occurrence without inventing admission', async () => {
+    const current = subject(); const original = job();
+    original.applyUrl = 'https://acme.wd1.myworkdayjobs.com/External/job/New-York/Intern_R123';
+    original.sourceReferences[0] = { ...original.sourceReferences[0]!, applyUrl: original.applyUrl,
+      postingIdentityDecision: { status: 'confirmed', exactKey: 'provider:workday:acme:r123', provider: 'workday', tenant: 'acme',
+        evidenceKind: 'immutable-provider-id', contractId: 'posting-provider-workday', contractVersion: 1,
+        approvalReference: 'registry:workday:v1', evidenceHash: 'confirmed-hash', observedAt: '2026-09-05T00:00:00.000Z' } };
+    await current.jobs.putInternship(original);
+    expect((await current.operations.roleMetadataAudit()).collectionCoverage.eligible).toBe(1);
+    expect(await current.operations.metadataVerificationCandidates(10)).toMatchObject([
+      { jobId: original.jobId, providerIdentity: { provider: 'workday', tenant: 'acme', postingId: 'r123' } },
+    ]);
+    expect((await current.jobs.getJob(original.jobId))?.admission).toBeUndefined();
+    original.sourceReferences[0] = { ...original.sourceReferences[0]!, applyUrl: original.applyUrl.replace('R123', 'R999') };
+    await current.jobs.putInternship(original);
+    expect(await current.operations.metadataVerificationCandidates(10)).toEqual([]);
+    expect((await current.operations.roleMetadataAudit()).collectionCoverage.eligible).toBe(0);
+  });
+
   it('backs off failed acquisitions without calling them complete or starving other jobs', async () => {
     const current = subject();
     for (const id of ['a', 'b']) await current.jobs.putInternship({ ...jobWithVerifiedDestination(), jobId: id });
