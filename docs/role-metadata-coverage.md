@@ -1,6 +1,42 @@
 # Employer metadata coverage audit — 2026-09-05
 
-## Latest implementation: extraction v9 — 2026-09-06
+## Latest implementation: extraction v10 — 2026-09-06
+
+Worker source `eee0205`, version `cb3feb19-bc79-4110-94b0-5a416896aba4`,
+is deployed with publication flags independently verified unchanged. Web source
+`9e55df6`, deployment `6af88108.internnotifs.pages.dev`, serves the canonical site.
+At 20:24 UTC, 1,685 public roles include 407 with pay (24.2%), 1,379 with enriched
+metadata (81.8%), and 21 with housing information (1.2%). These are field-presence
+counts, not disclosure recall, numeric housing-cost coverage, or proof of repair.
+
+Live QA found seven Varda roles with a $20 cell-phone reimbursement in the salary
+display. V10 binds reimbursement exclusions to the individual monetary clause.
+All seven exact employer payloads now replay through ordinary ingestion with
+one USD 33/hour wage, the relocation-conditional housing stipend, and zero
+conflicts. The original 53-posting corpus still retains pay throughout with zero
+reproduced conflicts; all 19 SpaceX source-path cases retain pay too.
+
+The new extraction version requires fresh evidence. Its initial audit starts at
+0/4,645 current source/posting pairs, with 3,434 deferred projections. V9's 95.6%
+collection coverage is not v10 validation. Existing public projections remain
+accepted-but-stale until their sources refresh; historical collection only
+stages evidence. No historical repair is approved or applied. Version-bound
+omission reviews must be regenerated before any historical publication.
+At the 19:57 QA snapshot, 44 of the exact 45 prior pay-loss roles still lacked pay;
+the aggregate increase to 407 does not establish those jobs' recovery.
+
+Web QA also fixes invisible guest catalog controls in the keyboard order,
+missing radio/filter states, and a clipped company-coverage toggle. Direct ARIA
+props work in both installed renderers; a regression test checks the real web
+renderer and actual JSX wiring. Browser confirmation passes at 1440, 390 and
+320px, including Profile, Saved, and the sign-in overlay. The native appearance
+and inactive-list behavior remain unchanged; physical-device acceptance is open.
+
+Validation: 1,362 backend tests pass (284 skipped), 100 mobile tests pass, both
+type checks and lint pass, and Worker compilation/web export succeed. The code
+commits' CI checks pass. No account or notification data changed in these checks.
+
+## Previous implementation: extraction v9 — 2026-09-06
 
 Worker source `fba716c`, version `1f9364cf-1f09-499e-be5f-8db386b68767`,
 serves 100% of production traffic as of 19:27 UTC. Migrations 0018–0019 are
