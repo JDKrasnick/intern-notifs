@@ -473,6 +473,7 @@ export interface ProviderTimestamp {
 
 /** Ordered from most to least authoritative for provider-neutral enrichment. */
 export type EvidenceSource =
+  | 'official-api'
   | 'official-ats'
   | 'official-json-ld'
   | 'official-page'
@@ -674,13 +675,17 @@ export interface Compensation {
   ranges?: CompensationRange[];
 }
 
-export type CompensationPeriod = 'hourly' | 'annual' | 'daily' | 'weekly' | 'monthly' | 'other';
+export type CompensationPeriod = 'hourly' | 'annual' | 'daily' | 'weekly' | 'monthly' | 'unknown' | 'other';
 
 export interface CompensationRange {
   minAmount: number;
   maxAmount: number;
   currency: string;
   period: CompensationPeriod;
+  /** Publisher-supplied range label, not an inferred location or degree. */
+  applicabilityLabel?: string;
+  /** Explicit nonstandard pay interval, retained without annualization. */
+  periodLabel?: string;
   applicableLocations?: string[];
   applicableEducationLevels?: EducationLevel[];
   /** Pay-only, whitespace-bounded excerpt; never a job-description excerpt. */

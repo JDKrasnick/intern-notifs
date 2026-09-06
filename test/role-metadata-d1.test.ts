@@ -6,6 +6,9 @@ import { D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.j
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 import { extractPostingMetadataEvidence, projectRoleMetadata } from '../src/role-metadata.js';
+import { persistDestinationAdmission } from '../cloudflare/destination-verification.js';
+import { parseMetadataApiResponse } from '../src/metadata-acquisition.js';
+import { mergeSourceOccurrence } from '../src/identity/source-occurrence.js';
 import type { Internship } from '../src/types.js';
 
 function sqliteD1(database: DatabaseSync): D1Database {
@@ -27,7 +30,7 @@ function sqliteD1(database: DatabaseSync): D1Database {
 
 function subject() {
   const database = new DatabaseSync(':memory:');
-  for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql']) {
+  for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql', '0017_metadata_acquisition.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   const db = sqliteD1(database);
@@ -72,6 +75,69 @@ function jobWithVerifiedDestination(): Internship {
 }
 
 describe('D1 role metadata evidence and guarded repair', () => {
+  it.each(['greenhouse', 'lever', 'ashby'] as const)('stages %s API evidence on a GitHub discovery and publishes it only through exact repair guards', async (provider) => {
+    const current = subject(); const original = jobWithVerifiedDestination();
+    await current.jobs.putInternship(original);
+    const before = await current.jobs.getJob(original.jobId);
+    const postingId = provider === 'greenhouse' ? '123' : 'ef725594-42dd-4f0d-ba8e-df8179dbc6cb';
+    const identity = { provider, tenant: 'acme', postingId, sourceId: 'community-acme', sourceUrl: original.applyUrl };
+    const method = `${provider}-api` as const;
+    const payload = provider === 'greenhouse' ? { id: 123, title: original.title,
+      content: 'The salary for this role is USD 4500 - 5800 per week.', location: { name: 'New York, NY' } }
+      : provider === 'lever' ? { id: postingId, text: original.title, hostedUrl: `https://jobs.lever.co/acme/${postingId}`,
+        descriptionPlain: 'Build software.', salaryRange: { currency: 'USD', min: 4500, max: 5800, interval: 'per-week-salary' },
+        lists: [{ text: 'Requirements', content: 'Must hold a bachelors degree.' }] }
+        : { jobs: [{ id: postingId, title: original.title, jobUrl: `https://jobs.ashbyhq.com/acme/${postingId}`,
+          descriptionPlain: 'Build software.', compensation: { scrapeableCompensationSalarySummary: 'Salary USD 4500 - 5800 per week' } }] };
+    const artifact = parseMetadataApiResponse(identity, method, payload);
+    const observedAt = '2026-09-05T12:00:00.000Z';
+    await persistDestinationAdmission({ jobs: current.jobs, operations: current.operations, job: original, reference: original.sourceReferences[0]!,
+      message: { version: 1, jobId: original.jobId, sourceId: 'community-acme', externalId: 'row-1', providerIdentity: identity,
+        candidateUrl: original.applyUrl, queuedAt: observedAt, reason: 'historical-backfill', metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION, metadataBackfillToken: 'collection-api' },
+      reachability: 'live', inspectedAt: observedAt,
+      apiAcquisition: { method, sourceUrl: original.applyUrl, outcome: 'acquired', artifact } });
+    expect(await current.jobs.getJob(original.jobId)).toEqual(before);
+    const plan = await current.operations.stageRoleMetadataRepair(observedAt);
+    expect(plan.expectedJobs).toBe(1);
+    await current.operations.applyRoleMetadataRepair(plan.repairToken, 1, 0, observedAt);
+    const repaired = await current.jobs.getJob(original.jobId);
+    expect(repaired?.compensation.ranges).toMatchObject([{ minAmount: 4500, maxAmount: 5800, period: 'weekly', currency: 'USD' }]);
+    expect(repaired?.notification).toEqual(original.notification);
+    expect(repaired?.sourceReferences[0]?.admission).toEqual(original.sourceReferences[0]?.admission);
+    expect(repaired?.applyUrl).toBe(original.applyUrl);
+    expect(repaired?.compensation.minAnnualUSD).toBeUndefined();
+    const laterList = extractPostingMetadataEvidence({ artifact: { title: original.title, text: 'No salary field in the board list.' },
+      sourceClass: 'official-ats', sourceId: 'community-acme', sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs',
+      observedAt: '2026-09-05T12:05:00.000Z', exactPosting: true });
+    const merged = mergeSourceOccurrence(repaired!.sourceReferences[0], { ...original.sourceReferences[0]!, metadataEvidence: laterList });
+    expect(projectRoleMetadata({ ...repaired!, sourceReferences: [merged] }).job.compensation.ranges)
+      .toMatchObject([{ minAmount: 4500, maxAmount: 5800, period: 'weekly' }]);
+  });
+  it('reserves disjoint resumable batches, revisits old versions and expires abandoned leases', async () => {
+    const current = subject();
+    for (const id of ['a', 'b', 'c']) await current.jobs.putInternship({ ...jobWithVerifiedDestination(), jobId: id });
+    await current.operations.recordRoleMetadataExtraction({ jobId: 'a', sourceId: 'community-acme', sourceUrl: job().applyUrl,
+      artifactHash: 'old', extractionVersion: ROLE_METADATA_EXTRACTION_VERSION - 1, outcome: 'no-explicit-metadata', observedAt: '2026-09-05T00:00:00.000Z' });
+    const options = { observedBefore: '2026-09-01T00:00:00.000Z', reserveAt: '2026-09-05T01:00:00.000Z', after: '' };
+    const first = await current.operations.metadataVerificationCandidates(1, options);
+    expect(first.map((row) => row.jobId)).toEqual(['a']);
+    expect((await current.operations.metadataVerificationCandidates(1, options)).map((row) => row.jobId)).toEqual(['b']);
+    expect((await current.operations.metadataVerificationCandidates(1, { ...options, after: 'b\0community-acme' })).map((row) => row.jobId)).toEqual(['c']);
+    expect(await current.operations.metadataVerificationCandidates(1, options)).toEqual([]);
+    expect((await current.operations.metadataVerificationCandidates(1, { ...options, reserveAt: '2026-09-05T01:31:00.000Z' })).map((row) => row.jobId)).toEqual(['a']);
+  });
+
+  it('backs off failed acquisitions without calling them complete or starving other jobs', async () => {
+    const current = subject();
+    for (const id of ['a', 'b']) await current.jobs.putInternship({ ...jobWithVerifiedDestination(), jobId: id });
+    await current.operations.recordMetadataAcquisition('a', 'community-acme', '2026-09-05T00:00:00.000Z',
+      { fields: { compensation: 'acquisition-failed' }, complete: false, method: 'browser' }, '2026-09-06T00:00:00.000Z');
+    expect((await current.operations.metadataVerificationCandidates(5, { reserveAt: '2026-09-05T01:00:00.000Z' })).map((row) => row.jobId)).toEqual(['b']);
+    const audit = await current.operations.roleMetadataAudit(new Date('2026-09-05T01:00:00.000Z'));
+    expect(audit.collectionCoverage.complete).toBe(false);
+    expect(audit.disclosureRecall).toBeNull();
+    expect(audit.fieldOutcomes['github/browser/compensation']).toEqual({ 'acquisition-failed': 1 });
+  });
   it('reports and blocks incomplete exact-destination collection', async () => {
     const current = subject();
     const original = jobWithVerifiedDestination();

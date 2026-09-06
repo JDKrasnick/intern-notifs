@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { decodeMetadataCursor, encodeMetadataCursor } from '../src/metadata-audit.js';
 import { createApiHandler, type DocumentStorage } from '../src/api.js';
 import { ashbyWorkMessages, isAshbySourceDue } from '../src/ashby-dispatch.js';
 import { processAshbyQueue } from '../src/ashby-worker.js';
@@ -602,7 +603,7 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
   if (url.pathname === '/internal/role-metadata/backfill' && request.method === 'POST') {
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
     const input = await request.json().catch(() => ({})) as {
-      action?: 'collect' | 'dry-run' | 'apply'; limit?: number; collectionToken?: string;
+      action?: 'collect' | 'dry-run' | 'apply'; limit?: number; collectionToken?: string; cursor?: string;
       repairToken?: string; expectedJobs?: number; expectedOccurrences?: number;
     };
     const operations = new D1CatalogAdmissionStore(env.DB);
@@ -613,6 +614,8 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
         const collectionToken = input.collectionToken?.trim() || crypto.randomUUID();
         const candidates = await operations.metadataVerificationCandidates(limit, {
           observedBefore: new Date(Date.now() - ROLE_METADATA_REVALIDATION_MS).toISOString(),
+          after: decodeMetadataCursor(input.cursor),
+          reserveAt: new Date().toISOString(),
         });
         await sendQueueMessages(env.DESTINATION_VERIFICATION_QUEUE, candidates.map((candidate) => destinationVerificationMessage({
           ...candidate,
@@ -620,7 +623,11 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
           metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
           metadataBackfillToken: collectionToken,
         })));
-        return withCors(Response.json({ collectionToken, queued: candidates.length, extractionVersion: ROLE_METADATA_EXTRACTION_VERSION }));
+        const last = candidates.at(-1);
+        return withCors(Response.json({ collectionToken, queued: candidates.length,
+          nextCursor: last ? encodeMetadataCursor(last.jobId, last.sourceId) : null,
+          // Exhausted is not collection-complete: reservations may still be in flight.
+          exhausted: candidates.length < limit, extractionVersion: ROLE_METADATA_EXTRACTION_VERSION }));
       }
       if (input.action === 'apply') {
         if (typeof input.repairToken !== 'string' || !/^[a-f0-9]{64}$/u.test(input.repairToken)) throw new Error('repairToken is invalid');

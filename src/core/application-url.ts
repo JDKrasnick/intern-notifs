@@ -46,6 +46,8 @@ export interface ApplicationPageEvidence {
   url: string;
   /** True when only the bounded prefix of the response was inspected. */
   inspectionTruncated?: boolean;
+  /** Renderer never reached a role description or a recognized terminal state. */
+  loadingShell?: boolean;
   /** Exact number of response bytes inspected before decoding. */
   inspectedBytes?: number;
   /** A specific source path collapsed to a site's root after redirecting. */

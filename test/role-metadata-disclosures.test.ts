@@ -17,7 +17,7 @@ const fixtures = [
   { employer: 'Daktronics / iCIMS', text: 'The typical hiring range for this position is $25.00 to $27.00 per hour based on the location of the candidate.', min: 25, max: 27, period: 'hourly' },
   { employer: 'Tower Research / Greenhouse', text: 'Anticipated New York weekly base salary range $3,500-5,700.', min: 3500, max: 5700, period: 'weekly' },
   { employer: 'Nokia / Oracle', text: 'Salary Range $20.10 – $70.40 USD per hour', min: 20.1, max: 70.4, period: 'hourly' },
-  { employer: 'Cotiviti / iCIMS', text: 'The hourly pay range is $32 to $40 per hour.', min: 32, max: 40, period: 'hourly' },
+  { employer: 'Cotiviti / iCIMS', text: 'Base compensation ranges from $32.00 to $40.00 per hour.', min: 32, max: 40, period: 'hourly' },
 ];
 
 function project(text: string, location = 'New York, NY, United States') {
@@ -34,6 +34,20 @@ function project(text: string, location = 'New York, NY, United States') {
 }
 
 describe('employer disclosure formats from the coverage audit', () => {
+  it.each([
+    ['Base Salary Range $123,500 - $170,000 USD', 123500, 170000, 'USD', 'unknown'],
+    ['Salary JPY 2,000 - 4,000 per hour', 2000, 4000, 'JPY', 'hourly'],
+    ['Salary KRW 30,000,000 - 40,000,000 per year', 30000000, 40000000, 'KRW', 'annual'],
+  ])('preserves disclosed native amounts without a USD or annual guess: %s', (text, min, max, currency, period) => {
+    const result = project(String(text));
+    expect(result.job.compensation.ranges).toMatchObject([{ minAmount: min, maxAmount: max, currency, period }]);
+    expect(result.job.compensation.minAnnualUSD).toBeUndefined();
+    expect(result.job.compensation.minHourlyUSD).toBeUndefined();
+  });
+
+  it.each(['Salary USD $30 - CAD $40 per hour', 'Desired salary: USD $50 per hour', 'Sign-on bonus USD $10000 per year'])('rejects ambiguous or unrelated pay: %s', (text) => {
+    expect(project(text).job.compensation.raw).toBe('');
+  });
   it.each(fixtures)('captures $employer pay with an explicit period', ({ text, min, max, period }) => {
     const result = project(text);
     expect(result.conflicts).toEqual([]);
@@ -53,7 +67,6 @@ describe('employer disclosure formats from the coverage audit', () => {
 
   it.each([
     'The expected wage range for this position is $22 to $41.',
-    'Base Salary Range $38,000 — $38,000 USD',
     'Revenue exceeded $11 billion. Hourly employees may apply.',
     'The role pays $20 per hour and includes mentoring.',
   ])('does not guess missing periods or mistake connecting words for currencies: %s', text => {

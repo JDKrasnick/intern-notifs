@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { compensationLabels } from '../shared/compensation-display.js';
 import { boundedText, locationSummary, normalizeLocations } from './catalog-quality.js';
 import { mergeEducationEvidence, mergeProvenance } from './identity/enrichment.js';
 import type {
@@ -26,9 +27,12 @@ import type {
 // Increment whenever a parser change can produce a different result from an
 // unchanged artifact. This makes the collection scheduler revisit both a
 // previous negative result and an already-enriched posting.
-export const ROLE_METADATA_EXTRACTION_VERSION = 3;
+export const ROLE_METADATA_EXTRACTION_VERSION = 4;
 export const VERIFIED_PAGE_METADATA_SOURCES = ['official-json-ld', 'official-page'] as const;
 const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
+  // Exact-role detail retrieval owns its own slot; a later board-list poll
+  // must not erase fields the list endpoint omits.
+  'official-api': -1,
   'official-ats': 0,
   'official-json-ld': 1,
   'official-page': 2,
@@ -40,6 +44,7 @@ export interface RoleMetadataArtifact {
   title: string;
   text?: string;
   compensationText?: string;
+  compensationBands?: Array<{ minAmount: number; maxAmount: number; currency: string; period?: CompensationPeriod; label?: string; sourceText: string }>;
   locations?: string[];
   workMode?: string;
   publishedAt?: string;
@@ -50,6 +55,7 @@ export interface RoleMetadataArtifact {
 
 export interface ApplicationMetadataArtifact extends RoleMetadataArtifact {
   identifier?: string;
+  inspectionTruncated?: boolean;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -110,7 +116,7 @@ function jsonLdCompensation(value: unknown): string | undefined {
   const min = typeof amountValue.minValue === 'number' ? amountValue.minValue : typeof amountValue.value === 'number' ? amountValue.value : undefined;
   const max = typeof amountValue.maxValue === 'number' ? amountValue.maxValue : min;
   const unit = stringValue(amountValue.unitText);
-  return min !== undefined && max !== undefined && unit ? `${currency} $${min}${min === max ? '' : ` - $${max}`} per ${unit}` : undefined;
+  return min !== undefined && max !== undefined ? `Salary: ${currency} ${min}${min === max ? '' : ` - ${max}`}${unit ? ` per ${unit}` : ''}` : undefined;
 }
 
 /** Parses transient JSON-LD into bounded role artifacts; callers persist only extracted evidence. */
@@ -127,7 +133,8 @@ export function applicationMetadataArtifactsFromJsonDocuments(documents: readonl
     return [{
       title,
       ...(jsonLdIdentifier(row.identifier) ? { identifier: jsonLdIdentifier(row.identifier) } : {}),
-      ...(stringValue(row.description) ? { text: boundedText(stringValue(row.description)!.replace(/<[^>]+>/gu, ' '), 12_000) } : {}),
+      ...(stringValue(row.description) ? { text: boundedText(stringValue(row.description)!.replace(/<[^>]+>/gu, ' '), 40_000),
+        ...(stringValue(row.description)!.length > 40_000 ? { inspectionTruncated: true } : {}) } : {}),
       ...(locations.length ? { locations } : {}),
       ...(remote ? { workMode: remote } : {}),
       ...(jsonLdCompensation(row.baseSalary) ? { compensationText: jsonLdCompensation(row.baseSalary) } : {}),
@@ -268,10 +275,9 @@ function amount(value: string, suffix?: string): number {
 }
 
 const CURRENCY_SYMBOL: Record<string, string> = { '€': 'EUR', '£': 'GBP' };
-const NON_USD = new Set(['XXX', 'CAD', 'AUD', 'NZD', 'SGD', 'HKD', 'EUR', 'GBP', 'JPY', 'CNY', 'INR', 'CHF']);
-const PERIOD = String.raw`hour|hourly|hr|day|daily|week|weekly|month|monthly|year|yearly|yr|annum|annual(?:ly|ized)?`;
+const PERIOD = String.raw`hour|hourly|hr|day|daily|week|weekly|month|monthly|year|yearly|yr|annum|annual(?:ly|ized)?|biweekly|bi-weekly|semimonthly|semi-monthly|bimonthly|fortnightly|one-time`;
 const MONEY_AMOUNT = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?`;
-const CURRENCY_CODE = String.raw`USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP|JPY|CNY|INR|CHF|XXX`;
+const CURRENCY_CODE = String.raw`USD|CAD|AUD|NZD|SGD|HKD|EUR|GBP|JPY|CNY|INR|CHF|SEK|NOK|DKK|PLN|CZK|HUF|RON|BRL|MXN|ARS|CLP|COP|KRW|TWD|IDR|MYR|PHP|THB|VND|ILS|AED|SAR|ZAR|TRY|XXX`;
 const PAY = new RegExp(String.raw`(?:(${CURRENCY_CODE})\s*)?([$€£])?\s*(${MONEY_AMOUNT})\s*([kK])?\s*(?:(?:-|–|—|to)\s*(?:(${CURRENCY_CODE})\s*)?[$€£]?\s*(${MONEY_AMOUNT})\s*([kK])?)?\s*(?:\/\s*)?(?:per\s+)?\(?\s*(${PERIOD})(?:\b|$)`, 'giu');
 const SPLIT_PERIOD_PAY = new RegExp(String.raw`(?:(${CURRENCY_CODE})\s*)?([$€£])?\s*(${MONEY_AMOUNT})\s*([kK])?\s*(?:\/|per\s+)(${PERIOD})\s*(?:-|–|—|to)\s*(?:(${CURRENCY_CODE})\s*)?[$€£]?\s*(${MONEY_AMOUNT})\s*([kK])?\s*(?:\/|per\s+)(${PERIOD})(?:\b|$)`, 'giu');
 const USD_TEXT_PAY = new RegExp(String.raw`\b(USD)\s+(${MONEY_AMOUNT})\s*([kK])?\s*(?:(?:-|–|—|to)\s*(${MONEY_AMOUNT})\s*([kK])?)?\s*(?:\/|per\s+)?(${PERIOD})(?:\b|$)`, 'giu');
@@ -283,6 +289,7 @@ const BETWEEN_RANGE_AND_PERIOD_CURRENCY_PAY = new RegExp(String.raw`([$€£])\s
 const LABELED_PAY = new RegExp(String.raw`\b(hourly|annual(?:ized)?|yearly|daily|weekly|monthly)\s+(?:(?:base|estimated|starting)\s+)?(?:pay|salary|wage|rate|compensation)(?:\s+range)?[^.;$€£\d]{0,100}?(?:(${CURRENCY_CODE})\s*)?([$€£])\s*(${MONEY_AMOUNT})\s*([kK])?\s*(?:(?:-|–|—|to)\s*[$€£]?\s*(${MONEY_AMOUNT})\s*([kK])?)?(?:\s*\(?(${CURRENCY_CODE})\b\)?)?`, 'giu');
 
 function compensationPeriod(value: string): CompensationPeriod {
+  if (value === 'unknown') return 'unknown';
   if (/^(?:hour|hourly|hr)$/iu.test(value)) return 'hourly';
   if (/^(?:year|yearly|yr|annum|annual(?:ly|ized)?)$/iu.test(value)) return 'annual';
   if (/^(?:day|daily)$/iu.test(value)) return 'daily';
@@ -321,14 +328,22 @@ export function extractCompensationRanges(
     if (input.requirePayContext && !/\b(?:salary|pays?|compensation|base rate|market range|hourly rate|annual range|hiring range|internships? (?:is|are) paid)\b/iu.test(segment)) return;
     const period = compensationPeriod(periodText);
     const minAmount = Math.min(first, second); const maxAmount = Math.max(first, second);
-    const plausible = period === 'hourly' ? minAmount >= 5 && maxAmount <= 500
-      : period === 'annual' ? minAmount >= 10_000 && maxAmount <= 1_000_000
-        : minAmount > 0 && maxAmount <= 1_000_000;
+    // Nominal yen/rupee amounts are not comparable to dollars. Only apply
+    // dollar plausibility bounds to known USD; never convert foreign pay.
+    const plausible = currency !== 'USD' ? minAmount > 0 && maxAmount <= 1_000_000_000
+      : period === 'hourly' ? minAmount >= 5 && maxAmount <= 500
+        : period === 'annual' ? minAmount >= 10_000 && maxAmount <= 1_000_000
+          : minAmount > 0 && maxAmount <= 1_000_000;
     if (!plausible) return;
-    ranges.push({ minAmount, maxAmount, currency, period, ...applicability(segment, input.knownLocations ?? []),
+    ranges.push({ minAmount, maxAmount, currency, period, ...(period === 'other' ? { periodLabel: periodText.toLowerCase() } : {}), ...applicability(segment, input.knownLocations ?? []),
       sourceText: boundedText(raw, 160), provenance: [input.provenance] });
   };
   for (const segment of segments) {
+    // Benefits, equity and application questions are not base compensation.
+    if (/\b(?:sign[ -]?on|signing bonus|revenue|salary expectations?|desired salary)\b/iu.test(segment)) continue;
+    const statedCurrencies = [...segment.matchAll(new RegExp(String.raw`\b(${CURRENCY_CODE})\b`, 'giu'))].map((match) => match[1]!.toUpperCase());
+    if (new Set(statedCurrencies).size > 1) continue;
+    const before = ranges.length;
     for (const match of segment.matchAll(LABELED_PAY)) {
       const currency = match[2]?.toUpperCase() ?? match[8]?.toUpperCase()
         ?? CURRENCY_SYMBOL[match[3]!] ?? dollarCurrency(input.knownLocations ?? []);
@@ -359,9 +374,21 @@ export function extractCompensationRanges(
     for (const match of segment.matchAll(USD_TEXT_PAY)) {
       append(segment, match[0], amount(match[2]!, match[3]), match[4] ? amount(match[4], match[5]) : amount(match[2]!, match[3]), match[6]!, 'USD');
     }
+    // A clearly labelled disclosed amount is useful even without a period.
+    // Do not downgrade a malformed/mixed explicit-period expression to unknown.
+    if (ranges.length === before && !new RegExp(String.raw`\b(?:${PERIOD}|biweekly|semimonthly)\b`, 'iu').test(segment)
+      && (input.requirePayContext !== true || /\b(?:base (?:pay|salary)|salary(?: range)?|compensation(?: range)?|hiring range)\b/iu.test(segment))) {
+      const unknownPay = new RegExp(String.raw`(?:(${CURRENCY_CODE})\s*([$€£])?|([$€£]))\s*(${MONEY_AMOUNT})\s*([kK])?\s*(?:(?:-|–|—|to)\s*(?:(${CURRENCY_CODE})\s*)?[$€£]?\s*(${MONEY_AMOUNT})\s*([kK])?)?(?:\s*(${CURRENCY_CODE})\b)?`, 'giu');
+      for (const match of segment.matchAll(unknownPay)) {
+        const codes = [match[1], match[6], match[9]].filter(Boolean).map((value) => value!.toUpperCase());
+        if (new Set(codes).size > 1) continue;
+        const currency = codes[0] ?? CURRENCY_SYMBOL[match[2] ?? match[3] ?? ''] ?? dollarCurrency(input.knownLocations ?? []);
+        append(segment, match[0], amount(match[4]!, match[5]), match[7] ? amount(match[7], match[8]) : amount(match[4]!, match[5]), 'unknown', currency);
+      }
+    }
   }
   const key = (range: CompensationRange) => stable({ minAmount: range.minAmount, maxAmount: range.maxAmount, currency: range.currency,
-    period: range.period, applicableLocations: range.applicableLocations, applicableEducationLevels: range.applicableEducationLevels });
+    period: range.period, periodLabel: range.periodLabel, applicableLocations: range.applicableLocations, applicableEducationLevels: range.applicableEducationLevels });
   const unique = [...new Map(ranges.map((range) => [key(range), range])).values()];
   return unique.filter((candidate) => candidate.minAmount !== candidate.maxAmount || !unique.some((range) =>
     range !== candidate && range.minAmount !== range.maxAmount && range.period === candidate.period
@@ -377,10 +404,10 @@ export function compensationFromRanges(ranges: readonly CompensationRange[]): Co
   // including native currencies and nonstandard/unknown periods. The old USD
   // scalar bounds remain intentionally narrow for existing sorting consumers.
   const projected = ranges.map((range) => ({ ...range, provenance: mergeProvenance(range.provenance) }));
-  const raw = boundedText([...new Set(projected.map((range) => range.sourceText))].join(' · '), 160);
+  const raw = boundedText(compensationLabels({ ranges: projected }).join(' · '), 160);
   const result: Compensation = { raw, ...(projected.length ? { ranges: projected } : {}) };
   const supported = projected.filter((range) => range.currency === 'USD' && ['hourly', 'annual'].includes(range.period));
-  const global = supported.filter((range) => !range.applicableLocations?.length && !range.applicableEducationLevels?.length);
+  const global = supported.filter((range) => !range.applicabilityLabel && !range.applicableLocations?.length && !range.applicableEducationLevels?.length);
   const hourly = global.filter((range) => range.period === 'hourly');
   const annual = global.filter((range) => range.period === 'annual');
   if (hourly.length === 1) { result.minHourlyUSD = hourly[0]!.minAmount; result.maxHourlyUSD = hourly[0]!.maxAmount; }
@@ -441,12 +468,27 @@ export function extractRoleMetadataEvidence(input: ExtractRoleMetadataInput): Ro
   // Title-derived audience hints intentionally live in their own low-priority
   // evidence record. Do not let a title token inherit official-page authority.
   const text = input.titleOnly ? title : input.artifact.text ?? '';
-  const compensationText = input.titleOnly ? '' : input.artifact.compensationText ?? input.artifact.text ?? '';
+  const compensationText = input.titleOnly ? '' : input.artifact.compensationText?.trim() || input.artifact.text || '';
   const normalizedLocations = input.titleOnly ? [] : normalizeLocations(input.artifact.locations?.length ? input.artifact.locations : labeledLocations(input.artifact.text ?? ''));
   const compensationRanges = extractCompensationRanges(compensationText, {
     provenance: field('compensation-range'), knownLocations: normalizedLocations,
     requirePayContext: !input.artifact.compensationText,
   });
+  // A dedicated salary field can be partial; it must not hide disclosures in
+  // the role description. The latter still needs explicit pay context.
+  if (!input.titleOnly && input.artifact.compensationText && input.artifact.text) compensationRanges.push(...extractCompensationRanges(input.artifact.text, {
+    provenance: field('compensation-range'), knownLocations: normalizedLocations, requirePayContext: true,
+  }));
+  for (const band of input.titleOnly ? [] : input.artifact.compensationBands ?? []) {
+    if (!Number.isFinite(band.minAmount) || !Number.isFinite(band.maxAmount) || band.minAmount <= 0 || band.maxAmount < band.minAmount) continue;
+    const periodText = ({ hourly: 'hour', annual: 'year', weekly: 'week', daily: 'day', monthly: 'month' } as Record<string, string>)[band.period ?? ''];
+    if (band.period && band.period !== 'unknown' && !periodText) continue;
+    const ranges = extractCompensationRanges(`Salary: ${band.currency} ${band.minAmount} - ${band.maxAmount}${periodText ? ` per ${periodText}` : ''}`, {
+      provenance: field('compensation-range'), requirePayContext: false,
+    });
+    compensationRanges.push(...ranges.map((range) => ({ ...range, sourceText: boundedText(band.sourceText, 160),
+      ...(band.label ? { applicabilityLabel: boundedText(band.label, 120) } : {}) })));
+  }
   const levels = educationLevels(text);
   const window = graduationWindow(text);
   const degree = minimumDegree(text);
@@ -552,6 +594,8 @@ function scalar<T>(field: RoleMetadataField, values: Array<ProvenancedValue<T> &
 
 function rangeApplicability(range: CompensationRange): string {
   return stable({ currency: range.currency, period: range.period,
+    periodLabel: range.periodLabel,
+    label: range.applicabilityLabel,
     locations: [...(range.applicableLocations ?? [])].map((item) => item.toLowerCase()).sort(),
     education: [...(range.applicableEducationLevels ?? [])].sort() });
 }
@@ -579,6 +623,8 @@ function reconcileRanges(evidence: readonly RoleMetadataEvidence[], existing: re
     }
     const winner = [...distinct.values()][0]!;
     ranges.push({ minAmount: winner.minAmount, maxAmount: winner.maxAmount, currency: winner.currency, period: winner.period,
+      ...(winner.periodLabel ? { periodLabel: winner.periodLabel } : {}),
+      ...(winner.applicabilityLabel ? { applicabilityLabel: winner.applicabilityLabel } : {}),
       ...(winner.applicableLocations?.length ? { applicableLocations: winner.applicableLocations } : {}),
       ...(winner.applicableEducationLevels?.length ? { applicableEducationLevels: winner.applicableEducationLevels } : {}),
       sourceText: winner.sourceText, provenance: mergeProvenance(candidates.flatMap((item) => item.provenance)) });
@@ -727,7 +773,7 @@ export function projectRoleMetadata(job: Internship, evidence = job.sourceRefere
 }
 
 export function unsupportedMetadataCurrencies(evidence: readonly RoleMetadataEvidence[]): string[] {
-  return [...new Set(evidence.flatMap((item) => item.compensationRanges ?? []).map((range) => range.currency).filter((currency) => NON_USD.has(currency)))].sort();
+  return [...new Set(evidence.flatMap((item) => item.compensationRanges ?? []).map((range) => range.currency).filter((currency) => currency !== 'USD'))].sort();
 }
 
 export function unsupportedMetadataPeriods(evidence: readonly RoleMetadataEvidence[]): string[] {

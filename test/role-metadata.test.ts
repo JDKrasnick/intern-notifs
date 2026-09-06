@@ -149,13 +149,13 @@ describe('provider-neutral role metadata', () => {
       sourceId: 'lever-acme', sourceUrl: 'https://api.lever.test/acme', observedAt, exactPosting: true,
     });
     expect(item?.compensationRanges?.[0]?.currency).toBe('CAD');
-    expect(reconcileRoleMetadata(item ? [item] : []).compensation).toMatchObject({ raw: 'CAD $30-$40/hour', ranges: [{ currency: 'CAD', period: 'hourly' }] });
+    expect(reconcileRoleMetadata(item ? [item] : []).compensation).toMatchObject({ raw: 'CAD 30–40/hour', ranges: [{ currency: 'CAD', period: 'hourly' }] });
   });
 
   it('does not assume an ambiguous dollar symbol is USD without a US location', () => {
     const ranges = extractCompensationRanges('The pay range is $30-$40/hour.', { provenance: field, knownLocations: ['Toronto, ON'] });
     expect(ranges[0]?.currency).toBe('XXX');
-    expect(compensationFromRanges(ranges)).toMatchObject({ raw: '$30-$40/hour', ranges: [{ currency: 'XXX', period: 'hourly' }] });
+    expect(compensationFromRanges(ranges)).toMatchObject({ raw: 'Currency not stated 30–40/hour', ranges: [{ currency: 'XXX', period: 'hourly' }] });
   });
 
   it('projects nonstandard pay periods without using them as legacy scalar bounds', () => {
@@ -164,7 +164,7 @@ describe('provider-neutral role metadata', () => {
       sourceId: 'lever-acme', sourceUrl: 'https://api.lever.test/acme', observedAt, exactPosting: true,
     });
     expect(item?.compensationRanges?.[0]?.period).toBe('weekly');
-    expect(reconcileRoleMetadata(item ? [item] : []).compensation).toMatchObject({ raw: 'USD $500-$700/week', ranges: [{ currency: 'USD', period: 'weekly' }] });
+    expect(reconcileRoleMetadata(item ? [item] : []).compensation).toMatchObject({ raw: 'USD 500–700/week', ranges: [{ currency: 'USD', period: 'weekly' }] });
   });
 
   it('accepts explicit degree and work-mode title evidence but never an inexact artifact', () => {

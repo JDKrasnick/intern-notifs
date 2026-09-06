@@ -51,7 +51,7 @@ function job(): Internship {
 function subject() {
   const database = new DatabaseSync(':memory:');
   for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0008_catalog_admission_occurrence_repair.sql',
-    '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql']) {
+    '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql', '0017_metadata_acquisition.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   const db = sqliteD1(database);
@@ -361,6 +361,13 @@ describe('D1 catalog admission operations', () => {
     expect(enriched.compensation).toMatchObject({ minHourlyUSD: 40, maxHourlyUSD: 50 });
 
     const enrichedReference = enriched.sourceReferences[0]!;
+    await persistDestinationAdmission({ jobs, operations, message: { ...message, metadataBackfillToken: 'partial-collection' },
+      job: enriched, reference: enrichedReference, reachability: 'live',
+      inspectedAt: '2026-08-28T12:00:00Z', browserVisible: true,
+      evidence: { ...pageEvidence, inspectionTruncated: true } });
+    expect(database.prepare("SELECT count(*) AS count FROM role_metadata_evidence WHERE source_class = 'official-json-ld' AND is_current = 1").get())
+      .toEqual({ count: 1 });
+    expect((await operations.stageRoleMetadataRepair('2026-08-28T12:01:00Z')).expectedJobs).toBe(0);
     await persistDestinationAdmission({ jobs, operations, message: { ...message, metadataBackfillToken: 'collection-1' },
       job: enriched, reference: enrichedReference, reachability: 'live',
       inspectedAt: '2026-08-29T00:01:00Z', browserVisible: true, evidence: pageEvidence });

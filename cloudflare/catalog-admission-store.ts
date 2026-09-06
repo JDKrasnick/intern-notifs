@@ -264,13 +264,17 @@ export class D1CatalogAdmissionStore {
     scanned: number;
     enriched: number;
     projectionOnlyOmissions: Array<{ jobId: string; fields: string[] }>;
-    supportedRoleSpecificDisclosedMetadataMisses: number;
+    supportedRoleSpecificDisclosedMetadataMisses: null;
     currentEvidenceBySourceClass: Record<string, number>;
     unsupportedCurrencies: Record<string, number>;
     unsupportedPeriods: Record<string, number>;
     openConflicts: number;
     verificationOutcomes: Record<string, number>;
     collectionCoverage: RoleMetadataCollectionCoverage;
+    fieldOutcomes: Record<string, Record<string, number>>;
+    fieldOutcomeDenominator: { unit: 'source-occurrence'; count: number; scope: 'all-stored-roles' };
+    acquisitionReports: Array<{ jobId: string; sourceId: string; report: unknown }>;
+    disclosureRecall: null;
   }> {
     const [rows, current] = await Promise.all([
       this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'internship'").all<JsonRow>(),
@@ -312,17 +316,40 @@ export class D1CatalogAdmissionStore {
       jobs,
       new Date(now.getTime() - ROLE_METADATA_REVALIDATION_MS).toISOString(),
     );
+    const reports = await this.db.prepare('SELECT job_id, source_id, report FROM role_metadata_acquisition WHERE report IS NOT NULL')
+      .all<{ job_id: string; source_id: string; report: string }>();
+    const acquisitionReports = reports.results.map((row) => ({ jobId: row.job_id, sourceId: row.source_id, report: JSON.parse(row.report) as Record<string, unknown> }));
+    const byReference = new Map(acquisitionReports.map((row) => [`${row.jobId}\0${row.sourceId}`, row.report]));
+    const fieldOutcomes: Record<string, Record<string, number>> = {};
+    for (const job of jobs) for (const reference of job.sourceReferences) {
+      const report = byReference.get(`${job.jobId}\0${reference.sourceId}`);
+      const fields = report?.fields as Record<string, string> | undefined;
+      for (const field of ['compensation', 'education', 'graduation-window', 'locations', 'work-mode', 'application-deadline', 'employer-published-at', 'employer-updated-at']) {
+        const key = `${reference.admission?.destination.provider ?? 'unknown'}/${String(report?.method ?? 'unobserved')}/${field}`;
+        const counts = fieldOutcomes[key] ?? {};
+        const projectionField = ({ 'graduation-window': 'graduationWindow', 'work-mode': 'workMode', 'application-deadline': 'applicationDeadline',
+          'employer-published-at': 'employerPublishedAt', 'employer-updated-at': 'employerUpdatedAt' } as Record<string, string>)[field] ?? field;
+        const projectionMissing = fields?.[field] === 'extracted' && projectionOnlyOmissions.some((row) => row.jobId === job.jobId && row.fields.includes(projectionField));
+        const outcome = projectionMissing ? 'projection-missing' : fields?.[field] ?? 'inspection-pending';
+        counts[outcome] = (counts[outcome] ?? 0) + 1; fieldOutcomes[key] = counts;
+      }
+    }
     return {
       scanned: jobs.length,
       enriched: jobs.filter((job) => Boolean(job.roleMetadata)).length,
       projectionOnlyOmissions,
-      supportedRoleSpecificDisclosedMetadataMisses: projectionOnlyOmissions.length,
+      supportedRoleSpecificDisclosedMetadataMisses: null,
       currentEvidenceBySourceClass,
       unsupportedCurrencies,
       unsupportedPeriods,
       openConflicts: Number(conflicts?.count ?? 0),
       verificationOutcomes: Object.fromEntries(outcomes.results.map((row) => [row.outcome, Number(row.count)])),
       collectionCoverage,
+      fieldOutcomes,
+      fieldOutcomeDenominator: { unit: 'source-occurrence', count: jobs.reduce((sum, job) => sum + job.sourceReferences.length, 0), scope: 'all-stored-roles' },
+      acquisitionReports,
+      // A projection delta is not an independently measured extraction recall.
+      disclosureRecall: null,
     };
   }
 
@@ -330,11 +357,13 @@ export class D1CatalogAdmissionStore {
     observedBefore?: string;
     includeUnobserved?: boolean;
     requireProjectedEvidence?: boolean;
+    after?: string;
+    reserveAt?: string;
   } = {}): Promise<Array<{
     jobId: string; sourceId: string; externalId: string; candidateUrl: string; providerIdentity: ProviderIdentity;
     metadataArtifactHash?: string;
   }>> {
-    const [rows, attempts, evidence] = await Promise.all([
+    const [rows, attempts, evidence, reservations] = await Promise.all([
       this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'internship' AND catalog_state = 'OPEN' ORDER BY pk").all<JsonRow>(),
       this.db.prepare(`SELECT job_id, source_id, observed_at, artifact_hash
         FROM role_metadata_extraction_attempts WHERE extraction_version = ?`)
@@ -345,7 +374,12 @@ export class D1CatalogAdmissionStore {
           AND source_class IN ('official-page', 'official-json-ld')`)
         .bind(ROLE_METADATA_EXTRACTION_VERSION)
         .all<{ job_id: string; source_id: string; observed_at: string; artifact_hash: string }>(),
+      this.db.prepare('SELECT job_id, source_id, lease_until, retry_after FROM role_metadata_acquisition')
+        .all<{ job_id: string; source_id: string; lease_until: string; retry_after: string }>(),
     ]);
+    const now = options.reserveAt ?? new Date().toISOString();
+    const unavailable = new Set(reservations.results.filter((item) => item.lease_until > now || item.retry_after > now)
+      .map((item) => `${item.job_id}\0${item.source_id}`));
     const latest = new Map<string, { observedAt: string; artifactHash: string }>();
     for (const item of [...attempts.results, ...evidence.results]) {
       const key = `${item.job_id}\0${item.source_id}`;
@@ -357,6 +391,8 @@ export class D1CatalogAdmissionStore {
     for (const row of rows.results) {
       const job = JSON.parse(row.value) as Internship;
       for (const reference of job.sourceReferences) {
+        const key = `${job.jobId}\0${reference.sourceId}`;
+        if (unavailable.has(key) || (options.after && key <= options.after)) continue;
         const destination = reference.admission?.destination;
         if (!reference.externalId || !destination || !['posting-detail', 'application-form'].includes(destination.classification)) continue;
         const current = reference.metadataEvidence?.some((item) => ['official-page', 'official-json-ld'].includes(item.sourceClass)
@@ -375,10 +411,64 @@ export class D1CatalogAdmissionStore {
             ...(destination.expectedPostingId ? { postingId: destination.expectedPostingId } : {}),
           },
         });
-        if (candidates.length >= limit) return candidates;
       }
     }
-    return candidates;
+    // Lexicographic cursors support manual resumption. Automated batches
+    // interleave hosts so a large board cannot monopolize each run.
+    candidates.sort((a, b) => {
+      const left = `${a.jobId}\0${a.sourceId}`; const right = `${b.jobId}\0${b.sourceId}`;
+      if (options.after === undefined) {
+        const first = latest.get(left)?.observedAt ?? '';
+        const second = latest.get(right)?.observedAt ?? '';
+        if (first !== second) return first < second ? -1 : 1;
+      }
+      return left < right ? -1 : left > right ? 1 : 0;
+    });
+    const ordered = options.after !== undefined ? candidates : (() => {
+      const hosts = new Map<string, typeof candidates>();
+      for (const item of candidates) {
+        let host: string;
+        try { host = new URL(item.candidateUrl).hostname; } catch { continue; }
+        const group = hosts.get(host) ?? []; group.push(item); hosts.set(host, group);
+      }
+      const result: typeof candidates = [];
+      while ([...hosts.values()].some((group) => group.length)) for (const group of hosts.values()) {
+        const item = group.shift(); if (item) result.push(item);
+      }
+      return result;
+    })();
+    const selected: typeof candidates = [];
+    for (const candidate of ordered) {
+      if (selected.length >= limit) break;
+      if (options.reserveAt) {
+        const lease = new Date(Date.parse(options.reserveAt) + 30 * 60_000).toISOString();
+        const reserved = await this.db.prepare(`INSERT INTO role_metadata_acquisition(job_id, source_id, lease_until)
+          VALUES (?, ?, ?) ON CONFLICT(job_id, source_id) DO UPDATE SET lease_until=excluded.lease_until
+          WHERE role_metadata_acquisition.lease_until <= ? AND role_metadata_acquisition.retry_after <= ?`)
+          .bind(candidate.jobId, candidate.sourceId, lease, options.reserveAt, options.reserveAt).run();
+        if (reserved.meta?.changes !== 1) continue;
+      }
+      selected.push(candidate);
+    }
+    return selected;
+  }
+
+  async recordMetadataAcquisition(jobId: string, sourceId: string, observedAt: string, report: Record<string, unknown>, retryAfter: string): Promise<void> {
+    await this.db.prepare(`INSERT INTO role_metadata_acquisition(job_id, source_id, lease_until, retry_after, observed_at, report)
+      VALUES (?, ?, '', ?, ?, ?) ON CONFLICT(job_id, source_id) DO UPDATE SET
+      lease_until='', retry_after=excluded.retry_after, observed_at=excluded.observed_at, report=excluded.report`)
+      .bind(jobId, sourceId, retryAfter, observedAt, JSON.stringify(report)).run();
+  }
+
+  async metadataHostAvailable(host: string, now = new Date().toISOString()): Promise<boolean> {
+    const row = await this.db.prepare('SELECT retry_after FROM role_metadata_api_backoff WHERE host = ?').bind(host).first<{ retry_after: string }>();
+    return !row || row.retry_after <= now;
+  }
+
+  async deferMetadataHost(host: string, retryAfter: string): Promise<void> {
+    await this.db.prepare(`INSERT INTO role_metadata_api_backoff(host, retry_after) VALUES (?, ?)
+      ON CONFLICT(host) DO UPDATE SET retry_after=max(role_metadata_api_backoff.retry_after, excluded.retry_after)`)
+      .bind(host, retryAfter).run();
   }
 
   async stageRoleMetadataRepair(createdAt: string): Promise<{

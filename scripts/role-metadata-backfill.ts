@@ -35,7 +35,7 @@ async function main() {
   }
   if (command === 'collect') {
     console.log(JSON.stringify(await request('/internal/role-metadata/backfill', {
-      method: 'POST', body: JSON.stringify({ action: 'collect', limit: integer('--limit', 100), collectionToken: option('--collection-token') }),
+      method: 'POST', body: JSON.stringify({ action: 'collect', limit: integer('--limit', 100), collectionToken: option('--collection-token'), cursor: option('--cursor') }),
     }), null, 2));
     return;
   }
