@@ -7,7 +7,8 @@
 
 ## Architecture
 
-InternNotifs is an Expo mobile app with a serverless AWS backend.
+InternNotifs is an Expo mobile app with a Cloudflare Worker backend. Retained
+AWS resources are rollback/export infrastructure, not active application targets.
 
 | Area | Service / implementation |
 | --- | --- |

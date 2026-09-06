@@ -33,6 +33,40 @@ uses the existing HTML/browser fallback; no undocumented Oracle API is enabled.
 
 ## Objective and boundaries
 
+### September 6 accuracy sampling protocol
+
+Freeze the public snapshot before inspecting employer evidence. The 21:38 UTC
+frame contains 1,685 roles: 410 with pay text, 1,403 with metadata, and 21 with
+housing. These are field-presence counts, not accuracy estimates.
+
+- Draw 100 roles with a reproducible seed: 50 with pay and 50 without, stratified
+  across Greenhouse, Lever, Ashby, Workday, ByteDance, and other destinations.
+  Retain each stratum's population and sampling weight.
+- Give readers only posting identity and official URLs, not the app's field
+  values. Inspect complete exact-role API/page content, preserve all pay bands,
+  eligibility conditions and short evidence quotes, and distinguish explicit
+  currency/period from unknown. A blocked page or generic shell is unresolved,
+  never evidence of nondisclosure.
+- Independently check labels against saved artifacts before scoring; schema
+  validation alone is insufficient. Record fetch time or artifact save time
+  honestly. Separate housing benefits from generic relocation assistance.
+- Review all 21 housing-positive roles as a targeted safety set. Do not pool
+  this oversample into population estimates. Check amount, currency, cadence,
+  employee cost versus employer support, and conditional eligibility.
+- Reserve 30 additional blind roles (15 pay/15 blank) for holdout validation.
+  Report verified denominators and unresolved cases alongside weighted pay
+  precision/disclosure recall; do not claim complete coverage from attempted
+  reads. Score education, locations/work mode, dates, and housing separately.
+- Turn confirmed parser defects into regression fixtures, recollect using the
+  new extraction version, and repeat public comparison after approved repairs.
+  Collection completeness, conflicts, and exact repair approvals remain gates.
+
+The frame, blind batches, original responses and independently checked labels
+are archived under `.context/accuracy-20260906/`. Sampling and publication
+acceptance remain in progress; no accuracy percentage is certified yet.
+
+## Capture boundaries
+
 Capture as much metadata as employers actually disclose on exact, official job
 postings. Keep credible roles available when pay or another optional field is
 absent. Measure acquisition success separately from extraction quality and
