@@ -5,7 +5,7 @@
 Worker source `eee0205`, version `cb3feb19-bc79-4110-94b0-5a416896aba4`,
 is deployed with publication flags independently verified unchanged. Web source
 `9e55df6`, deployment `6af88108.internnotifs.pages.dev`, serves the canonical site.
-At 20:24 UTC, 1,685 public roles include 407 with pay (24.2%), 1,379 with enriched
+At 20:45 UTC, 1,685 public roles include 409 with pay (24.3%), 1,379 with enriched
 metadata (81.8%), and 21 with housing information (1.2%). These are field-presence
 counts, not disclosure recall, numeric housing-cost coverage, or proof of repair.
 
@@ -15,6 +15,9 @@ All seven exact employer payloads now replay through ordinary ingestion with
 one USD 33/hour wage, the relocation-conditional housing stipend, and zero
 conflicts. The original 53-posting corpus still retains pay throughout with zero
 reproduced conflicts; all 19 SpaceX source-path cases retain pay too.
+The 20:45 public snapshot confirms all nine current Varda roles exclude the
+reimbursement: eight show USD 33/hour, Flight Software shows USD 37/hour, and
+all nine retain conditional housing separately after the ordinary 20:43 refresh.
 
 The new extraction version requires fresh evidence. Its initial audit starts at
 0/4,645 current source/posting pairs, with 3,434 deferred projections. V9's 95.6%
@@ -22,8 +25,13 @@ collection coverage is not v10 validation. Existing public projections remain
 accepted-but-stale until their sources refresh; historical collection only
 stages evidence. No historical repair is approved or applied. Version-bound
 omission reviews must be regenerated before any historical publication.
-At the 19:57 QA snapshot, 44 of the exact 45 prior pay-loss roles still lacked pay;
-the aggregate increase to 407 does not establish those jobs' recovery.
+Exact-cohort comparison confirms all 45 prior pay-loss roles display pay again
+at 20:45, up from 43 at 20:24. Recovery of field presence does not prove accuracy:
+two TikTok roles display community $60/hour while rendered official-page browser
+evidence gives $42.75/hour and $45–60/hour respectively. Jump displays community
+USD 138/hour alongside official 250,000/year with unstated currency. Cross-unit
+and unknown-currency ranges occupy separate reconciliation groups, so this
+source-authority case needs further validation before rollout acceptance.
 
 Web QA also fixes invisible guest catalog controls in the keyboard order,
 missing radio/filter states, and a clipped company-coverage toggle. Direct ARIA
