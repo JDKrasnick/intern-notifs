@@ -1,6 +1,6 @@
 # Employer metadata coverage audit — 2026-09-05
 
-## Latest implementation: extraction v8 — 2026-09-06
+## Latest implementation: extraction v9 — 2026-09-06
 
 V8 adds separately provenanced housing stipends, employer-paid housing, intern-paid
 housing costs and availability with unconfirmed cost. Amounts retain their stated
@@ -8,6 +8,13 @@ currency and period; conditional or combined benefit amounts remain in the
 bounded employer wording when they cannot be isolated safely. Housing never
 becomes base salary. Interview/disability accommodations are excluded. The role
 detail UI displays housing independently, including conditions and the excerpt.
+
+The v8 production canary exposed adjacent Ashby hourly bands followed by
+“Eligible for housing stipend”. V9 separates bullet/pipe-delimited benefits,
+leaving stipend eligibility without mislabeling the salary as a housing amount.
+It also avoids equating generic housing support with available accommodation and
+keeps qualification/relocation conditions explicit. Housing amounts combined
+with travel, relocation or other compensation remain unquantified.
 
 General correctness fixes keep graduate audiences separate from graduation dates,
 preserve degree alternatives and waived requirements, reject impossible calendar
@@ -33,7 +40,7 @@ guard; unrelated conflicts and the full collection gate remain blocking. See
 These are implementation and sample-validation results, not achieved historical
 coverage or catalog-wide disclosure recall. The v7 collection pass reached
 4,430/4,670 current source-posting pairs with 240 unresolved at its last audit;
-cursor exhaustion is not completion. V8 requires its own fresh collection.
+cursor exhaustion is not completion. V9 requires its own fresh collection.
 Historical repair remains unapplied pending complete evidence and exact approval.
 
 ## Scope and result

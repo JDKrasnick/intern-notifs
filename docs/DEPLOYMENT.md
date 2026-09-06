@@ -139,7 +139,7 @@ documentation.
 
 Apply `0015_role_metadata_enrichment.sql`, `0016_role_metadata_repair_plans.sql`
 and `0017_metadata_acquisition.sql` before deploying the enrichment Worker.
-Extraction v8 additionally requires `0018_metadata_review.sql` and
+Extraction v8 and later additionally require `0018_metadata_review.sql` and
 `0019_metadata_job_review_revision.sql` before deployment.
 The migrations are additive: they store compact versioned field evidence,
 historical artifact versions, extraction outcomes, conflicts, and guarded repair

@@ -29,7 +29,7 @@ import type {
 // Increment whenever a parser change can produce a different result from an
 // unchanged artifact. This makes the collection scheduler revisit both a
 // previous negative result and an already-enriched posting.
-export const ROLE_METADATA_EXTRACTION_VERSION = 8;
+export const ROLE_METADATA_EXTRACTION_VERSION = 9;
 export const VERIFIED_PAGE_METADATA_SOURCES = ['official-json-ld', 'official-page'] as const;
 const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   // Exact-role detail retrieval owns its own slot; a later board-list poll
@@ -506,7 +506,7 @@ export function compensationFromRanges(ranges: readonly CompensationRange[]): Co
 
 export function extractHousingDetails(value: string, input: { provenance: FieldProvenance; knownLocations?: readonly string[] }): HousingDetail[] {
   const details: HousingDetail[] = [];
-  for (const raw of value.split(/(?<=[.!?;])\s+|\n+/u)) {
+  for (const raw of value.split(/(?<=[.!?;])\s+|\n+|\s*[•|]\s*/u)) {
     const clause = raw.replace(/^\s*[-•]\s*/u, '').trim();
     if (!/\b(?:housing|accommodation|rent)\b/iu.test(clause)
       || /\b(?:reasonable accommodation|disabilit(?:y|ies)|accessibility|interviews?)\b/iu.test(clause)
@@ -515,16 +515,17 @@ export function extractHousingDetails(value: string, input: { provenance: FieldP
       : /\b(?:free|company[ -]paid|employer[ -]paid)\s+(?:housing|accommodation)\b|\b(?:housing|accommodation|rent)(?:\s+(?:is|are|will be|provided|costs?))*\s+(?:free|at no cost|fully covered by (?:us|the company)|paid for by (?:us|the company))\b/iu.test(clause) ? 'employer-paid'
         : !/\b(?:covered|reimbursed|reimbursement|assistance)\b/iu.test(clause)
           && /\b(?:you|interns?|employees?|residents?)\s+(?:must |will )?(?:pay|cover)\s+(?:for |their )?(?:housing|accommodation|rent)\b|\b(?:housing|accommodation|rent)\s+(?:costs?|charges?)\s*:?\s*(?:[A-Z]{3}\s*)?[$€£]\s*\d/iu.test(clause) ? 'employee-cost'
-          : /\b(?:housing|accommodation)\s+(?:is |will be )?(?:provided|available)|\b(?:provide|offer)\s+(?:company\s+)?housing\b/iu.test(clause) ? 'available' : undefined;
+          : !/\b(?:assistance|support|help securing)\b/iu.test(clause)
+            && /\b(?:housing|accommodation)\s+(?:is |will be )?(?:provided|available)|\b(?:provide|offer)\s+(?:company\s+)?housing\b/iu.test(clause) ? 'available' : undefined;
     if (!kind) continue;
     // An amount belongs to housing only in a clause with one monetary range
     // and no competing salary, meal or relocation component.
-    const amounts = /\b(?:salary|base pay|meals?|relocation|deposit|up to|starting at)\b/iu.test(clause) ? []
+    const amounts = /\b(?:salary|base pay|hourly pay|wages?|meals?|relocation|travel|bonus|deposit|up to|starting at)\b|\b(?:plus|and|with|including)\s+(?:an?\s+)?(?:eligible for\s+)?(?:housing|accommodation)\b/iu.test(clause) ? []
       : extractCompensationRanges(clause.replace(/\b(?:stipend|allowance)\b/giu, 'support'), { ...input, requirePayContext: false });
     const range = amounts.length === 1 ? amounts[0] : undefined;
     details.push({ kind, ...(range ? { minAmount: range.minAmount, maxAmount: range.maxAmount, currency: range.currency,
       period: range.period, ...(range.periodLabel ? { periodLabel: range.periodLabel } : {}) } : {}),
-      ...(/\b(?:may|eligible|depending|subject to|up to|if)\b/iu.test(clause) ? { conditional: true } : {}),
+      ...(/\b(?:may|eligible|depending|dependent|subject to|up to|if|when|either|qualif\w*|relocat\w*|permanent residence)\b/iu.test(clause) ? { conditional: true } : {}),
       sourceText: boundedText(clause, 240), provenance: [input.provenance] });
   }
   return [...new Map(details.map(detail => [stable({ ...detail, sourceText: undefined, provenance: undefined }), detail])).values()];

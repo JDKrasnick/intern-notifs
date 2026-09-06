@@ -86,7 +86,8 @@ describe('provider-neutral role metadata', () => {
 
   it.each(['No housing stipend is provided.', 'Housing is not provided.', 'We cannot offer housing.',
     'Reasonable accommodation is available for interviews.', 'Our software helps tenants pay rent.',
-    'Relocation assistance covers housing costs.', 'Free meals and housing are available.'])('does not invent a housing benefit or employee cost: %s', text => {
+    'Relocation assistance covers housing costs.', 'Free meals and housing are available.',
+    'We offer housing and relocation support.', 'Housing: Financial support and help securing housing is available.'])('does not invent a housing benefit or employee cost: %s', text => {
     expect(extractHousingDetails(text, { provenance: field })).toEqual([]);
   });
 
@@ -101,6 +102,17 @@ describe('provider-neutral role metadata', () => {
     expect(conditional?.minAmount).toBeUndefined();
     expect(conditional?.sourceText).toContain('up to USD $2,500');
     expect(extractHousingDetails('USD $1,000 for a housing and relocation allowance.', { provenance: field })[0]?.minAmount).toBeUndefined();
+  });
+
+  it('does not attribute adjacent Ashby pay bands to housing eligibility', () => {
+    const details = extractHousingDetails('$47 – $51 • Eligible for housing stipend\n$40 – $45 • Eligible for housing stipend', { provenance: field });
+    expect(details).toEqual([{ kind: 'stipend', conditional: true, sourceText: 'Eligible for housing stipend', provenance: [field] }]);
+    expect(extractHousingDetails('$47–$51 | Eligible for housing stipend', { provenance: field })[0]?.minAmount).toBeUndefined();
+    expect(extractHousingDetails('Hourly wages of $47–$51 and eligible for housing stipend', { provenance: field })[0]?.minAmount).toBeUndefined();
+    expect(extractHousingDetails('$47/hour plus a housing stipend', { provenance: field })[0]?.minAmount).toBeUndefined();
+    expect(extractHousingDetails('USD $2500 housing and travel stipend', { provenance: field })[0]?.minAmount).toBeUndefined();
+    expect(extractHousingDetails('Housing stipend for interns relocating to the area', { provenance: field })[0]?.conditional).toBe(true);
+    expect(extractHousingDetails('All co-ops that qualify for housing assistance receive a one-time stipend.', { provenance: field })[0]?.conditional).toBe(true);
   });
 
   it('reconciles housing conflicts and withdrawals without changing lifecycle or notifications', () => {
