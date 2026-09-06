@@ -176,6 +176,12 @@ corrections by field/source class, every conflict, unsupported currencies/pay pe
 blocked/inconclusive/aggregate outcomes. Unknown values must remain unknown.
 Apply only after owner approval, copying all three guards from the same dry run:
 
+`deferredProjections` must also be empty. These jobs retain accepted metadata
+whose contributing source evidence predates the current parser. Source
+checkpoints require a full successful refresh after extraction/preprocessing
+upgrades, without treating HTTP 304s or admission migration slices as completion.
+Do not clear evidence or bypass the deferral guard to make the audit pass.
+
 Each dry run stages at most 900 jobs in stable job-ID order and reports
 `remainingJobs` separately. Field fill/correction counts describe only that batch;
 conflicts, evidence freshness and collection completeness still cover the entire

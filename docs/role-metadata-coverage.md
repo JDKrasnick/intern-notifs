@@ -2,13 +2,38 @@
 
 ## Latest implementation: extraction v9 — 2026-09-06
 
-Worker source `983b2fe`, version `e06e0597-f41d-4a7d-bb6f-ac340ea09dd7`,
-serves 100% of production traffic as of 18:14 UTC. Migrations 0018–0019 are
+Worker source `fba716c`, version `1f9364cf-1f09-499e-be5f-8db386b68767`,
+serves 100% of production traffic as of 19:27 UTC. Migrations 0018–0019 are
 applied; production publication flags remain unchanged. Web deployment
 `e52e8436.internnotifs.pages.dev` serves `internnotifs.app` with separate housing
-rows and corrected icon assets. At 18:14 UTC the public catalog has 1,682 roles:
-270 with pay (16.1%), 1,020 with enriched metadata (60.6%), and zero with published
+rows and corrected icon assets. At 19:27 UTC the public catalog has 1,685 roles:
+247 with pay (14.7%), 1,164 with enriched metadata (69.1%), and zero with published
 housing. Staged evidence is not an applied coverage gain.
+
+The earlier pay count fell from 270 to 224 during ordinary refreshes. Comparing
+the September 5 snapshot with the 19:06 catalog confirms 45 still-live roles lost
+pay while retaining version-7 SpeedyApply evidence. A current-version refresh
+from another source filtered that evidence out and treated the absent projection
+as withdrawal. Accepted projections now wait for their contributing snapshots
+to be re-extracted or removed; stale evidence is not promoted into a new result.
+Those 45 roles remain blank at 19:25; the later rise to 247 is not their recovery.
+
+Source checkpoints separately record the extraction version and preprocessing
+revision. A parser upgrade requires one successful full source reconciliation
+before conditional ETags/hashes resume. Failed refreshes, HTTP 304s and admission
+migration slices cannot mark the replay complete. `deferredProjections` exposes
+accepted fields waiting for source refresh and blocks historical apply, even if
+destination collection alone is complete.
+
+Ordinary ingestion now preserves paragraph/list boundaries for metadata while
+retaining existing admission/lifecycle classification text. All 19 SpaceX
+postings from the latest conflict sample retain pay and produce zero conflicts
+when replayed through source preprocessing revision 1. This fixes the source
+path's flattened pay tiers without restarting version-9 API collection.
+Historical browser collection can acquire a newly observed exact Greenhouse
+embed through the existing fixed-host API checks, and collision detection cannot
+write another job's admission. Tower's live retry remains behind its existing
+September 7 backoff; the route is regression-tested, not yet production-rechecked.
 
 V8 adds separately provenanced housing stipends, employer-paid housing, intern-paid
 housing costs and availability with unconfirmed cost. Amounts retain their stated
@@ -25,11 +50,14 @@ keeps qualification/relocation conditions explicit. Housing amounts combined
 with travel, relocation or other compensation remain unquantified.
 Production v9 canaries confirm both the RV Tech correction and Melius's separately
 stated USD 2,500/month housing stipend. Omission preview succeeds with zero public
-writes; no omission decisions or historical repairs are approved/applied.
+writes. The owner approved both Melius omission decisions at 18:39 UTC, changing
+zero public jobs. Later evidence invalidated the Spring/Summer 2027 decision's
+fingerprint; its renewed preview awaits approval. No historical repair is approved
+or applied.
 
-Validation: 1,338 backend tests pass (284 skipped), 94 mobile tests pass, and
-root/mobile type checks, lint and production web export pass. CI is green on
-`983b2fe`. Focused synthetic housing review passes on iPhone, XXL Dynamic Type
+Validation: 1,351 backend tests pass (284 skipped); root type checks, lint and the
+Worker build pass. Earlier unchanged-client validation has 94 mobile tests,
+mobile type checks and production web export passing. Focused synthetic housing review passes on iPhone, XXL Dynamic Type
 and iPad; Android, hardware, VoiceOver and native live-pay acceptance remain open.
 
 General correctness fixes keep graduate audiences separate from graduation dates,
@@ -56,8 +84,11 @@ guard; unrelated conflicts and the full collection gate remain blocking. See
 These are implementation and sample-validation results, not achieved historical
 coverage or catalog-wide disclosure recall. The v7 collection pass reached
 4,430/4,670 current source-posting pairs with 240 unresolved at its last audit;
-cursor exhaustion is not completion. V9 collection is running in bounded batches;
-the 18:17 UTC audit has 162/4,664 current source-posting pairs and 4,502 pending.
+cursor exhaustion is not completion. V9 collection reaches 4,458/4,666 current
+source-posting pairs (95.5%) at 19:27 UTC, with 208 pending and zero stale. The
+same audit has 944 deferred projections and 26 open conflict records. An earlier
+19:22 repair preview remains blocked, with 20 recomputed conflicts; 19 are the
+SpaceX source-path issue addressed above and one is the renewed Melius review.
 Historical repair remains unapplied pending complete evidence and exact approval.
 
 ## Scope and result
