@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { compensationLabels } from '../shared/compensation-display.js';
+import { metadataDescriptionText } from './core/metadata-text.js';
 import { boundedText, locationSummary, normalizeLocations } from './catalog-quality.js';
 import { mergeEducationEvidence, mergeProvenance } from './identity/enrichment.js';
 import type {
@@ -27,7 +28,7 @@ import type {
 // Increment whenever a parser change can produce a different result from an
 // unchanged artifact. This makes the collection scheduler revisit both a
 // previous negative result and an already-enriched posting.
-export const ROLE_METADATA_EXTRACTION_VERSION = 6;
+export const ROLE_METADATA_EXTRACTION_VERSION = 7;
 export const VERIFIED_PAGE_METADATA_SOURCES = ['official-json-ld', 'official-page'] as const;
 const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   // Exact-role detail retrieval owns its own slot; a later board-list poll
@@ -134,7 +135,7 @@ export function applicationMetadataArtifactsFromJsonDocuments(documents: readonl
     return [{
       title,
       ...(jsonLdIdentifier(row.identifier) ? { identifier: jsonLdIdentifier(row.identifier) } : {}),
-      ...(stringValue(row.description) ? { text: boundedText(stringValue(row.description)!.replace(/<[^>]+>/gu, ' '), 40_000),
+      ...(stringValue(row.description) ? { text: metadataDescriptionText(stringValue(row.description)!).slice(0, 40_000),
         ...(stringValue(row.description)!.length > 40_000 ? { inspectionTruncated: true } : {}) } : {}),
       ...(locations.length ? { locations } : {}),
       ...(remote ? { workMode: remote } : {}),
@@ -304,18 +305,22 @@ function dollarCurrency(knownLocations: readonly string[]): string {
   return knownLocations.some((location) => usLocation.test(location)) ? 'USD' : 'XXX';
 }
 
-function applicability(segment: string, knownLocations: readonly string[]): Pick<CompensationRange, 'applicableLocations' | 'applicableEducationLevels'> {
+function applicability(segment: string, knownLocations: readonly string[]): Pick<CompensationRange, 'applicableLocations' | 'applicableEducationLevels' | 'applicabilityLabel'> {
   const locations = knownLocations.filter((location) => {
     const terms = location.toLowerCase().split(/[^a-z0-9]+/u).filter((term) => term.length > 2 && !['remote', 'united', 'states'].includes(term));
     return terms.length > 0 && terms.every((term) => segment.toLowerCase().includes(term));
   });
-  const prefix = /^\s*([A-Za-z][A-Za-z .,&/-]{2,60})\s*:/u.exec(segment)?.[1]?.trim();
+  const prefix = /^\s*([A-Za-z][A-Za-z0-9 .,&/()-]{2,100})\s*:/u.exec(segment)?.[1]?.trim()
+    ?? /^\s*([A-Za-z][A-Za-z0-9 .,&/()-]{1,100}?)\s*[-–—]\s*Minimum\b/iu.exec(segment)?.[1]?.trim()
+    ?? /\bfor (?:the )?([\w. -]{1,60}\blevel)\b/iu.exec(segment)?.[1]?.trim()
+    ?? /\bfor ((?:undergrad(?:uate)?|graduate|PhD)(?: students?)?)\b/iu.exec(segment)?.[1]?.trim();
   const compensationLabel = prefix && /\b(?:salary|pay|compensation|wages?|earnings?|rate|range)\b/iu.test(prefix);
-  if (!locations.length && prefix && !compensationLabel && !/^base$/iu.test(prefix)) locations.push(prefix);
+  const genericHeading = prefix && /^(?:base|required skills|additional requirements|what we offer|requirements|qualifications)$/iu.test(prefix);
   const levels = educationLevels(segment);
   return {
     ...(locations.length ? { applicableLocations: normalizeLocations(locations) } : {}),
     ...(levels.length ? { applicableEducationLevels: levels } : {}),
+    ...(!locations.length && prefix && !compensationLabel && !genericHeading ? { applicabilityLabel: prefix } : {}),
   };
 }
 
@@ -328,9 +333,20 @@ export function extractCompensationRanges(
   // of a range. Normalize the notation before matching, never infer from pay size.
   const qualified = value.replace(/\b(US|CA|AU|NZ|SG|HK)\$/gu, (_, code: string) =>
     `${({ US: 'USD', CA: 'CAD', AU: 'AUD', NZ: 'NZD', SG: 'SGD', HK: 'HKD' } as Record<string, string>)[code]} $`);
-  const segments = qualified.split(/(?<=[.;\n])\s+|\s*[;\n]\s*/u).filter(Boolean);
+  const normalized = qualified.replace(new RegExp(String.raw`([$€£]?\s*${MONEY_AMOUNT}\s*[kK]?)\s+(${CURRENCY_CODE})(?=\s*(?:[-–—]|to)\s*)`, 'giu'), '$2 $1')
+    .replace(/([-–—]|\bto\b)\s*(?:maximum|max\.?)\s*(?=[$€£\d])/giu, '$1 ');
+  const payContext = /\b(?:salary|pays?|compensation|base rate|market range|hourly rate|annual range|hiring range|internships? (?:is|are) paid)\b/iu;
+  const segments = normalized.split(/(?<=[.;\n])\s+|\s*[;\n]\s*/u).filter(Boolean).flatMap(segment => {
+    // Inline degree tiers are separate disclosures, not range endpoints. Keep
+    // each amount with its own qualifier; do not carry a period across tiers.
+    const tiers = /\bfor (?:undergrad(?:uate)?|graduate|PhD)\b/iu.test(segment)
+      ? segment.split(/(?:,\s*(?:and\s+)?|\s+and\s+)(?=(?:(?:USD|CAD|EUR|GBP)\s*)?[$€£]\s*\d)/iu) : [segment];
+    return tiers.map(text => ({ text, inlinePayContext: tiers.length > 1 && payContext.test(segment) }));
+  });
+  let inheritedPayContext = false;
+  let currentPayContext = false;
   const append = (segment: string, raw: string, first: number, second: number, periodText: string, currency: string) => {
-    if (input.requirePayContext && !/\b(?:salary|pays?|compensation|base rate|market range|hourly rate|annual range|hiring range|internships? (?:is|are) paid)\b/iu.test(segment)) return;
+    if (input.requirePayContext && !currentPayContext) return;
     const period = compensationPeriod(periodText);
     const minAmount = Math.min(first, second); const maxAmount = Math.max(first, second);
     // Nominal yen/rupee amounts are not comparable to dollars. Only apply
@@ -343,18 +359,30 @@ export function extractCompensationRanges(
     ranges.push({ minAmount, maxAmount, currency, period, ...(period === 'other' ? { periodLabel: periodText.toLowerCase() } : {}), ...applicability(segment, input.knownLocations ?? []),
       sourceText: boundedText(raw, 160), provenance: [input.provenance] });
   };
-  for (const segment of segments) {
+  for (const { text: segment, inlinePayContext } of segments) {
+    const hasMoney = /[$€£]\s*\d/u.test(segment) || new RegExp(String.raw`\b(?:${CURRENCY_CODE})\s+\d`, 'iu').test(segment);
+    if (!hasMoney) {
+      inheritedPayContext = segment.length <= 160 && payContext.test(segment);
+      continue;
+    }
+    const salaryRow = /^(?:[A-Za-z][^$€£\n]{0,120}:\s*|(?:Level\w*\s+[\w.]+\s*[-–—]\s*)?Minimum\s*|[$€£]|[A-Z]{3}\s)/iu.test(segment);
+    currentPayContext = inlinePayContext || payContext.test(segment) || inheritedPayContext && salaryRow;
+    inheritedPayContext = inheritedPayContext && salaryRow;
     // Benefits, equity and application questions are not base compensation.
-    if (/\b(?:sign[ -]?on|signing bonus|revenue|salary expectations?|desired salary)\b/iu.test(segment)) continue;
+    if (/\b(?:sign[ -]?on|signing bonus|revenue|salary expectations?|desired salary|stipend|lunch allowance)\b/iu.test(segment)) { inheritedPayContext = false; continue; }
     const statedCurrencies = [...segment.matchAll(new RegExp(String.raw`\b(${CURRENCY_CODE})\b`, 'giu'))].map((match) => match[1]!.toUpperCase());
     if (new Set(statedCurrencies).size > 1) continue;
     const before = ranges.length;
     for (const match of segment.matchAll(LABELED_PAY)) {
+      // An attached unit takes precedence over a generic template heading.
+      if (new RegExp(String.raw`^\s*(?:/|per\s+)(${PERIOD})\b`, 'iu').test(segment.slice((match.index ?? 0) + match[0].length))) continue;
       const currency = match[2]?.toUpperCase() ?? match[8]?.toUpperCase()
         ?? CURRENCY_SYMBOL[match[3]!] ?? dollarCurrency(input.knownLocations ?? []);
       append(segment, match[0], amount(match[4]!, match[5]), match[6] ? amount(match[6], match[7]) : amount(match[4]!, match[5]), match[1]!, currency);
     }
-    for (const match of segment.matchAll(SPLIT_PERIOD_PAY)) {
+    const splitPatterns = [SPLIT_PERIOD_PAY, ...( /\bbetween\b/iu.test(segment)
+      ? [new RegExp(SPLIT_PERIOD_PAY.source.replace('(?:-|–|—|to)', 'and'), 'giu')] : [])];
+    for (const match of splitPatterns.flatMap(pattern => [...segment.matchAll(pattern)])) {
       const leftPeriod = compensationPeriod(match[5]!);
       const rightPeriod = compensationPeriod(match[9]!);
       if (leftPeriod !== rightPeriod) continue;
@@ -382,7 +410,7 @@ export function extractCompensationRanges(
     // A clearly labelled disclosed amount is useful even without a period.
     // Do not downgrade a malformed/mixed explicit-period expression to unknown.
     if (ranges.length === before && !new RegExp(String.raw`\b(?:${PERIOD}|biweekly|semimonthly)\b`, 'iu').test(segment)
-      && (input.requirePayContext !== true || /\b(?:base (?:pay|salary)|salary(?: range)?|compensation(?: range)?|hiring range)\b/iu.test(segment))) {
+      && (input.requirePayContext !== true || currentPayContext)) {
       const unknownPay = new RegExp(String.raw`(?:(${CURRENCY_CODE})\s*([$€£])?|([$€£]))\s*(${MONEY_AMOUNT})\s*([kK])?\s*(?:(?:-|–|—|to)\s*(?:(${CURRENCY_CODE})\s*)?[$€£]?\s*(${MONEY_AMOUNT})\s*([kK])?)?(?:\s*(${CURRENCY_CODE})\b)?`, 'giu');
       for (const match of segment.matchAll(unknownPay)) {
         const codes = [match[1], match[6], match[9]].filter(Boolean).map((value) => value!.toUpperCase());
@@ -393,13 +421,16 @@ export function extractCompensationRanges(
     }
   }
   const key = (range: CompensationRange) => stable({ minAmount: range.minAmount, maxAmount: range.maxAmount, currency: range.currency,
-    period: range.period, periodLabel: range.periodLabel, applicableLocations: range.applicableLocations, applicableEducationLevels: range.applicableEducationLevels });
+    period: range.period, periodLabel: range.periodLabel, applicableLocations: range.applicableLocations, applicableEducationLevels: range.applicableEducationLevels,
+    applicabilityLabel: range.applicabilityLabel });
+  const normalizedPeriodText = (text: string) => text.replace(/\s*(?:per|\/)\s*(?:hour|hr)\b/giu, '/hour');
   const unique = [...new Map(ranges.map((range) => [key(range), range])).values()];
   return unique.filter((candidate) => candidate.minAmount !== candidate.maxAmount || !unique.some((range) =>
     range !== candidate && range.minAmount !== range.maxAmount && range.period === candidate.period
-      && stable({ locations: range.applicableLocations, education: range.applicableEducationLevels })
-        === stable({ locations: candidate.applicableLocations, education: candidate.applicableEducationLevels })
-      && range.sourceText.includes(candidate.sourceText)
+      && (range.currency === candidate.currency || candidate.currency === 'XXX')
+      && stable({ locations: range.applicableLocations, education: range.applicableEducationLevels, label: range.applicabilityLabel })
+        === stable({ locations: candidate.applicableLocations, education: candidate.applicableEducationLevels, label: candidate.applicabilityLabel })
+      && normalizedPeriodText(range.sourceText).includes(normalizedPeriodText(candidate.sourceText))
       && (candidate.minAmount === range.minAmount || candidate.maxAmount === range.maxAmount)))
     .sort((left, right) => key(left).localeCompare(key(right)));
 }

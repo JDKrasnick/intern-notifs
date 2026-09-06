@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createMetadataAcquirer, metadataApiRoute, parseMetadataApiResponse } from '../src/metadata-acquisition.js';
-import { extractPostingMetadataEvidence, compensationFromRanges } from '../src/role-metadata.js';
+import { extractPostingMetadataEvidence, compensationFromRanges, reconcileRoleMetadata } from '../src/role-metadata.js';
 import { exactPostingRecoveryUrl, renderedDescriptionReady } from '../src/rendered-destination-evidence.js';
 import { compareMetadataCohort, decodeMetadataCursor, encodeMetadataCursor, metadataFieldOutcomes } from '../src/metadata-audit.js';
 import type { ProviderIdentity } from '../src/types.js';
@@ -10,6 +10,32 @@ const identity = (provider: ProviderIdentity['provider'], postingId = uuid): Pro
 const extract = (artifact: Parameters<typeof extractPostingMetadataEvidence>[0]['artifact']) => extractPostingMetadataEvidence({ artifact, sourceClass: 'official-ats', sourceId: 'test', sourceUrl: 'https://api.example.test/job', observedAt: '2026-09-05T00:00:00Z', exactPosting: true });
 
 describe('identity-bound public metadata APIs', () => {
+  it('preserves degree-specific nested HTML pay rows through acquisition and reconciliation', () => {
+    const artifact = parseMetadataApiResponse(identity('greenhouse', '123'), 'greenhouse-api', { id: 123, title: 'Engineering Intern',
+      content: '<h3>Compensation and Benefits</h3><ul><li>The compensation for this role:<ul><li>Engineering Intern/Undergraduate: $30/hour</li><li>Engineering Intern/Masters: $32.50/hour</li><li>Engineering Intern/PhD: $35/hour</li></ul></li></ul>' });
+    const result = reconcileRoleMetadata(extract(artifact!));
+    expect(result.conflicts).toEqual([]);
+    expect(result.compensation?.ranges).toHaveLength(3);
+    expect(result.compensation?.ranges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ minAmount: 30, applicableEducationLevels: ['undergraduate'] }),
+      expect.objectContaining({ minAmount: 32.5, applicableEducationLevels: ['masters'] }),
+      expect.objectContaining({ minAmount: 35, applicableEducationLevels: ['doctoral'] }),
+    ]));
+    expect(result.compensation?.minHourlyUSD).toBeUndefined();
+  });
+  it('retains encoded ranges and publisher level labels without inventing periods', () => {
+    for (const [content, expected] of [
+      ['<h3>US Salary Range</h3><p>$90,000 &amp;mdash; $110,000 USD</p>', [{ minAmount: 90000, maxAmount: 110000, currency: 'USD' }]],
+      ['<h3>Compensation and Benefits:</h3><p>Level 1: $140,000 - $175,000</p><p>Level 2: $160,000 - $210,000</p>', [{ minAmount: 140000, maxAmount: 175000, applicabilityLabel: 'Level 1' }, { minAmount: 160000, maxAmount: 210000, applicabilityLabel: 'Level 2' }]],
+      ['<p>Compensation Range(s):</p><p>Level I - Minimum $18.00 - Maximum $20.00</p><p>Levell II - Minimum $21.00 - Maximum $23.00</p>', [{ minAmount: 18, maxAmount: 20, applicabilityLabel: 'Level I' }, { minAmount: 21, maxAmount: 23, applicabilityLabel: 'Levell II' }]],
+    ] as const) {
+      const artifact = parseMetadataApiResponse(identity('greenhouse', '123'), 'greenhouse-api', { id: 123, title: 'Engineering Intern', content });
+      const result = reconcileRoleMetadata(extract(artifact!));
+      expect(result.conflicts).toEqual([]);
+      expect(result.compensation?.ranges).toHaveLength(expected.length);
+      expect(result.compensation?.ranges).toEqual(expect.arrayContaining(expected.map(range => expect.objectContaining({ ...range, period: 'unknown' }))));
+    }
+  });
   it('uses the observed Workday site and requisition, never a start-date publication guess', () => {
     const id = { ...identity('workday', 'r0248143'), tenant: 'bah' };
     expect(metadataApiRoute(id, 'https://bah.wd1.myworkdayjobs.com/en-US/BAH_Jobs/job/Rome-NY/Intern_R0248143')?.url)

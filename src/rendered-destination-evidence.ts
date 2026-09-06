@@ -79,7 +79,7 @@ function withoutExpectedPostingId(value: string | undefined, expectedPostingId?:
 }
 
 function frameEvidence(frame: RenderedFrameSnapshot, expectedPostingId?: string): ApplicationPageEvidence {
-  const contentExcerpt = frame.visibleText?.replace(/\s+/gu, ' ').trim().slice(0, 40_000);
+  const contentExcerpt = frame.visibleText?.split(/[\r\n]+/u).map(line => line.replace(/\s+/gu, ' ').trim()).filter(Boolean).join('\n').slice(0, 40_000);
   const renderedPostingText = [contentExcerpt, frame.structuredJobText].filter(Boolean).join(' ');
   const postingIdPresent = includesPostingId(renderedPostingText, expectedPostingId);
   const metadataArtifacts = applicationMetadataArtifactsFromJsonDocuments(frame.structuredJobDocuments ?? []);

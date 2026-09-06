@@ -403,7 +403,8 @@ export async function processDestinationVerificationBatch(
                     .filter((heading) => visible(heading) && /^(?:compensation|salary|pay range)$/iu.test(heading.innerText.trim()))
                     .flatMap((heading) => [...(heading.nextElementSibling?.matches('ul,ol') ? heading.nextElementSibling.children : [])])
                     .filter(visible).map((row) => (row as HTMLElement).innerText.trim());
-                  const fullText = (document.querySelector('main')?.innerText ?? document.body?.innerText ?? '').replace(/\s+/g, ' ').trim();
+                  const fullText = (document.querySelector('main')?.innerText ?? document.body?.innerText ?? '').split(/[\r\n]+/)
+                    .map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n');
                   const main = fullText.slice(0, 40_000);
                   return {
                     url: location.href, title: document.title || undefined, description,

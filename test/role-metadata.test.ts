@@ -133,6 +133,36 @@ describe('provider-neutral role metadata', () => {
       .toMatchObject([{ minAmount: 40, maxAmount: 85, currency: 'USD', period: 'hourly' }]);
   });
 
+  it('deduplicates repeated between endpoints and preserves explicit trailing currencies', () => {
+    expect(extractCompensationRanges('The expected pay range is between $23.50 per hour and $52.50 per hour.', { provenance: field, requirePayContext: true }))
+      .toMatchObject([{ minAmount: 23.5, maxAmount: 52.5, period: 'hourly' }]);
+    expect(extractCompensationRanges('The salary range is $52,650 CAD to $70,200 CAD.', { provenance: field, requirePayContext: true }))
+      .toMatchObject([{ minAmount: 52650, maxAmount: 70200, currency: 'CAD', period: 'unknown' }]);
+  });
+
+  it('binds inline degree tiers individually without inferring an unstated period', () => {
+    const ranges = extractCompensationRanges('Compensation Range: The annual base salary range is $41/hr for Undergrad, $53/hr for Graduate students, and $58 for PhD students*.', {
+      provenance: field, requirePayContext: true, knownLocations: ['United States'],
+    });
+    expect(ranges).toHaveLength(3);
+    expect(ranges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ minAmount: 41, maxAmount: 41, period: 'hourly', applicableEducationLevels: ['undergraduate'] }),
+      expect.objectContaining({ minAmount: 53, maxAmount: 53, period: 'hourly', applicabilityLabel: 'Graduate students' }),
+      expect.objectContaining({ minAmount: 58, maxAmount: 58, period: 'unknown', applicabilityLabel: 'PhD students', applicableEducationLevels: ['doctoral'] }),
+    ]));
+    expect(compensationFromRanges(ranges).minHourlyUSD).toBeUndefined();
+    expect(extractCompensationRanges('Salary: $47/hr for Undergrad and $53/hr for Graduate students', { provenance: field, requirePayContext: true })).toHaveLength(2);
+  });
+
+  it('does not leak a pay heading through unrelated paragraphs or into benefits', () => {
+    for (const text of [
+      'Compensation\nAbout us\nOur products cost $40/hour',
+      'Compensation\nLunch allowance: $20 per day',
+      'Compensation\nRelocation stipend: $5000',
+      'Compensation\nSalary expectations: $50/hour',
+    ]) expect(extractCompensationRanges(text, { provenance: field, requirePayContext: true })).toEqual([]);
+  });
+
   it('binds graduation dates to the graduation clause and does not treat pursuing a degree as a completed minimum', () => {
     const [item] = extractPostingMetadataEvidence({
       artifact: { title: 'Engineering Intern', text: 'Applications close 11 Nov 2026. Required Qualifications: Working toward a bachelor’s or master’s degree with an anticipated graduation date of Winter 2027, Spring 2028, Winter 2028, or Spring 2029.' },

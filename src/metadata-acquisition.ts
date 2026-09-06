@@ -1,4 +1,5 @@
 import { htmlToText } from './core/early-career.js';
+import { metadataDescriptionText } from './core/metadata-text.js';
 import type { ProviderIdentity } from './types.js';
 import type { RoleMetadataArtifact } from './role-metadata.js';
 
@@ -12,6 +13,7 @@ export type MetadataAcquisition = {
 };
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown) => typeof value === 'string' ? htmlToText(value) : '';
+const description = (value: unknown) => typeof value === 'string' ? metadataDescriptionText(value) : '';
 const strings = (value: unknown) => Array.isArray(value) ? value.map(text).filter(Boolean) : [];
 const periods: Record<string, string> = { 'per-hour-wage': 'hour', 'per-day-wage': 'day', 'per-week-salary': 'week', 'per-month-salary': 'month', 'per-year-salary': 'year',
   'bi-week-salary': 'biweekly', 'semi-month-salary': 'semimonthly', 'bi-month-salary': 'bimonthly', 'one-time': 'one-time' };
@@ -73,14 +75,14 @@ export function parseMetadataApiResponse(identity: ProviderIdentity, method: Met
     // Workday's published presentation can have a suffix (-1/-2). Validate
     // its entire returned slug instead of stripping suffixes or merging IDs.
     if (!exactPresentation && !exactRequisition) return undefined;
-    return { title: text(job.title), text: text(job.jobDescription),
+    return { title: text(job.title), text: description(job.jobDescription),
       locations: [text(job.location), ...strings(job.additionalLocations)].filter(Boolean), deadline: text(job.endDate) || undefined };
   }
   if (method === 'smartrecruiters-api') {
     if (String(payload.id) !== expected || !record(payload.company) || text(payload.company.identifier).toLowerCase() !== identity.tenant?.toLowerCase()
       || !text(payload.name) || !record(payload.jobAd) || !record(payload.jobAd.sections)) return undefined;
     const sections = payload.jobAd.sections;
-    const content = ['jobDescription', 'qualifications', 'additionalInformation'].flatMap((key) => record(sections[key]) ? [text(sections[key].text)] : []).filter(Boolean).join('\n');
+    const content = ['jobDescription', 'qualifications', 'additionalInformation'].flatMap((key) => record(sections[key]) ? [description(sections[key].text)] : []).filter(Boolean).join('\n');
     if (!content) return undefined;
     const location = record(payload.location) ? payload.location : {};
     return { title: text(payload.name), text: content, locations: [text(location.fullLocation) || [location.city, location.region, location.country].map(text).filter(Boolean).join(', ')].filter(Boolean),
@@ -98,7 +100,7 @@ export function parseMetadataApiResponse(identity: ProviderIdentity, method: Met
         currency: text(range.currency_type), label: text(range.title) || undefined,
         sourceText: `${text(range.title)}: ${band}. ${text(range.blurb)}` }] : [];
     }) : [];
-    return { title: text(payload.title), text: text(payload.content), compensationBands: ranges,
+    return { title: text(payload.title), text: description(payload.content), compensationBands: ranges,
       locations: record(payload.location) ? [text(payload.location.name)].filter(Boolean) : [],
       publishedAt: text(payload.first_published) || undefined, updatedAt: text(payload.updated_at) || undefined,
       deadline: text(payload.application_deadline) || undefined };
@@ -109,12 +111,12 @@ export function parseMetadataApiResponse(identity: ProviderIdentity, method: Met
       const url = new URL(String(payload.hostedUrl));
       if (url.origin !== 'https://jobs.lever.co' || url.pathname.replace(/\/$/u, '') !== `/${identity.tenant}/${expected}`) return undefined;
     } catch { return undefined; }
-    const sections = Array.isArray(payload.lists) ? payload.lists.flatMap((item) => record(item) ? [text(item.text), text(item.content)] : []) : [];
-    const description = [payload.descriptionPlain, payload.description, payload.additionalPlain, payload.additional].map(text);
-    if (!description.some(Boolean)) return undefined;
+    const sections = Array.isArray(payload.lists) ? payload.lists.flatMap((item) => record(item) ? [text(item.text), description(item.content)] : []) : [];
+    const descriptions = [payload.descriptionPlain, payload.description, payload.additionalPlain, payload.additional].map(description);
+    if (!descriptions.some(Boolean)) return undefined;
     const timestamp = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && !Number.isNaN(new Date(value).valueOf()) ? new Date(value).toISOString() : undefined;
-    return { title: text(payload.text), text: [...description, ...sections].filter(Boolean).join('\n'),
-      compensationText: [bandText(payload.salaryRange), text(payload.salaryDescriptionPlain), text(payload.salaryDescription)].filter(Boolean).join('\n'),
+    return { title: text(payload.text), text: [...descriptions, ...sections].filter(Boolean).join('\n'),
+      compensationText: [bandText(payload.salaryRange), description(payload.salaryDescriptionPlain), description(payload.salaryDescription)].filter(Boolean).join('\n'),
       locations: record(payload.categories) ? [text(payload.categories.location), ...strings(payload.categories.allLocations)].filter(Boolean) : [],
       workMode: text(payload.workplaceType) || undefined, publishedAt: timestamp(payload.createdAt), updatedAt: timestamp(payload.updatedAt) };
   }
@@ -127,8 +129,8 @@ export function parseMetadataApiResponse(identity: ProviderIdentity, method: Met
     if (url.origin !== 'https://jobs.ashbyhq.com' || url.pathname.replace(/\/$/u, '') !== `/${identity.tenant}/${expected}`) return undefined;
   } catch { return undefined; }
   if (!text(job.title) || ![job.descriptionPlain, job.descriptionHtml].some((value) => text(value))) return undefined;
-  return { title: text(job.title), text: [job.descriptionPlain, job.descriptionHtml].map(text).filter(Boolean).join('\n'),
-    compensationText: record(job.compensation) ? [job.compensation.scrapeableCompensationSalarySummary, job.compensation.compensationTierSummary].map(text).filter(Boolean).join('\n') : undefined,
+  return { title: text(job.title), text: [job.descriptionPlain, job.descriptionHtml].map(description).filter(Boolean).join('\n'),
+    compensationText: record(job.compensation) ? [job.compensation.scrapeableCompensationSalarySummary, job.compensation.compensationTierSummary].map(description).filter(Boolean).join('\n') : undefined,
     locations: [text(job.location), ...(Array.isArray(job.secondaryLocations) ? job.secondaryLocations.flatMap((item) => record(item) ? [text(item.location)] : []) : [])].filter(Boolean),
     workMode: text(job.workplaceType) || undefined, publishedAt: text(job.publishedAt) || undefined };
 }
