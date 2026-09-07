@@ -25,10 +25,10 @@ const DISCIPLINE_STYLES: Record<DisciplineTag, DisciplineStyle> = {
 // Aliases for API values like "SWE", "Quant", "SWE " etc, and human display variants
 const ALIAS_MAP: Record<string, DisciplineTag> = {
   'swe': 'software', 'software': 'software', 'software engineering': 'software', 'eng': 'software', 'engineering': 'software', 'developer': 'software', 'sde': 'software',
-  'quant': 'quant', 'quantitative': 'quant', 'trading': 'quant',
+  'quant': 'quant', 'quant/fintech': 'quant', 'quantitative': 'quant', 'trading': 'quant',
   'ai': 'ai-ml', 'ai-ml': 'ai-ml', 'ai/ml': 'ai-ml', 'aiml': 'ai-ml', 'machine learning': 'ai-ml', 'ml': 'ai-ml', 'artificial intelligence': 'ai-ml', 'deep learning': 'ai-ml',
   'data': 'data', 'analytics': 'data', 'business intelligence': 'data',
-  'infra': 'infrastructure-cloud', 'infrastructure': 'infrastructure-cloud', 'infrastructure-cloud': 'infrastructure-cloud', 'cloud': 'infrastructure-cloud', 'platform': 'infrastructure-cloud', 'devops': 'infrastructure-cloud', 'sre': 'infrastructure-cloud',
+  'infra': 'infrastructure-cloud', 'cloud/infra': 'infrastructure-cloud', 'infrastructure': 'infrastructure-cloud', 'infrastructure-cloud': 'infrastructure-cloud', 'cloud': 'infrastructure-cloud', 'platform': 'infrastructure-cloud', 'devops': 'infrastructure-cloud', 'sre': 'infrastructure-cloud',
   'security': 'security', 'cybersecurity': 'security', 'infosec': 'security',
   'product': 'product', 'product management': 'product', 'pm': 'product',
   'design': 'technical-design', 'technical-design': 'technical-design', 'ux': 'technical-design', 'ui': 'technical-design', 'product design': 'technical-design',

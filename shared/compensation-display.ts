@@ -13,29 +13,22 @@ export function compensationLabels(value: DisplayCompensation | undefined): stri
     const number = (amount: number) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(amount);
     const isKnownCurrency = /^[A-Z]{3}$/u.test(range.currency) && range.currency !== 'XXX';
     let currencyPrefix = '';
-    let currencySuffix = '';
-    let showCurrency = false;
     if (isKnownCurrency) {
       currencyPrefix = `${range.currency} `;
-      showCurrency = true;
     } else {
       // XXX or missing currency: infer symbol from sourceText for UX, never show "Currency not stated"
       const src = range.sourceText ?? '';
-      if (src.includes('€')) { currencyPrefix = '€'; showCurrency = true; }
-      else if (src.includes('£')) { currencyPrefix = '£'; showCurrency = true; }
-      else if (src.includes('$')) { currencyPrefix = '$'; showCurrency = true; }
-      else if (src.includes('¥')) { currencyPrefix = '¥'; showCurrency = true; }
+      if (src.includes('€')) currencyPrefix = '€';
+      else if (src.includes('£')) currencyPrefix = '£';
+      else if (src.includes('$')) currencyPrefix = '$';
+      else if (src.includes('¥')) currencyPrefix = '¥';
       // otherwise no currency prefix, just amount
     }
     const period: Record<string, string> = { hourly: '/hour', daily: '/day', weekly: '/week', monthly: '/month', annual: '/year', unknown: ' · period not stated', other: ' · see employer pay terms' };
     const amount = `${number(range.minAmount)}${range.maxAmount !== range.minAmount ? `–${number(range.maxAmount)}` : ''}`;
     const applicability = [range.applicabilityLabel, ...(range.applicableLocations ?? []), ...(range.applicableEducationLevels ?? [])].filter(Boolean).join(', ');
     const interval = range.period === 'other' && range.periodLabel ? ` · ${range.periodLabel}` : period[range.period] ?? ' · period not stated';
-    const amountWithCurrency = showCurrency
-      ? (currencyPrefix === '$' || currencyPrefix === '€' || currencyPrefix === '£' || currencyPrefix === '¥')
-        ? `${currencyPrefix}${amount}${interval}`
-        : `${currencyPrefix}${amount}${interval}`
-      : `${amount}${interval}`;
+    const amountWithCurrency = `${currencyPrefix}${amount}${interval}`;
     return [`${amountWithCurrency}${applicability ? ` (${applicability})` : ''}`];
   });
   // Fallback to raw, but hide stale "Currency not stated" phrasing if it leaked through stored data

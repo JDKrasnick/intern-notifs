@@ -32,7 +32,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { ApiError, api, authenticatedRead, responseCache, sessionStorage } from "./src/api";
 import { appendGroupedCatalogPage, catalogCardKind, type GroupedCatalogPage } from "./src/catalog";
 import { boundedCatalogText, compactLocations, presentCatalogRole, seasonLabel } from "./src/catalog-quality";
-import { housingLabels, type DisplayHousingDetail } from "../shared/housing-display";
 import { catalogGroupAvailabilityLabel, groupedCatalogParameters } from "./src/catalog-filters";
 import { disciplineStyleFor } from "../shared/discipline-display";
 import { createLatestRequestGuard } from "./src/latest-request";
@@ -99,7 +98,6 @@ type Job = {
   season: string;
   applyUrl: string;
   compensation: { raw: string };
-  housing?: DisplayHousingDetail[];
   employerCategory?: EmployerCategory;
   requirements?: { requiresUsCitizenship: boolean; advancedDegreeRequired: boolean };
   disciplines?: string[];
@@ -162,7 +160,6 @@ type CatalogGroupRole = {
   requiresUsCitizenship?: boolean;
   advancedDegreeRequired?: boolean;
   compensation: { raw: string };
-  housing?: DisplayHousingDetail[];
   firstSeenAt: string;
   lastSeenAt: string;
   sourceReferences: Job["sourceReferences"];
@@ -467,17 +464,6 @@ function JobCard({
   const handleSave = () => {
     if (isHiding || !onSaveForWeb) return;
     onSaveForWeb();
-    if (!onHideLocally) return;
-    setIsHiding(true);
-    if (!motionAllowed) {
-      onHideLocally();
-      return;
-    }
-    Animated.parallel([
-      Animated.timing(hideFade, { toValue: 0, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
-      Animated.timing(hideScale, { toValue: 0.96, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
-      Animated.timing(hideTranslateY, { toValue: 6, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
-    ]).start(() => onHideLocally());
   };
   const resetPosition = () => {
     if (!motionAllowed) {
@@ -511,20 +497,6 @@ function JobCard({
           }
           if (shouldSave) {
             onSaveForWeb?.();
-            if (onHideLocally) {
-              if (!motionAllowed) {
-                translateX.setValue(0);
-                onHideLocally();
-                return;
-              }
-              setIsHiding(true);
-              Animated.parallel([
-                Animated.timing(hideFade, { toValue: 0, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
-                Animated.timing(hideScale, { toValue: 0.96, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
-                Animated.timing(hideTranslateY, { toValue: 6, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
-              ]).start(() => onHideLocally());
-              return;
-            }
           }
           if (!motionAllowed) {
             translateX.setValue(0);
@@ -546,7 +518,7 @@ function JobCard({
         },
         onPanResponderTerminate: resetPosition,
       }),
-    [canHideLocally, canSaveForWeb, hideFade, hideScale, hideTranslateY, isHiding, motionAllowed, onHideLocally, onSaveForWeb, translateX],
+    [canHideLocally, canSaveForWeb, motionAllowed, onHideLocally, onSaveForWeb, translateX],
   );
   const saveActionProgress = translateX.interpolate({
     inputRange: [-108, -36, 0],
@@ -691,7 +663,6 @@ function catalogRoleJob(role: CatalogGroupRole): Job {
     season: role.season,
     applyUrl: role.officialApplyUrl,
     compensation: role.compensation ?? { raw: "" },
-    housing: role.housing,
     employerCategory: role.employerCategory,
     requirements: {
       requiresUsCitizenship: Boolean(role.requiresUsCitizenship),
@@ -746,14 +717,6 @@ function CatalogGroupCard({
   const handleSave = () => {
     if (isHiding || !onSaveForWeb) return;
     onSaveForWeb();
-    if (!onHideLocally) return;
-    setIsHiding(true);
-    if (!motionAllowed) { onHideLocally(); return; }
-    Animated.parallel([
-      Animated.timing(hideFade, { toValue: 0, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
-      Animated.timing(hideScale, { toValue: 0.96, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
-      Animated.timing(hideTranslateY, { toValue: 6, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
-    ]).start(() => onHideLocally());
   };
   const resetPosition = () => {
     if (!motionAllowed) { translateX.setValue(0); return; }
@@ -773,16 +736,6 @@ function CatalogGroupCard({
           if (!shouldSave && !shouldHide) { resetPosition(); return; }
           if (shouldSave) {
             onSaveForWeb?.();
-            if (onHideLocally) {
-              if (!motionAllowed) { translateX.setValue(0); onHideLocally(); return; }
-              setIsHiding(true);
-              Animated.parallel([
-                Animated.timing(hideFade, { toValue: 0, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
-                Animated.timing(hideScale, { toValue: 0.96, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
-                Animated.timing(hideTranslateY, { toValue: 6, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
-              ]).start(() => onHideLocally());
-              return;
-            }
           }
           if (!motionAllowed) { translateX.setValue(0); if (shouldHide) onHideLocally?.(); return; }
           Animated.sequence([
@@ -792,7 +745,7 @@ function CatalogGroupCard({
         },
         onPanResponderTerminate: resetPosition,
       }),
-    [canHideLocally, canSaveForWeb, hideFade, hideScale, hideTranslateY, isHiding, motionAllowed, onHideLocally, onSaveForWeb, translateX],
+    [canHideLocally, canSaveForWeb, motionAllowed, onHideLocally, onSaveForWeb, translateX],
   );
   const saveActionProgress = translateX.interpolate({ inputRange: [-108, -36, 0], outputRange: [1, 0.32, 0], extrapolate: "clamp" });
   const hideActionProgress = translateX.interpolate({ inputRange: [0, 36, 108], outputRange: [0, 0.32, 1], extrapolate: "clamp" });
@@ -1110,7 +1063,7 @@ function JobDetailSheet({
 
   const role = job ?? displayedJob.current;
   const roleDisplay = role ? presentCatalogRole(role) : undefined;
-  const details = [roleDisplay?.location, roleDisplay?.season, roleDisplay?.compensation]
+  const details = [roleDisplay?.location, roleDisplay?.season]
     .filter(Boolean)
     .join(" · ");
   const actionLabel = !role?.open
@@ -1182,12 +1135,6 @@ function JobDetailSheet({
                   <Text style={styles.pay} numberOfLines={2}>{roleDisplay.compensation}</Text>
                 </View>
               ) : null}
-              {housingLabels(role.housing).map((housing, index) => (
-                <View key={`${housing.label}-${index}`} style={styles.sheetTrustBlock}>
-                  <Text style={styles.sheetTrustPrimary}>{housing.label}</Text>
-                  {housing.detail ? <Text style={styles.sheetTrustSecondary}>{housing.detail}</Text> : null}
-                </View>
-              ))}
               <View style={styles.sheetTrustBlock}>
                 <Text style={styles.sheetTrustPrimary}>{source.primary}</Text>
                 {source.corroboration ? <Text style={styles.sheetTrustSecondary}>{source.corroboration}</Text> : null}
@@ -1233,7 +1180,6 @@ function JobDetailSheet({
                     accessibilityLabel="Save for web"
                     onPress={() => {
                       if (role && onSaveForWeb) onSaveForWeb(role);
-                      if (role && onHideLocally) onHideLocally(role);
                       onDismiss();
                     }}
                     style={styles.sheetSaveBar}
