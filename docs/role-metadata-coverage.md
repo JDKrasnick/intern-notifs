@@ -1,6 +1,28 @@
 # Employer metadata coverage audit — 2026-09-05
 
-## Latest implementation: extraction v10 — 2026-09-06
+## Latest implementation: extraction v14 — 2026-09-07
+
+Worker source `31f278f`, version `155ddb09-e5c6-4d5e-aa27-814cba5e0498`,
+is deployed with source-processing revision 2 and production flags preserved.
+All 1,430 backend tests and 101 mobile tests pass; type checks, lint, Worker
+compilation and PR CI pass. The separate production web deployment remains on
+Cloudflare Pages and is not overwritten by this backend rollout.
+
+Full official-response replays retain Magna's six school-year/degree pay rows
+and PayPal's three location bands. Unknown currency and Magna's unstated pay
+period remain unknown. The Greenhouse source path retains Databricks' regional
+bands. Durable legacy 404/410 decisions no longer poison bounded source refresh;
+timeouts, blocked requests and persistence failures remain retryable/pending.
+
+At 21:59 UTC, the public catalog still contains 1,643 roles, 418 with pay text,
+1,641 with metadata and 22 with housing. The frozen sample still has known
+missing disclosures. Fresh v14 collection starts at 97/4,788 current pairs,
+not the v13 result of 4,673/4,786. No historical repair is approved or applied.
+Source freshness, complete evidence, unresolved conflict reviews, exact repair
+approval and public rescoring remain required; see the [current validation
+checkpoint](metadata-coverage-plan.md#september-7-validation-checkpoint).
+
+## Earlier implementation: extraction v10 — 2026-09-06
 
 Worker source `eee0205`, version `cb3feb19-bc79-4110-94b0-5a416896aba4`,
 is deployed with publication flags independently verified unchanged. Web source

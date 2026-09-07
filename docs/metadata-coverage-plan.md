@@ -1,6 +1,7 @@
 # Plan: maximize supported employer metadata coverage
 
-Status: expanded Worker and web deployed from PR #161, 2026-09-06. The owner authorized
+Status: Worker v14 deployed from PR #161 on 2026-09-07; web remains on Cloudflare
+Pages with separate visual work preserved. The owner authorized
 implementation; production repair still requires its exact dry-run approval.
 
 ## Delivery status
@@ -39,6 +40,13 @@ uses the existing HTML/browser fallback; no undocumented Oracle API is enabled.
 ## Objective and boundaries
 
 ### September 7 validation checkpoint
+
+Worker source `31f278f`, version `155ddb09-e5c6-4d5e-aa27-814cba5e0498`,
+deploys extraction v14 and source-processing revision 2. Production publication
+flags remain unchanged. All PR checks pass, alongside 1,430 backend tests,
+101 mobile tests, type checks, lint and Worker compilation. No migration or
+historical apply runs. The initial v14 audit reaches 97/4,788 current pairs;
+4,691 remain pending and collection continues with existing leases/backoffs.
 
 At 21:29 UTC, the public feed contains 1,643 roles: 418 with pay text, 1,641
 with metadata and 22 with housing. These remain presence counts. Of the frozen
