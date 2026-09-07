@@ -13,7 +13,6 @@ export function compensationLabels(value: DisplayCompensation | undefined): stri
     const number = (amount: number) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(amount);
     const isKnownCurrency = /^[A-Z]{3}$/u.test(range.currency) && range.currency !== 'XXX';
     let currencyPrefix = '';
-    let currencySuffix = '';
     let showCurrency = false;
     if (isKnownCurrency) {
       currencyPrefix = `${range.currency} `;

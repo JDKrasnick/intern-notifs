@@ -90,6 +90,25 @@ describe('public API ownership boundary', () => {
       job: { jobId: 'job-1', company: 'Acme', title: 'Software Intern', open: true, sourceReferences: [{ sourceId: 'greenhouse-acme', sourceUrl: 'https://boards.greenhouse.io/acme/jobs/1' }] },
     });
   });
+  it('deletes only the authenticated user application and preserves neighboring records', async () => {
+    const jobs = new MemoryInternshipStore(); await jobs.putInternship(job);
+    const users = new MemoryUserStore();
+    const handler = createApiHandler({ jobs, users });
+    const first = await handler(event('owner', 'POST', '/me/applications', { jobId: job.jobId }));
+    const secondJob = { ...job, jobId: 'job-2', title: 'Data Intern' };
+    await jobs.putInternship(secondJob);
+    const second = await handler(event('owner', 'POST', '/me/applications', { jobId: secondJob.jobId }));
+    const firstId = (JSON.parse(first.body) as { applicationId: string }).applicationId;
+    const secondId = (JSON.parse(second.body) as { applicationId: string }).applicationId;
+
+    expect((await handler(event(undefined, 'DELETE', `/me/applications/${firstId}`))).statusCode).toBe(401);
+    expect((await handler(event('other-user', 'DELETE', `/me/applications/${firstId}`))).statusCode).toBe(404);
+    expect((await handler(event('owner', 'DELETE', '/me/applications/missing'))).statusCode).toBe(404);
+    expect((await handler(event('owner', 'DELETE', `/me/applications/${firstId}`))).statusCode).toBe(204);
+    expect((await handler(event('owner', 'DELETE', `/me/applications/${firstId}`))).statusCode).toBe(404);
+    expect(JSON.parse((await handler(event('owner', 'GET', '/me/applications'))).body).applications)
+      .toMatchObject([{ applicationId: secondId, jobId: secondJob.jobId }]);
+  });
   it('persists per-user alert templates without resetting existing alert preferences', async () => {
     const jobs = new MemoryInternshipStore(); const users = new MemoryUserStore(); const handler = createApiHandler({ jobs, users });
     const first = await handler(event('user-a', 'PUT', '/me/preferences', { filter: { includeCategories: ['swe'], includeEmployerCategories: ['faang', 'startup'] }, alertsEnabled: true, onboardingComplete: true, push: { titleTemplate: '{company}: {title}', descriptionTemplate: '{location}\n{url}' } }));
