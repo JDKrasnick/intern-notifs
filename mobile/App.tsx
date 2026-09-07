@@ -32,7 +32,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { ApiError, api, authenticatedRead, responseCache, sessionStorage } from "./src/api";
 import { appendGroupedCatalogPage, catalogCardKind, type GroupedCatalogPage } from "./src/catalog";
 import { boundedCatalogText, compactLocations, presentCatalogRole, seasonLabel } from "./src/catalog-quality";
+import { housingLabels, type DisplayHousingDetail } from "../shared/housing-display";
 import { catalogGroupAvailabilityLabel, groupedCatalogParameters } from "./src/catalog-filters";
+import { disciplineStyleFor } from "../shared/discipline-display";
 import { createLatestRequestGuard } from "./src/latest-request";
 import { uploadDocumentContent } from "./src/document-upload";
 import { installationApi } from "./src/installation";
@@ -97,8 +99,10 @@ type Job = {
   season: string;
   applyUrl: string;
   compensation: { raw: string };
+  housing?: DisplayHousingDetail[];
   employerCategory?: EmployerCategory;
   requirements?: { requiresUsCitizenship: boolean; advancedDegreeRequired: boolean };
+  disciplines?: string[];
   open: boolean;
   firstSeenAt: string;
   lastSeenAt: string;
@@ -158,6 +162,7 @@ type CatalogGroupRole = {
   requiresUsCitizenship?: boolean;
   advancedDegreeRequired?: boolean;
   compensation: { raw: string };
+  housing?: DisplayHousingDetail[];
   firstSeenAt: string;
   lastSeenAt: string;
   sourceReferences: Job["sourceReferences"];
@@ -314,6 +319,10 @@ const colors = {
   success: "#067647",
   danger: "#B42318",
 };
+if (Platform.OS === 'web' && typeof document !== 'undefined') {
+  document.documentElement.style.backgroundColor = colors.canvas;
+  document.body.style.backgroundColor = colors.canvas;
+}
 const MotionAllowedContext = createContext(false);
 
 function useMotionAllowed() {
@@ -412,7 +421,6 @@ function hasGreenhouseQuickApply(url: string) {
     return false;
   }
 }
-
 function JobCard({
   job,
   onOpen,
@@ -435,10 +443,42 @@ function JobCard({
   const motionAllowed = useContext(MotionAllowedContext);
   const source = sourcePresentation(job.sourceReferences);
   const translateX = useRef(new Animated.Value(0)).current;
+  const hideFade = useRef(new Animated.Value(1)).current;
+  const hideScale = useRef(new Animated.Value(1)).current;
+  const hideTranslateY = useRef(new Animated.Value(0)).current;
+  const [isHiding, setIsHiding] = useState(false);
   const canSaveForWeb = Boolean(onSaveForWeb) && !applicationStatus && !isSavingForWeb;
   const canHideLocally = Boolean(onHideLocally);
   const postingTiming = postingTimingPresentation(job.sourceReferences, job.firstSeenAt);
   const recencyBadge = postingRecencyBadge(isNew, postingTiming);
+  const handleHide = () => {
+    if (isHiding || !onHideLocally) return;
+    setIsHiding(true);
+    if (!motionAllowed) {
+      onHideLocally();
+      return;
+    }
+    Animated.parallel([
+      Animated.timing(hideFade, { toValue: 0, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+      Animated.timing(hideScale, { toValue: 0.96, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+      Animated.timing(hideTranslateY, { toValue: 6, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+    ]).start(() => onHideLocally());
+  };
+  const handleSave = () => {
+    if (isHiding || !onSaveForWeb) return;
+    onSaveForWeb();
+    if (!onHideLocally) return;
+    setIsHiding(true);
+    if (!motionAllowed) {
+      onHideLocally();
+      return;
+    }
+    Animated.parallel([
+      Animated.timing(hideFade, { toValue: 0, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+      Animated.timing(hideScale, { toValue: 0.96, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+      Animated.timing(hideTranslateY, { toValue: 6, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+    ]).start(() => onHideLocally());
+  };
   const resetPosition = () => {
     if (!motionAllowed) {
       translateX.setValue(0);
@@ -469,7 +509,23 @@ function JobCard({
             resetPosition();
             return;
           }
-          if (shouldSave) onSaveForWeb?.();
+          if (shouldSave) {
+            onSaveForWeb?.();
+            if (onHideLocally) {
+              if (!motionAllowed) {
+                translateX.setValue(0);
+                onHideLocally();
+                return;
+              }
+              setIsHiding(true);
+              Animated.parallel([
+                Animated.timing(hideFade, { toValue: 0, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+                Animated.timing(hideScale, { toValue: 0.96, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+                Animated.timing(hideTranslateY, { toValue: 6, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+              ]).start(() => onHideLocally());
+              return;
+            }
+          }
           if (!motionAllowed) {
             translateX.setValue(0);
             if (shouldHide) onHideLocally?.();
@@ -490,7 +546,7 @@ function JobCard({
         },
         onPanResponderTerminate: resetPosition,
       }),
-    [canHideLocally, canSaveForWeb, motionAllowed, onHideLocally, onSaveForWeb, translateX],
+    [canHideLocally, canSaveForWeb, hideFade, hideScale, hideTranslateY, isHiding, motionAllowed, onHideLocally, onSaveForWeb, translateX],
   );
   const saveActionProgress = translateX.interpolate({
     inputRange: [-108, -36, 0],
@@ -504,86 +560,124 @@ function JobCard({
   });
 
   return (
-    <View style={styles.swipeCard}>
-      {canSaveForWeb || isSavingForWeb ? (
+    <Animated.View style={{ opacity: hideFade, transform: [{ scale: hideScale }, { translateY: hideTranslateY }] }}>
+      <View style={styles.swipeCard}>
+        {canSaveForWeb || isSavingForWeb ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.swipeSaveAction, { opacity: saveActionProgress }]}
+          >
+            <Ionicons name="bookmark" size={20} color="#FFFFFF" />
+            <Text style={styles.swipeSaveActionText}>{isSavingForWeb ? "Saving…" : "Save"}</Text>
+          </Animated.View>
+        ) : null}
+        {canHideLocally ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.swipeHideAction, { opacity: hideActionProgress }]}
+          >
+            <Ionicons name="eye-off-outline" size={20} color={colors.onDark} />
+            <Text style={styles.swipeHideActionText}>Hide</Text>
+          </Animated.View>
+        ) : null}
         <Animated.View
-          pointerEvents="none"
-          style={[styles.swipeSaveAction, { opacity: saveActionProgress }]}
+          {...(canSaveForWeb || canHideLocally ? panResponder.panHandlers : {})}
+          style={{ transform: [{ translateX }] }}
         >
-          <Ionicons name="bookmark" size={20} color={colors.onDark} />
-          <Text style={styles.swipeSaveActionText}>{isSavingForWeb ? "Saving…" : "Save"}</Text>
-        </Animated.View>
-      ) : null}
-      {canHideLocally ? (
-        <Animated.View
-          pointerEvents="none"
-          style={[styles.swipeHideAction, { opacity: hideActionProgress }]}
-        >
-          <Ionicons name="eye-off-outline" size={20} color={colors.onDark} />
-          <Text style={styles.swipeHideActionText}>Hide</Text>
-        </Animated.View>
-      ) : null}
-      <Animated.View
-        {...(canSaveForWeb || canHideLocally ? panResponder.panHandlers : {})}
-        style={{ transform: [{ translateX }] }}
-      >
-        <TouchableOpacity
-          accessibilityRole="button"
-          accessibilityLabel={`${recencyBadge ? `${recencyBadge} role, ` : ""}${display.title} at ${display.company}, ${display.location}, ${postingTiming.summary}, ${source.primary}${source.corroboration ? ", corroborated by a community listing" : ""}${job.postingIdentityStatus === "unconfirmed" ? ", identity unconfirmed" : ""}${applicationStatus ? `, ${applicationStatus}` : ""}`}
-          accessibilityHint={
-            canSaveForWeb && canHideLocally
-              ? "Swipe left to save this role for the web app, or swipe right to hide it on this device."
-              : canSaveForWeb
-                ? "Swipe left to save this role and apply later in the web app."
-                : canHideLocally
-                  ? "Swipe right to hide this role on this device."
-                  : undefined
-          }
-          accessibilityActions={
-            [
-              ...(canSaveForWeb ? [{ name: "save", label: "Save for web" }] : []),
-              ...(canHideLocally ? [{ name: "hide", label: "Hide on this device" }] : []),
-            ]
-          }
-          onAccessibilityAction={(event) => {
-            if (event.nativeEvent.actionName === "save") onSaveForWeb?.();
-            if (event.nativeEvent.actionName === "hide") onHideLocally?.();
-          }}
-          style={[styles.card, styles.swipeCardSurface]}
-          onPress={onOpen}
-        >
-          <View style={styles.jobCompanyRow}>
-            <Text style={styles.company} numberOfLines={1}>{display.company}</Text>
-            {recencyBadge ? (
-              <View style={styles.newSpark} accessibilityLabel={`${recencyBadge} role`}>
-                <Ionicons name="sparkles-outline" size={13} color={colors.signal} />
-                <Text style={styles.newSparkText}>{recencyBadge}</Text>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={`${recencyBadge ? `${recencyBadge} role, ` : ""}${display.title} at ${display.company}, ${display.location}, ${postingTiming.summary}, ${source.primary}${source.corroboration ? ", corroborated by a community listing" : ""}${job.postingIdentityStatus === "unconfirmed" ? ", identity unconfirmed" : ""}${applicationStatus ? `, ${applicationStatus}` : ""}`}
+            accessibilityHint={
+              canSaveForWeb && canHideLocally
+                ? "Swipe left to save this role for the web app, or swipe right to hide it on this device."
+                : canSaveForWeb
+                  ? "Swipe left to save this role and apply later in the web app."
+                  : canHideLocally
+                    ? "Swipe right to hide this role on this device."
+                    : undefined
+            }
+            accessibilityActions={
+              [
+                ...(canSaveForWeb ? [{ name: "save", label: "Save for web" }] : []),
+                ...(canHideLocally ? [{ name: "hide", label: "Hide on this device" }] : []),
+              ]
+            }
+            onAccessibilityAction={(event) => {
+              if (event.nativeEvent.actionName === "save") handleSave();
+              if (event.nativeEvent.actionName === "hide") handleHide();
+            }}
+            style={[styles.card, styles.swipeCardSurface]}
+            onPress={onOpen}
+          >
+            <View style={styles.jobCompanyRow}>
+              <View style={styles.jobCompanyLeft}>
+                <Text style={styles.company} numberOfLines={1}>{display.company}</Text>
+                {recencyBadge ? (
+                  <View style={styles.newSpark} accessibilityLabel={`${recencyBadge} role`}>
+                    <Ionicons name="sparkles-outline" size={13} color={colors.signal} />
+                    <Text style={styles.newSparkText}>{recencyBadge}</Text>
+                  </View>
+                ) : null}
+              </View>
+              {job.disciplines?.length ? (
+                <View style={styles.jobCardTopTags}>
+                  {job.disciplines.slice(0, 2).map((d) => {
+                    const s = disciplineStyleFor(d);
+                    return (
+                      <View key={d} style={[styles.disciplinePill, { backgroundColor: s.backgroundColor, borderColor: s.borderColor }]}>
+                        <Text style={[styles.disciplinePillText, { color: s.color }]}>{s.label}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : null}
+            </View>
+            <Text style={styles.title} numberOfLines={2}>{display.title}</Text>
+            <Text style={styles.muted} numberOfLines={2}>
+              {display.location} · {display.season}
+            </Text>
+            <JobSource source={source} />
+            {job.postingIdentityStatus === "unconfirmed" ? <IdentityTrustLabel /> : null}
+            <Text style={styles.postingTiming}>{postingTiming.summary}</Text>
+            {!job.open ? <Text style={styles.closedStatus}>Closed</Text> : null}
+            {display.compensation ? (
+              <View style={styles.jobCardMidPills}>
+                <Text style={styles.pay} numberOfLines={2}>{display.compensation}</Text>
               </View>
             ) : null}
-          </View>
-          <Text style={styles.title} numberOfLines={2}>{display.title}</Text>
-          <Text style={styles.muted} numberOfLines={2}>
-            {display.location} · {display.season}
-          </Text>
-          <JobSource source={source} />
-          {job.postingIdentityStatus === "unconfirmed" ? <IdentityTrustLabel /> : null}
-          <Text style={styles.postingTiming}>{postingTiming.summary}</Text>
-          {!job.open ? <Text style={styles.closedStatus}>Closed</Text> : null}
-          {display.compensation ? (
-            <Text style={styles.pay} numberOfLines={2}>{display.compensation}</Text>
-          ) : null}
-          {applicationStatus ? (
-            <View style={styles.jobApplicationStatus}>
-              <Text style={styles.jobApplicationStatusText}>{applicationStatus.toUpperCase()}</Text>
+            {applicationStatus ? (
+              <View style={styles.jobApplicationStatus}>
+                <Text style={styles.jobApplicationStatusText}>{applicationStatus.toUpperCase()}</Text>
+              </View>
+            ) : null}
+            <View style={styles.jobCardFooterLeft}>
+              <View style={styles.jobCardActionCompact}>
+                <Text style={styles.jobCardActionText}>View role</Text>
+                <Text style={styles.jobCardActionArrow}>›</Text>
+              </View>
+              <View style={styles.jobCardBottomActions}>
+                {canSaveForWeb ? (
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Save for web" onPress={handleSave} style={styles.webSaveButtonCompact}>
+                    <Ionicons name="bookmark" size={14} color="#FFFFFF" />
+                    <Text style={styles.webSaveButtonText}>Save</Text>
+                  </TouchableOpacity>
+                ) : isSavingForWeb ? (
+                  <View style={styles.webSaveButtonCompact}>
+                    <Text style={styles.webSaveButtonText}>Saving…</Text>
+                  </View>
+                ) : null}
+                {canHideLocally ? (
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Hide on this device" onPress={handleHide} style={styles.webHideButtonCompact}>
+                    <Ionicons name="eye-off-outline" size={14} color={colors.muted} />
+                    <Text style={styles.webHideButtonText}>Hide</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             </View>
-          ) : null}
-          <View style={styles.jobCardAction}>
-            <Text style={styles.jobCardActionText}>View role</Text>
-            <Text style={styles.jobCardActionArrow}>›</Text>
-          </View>
-        </TouchableOpacity>
-      </Animated.View>
-    </View>
+          </TouchableOpacity>
+        </Animated.View>
+      </View>
+    </Animated.View>
   );
 }
 
@@ -597,11 +691,13 @@ function catalogRoleJob(role: CatalogGroupRole): Job {
     season: role.season,
     applyUrl: role.officialApplyUrl,
     compensation: role.compensation ?? { raw: "" },
+    housing: role.housing,
     employerCategory: role.employerCategory,
     requirements: {
       requiresUsCitizenship: Boolean(role.requiresUsCitizenship),
       advancedDegreeRequired: Boolean(role.advancedDegreeRequired),
     },
+    disciplines: role.disciplines,
     open: role.open,
     firstSeenAt: role.firstSeenAt ?? role.visibleAt,
     lastSeenAt: role.lastSeenAt ?? role.visibleAt,
@@ -617,15 +713,92 @@ function CatalogGroupCard({
   onOpenGroup,
   onOpenRole,
   status = "open",
+  onSaveForWeb,
+  isSavingForWeb = false,
+  onHideLocally,
 }: {
   group: CatalogGroupRow;
   onOpenGroup: () => void;
   onOpenRole: (job: Job) => void;
   status?: "open" | "closed";
+  onSaveForWeb?: () => void;
+  isSavingForWeb?: boolean;
+  onHideLocally?: () => void;
 }) {
+  const motionAllowed = useContext(MotionAllowedContext);
+  const hideFade = useRef(new Animated.Value(1)).current;
+  const hideScale = useRef(new Animated.Value(1)).current;
+  const hideTranslateY = useRef(new Animated.Value(0)).current;
+  const [isHiding, setIsHiding] = useState(false);
+  const translateX = useRef(new Animated.Value(0)).current;
+  const canSaveForWeb = Boolean(onSaveForWeb) && !isSavingForWeb;
+  const canHideLocally = Boolean(onHideLocally);
+  const handleHide = () => {
+    if (isHiding || !onHideLocally) return;
+    setIsHiding(true);
+    if (!motionAllowed) { onHideLocally(); return; }
+    Animated.parallel([
+      Animated.timing(hideFade, { toValue: 0, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+      Animated.timing(hideScale, { toValue: 0.96, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+      Animated.timing(hideTranslateY, { toValue: 6, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+    ]).start(() => onHideLocally());
+  };
+  const handleSave = () => {
+    if (isHiding || !onSaveForWeb) return;
+    onSaveForWeb();
+    if (!onHideLocally) return;
+    setIsHiding(true);
+    if (!motionAllowed) { onHideLocally(); return; }
+    Animated.parallel([
+      Animated.timing(hideFade, { toValue: 0, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+      Animated.timing(hideScale, { toValue: 0.96, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+      Animated.timing(hideTranslateY, { toValue: 6, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+    ]).start(() => onHideLocally());
+  };
+  const resetPosition = () => {
+    if (!motionAllowed) { translateX.setValue(0); return; }
+    Animated.spring(translateX, { toValue: 0, friction: 9, tension: 130, useNativeDriver: true }).start();
+  };
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          ((canSaveForWeb && gesture.dx < -8) || (canHideLocally && gesture.dx > 8)) && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+        onPanResponderMove: (_, gesture) => {
+          translateX.setValue(Math.max(canSaveForWeb ? -116 : 0, Math.min(canHideLocally ? 116 : 0, gesture.dx)));
+        },
+        onPanResponderRelease: (_, gesture) => {
+          const shouldSave = canSaveForWeb && (gesture.dx < -84 || gesture.vx < -0.7);
+          const shouldHide = canHideLocally && (gesture.dx > 84 || gesture.vx > 0.7);
+          if (!shouldSave && !shouldHide) { resetPosition(); return; }
+          if (shouldSave) {
+            onSaveForWeb?.();
+            if (onHideLocally) {
+              if (!motionAllowed) { translateX.setValue(0); onHideLocally(); return; }
+              setIsHiding(true);
+              Animated.parallel([
+                Animated.timing(hideFade, { toValue: 0, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+                Animated.timing(hideScale, { toValue: 0.96, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+                Animated.timing(hideTranslateY, { toValue: 6, duration: 200, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+              ]).start(() => onHideLocally());
+              return;
+            }
+          }
+          if (!motionAllowed) { translateX.setValue(0); if (shouldHide) onHideLocally?.(); return; }
+          Animated.sequence([
+            Animated.timing(translateX, { toValue: shouldSave ? -108 : 108, duration: 100, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+            Animated.delay(120),
+          ]).start(() => { if (shouldHide) onHideLocally?.(); else resetPosition(); });
+        },
+        onPanResponderTerminate: resetPosition,
+      }),
+    [canHideLocally, canSaveForWeb, hideFade, hideScale, hideTranslateY, isHiding, motionAllowed, onHideLocally, onSaveForWeb, translateX],
+  );
+  const saveActionProgress = translateX.interpolate({ inputRange: [-108, -36, 0], outputRange: [1, 0.32, 0], extrapolate: "clamp" });
+  const hideActionProgress = translateX.interpolate({ inputRange: [0, 36, 108], outputRange: [0, 0.32, 1], extrapolate: "clamp" });
   if (catalogCardKind(group) === "role") {
     const job = catalogRoleJob(group.featuredRole);
-    return <JobCard job={job} onOpen={() => onOpenRole(job)} />;
+    return <JobCard job={job} onOpen={() => onOpenRole(job)} onSaveForWeb={onSaveForWeb} isSavingForWeb={isSavingForWeb} onHideLocally={onHideLocally} />;
   }
   const label = catalogGroupAvailabilityLabel(group, status);
   const education = group.education
@@ -642,41 +815,91 @@ function CatalogGroupCard({
   const groupTitles = group.titles.map((title) => boundedCatalogText(title, 240)).filter(Boolean);
   const groupLocation = compactLocations(group.locations);
   return (
-    <TouchableOpacity
-      accessibilityRole="button"
-      accessibilityLabel={`${groupCompany}, ${label}, ${boundedCatalogText(groupTitles.join(", "), 480)}${group.unconfirmedRoleCount ? `, ${group.unconfirmedRoleCount} ${group.unconfirmedRoleCount === 1 ? "role has" : "roles have"} unconfirmed identity` : ""}`}
-      accessibilityHint="Opens every role in this group"
-      onPress={onOpenGroup}
-      style={styles.catalogGroupCard}
-    >
-      <View style={styles.catalogGroupTopline}>
-        <Text style={styles.company} numberOfLines={1}>{groupCompany}</Text>
-        <Text style={styles.catalogGroupCount}>{label}</Text>
+    <Animated.View style={{ opacity: hideFade, transform: [{ scale: hideScale }, { translateY: hideTranslateY }] }}>
+      <View style={styles.swipeCard}>
+        {canSaveForWeb || isSavingForWeb ? (
+          <Animated.View pointerEvents="none" style={[styles.swipeSaveAction, { opacity: saveActionProgress }]}>
+            <Ionicons name="bookmark" size={20} color="#FFFFFF" />
+            <Text style={styles.swipeSaveActionText}>{isSavingForWeb ? "Saving…" : "Save"}</Text>
+          </Animated.View>
+        ) : null}
+        {canHideLocally ? (
+          <Animated.View pointerEvents="none" style={[styles.swipeHideAction, { opacity: hideActionProgress }]}>
+            <Ionicons name="eye-off-outline" size={20} color={colors.onDark} />
+            <Text style={styles.swipeHideActionText}>Hide</Text>
+          </Animated.View>
+        ) : null}
+        <Animated.View {...(canSaveForWeb || canHideLocally ? panResponder.panHandlers : {})} style={{ transform: [{ translateX }] }}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={`${groupCompany}, ${label}, ${boundedCatalogText(groupTitles.join(", "), 480)}${group.unconfirmedRoleCount ? `, ${group.unconfirmedRoleCount} ${group.unconfirmedRoleCount === 1 ? "role has" : "roles have"} unconfirmed identity` : ""}`}
+            accessibilityHint="Opens every role in this group"
+            onPress={onOpenGroup}
+            style={styles.catalogGroupCard}
+          >
+            <View style={styles.catalogGroupTopline}>
+              <View style={styles.jobCompanyLeft}>
+                <Text style={styles.company} numberOfLines={1}>{groupCompany}</Text>
+                <Text style={styles.catalogGroupCount}>{label}</Text>
+              </View>
+              {group.disciplines?.length ? (
+                <View style={styles.catalogGroupTopTags}>
+                  {group.disciplines.slice(0, 2).map((d) => {
+                    const s = disciplineStyleFor(d);
+                    return (
+                      <View key={d} style={[styles.disciplinePill, { backgroundColor: s.backgroundColor, borderColor: s.borderColor }]}>
+                        <Text style={[styles.disciplinePillText, { color: s.color }]}>{s.label}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : null}
+            </View>
+            <Text style={styles.catalogGroupTitle} numberOfLines={group.roleCount === 1 ? 2 : 3}>
+              {groupTitles.join(" · ")}
+            </Text>
+            <Text style={styles.catalogGroupMeta} numberOfLines={2}>
+              {[groupLocation, group.seasons.map(seasonLabel).join(" · ")].filter(Boolean).join("  •  ")}
+            </Text>
+            {featuredRole ? <JobSource source={source} /> : null}
+            {postingTiming ? <Text style={styles.postingTiming}>{postingTiming.summary}</Text> : null}
+            {compensation.length ? (
+              <View style={styles.jobCardMidPills}>
+                <Text style={styles.catalogGroupRolePay} numberOfLines={2}>
+                  {compensation.slice(0, 2).join(" · ")}{compensation.length > 2 ? ` + ${compensation.length - 2} more` : ""}
+                </Text>
+              </View>
+            ) : null}
+            {education ? <Text style={styles.catalogGroupEducation} numberOfLines={2}>{education}</Text> : null}
+            {group.unconfirmedRoleCount ? (
+              <Text style={styles.catalogGroupIdentity} accessibilityLabel={`${group.unconfirmedRoleCount} ${group.unconfirmedRoleCount === 1 ? "role" : "roles"}: identity unconfirmed`}>
+                {group.unconfirmedRoleCount} {group.unconfirmedRoleCount === 1 ? "role" : "roles"}: identity unconfirmed
+              </Text>
+            ) : null}
+            <View style={styles.catalogGroupFooterLeft}>
+              <View style={styles.jobCardActionCompact}>
+                <Text style={styles.jobCardActionText}>View roles</Text>
+                <Ionicons name="chevron-forward" size={17} color={colors.signal} />
+              </View>
+              <View style={styles.jobCardBottomActions}>
+                {canSaveForWeb ? (
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Save for web" onPress={handleSave} style={styles.webSaveButtonCompact}>
+                    <Ionicons name="bookmark" size={14} color="#FFFFFF" />
+                    <Text style={styles.webSaveButtonText}>Save</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {canHideLocally ? (
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Hide on this device" onPress={handleHide} style={styles.webHideButtonCompact}>
+                    <Ionicons name="eye-off-outline" size={14} color={colors.muted} />
+                    <Text style={styles.webHideButtonText}>Hide</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            </View>
+          </TouchableOpacity>
+        </Animated.View>
       </View>
-      <Text style={styles.catalogGroupTitle} numberOfLines={group.roleCount === 1 ? 2 : 3}>
-        {groupTitles.join(" · ")}
-      </Text>
-      <Text style={styles.catalogGroupMeta} numberOfLines={2}>
-        {[groupLocation, group.seasons.map(seasonLabel).join(" · ")].filter(Boolean).join("  •  ")}
-      </Text>
-      {featuredRole ? <JobSource source={source} /> : null}
-      {postingTiming ? <Text style={styles.postingTiming}>{postingTiming.summary}</Text> : null}
-      {compensation.length ? (
-        <Text style={styles.pay} numberOfLines={2}>
-          {compensation.slice(0, 2).join(" · ")}{compensation.length > 2 ? ` + ${compensation.length - 2} more` : ""}
-        </Text>
-      ) : null}
-      {education ? <Text style={styles.catalogGroupEducation} numberOfLines={2}>{education}</Text> : null}
-      {group.unconfirmedRoleCount ? (
-        <Text style={styles.catalogGroupIdentity} accessibilityLabel={`${group.unconfirmedRoleCount} ${group.unconfirmedRoleCount === 1 ? "role" : "roles"}: identity unconfirmed`}>
-          {group.unconfirmedRoleCount} {group.unconfirmedRoleCount === 1 ? "role" : "roles"}: identity unconfirmed
-        </Text>
-      ) : null}
-      <View style={styles.jobCardAction}>
-        <Text style={styles.jobCardActionText}>View roles</Text>
-        <Ionicons name="chevron-forward" size={17} color={colors.signal} />
-      </View>
-    </TouchableOpacity>
+    </Animated.View>
   );
 }
 
@@ -743,7 +966,7 @@ function CatalogGroupSheet({
                       <Text style={styles.catalogGroupRoleTitle} numberOfLines={2}>{boundedCatalogText(item.title, 240)}</Text>
                       <Text style={styles.catalogGroupRoleMeta} numberOfLines={2}>{compactLocations(item.locations, item.location)} · {seasonLabel(item.season)}</Text>
                       {item.postingIdentityStatus === "unconfirmed" ? <IdentityTrustLabel /> : null}
-                      {item.compensation?.raw ? <Text style={styles.catalogGroupRolePay} numberOfLines={2}>{boundedCatalogText(item.compensation.raw, 160)}</Text> : null}
+                      {presentCatalogRole(item).compensation ? <Text style={styles.catalogGroupRolePay} numberOfLines={2}>{presentCatalogRole(item).compensation}</Text> : null}
                     </View>
                     <Ionicons name="chevron-forward" size={18} color={colors.signal} />
                   </TouchableOpacity>
@@ -831,6 +1054,11 @@ function JobDetailSheet({
   onRetry = () => undefined,
   onApply,
   onOpenListing,
+  onSaveForWeb,
+  isSavingForWeb = false,
+  applicationStatus,
+  onHideLocally,
+  onUnsave,
 }: {
   job: Job | null;
   signedIn: boolean;
@@ -842,6 +1070,11 @@ function JobDetailSheet({
   onRetry?: () => void;
   onApply: (job: Job) => void;
   onOpenListing: (job: Job) => void;
+  onSaveForWeb?: (job: Job) => void;
+  isSavingForWeb?: boolean;
+  applicationStatus?: string;
+  onHideLocally?: (job: Job) => void;
+  onUnsave?: (job: Job) => void;
 }) {
   const motionAllowed = useContext(MotionAllowedContext);
   const sheetOffset = useRef(new Animated.Value(800)).current;
@@ -891,6 +1124,8 @@ function JobDetailSheet({
     ? postingTimingPresentation(role.sourceReferences, role.firstSeenAt)
     : undefined;
   const closedListingUrl = role && !role.open ? validatedOfficialUrl(role) : undefined;
+  const canSave = Boolean(role && onSaveForWeb && !applicationStatus && !isSavingForWeb);
+  const isSaved = Boolean(applicationStatus);
   return (
     <Modal
       animationType="none"
@@ -929,7 +1164,30 @@ function JobDetailSheet({
               <Text style={styles.sheetEyebrow}>{role.open ? "Role details" : "Closed role"}</Text>
               <Text style={styles.sheetTitle}>{roleDisplay?.title}</Text>
               <Text style={styles.sheetCompany}>{roleDisplay?.company}</Text>
+              {role.disciplines?.length ? (
+                <View style={[styles.jobCardMidPills, { marginTop: 10 }]}>
+                  {role.disciplines.slice(0, 4).map((d) => {
+                    const s = disciplineStyleFor(d);
+                    return (
+                      <View key={d} style={[styles.disciplinePill, { backgroundColor: s.backgroundColor, borderColor: s.borderColor }]}>
+                        <Text style={[styles.disciplinePillText, { color: s.color }]}>{s.label}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : null}
               <Text style={styles.sheetDetail}>{details}</Text>
+              {roleDisplay?.compensation ? (
+                <View style={styles.jobCardMidPills}>
+                  <Text style={styles.pay} numberOfLines={2}>{roleDisplay.compensation}</Text>
+                </View>
+              ) : null}
+              {housingLabels(role.housing).map((housing, index) => (
+                <View key={`${housing.label}-${index}`} style={styles.sheetTrustBlock}>
+                  <Text style={styles.sheetTrustPrimary}>{housing.label}</Text>
+                  {housing.detail ? <Text style={styles.sheetTrustSecondary}>{housing.detail}</Text> : null}
+                </View>
+              ))}
               <View style={styles.sheetTrustBlock}>
                 <Text style={styles.sheetTrustPrimary}>{source.primary}</Text>
                 {source.corroboration ? <Text style={styles.sheetTrustSecondary}>{source.corroboration}</Text> : null}
@@ -969,13 +1227,45 @@ function JobDetailSheet({
                     onPress={() => startRoleAction("apply")}
                   />
                 ) : null}
-                {role.open || closedListingUrl ? (
-                  <ActionButton
-                    label={role.open ? "Read the official listing first" : "View official listing"}
-                    variant="secondary"
-                    disabled={handoffPending}
-                    onPress={() => startRoleAction("listing")}
-                  />
+                {canSave ? (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Save for web"
+                    onPress={() => {
+                      if (role && onSaveForWeb) onSaveForWeb(role);
+                      if (role && onHideLocally) onHideLocally(role);
+                      onDismiss();
+                    }}
+                    style={styles.sheetSaveBar}
+                  >
+                    <Ionicons name="bookmark" size={18} color="#FFFFFF" />
+                    <Text style={styles.sheetSaveBarText}>Save</Text>
+                  </TouchableOpacity>
+                ) : isSaved && onUnsave && role ? (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Unsave"
+                    onPress={() => { onUnsave(role); onDismiss(); }}
+                    style={styles.sheetSavedBar}
+                  >
+                    <Ionicons name="bookmark" size={18} color="#92400E" />
+                    <Text style={styles.sheetSavedBarText}>Saved</Text>
+                  </TouchableOpacity>
+                ) : isSavingForWeb ? (
+                  <View style={styles.sheetSaveBar}>
+                    <Text style={styles.sheetSaveBarText}>Saving…</Text>
+                  </View>
+                ) : null}
+                {onHideLocally && role ? (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Hide on this device"
+                    onPress={() => { onHideLocally(role); onDismiss(); }}
+                    style={styles.sheetHideBar}
+                  >
+                    <Ionicons name="eye-off-outline" size={18} color={colors.muted} />
+                    <Text style={styles.sheetHideBarText}>Hide</Text>
+                  </TouchableOpacity>
                 ) : null}
                 <ActionButton label="Not now" variant="secondary" onPress={onDismiss} />
               </View>
@@ -1035,7 +1325,7 @@ function ApplyNowButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityHint={hint}
-      accessibilityState={{ disabled }}
+      aria-disabled={disabled}
       disabled={disabled}
       onPress={onPress}
       style={[styles.applyNowButton, disabled && styles.actionButtonDisabled]}
@@ -1093,12 +1383,12 @@ function EmployerCategoryFilter({
 }) {
   const options: Array<EmployerCategory | "all"> = ["all", "faang", "startup", "normal"];
   return (
-    <View style={styles.companyFilter} accessibilityRole="radiogroup">
+    <View style={styles.companyFilter} accessibilityRole="radiogroup" accessibilityLabel="Company type">
       {options.map((option) => (
         <TouchableOpacity
           key={option}
           accessibilityRole="radio"
-          accessibilityState={{ selected: selected === option }}
+          aria-checked={selected === option}
           style={[styles.chip, selected === option && styles.chipOn]}
           onPress={() => onChange(option)}
         >
@@ -1119,12 +1409,12 @@ function JobStatusFilter({
   onChange: (value: "open" | "closed") => void;
 }) {
   return (
-    <View style={styles.companyFilter} accessibilityRole="radiogroup">
+    <View style={styles.companyFilter} accessibilityRole="radiogroup" accessibilityLabel="Availability">
       {(["open", "closed"] as const).map((option) => (
         <TouchableOpacity
           key={option}
           accessibilityRole="radio"
-          accessibilityState={{ selected: status === option }}
+          aria-checked={status === option}
           style={[styles.chip, status === option && styles.chipOn]}
           onPress={() => onChange(option)}
         >
@@ -1158,7 +1448,7 @@ function RequirementFilter({
         <TouchableOpacity
           key={option.key}
           accessibilityRole="checkbox"
-          accessibilityState={{ checked: option.selected }}
+          aria-checked={option.selected}
           style={[styles.chip, option.selected && styles.chipOn]}
           onPress={option.onPress}
         >
@@ -1215,7 +1505,7 @@ function RoleFilters({
       <View style={styles.filterBar}>
         <TouchableOpacity
           accessibilityRole="button"
-          accessibilityState={{ expanded }}
+          aria-expanded={expanded}
           onPress={onToggle}
           style={styles.filterToggle}
         >
@@ -1237,9 +1527,9 @@ function RoleFilters({
           <Text style={styles.filterLabel}>Availability</Text>
           <JobStatusFilter status={jobStatus} onChange={onJobStatusChange} />
           <Text style={styles.filterLabel}>Source</Text>
-          <View style={styles.companyFilter}>
+          <View style={styles.companyFilter} accessibilityRole="radiogroup" accessibilityLabel="Source">
             {([['all', 'All'], ['direct', 'Direct'], ['community', 'Community'], ['corroborated', 'Direct + community']] as const).map(([value, label]) => (
-              <TouchableOpacity key={value} accessibilityRole="radio" accessibilityState={{ selected: sourceFilter === value }} style={[styles.chip, sourceFilter === value && styles.chipOn]} onPress={() => onSourceFilterChange(value)}>
+              <TouchableOpacity key={value} accessibilityRole="radio" aria-checked={sourceFilter === value} style={[styles.chip, sourceFilter === value && styles.chipOn]} onPress={() => onSourceFilterChange(value)}>
                 <Text style={[styles.chipLabel, sourceFilter === value && styles.chipLabelOn]}>{label}</Text>
               </TouchableOpacity>
             ))}
@@ -1299,11 +1589,11 @@ function CompanyCoverageDisclosure() {
     <View style={styles.coverageRegion}>
       <TouchableOpacity
         accessibilityRole="button"
-        accessibilityState={{ expanded }}
+        aria-expanded={expanded}
         onPress={() => setExpanded((value) => !value)}
         style={styles.coverageToggle}
       >
-        <View>
+        <View style={styles.coverageToggleCopy}>
           <Text style={styles.coverageToggleTitle}>Company coverage</Text>
           <Text style={styles.coverageToggleSummary}>
             {coverage
@@ -1399,7 +1689,7 @@ function TabNavigation({
           <TouchableOpacity
             key={item.key}
             accessibilityRole="tab"
-            accessibilityState={{ selected }}
+            aria-selected={selected}
             accessibilityLabel={item.label}
             onPress={() => onChange(item.key)}
             style={[styles.navItem, rail && styles.navRailItem]}
@@ -1435,7 +1725,7 @@ function ActionButton({
   return (
     <TouchableOpacity
       accessibilityRole="button"
-      accessibilityState={{ disabled }}
+      aria-disabled={disabled}
       disabled={disabled}
       onPress={onPress}
       style={[
@@ -1552,7 +1842,7 @@ function ChoiceOption({
   return (
     <TouchableOpacity
       accessibilityRole="radio"
-      accessibilityState={{ selected }}
+      aria-checked={selected}
       onPress={onPress}
       style={[styles.choiceOption, selected && styles.choiceOptionSelected]}
     >
@@ -3095,7 +3385,7 @@ function EmployerPortal({ initialSection }: { initialSection: EmployerWorkspaceS
             <TouchableOpacity
               key={item.id}
               accessibilityRole="tab"
-              accessibilityState={{ selected: section === item.id }}
+              aria-selected={section === item.id}
               accessibilityHint={item.description}
               onPress={() => changeSection(item.id)}
               style={[styles.employerNavItem, section === item.id && styles.employerNavItemActive]}
@@ -3127,7 +3417,7 @@ function EmployerPortal({ initialSection }: { initialSection: EmployerWorkspaceS
             <View style={styles.employerEvidence}>
               <Text style={styles.inputLabel}>Organization</Text>
               {organizations.map((candidate) => <TouchableOpacity key={candidate.organizationId} accessibilityRole="button"
-                accessibilityState={{ selected: candidate.organizationId === organization?.organizationId }}
+                aria-selected={candidate.organizationId === organization?.organizationId}
                 onPress={() => { setOrganization(candidate); void loadWorkspace(candidate.organizationId); }} style={styles.employerInlineAction}>
                 <Text style={styles.employerInlineActionText}>{candidate.name}{candidate.organizationId === organization?.organizationId ? " · selected" : ""}</Text>
               </TouchableOpacity>)}
@@ -3335,7 +3625,7 @@ function GuestExperience({
   return (
     <View style={styles.guestRoot}>
       <SafeAreaView
-        style={styles.screen}
+        style={[styles.screen, showAccount && Platform.OS === "web" && styles.hiddenScreen]}
         accessibilityElementsHidden={showAccount}
         importantForAccessibility={showAccount ? "no-hide-descendants" : "auto"}
       >
@@ -3527,7 +3817,7 @@ function Onboarding({
               <TouchableOpacity
                 key={category}
                 accessibilityRole="checkbox"
-                accessibilityState={{ checked: selected.includes(category) }}
+                aria-checked={selected.includes(category)}
                 style={[
                   styles.chip,
                   selected.includes(category) && styles.chipOn,
@@ -4510,7 +4800,7 @@ function Profile({
           <TouchableOpacity
             key={`employer-${category}`}
             accessibilityRole="checkbox"
-            accessibilityState={{ checked: includeEmployerCategories.includes(category) }}
+            aria-checked={includeEmployerCategories.includes(category)}
             style={[styles.chip, includeEmployerCategories.includes(category) && styles.chipOn]}
             onPress={() => {
               markJobPreferencesDirty();
@@ -4636,7 +4926,7 @@ function Profile({
               includeCategories.includes(category) && styles.chipOn,
             ]}
             accessibilityRole="checkbox"
-            accessibilityState={{ checked: includeCategories.includes(category) }}
+            aria-checked={includeCategories.includes(category)}
             onPress={() => {
               markJobPreferencesDirty();
               toggleCategory(category, includeCategories, setIncludeCategories);
@@ -4675,7 +4965,7 @@ function Profile({
               excludeCategories.includes(category) && styles.chipExclude,
             ]}
             accessibilityRole="checkbox"
-            accessibilityState={{ checked: excludeCategories.includes(category) }}
+            aria-checked={excludeCategories.includes(category)}
             onPress={() => {
               markJobPreferencesDirty();
               toggleCategory(category, excludeCategories, setExcludeCategories);
@@ -4926,7 +5216,7 @@ function AuthButton({
   return (
     <TouchableOpacity
       accessibilityRole="button"
-      accessibilityState={{ disabled }}
+      aria-disabled={disabled}
       disabled={disabled}
       onPress={onPress}
       style={[
@@ -5125,7 +5415,7 @@ function SignIn({
                   <View style={styles.consentGroup}>
                     <TouchableOpacity
                       accessibilityRole="checkbox"
-                      accessibilityState={{ checked: ageAttested }}
+                      aria-checked={ageAttested}
                       onPress={() => setAgeAttested((current) => !current)}
                       style={styles.consentRow}
                     >
@@ -5136,7 +5426,7 @@ function SignIn({
                     </TouchableOpacity>
                     <TouchableOpacity
                       accessibilityRole="checkbox"
-                      accessibilityState={{ checked: policiesAccepted }}
+                      aria-checked={policiesAccepted}
                       onPress={() => setPoliciesAccepted((current) => !current)}
                       style={styles.consentRow}
                     >
@@ -5205,7 +5495,11 @@ function SignIn({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.canvas },
   guestRoot: { flex: 1 },
-  hiddenScreen: { ...StyleSheet.absoluteFillObject, opacity: 0 },
+  // Keep native list state/layout intact. On web, opacity and pointerEvents
+  // alone leave invisible descendants in the keyboard tab order.
+  hiddenScreen: Platform.OS === "web"
+    ? { display: "none" }
+    : { ...StyleSheet.absoluteFillObject, opacity: 0 },
   authOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.canvas },
   appShell: { flex: 1 },
   appShellWide: { flexDirection: "row" },
@@ -5281,12 +5575,14 @@ const styles = StyleSheet.create({
   navItem: { flex: 1, alignItems: "center", justifyContent: "center", minHeight: 52 },
   navRail: {
     alignSelf: "stretch",
+    backgroundColor: colors.surface,
     borderRightColor: colors.separator,
     borderRightWidth: 1,
     borderTopWidth: 0,
     flexDirection: "column",
-    height: undefined,
+    height: "auto" as unknown as number,
     justifyContent: "flex-start",
+    minHeight: "100%" as unknown as number,
     paddingHorizontal: 8,
     paddingVertical: 16,
     width: 96,
@@ -5433,12 +5729,12 @@ const styles = StyleSheet.create({
   catalogGroupRoleCopy: { flex: 1, paddingRight: 12 },
   catalogGroupRoleTitle: { color: colors.ink, fontSize: 16, fontWeight: "700", lineHeight: 22 },
   catalogGroupRoleMeta: { color: colors.muted, fontSize: 13, lineHeight: 19, marginTop: 3 },
-  catalogGroupRolePay: { color: colors.signal, fontSize: 13, fontWeight: "600", lineHeight: 19, marginTop: 3 },
+  catalogGroupRolePay: { color: colors.success, fontSize: 13, fontWeight: "700", marginTop: 6 },
   swipeCard: { marginBottom: 12, position: "relative" },
   swipeCardSurface: { marginBottom: 0 },
   swipeSaveAction: {
     alignItems: "center",
-    backgroundColor: colors.signal,
+    backgroundColor: "#F59E0B",
     borderRadius: 14,
     bottom: 0,
     flexDirection: "row",
@@ -5450,7 +5746,7 @@ const styles = StyleSheet.create({
     top: 0,
     width: 112,
   },
-  swipeSaveActionText: { color: colors.onDark, fontSize: 14, fontWeight: "800" },
+  swipeSaveActionText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" },
   swipeHideAction: {
     alignItems: "center",
     backgroundColor: colors.body,
@@ -5466,6 +5762,31 @@ const styles = StyleSheet.create({
     width: 112,
   },
   swipeHideActionText: { color: colors.onDark, fontSize: 14, fontWeight: "800" },
+  disciplinePill: { borderRadius: 999, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4 },
+  disciplinePillText: { fontSize: 11, fontWeight: "800", letterSpacing: 0.2 },
+  jobCardTopTags: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginLeft: 8, flexShrink: 1, justifyContent: "flex-end" },
+  jobCardMidPills: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
+  jobCardFooterLeft: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12, gap: 12 },
+  jobCardBottomActions: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 },
+  catalogGroupTopTags: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginLeft: 8, flexShrink: 1, justifyContent: "flex-end" },
+  catalogGroupFooterLeft: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12, gap: 12 },
+  jobCardActionCompact: { alignItems: "center", flexDirection: "row", gap: 4 },
+  jobCompanyLeft: { flexDirection: "row", alignItems: "center", flex: 1, minWidth: 0 },
+  sheetSaveBar: { alignItems: "center", backgroundColor: "#F59E0B", borderColor: "#F59E0B", borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
+  sheetSaveBarText: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
+  sheetSavedBar: { alignItems: "center", backgroundColor: "#FFFBEB", borderColor: "#FDE68A", borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
+  sheetSavedBarText: { color: "#92400E", fontSize: 16, fontWeight: "800" },
+  sheetHideBar: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
+  sheetHideBarText: { color: colors.body, fontSize: 16, fontWeight: "700" },
+  webSaveButton: { alignItems: "center", backgroundColor: "#F59E0B", borderColor: "#F59E0B", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
+  webSaveButtonCompact: { alignItems: "center", backgroundColor: "#F59E0B", borderColor: "#F59E0B", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
+  webSaveButtonText: { color: "#FFFFFF", fontSize: 13, fontWeight: "800" },
+  webUnsaveButton: { alignItems: "center", backgroundColor: "#FFFBEB", borderColor: "#FDE68A", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
+  webUnsaveButtonCompact: { alignItems: "center", backgroundColor: "#FFFBEB", borderColor: "#FDE68A", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
+  webUnsaveButtonText: { color: "#92400E", fontSize: 13, fontWeight: "800" },
+  webHideButton: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
+  webHideButtonCompact: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
+  webHideButtonText: { color: colors.muted, fontSize: 13, fontWeight: "700" },
   newRoleGlow: {
     backgroundColor: colors.signalGlow,
     borderRadius: 14,
@@ -5562,13 +5883,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: colors.ink,
     borderRadius: 12,
+    flexDirection: "row",
+    gap: 12,
     justifyContent: "center",
     minHeight: 52,
     paddingHorizontal: 16,
-    position: "relative",
+    paddingVertical: 12,
   },
-  applyNowTitle: { color: colors.onDark, fontSize: 17, fontWeight: "700", lineHeight: 22, textAlign: "center" },
-  applyNowArrow: { position: "absolute", right: 16 },
+  applyNowTitle: { color: colors.onDark, flex: 1, minWidth: 0, fontSize: 17, fontWeight: "700", lineHeight: 22, textAlign: "center" },
+  applyNowArrow: { flexShrink: 0 },
   sheetHelper: {
     color: colors.muted,
     fontSize: 13,
@@ -5613,7 +5936,7 @@ const styles = StyleSheet.create({
   jobSourceRow: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 7 },
   jobSourceText: { color: colors.muted, flexShrink: 1, fontSize: 13, fontWeight: "600", lineHeight: 18 },
   jobSourceCorroboration: { color: colors.signal, fontSize: 12, fontWeight: "700", lineHeight: 18 },
-  pay: { marginTop: 8, color: colors.signal, fontSize: 14, fontWeight: "600" },
+  pay: { color: colors.success, fontSize: 13, fontWeight: "700", marginTop: 6 },
   closedStatus: { marginTop: 8, color: colors.danger, fontWeight: "700" },
   jobCardAction: { alignItems: "center", flexDirection: "row", marginTop: 14 },
   jobCardActionText: { color: colors.signal, fontSize: 15, fontWeight: "700" },
@@ -5689,7 +6012,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     minHeight: 58,
     paddingVertical: 8,
+    gap: 12,
   },
+  coverageToggleCopy: { flex: 1, minWidth: 0 },
   coverageToggleTitle: { color: colors.ink, fontSize: 15, fontWeight: "700" },
   coverageToggleSummary: { color: colors.muted, fontSize: 13, lineHeight: 19, marginTop: 2 },
   coveragePanel: { paddingBottom: 12 },
