@@ -2100,6 +2100,8 @@ function GroupedCatalogFeed({
   onRetry,
   onOpenGroup,
   onOpenRole,
+  onSaveForWeb,
+  onHideLocally,
 }: {
   groups: CatalogGroupRow[];
   query: string;
@@ -2126,6 +2128,8 @@ function GroupedCatalogFeed({
   onRetry: () => void;
   onOpenGroup: (group: CatalogGroupRow) => void;
   onOpenRole: (job: Job) => void;
+  onSaveForWeb?: () => Promise<boolean>;
+  onHideLocally?: (job: Job) => void;
 }) {
   return (
     <>
@@ -2169,6 +2173,8 @@ function GroupedCatalogFeed({
             status={jobStatus}
             onOpenGroup={() => onOpenGroup(item)}
             onOpenRole={onOpenRole}
+            onSaveForWeb={onSaveForWeb}
+            onHideLocally={onHideLocally as unknown as (() => void) | undefined}
           />
         )}
         ListEmptyComponent={
@@ -2220,19 +2226,21 @@ function AppLoadingSkeleton() {
             <Skeleton width={46} height={14} />
           </View>
         ) : null}
-        <View style={styles.skeletonPage}>
-          <View style={styles.loadingTitleGroup}>
-            <Skeleton width={94} height={12} />
-            <View style={styles.skeletonGap8} />
-            <Skeleton width={168} height={28} />
+        <View style={styles.appMain}>
+          <View style={styles.skeletonPage}>
+            <View style={styles.loadingTitleGroup}>
+              <Skeleton width={94} height={12} />
+              <View style={styles.skeletonGap8} />
+              <Skeleton width={168} height={28} />
+            </View>
+            <View style={styles.skeletonSearch} />
+            <View style={styles.skeletonSection}>
+              <Skeleton width={132} height={12} />
+              <View style={styles.skeletonGap8} />
+              <Skeleton width={248} height={14} />
+            </View>
+            {[0, 1, 2].map((index) => <LoadingRoleCard key={index} index={index} />)}
           </View>
-          <View style={styles.skeletonSearch} />
-          <View style={styles.skeletonSection}>
-            <Skeleton width={132} height={12} />
-            <View style={styles.skeletonGap8} />
-            <Skeleton width={248} height={14} />
-          </View>
-          {[0, 1, 2].map((index) => <LoadingRoleCard key={index} index={index} />)}
         </View>
         {!usesNavigationRail ? (
           <View style={styles.skeletonNav}>
@@ -3610,6 +3618,8 @@ function GuestExperience({
                 onRetry={onRetryCatalog}
                 onOpenGroup={onOpenGroup}
                 onOpenRole={onOpenJob}
+                onSaveForWeb={async () => { setShowAccount(true); return false; }}
+                onHideLocally={onHideLocally as unknown as (job: Job) => void}
               />
             </View>
             {tab === "saved" ? (
@@ -3644,6 +3654,8 @@ function GuestExperience({
           onOpenListing={(job) => {
             void openOfficialApplication(job.applyUrl);
           }}
+          onSaveForWeb={async () => { setShowAccount(true); return false; }}
+          onHideLocally={onHideLocally}
         />
       </SafeAreaView>
       {showAccount ? (
