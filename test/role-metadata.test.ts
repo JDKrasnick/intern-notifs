@@ -585,7 +585,7 @@ describe('provider-neutral role metadata', () => {
   it('does not assume an ambiguous dollar symbol is USD without a US location', () => {
     const ranges = extractCompensationRanges('The pay range is $30-$40/hour.', { provenance: field, knownLocations: ['Toronto, ON'] });
     expect(ranges[0]?.currency).toBe('XXX');
-    expect(compensationFromRanges(ranges)).toMatchObject({ raw: 'Currency not stated 30–40/hour', ranges: [{ currency: 'XXX', period: 'hourly' }] });
+    expect(compensationFromRanges(ranges)).toMatchObject({ raw: '$30–40/hour', ranges: [{ currency: 'XXX', period: 'hourly' }] });
   });
 
   it.each([

@@ -933,6 +933,14 @@ export interface SourcedPosting {
   classificationTags?: string[];
   declaredWorkMode?: string;
   compensationText?: string;
+  compensationBands?: Array<{
+    minAmount: number;
+    maxAmount: number;
+    currency: string;
+    period?: CompensationPeriod;
+    label?: string;
+    sourceText: string;
+  }>;
   declaredRequirements?: Partial<JobRequirements>;
 }
 

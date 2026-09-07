@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GreenhouseBoardAdapter, greenhouseJobsUrl, isGreenhouseJobShape, mapGreenhouseJob } from '../src/sources/greenhouse.js';
+import { reconcileRoleMetadata } from '../src/role-metadata.js';
 import { enabledGreenhouseQualityPolicies, greenhouseQualityPolicy, verifySourceQuality } from '../src/sources/quality.js';
 import { defaultSources } from '../src/sources/index.js';
 import { validateApplicationUrl, ApplicationUrlValidationError } from '../src/core/application-url.js';
@@ -61,6 +62,50 @@ describe('mapGreenhouseJob', () => {
 });
 
 describe('GreenhouseBoardAdapter', () => {
+  it.each([
+    ['Product Management Intern (Summer 2027)', '$54 — $56 USD', '$51.50 — $53.50 USD', 56, 53.5],
+    ['Software Engineering Intern (2027 Start) - Winter', '$54 — $60 USD', '$51.50 — $60 USD', 60, 60],
+  ])('preserves Databricks regional pay rows from the board path for %s', async (title, sfPay, bellevuePay, sfMax, bellevueMax) => {
+    const source = { ...acmeSource, id: 'greenhouse-databricks', boardToken: 'databricks', displayName: 'Databricks' };
+    const content = `&lt;p&gt;Pay Range Transparency&lt;/p&gt;
+      &lt;p&gt;SF Bay Area Hourly Rate&lt;/p&gt;&lt;p&gt;${sfPay}&lt;/p&gt;
+      &lt;p&gt;Pay Range Transparency&lt;/p&gt;
+      &lt;p&gt;Bellevue, Washington Hourly Rate&lt;/p&gt;&lt;p&gt;${bellevuePay}&lt;/p&gt;`;
+    const adapter = new GreenhouseBoardAdapter({ source, fetchImpl: async () => jsonResponse({ jobs: [{
+      id: title.startsWith('Product') ? 6883068002 : 8732364002, internal_job_id: 1, title, content,
+      absolute_url: `https://job-boards.greenhouse.io/databricks/jobs/${title.startsWith('Product') ? 6883068002 : 8732364002}`,
+      location: { name: 'Bellevue, Washington; Mountain View, California; San Francisco, California' },
+    }] }) });
+
+    const result = await adapter.fetch();
+    const reconciliation = reconcileRoleMetadata(result.listings[0]!.metadataEvidence ?? []);
+    expect(reconciliation.conflicts).toEqual([]);
+    expect(reconciliation.compensation?.ranges).toHaveLength(2);
+    expect(reconciliation.compensation?.ranges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ minAmount: 54, maxAmount: sfMax, currency: 'USD', period: 'hourly', applicabilityLabel: 'SF Bay Area Hourly Rate' }),
+      expect.objectContaining({ minAmount: 51.5, maxAmount: bellevueMax, currency: 'USD', period: 'hourly', applicabilityLabel: 'Bellevue, Washington Hourly Rate' }),
+    ]));
+  });
+
+  it('does not infer a currency for a labeled Greenhouse board range containing only bare dollar signs', async () => {
+    const content = '&lt;p&gt;Seattle Hourly Rate&lt;/p&gt;&lt;p&gt;$30 — $40&lt;/p&gt;';
+    const adapter = new GreenhouseBoardAdapter({ source: acmeSource, fetchImpl: async () => jsonResponse({ jobs: [{
+      ...technicalInternship, content,
+    }] }) });
+    const result = await adapter.fetch();
+    expect(reconcileRoleMetadata(result.listings[0]!.metadataEvidence ?? []).compensation?.ranges).toMatchObject([
+      { minAmount: 30, maxAmount: 40, currency: 'XXX', period: 'hourly', applicabilityLabel: 'Seattle Hourly Rate' },
+    ]);
+  });
+
+  it('does not turn an amount following a non-pay label into a structured salary band', async () => {
+    const adapter = new GreenhouseBoardAdapter({ source: acmeSource, fetchImpl: async () => jsonResponse({ jobs: [{
+      ...technicalInternship, content: '&lt;p&gt;Benefits allowance&lt;/p&gt;&lt;p&gt;$30 — $40 USD&lt;/p&gt;',
+    }] }) });
+    const result = await adapter.fetch();
+    expect(reconcileRoleMetadata(result.listings[0]!.metadataEvidence ?? []).compensation).toBeUndefined();
+  });
+
   it('maps a full board, excludes ineligible rows, and records an ETag', async () => {
     const adapter = new GreenhouseBoardAdapter({
       source: acmeSource,

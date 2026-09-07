@@ -21,7 +21,7 @@ import type {
 
 // Source preprocessing can change independently of the shared API/page parser.
 // Revisit source snapshots without invalidating complete API acquisitions.
-export const SOURCE_METADATA_PROCESSING_REVISION = 1;
+export const SOURCE_METADATA_PROCESSING_REVISION = 2;
 
 function markdownToText(value: string): string {
   return htmlToText(value
@@ -123,6 +123,7 @@ export function processPosting(
             .replace(/\[([^\]]+)\]\([^)]*\)/gu, '$1').replace(/[*`>#]/gu, ' ')
           : part.value)).join('\n'),
         ...(posting.compensationText ? { compensationText: posting.compensationText } : {}),
+        ...(posting.compensationBands?.length ? { compensationBands: posting.compensationBands } : {}),
         locations: sourceLocations,
         ...(posting.declaredWorkMode ? { workMode: posting.declaredWorkMode } : workMode ? { workMode } : {}),
         ...(posting.providerTimestamp?.semantics === 'published' ? { publishedAt: posting.providerTimestamp.value }

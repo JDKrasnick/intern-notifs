@@ -793,6 +793,7 @@ export class D1UserStore implements UserStore {
   async listApplications(userId: string) { return (await this.list<ApplicationRecord>(userId, 'APPLICATION#')).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
   getApplication(userId: string, applicationId: string) { return this.get<ApplicationRecord>(userId, `APPLICATION#${applicationId}`); }
   putApplication(userId: string, value: ApplicationRecord) { return this.put(userId, `APPLICATION#${value.applicationId}`, 'application', value); }
+  async deleteApplication(userId: string, applicationId: string) { await this.db.prepare('DELETE FROM user_items WHERE user_id = ? AND item_key = ?').bind(userId, `APPLICATION#${applicationId}`).run(); }
   getApplicationSession(userId: string, sessionId: string) { return this.get<ApplicationSession>(userId, `APPLICATION_SESSION#${sessionId}`); }
   async getApplicationSessionById(sessionId: string) { return parse<ApplicationSession>(await this.db.prepare('SELECT value FROM user_items WHERE session_id = ? LIMIT 1').bind(sessionId).first<JsonRow>()); }
   async putApplicationSession(userId: string, value: ApplicationSession, expectedVersion?: number): Promise<boolean> {

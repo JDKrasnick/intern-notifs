@@ -76,6 +76,23 @@ function bandText(value: unknown): string {
   return `Salary: ${value.currency} ${value.min} - ${value.max}${period ? ` per ${period}` : ''}`;
 }
 
+/** Normalizes an exact Greenhouse publisher band shared by detail and board APIs. */
+export function greenhouseCompensationBand(input: {
+  minAmount: number;
+  maxAmount: number;
+  currency: string;
+  label?: string;
+  sourceText: string;
+}): NonNullable<RoleMetadataArtifact['compensationBands']>[number] | undefined {
+  const band = bandText({ min: input.minAmount, max: input.maxAmount, currency: input.currency });
+  if (!band) return undefined;
+  const label = input.label?.trim();
+  const period = label && /\bhourly (?:rate|pay|salary)\b/iu.test(label) ? 'hourly' as const
+    : label && /\bannual (?:rate|pay|salary)\b/iu.test(label) ? 'annual' as const : undefined;
+  return { minAmount: input.minAmount, maxAmount: input.maxAmount, currency: input.currency,
+    period, ...(label ? { label } : {}), sourceText: input.sourceText };
+}
+
 export function parseMetadataApiResponse(identity: ProviderIdentity, method: MetadataAcquisition['method'], payload: unknown, requestUrl?: string): RoleMetadataArtifact | undefined {
   if (!record(payload)) return undefined;
   const expected = identity.postingId;
@@ -111,14 +128,11 @@ export function parseMetadataApiResponse(identity: ProviderIdentity, method: Met
     const ranges = Array.isArray(payload.pay_input_ranges) ? payload.pay_input_ranges.flatMap((range) => {
       if (!record(range) || typeof range.min_cents !== 'number' || typeof range.max_cents !== 'number') return [];
       const band = bandText({ min: range.min_cents / 100, max: range.max_cents / 100, currency: range.currency_type });
-      // Greenhouse does not supply a period in the structured range contract.
-      // Only an explicit period in its publisher label supplies a unit.
       const label = text(range.title);
-      const period = /\bhourly (?:rate|pay|salary)\b/iu.test(label) ? 'hourly' as const
-        : /\bannual (?:rate|pay|salary)\b/iu.test(label) ? 'annual' as const : undefined;
-      return band ? [{ minAmount: range.min_cents / 100, maxAmount: range.max_cents / 100,
-        currency: text(range.currency_type), period, label: label || undefined,
-        sourceText: `${text(range.title)}: ${band}. ${text(range.blurb)}` }] : [];
+      const normalized = band && greenhouseCompensationBand({ minAmount: range.min_cents / 100, maxAmount: range.max_cents / 100,
+        currency: text(range.currency_type), label: label || undefined,
+        sourceText: `${text(range.title)}: ${band}. ${text(range.blurb)}` });
+      return normalized ? [normalized] : [];
     }) : [];
     return { title: text(payload.title), text: description(payload.content), compensationBands: ranges,
       locations: record(payload.location) ? [text(payload.location.name)].filter(Boolean) : [],
