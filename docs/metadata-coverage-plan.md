@@ -38,6 +38,41 @@ uses the existing HTML/browser fallback; no undocumented Oracle API is enabled.
 
 ## Objective and boundaries
 
+### September 7 validation checkpoint
+
+At 21:29 UTC, the public feed contains 1,643 roles: 418 with pay text, 1,641
+with metadata and 22 with housing. These remain presence counts. Of the frozen
+100-role sample, 98 remain public; all 12 previously confirmed missing pay
+disclosures remain blank. For the original 48 comparable pay-present roles,
+amount/currency/period sets agree in 33/43/40 cases, disagree in 14/4/7, and one
+role is no longer public. This is neither joint-band precision nor disclosure
+recall, and disappearing roles are not silently removed from the denominator.
+
+V13 collection reaches 4,673/4,786 eligible source/posting pairs, with 113
+pending, zero stale attempts and no active leases. All 113 pending acquisitions
+are incomplete and in retry backoff; the saved retry windows run from September
+7 at 22:48 UTC through September 8 at 21:18 UTC. Cursor exhaustion does not
+override these gates. New parser versions require their own collection proof.
+
+All 201 published Greenhouse/Lever/Ashby sources are healthy. Seven GitHub
+sources are degraded: six have completed v13/revision-1 refreshes but are stale
+again, while Vansh retains unfinished row progress. A regression reproduces
+legacy HTTP 404/410 rows retrying indefinitely. The fix certifies a negative
+result only after quarantine and prior-decision persistence succeed; blocked
+responses, timeouts and write failures remain pending. No queue is replayed or
+purged and no checkpoint, lease or backoff is cleared.
+
+Exact Databricks board-path regressions retain both regional pay bands through
+the shared Greenhouse normalizer. Extraction v14 preserves six education/year
+tiers from the full official Magna response and all three city/state bands
+from PayPal's response. Magna's currency and period remain unknown; PayPal's
+currency remains unknown and its hourly period is explicit. Regression tests
+protect richer degree labels, unrelated locations and benefit exclusions.
+Citi, CVS and Kroger remain unresolved; current Citi/CVS pages confirm competing
+ranges without enough context to establish separate audiences.
+Genuine Melius salary/housing contradictions require renewed exact omission
+reviews, followed by separately approved historical repair batches.
+
 ### September 6 accuracy sampling protocol
 
 Freeze the public snapshot before inspecting employer evidence. The 21:38 UTC
