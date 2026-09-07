@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Poller } from '../src/poll.js';
 import { ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
 import { MemoryInternshipStore } from '../src/store.js';
+import { SourceFetchError } from '../src/sources/source-error.js';
 import type { Internship, RawListing, SourceAdapter, SourceCheckpoint, SourceFetchResult } from '../src/types.js';
 
 const sourceId = 'metadata-refresh-failure-fixture';
@@ -29,6 +30,122 @@ const resolver = {
 };
 
 describe('bounded metadata refresh persistence failures', () => {
+  it.each([404, 410])('completes a new legacy row that is gone (%s) without publishing or retrying it', async (status) => {
+    const store = new MemoryInternshipStore();
+    const gone = row(`gone-${status}`);
+    const adapter = new Adapter([gone]);
+    await store.putCheckpoint({ sourceId, successfulFetches: 7, lastSuccessAt: '2026-09-05T12:00:00.000Z',
+      metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION - 1, metadataProcessingRevision: 1 });
+    const resolver = { async configurationVersion() { return 'fixture-v1'; },
+      async resolveCanonicalEmployer() { return undefined; }, async resolveDestinationRule() { return undefined; } };
+    const poll = () => new Poller([adapter], store, undefined, undefined,
+      async () => { throw new SourceFetchError(`HTTP ${status}`, 'http', status); }, undefined, undefined, resolver)
+      .poll({ maxAdmissionMigrationListingsPerSourceRun: 20 });
+
+    const report = await poll();
+    expect(report.continuationSources).toEqual([]);
+    expect(report.newJobs).toEqual([]);
+    expect(store.notificationEvents.size).toBe(0);
+    expect([...store.jobs.values()]).toEqual([]);
+    expect(await store.getCheckpoint(sourceId)).toMatchObject({
+      metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+      metadataProcessingRevision: 2,
+    });
+    expect((await store.getCheckpoint(sourceId))!.pendingMetadataProcessedRows).toBeUndefined();
+    expect((await store.getCheckpoint(sourceId))!.pendingMetadataOmissions).toBeUndefined();
+  });
+
+  it.each([403, 429, 'timeout'] as const)('keeps transient validation failure (%s) pending', async (kind) => {
+    const store = new MemoryInternshipStore();
+    const pending = row(`pending-${kind}`);
+    const adapter = new Adapter([pending]);
+    await store.putCheckpoint({ sourceId, successfulFetches: 7, lastSuccessAt: '2026-09-05T12:00:00.000Z',
+      metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION - 1, metadataProcessingRevision: 1 });
+    const resolver = { async configurationVersion() { return 'fixture-v1'; },
+      async resolveCanonicalEmployer() { return undefined; }, async resolveDestinationRule() { return undefined; } };
+    const poll = () => new Poller([adapter], store, undefined, undefined,
+      async () => { throw kind === 'timeout' ? new SourceFetchError('timed out', 'transport') : new SourceFetchError(`HTTP ${kind}`, 'http', kind); },
+      undefined, undefined, resolver).poll({ maxAdmissionMigrationListingsPerSourceRun: 20 });
+
+    const report = await poll();
+    expect(report.continuationSources).toEqual([sourceId]);
+    expect((await store.getCheckpoint(sourceId))!.metadataExtractionVersion).toBe(ROLE_METADATA_EXTRACTION_VERSION - 1);
+    expect((await store.getCheckpoint(sourceId))!.pendingMetadataProcessedRows).toEqual([]);
+    expect([...store.jobs.values()]).toEqual([]);
+  });
+
+  it.each([404, 410])('quarantines an existing legacy open job before certifying a gone destination (%s)', async (status) => {
+    const store = new MemoryInternshipStore();
+    const legacy = row(`existing-${status}`);
+    const adapter = new Adapter([legacy]);
+    let gone = false;
+    let validationCalls = 0;
+    const resolver = { async configurationVersion() { return 'fixture-v1'; },
+      async resolveCanonicalEmployer() { return undefined; }, async resolveDestinationRule() { return undefined; } };
+    const validate = async () => {
+      validationCalls += 1;
+      if (gone) throw new SourceFetchError(`HTTP ${status}`, 'http', status);
+      return 'live';
+    };
+    const poll = () => new Poller([adapter], store, undefined, undefined, validate, false, undefined, resolver)
+      .poll({ maxAdmissionMigrationListingsPerSourceRun: 20 });
+    await poll();
+    const jobId = [...store.jobs.keys()][0]!;
+    const existing = await store.getJob(jobId);
+    expect(existing).toBeDefined();
+    await store.putInternship({ ...existing!, applicationUrlValidatedAt: undefined });
+    const complete = (await store.getCheckpoint(sourceId))!;
+    await store.putCheckpoint({ ...complete, metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION - 1, metadataProcessingRevision: 1 });
+    gone = true;
+
+    const callsBeforeGone = validationCalls;
+    const report = await poll();
+    expect(validationCalls).toBeGreaterThan(callsBeforeGone);
+    expect(report.continuationSources).toEqual([]);
+    expect(await store.getJob(jobId)).toMatchObject({ open: false, notification: { smsPending: false, digestPending: false } });
+    expect((await store.getCheckpoint(sourceId))!.metadataExtractionVersion).toBe(ROLE_METADATA_EXTRACTION_VERSION);
+  });
+
+  it('keeps a failed legacy quarantine pending and retries it durably', async () => {
+    class QuarantineFailureStore extends MemoryInternshipStore {
+      failQuarantine = true;
+      override async putInternship(job: Internship) {
+        if (this.failQuarantine && !job.open) throw new Error('quarantine write failed');
+        return super.putInternship(job);
+      }
+    }
+    const store = new QuarantineFailureStore();
+    const adapter = new Adapter([row('existing-quarantine-failure')]);
+    let gone = false;
+    let validationCalls = 0;
+    const resolver = { async configurationVersion() { return 'fixture-v1'; },
+      async resolveCanonicalEmployer() { return undefined; }, async resolveDestinationRule() { return undefined; } };
+    const validate = async () => {
+      validationCalls += 1;
+      if (gone) throw new SourceFetchError('HTTP 410', 'http', 410);
+      return 'live';
+    };
+    const poll = () => new Poller([adapter], store, undefined, undefined, validate, false, undefined, resolver)
+      .poll({ maxAdmissionMigrationListingsPerSourceRun: 20 });
+    await poll();
+    const jobId = [...store.jobs.keys()][0]!;
+    const existing = await store.getJob(jobId);
+    expect(existing).toBeDefined();
+    await store.putInternship({ ...existing!, applicationUrlValidatedAt: undefined });
+    const complete = (await store.getCheckpoint(sourceId))!;
+    await store.putCheckpoint({ ...complete, metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION - 1, metadataProcessingRevision: 1 });
+    gone = true;
+    const callsBeforeGone = validationCalls;
+    expect((await poll()).continuationSources).toEqual([sourceId]);
+    expect(validationCalls).toBeGreaterThan(callsBeforeGone);
+    expect((await store.getJob(jobId))!.open).toBe(true);
+    expect((await store.getCheckpoint(sourceId))!.metadataExtractionVersion).toBe(ROLE_METADATA_EXTRACTION_VERSION - 1);
+    store.failQuarantine = false;
+    expect((await poll()).continuationSources).toEqual([]);
+    expect((await store.getJob(jobId))!.open).toBe(false);
+    expect((await store.getCheckpoint(sourceId))!.metadataExtractionVersion).toBe(ROLE_METADATA_EXTRACTION_VERSION);
+  });
+
   it('does not checkpoint an omission when the legacy closed-job fallback fails', async () => {
     class ClosedJobFailureStore extends MemoryInternshipStore {
       failClosedJob = false;
