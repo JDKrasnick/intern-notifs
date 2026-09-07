@@ -630,7 +630,7 @@ function JobCard({
               <View style={styles.jobCardBottomActions}>
                 {canSaveForWeb ? (
                   <TouchableOpacity accessibilityRole="button" accessibilityLabel="Save for web" onPress={handleSave} style={styles.webSaveButtonCompact}>
-                    <Ionicons name="bookmark" size={14} color="#FFFFFF" />
+                    <Ionicons name="bookmark-outline" size={14} color={colors.ink} />
                     <Text style={styles.webSaveButtonText}>Save</Text>
                   </TouchableOpacity>
                 ) : isSavingForWeb ? (
@@ -837,7 +837,7 @@ function CatalogGroupCard({
               <View style={styles.jobCardBottomActions}>
                 {canSaveForWeb ? (
                   <TouchableOpacity accessibilityRole="button" accessibilityLabel="Save for web" onPress={handleSave} style={styles.webSaveButtonCompact}>
-                    <Ionicons name="bookmark" size={14} color="#FFFFFF" />
+                    <Ionicons name="bookmark-outline" size={14} color={colors.ink} />
                     <Text style={styles.webSaveButtonText}>Save</Text>
                   </TouchableOpacity>
                 ) : null}
@@ -1184,7 +1184,7 @@ function JobDetailSheet({
                     }}
                     style={styles.sheetSaveBar}
                   >
-                    <Ionicons name="bookmark" size={18} color="#FFFFFF" />
+                    <Ionicons name="bookmark-outline" size={18} color={colors.ink} />
                     <Text style={styles.sheetSaveBarText}>Save</Text>
                   </TouchableOpacity>
                 ) : isSaved && onUnsave && role ? (
@@ -1194,7 +1194,7 @@ function JobDetailSheet({
                     onPress={() => { onUnsave(role); onDismiss(); }}
                     style={styles.sheetSavedBar}
                   >
-                    <Ionicons name="bookmark" size={18} color="#92400E" />
+                    <Ionicons name="bookmark" size={18} color={colors.signal} />
                     <Text style={styles.sheetSavedBarText}>Saved</Text>
                   </TouchableOpacity>
                 ) : isSavingForWeb ? (
@@ -1489,7 +1489,6 @@ function RoleFilters({
           />
         </View>
       ) : null}
-      <CompanyCoverageDisclosure />
     </View>
   );
 }
@@ -2689,6 +2688,11 @@ function AppContent() {
     setSelectedMatchReasons(destination.reasons);
     setSelectedExclusionsApplied(destination.exclusionsApplied);
     setJobRouteState("loading");
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("job", destination.jobId);
+      window.history.pushState({ jobId: destination.jobId }, "", url.toString());
+    }
     void api<Job>(`/jobs/${encodeURIComponent(destination.jobId)}`, "")
       .then((job) => {
         if (routedJobId.current !== destination.jobId) return;
@@ -2717,6 +2721,25 @@ function AppContent() {
     setSelectedMatchReasons([]);
     setSelectedExclusionsApplied(false);
     setJobRouteState("idle");
+    if (Platform.OS === "web" && typeof window !== "undefined" && wasVisible) {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("job")) {
+        url.searchParams.delete("job");
+        // If we pushed a job state, back will return to catalog without empty page.
+        // Use back when possible, otherwise replace.
+        if (window.history.state?.jobId) {
+          window.history.back();
+        } else {
+          window.history.replaceState({}, "", url.toString());
+        }
+        // Prevent double-dismiss from popstate
+        wasVisible && (detailDismissalPending.current = true);
+        if (Platform.OS !== "ios") {
+          InteractionManager.runAfterInteractions(finishDetailDismissal);
+        }
+        return;
+      }
+    }
     if (!wasVisible) return;
     detailDismissalPending.current = true;
     // React Native does not emit Modal.onDismiss on Android. Waiting for
@@ -2779,6 +2802,11 @@ function AppContent() {
     setSelectedExclusionsApplied(false);
     setJobRouteState("idle");
     setSelectedJob(job);
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("job", job.jobId);
+      window.history.pushState({ jobId: job.jobId }, "", url.toString());
+    }
   };
   const loadCatalogGroup = (groupId: string) => {
     const requestGeneration = groupRequestGuard.current.begin(groupId);
@@ -2856,6 +2884,25 @@ function AppContent() {
       notificationSubscription.remove();
       urlSubscription.remove();
     };
+  }, []);
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+    // Handle initial ?job param and back/forward navigation
+    const initialJobId = new URL(window.location.href).searchParams.get("job");
+    if (initialJobId && !detailVisible.current) {
+      openDestination({ kind: "job", jobId: initialJobId, reasons: [], exclusionsApplied: false });
+    }
+    const onPopState = () => {
+      const url = new URL(window.location.href);
+      const jobId = url.searchParams.get("job");
+      if (!jobId && detailVisible.current) {
+        dismissRoutedJob();
+      } else if (jobId && routedJobId.current !== jobId) {
+        openDestination({ kind: "job", jobId, reasons: [], exclusionsApplied: false });
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
   }, []);
   const catalogJobs = useMemo(() => {
     const newJobs = jobStatus === "open" ? launchInbox?.jobs ?? [] : [];
@@ -5692,7 +5739,7 @@ const styles = StyleSheet.create({
   swipeCardSurface: { marginBottom: 0 },
   swipeSaveAction: {
     alignItems: "center",
-    backgroundColor: "#F59E0B",
+    backgroundColor: colors.ink,
     borderRadius: 14,
     bottom: 0,
     flexDirection: "row",
@@ -5704,7 +5751,7 @@ const styles = StyleSheet.create({
     top: 0,
     width: 112,
   },
-  swipeSaveActionText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" },
+  swipeSaveActionText: { color: colors.onDark, fontSize: 14, fontWeight: "800" },
   swipeHideAction: {
     alignItems: "center",
     backgroundColor: colors.body,
@@ -5730,18 +5777,18 @@ const styles = StyleSheet.create({
   catalogGroupFooterLeft: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12, gap: 12 },
   jobCardActionCompact: { alignItems: "center", flexDirection: "row", gap: 4 },
   jobCompanyLeft: { flexDirection: "row", alignItems: "center", flex: 1, minWidth: 0 },
-  sheetSaveBar: { alignItems: "center", backgroundColor: "#F59E0B", borderColor: "#F59E0B", borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
-  sheetSaveBarText: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
-  sheetSavedBar: { alignItems: "center", backgroundColor: "#FFFBEB", borderColor: "#FDE68A", borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
-  sheetSavedBarText: { color: "#92400E", fontSize: 16, fontWeight: "800" },
+  sheetSaveBar: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
+  sheetSaveBarText: { color: colors.ink, fontSize: 16, fontWeight: "800" },
+  sheetSavedBar: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
+  sheetSavedBarText: { color: colors.signal, fontSize: 16, fontWeight: "800" },
   sheetHideBar: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
   sheetHideBarText: { color: colors.body, fontSize: 16, fontWeight: "700" },
-  webSaveButton: { alignItems: "center", backgroundColor: "#F59E0B", borderColor: "#F59E0B", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
-  webSaveButtonCompact: { alignItems: "center", backgroundColor: "#F59E0B", borderColor: "#F59E0B", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
-  webSaveButtonText: { color: "#FFFFFF", fontSize: 13, fontWeight: "800" },
-  webUnsaveButton: { alignItems: "center", backgroundColor: "#FFFBEB", borderColor: "#FDE68A", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
-  webUnsaveButtonCompact: { alignItems: "center", backgroundColor: "#FFFBEB", borderColor: "#FDE68A", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
-  webUnsaveButtonText: { color: "#92400E", fontSize: 13, fontWeight: "800" },
+  webSaveButton: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
+  webSaveButtonCompact: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
+  webSaveButtonText: { color: colors.ink, fontSize: 13, fontWeight: "800" },
+  webUnsaveButton: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
+  webUnsaveButtonCompact: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
+  webUnsaveButtonText: { color: colors.signal, fontSize: 13, fontWeight: "800" },
   webHideButton: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
   webHideButtonCompact: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
   webHideButtonText: { color: colors.muted, fontSize: 13, fontWeight: "700" },
