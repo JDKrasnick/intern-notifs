@@ -3623,6 +3623,34 @@ function GuestExperience({
   const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
   const [query, setQuery] = useState("");
   const [showAccount, setShowAccount] = useState(false);
+  const openAccount = () => {
+    setShowAccount(true);
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("auth", "signin");
+      window.history.pushState({ auth: true }, "", url.toString());
+    }
+  };
+  const closeAccount = () => {
+    setShowAccount(false);
+    if (Platform.OS === "web" && typeof window !== "undefined" && window.history.state?.auth) {
+      window.history.back();
+    } else if (Platform.OS === "web" && typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("auth");
+      window.history.replaceState({}, "", url.toString());
+    }
+  };
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+    const onPopState = () => {
+      const hasAuth = new URL(window.location.href).searchParams.has("auth") || Boolean(window.history.state?.auth);
+      if (!hasAuth && showAccount) setShowAccount(false);
+      if (hasAuth && !showAccount) setShowAccount(true);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [showAccount]);
   return (
     <View style={styles.guestRoot}>
       <SafeAreaView
@@ -3665,14 +3693,14 @@ function GuestExperience({
                 onRetry={onRetryCatalog}
                 onOpenGroup={onOpenGroup}
                 onOpenRole={onOpenJob}
-                onSaveForWeb={async () => { setShowAccount(true); return false; }}
+                onSaveForWeb={async () => { openAccount(); return false; }}
                 onHideLocally={onHideLocally as unknown as (job: Job) => void}
               />
             </View>
             {tab === "saved" ? (
               <AccountGate
                 feature="save and track applications"
-                onSignIn={() => setShowAccount(true)}
+                onSignIn={openAccount}
               />
             ) : tab === "profile" ? (
               <Profile
@@ -3680,7 +3708,7 @@ function GuestExperience({
                 hiddenJobs={hiddenJobs}
                 onRestoreHiddenRole={onRestoreHiddenRole}
                 onPreferencesChanged={onPreferencesChanged}
-                onSignIn={() => setShowAccount(true)}
+                onSignIn={openAccount}
               />
             ) : null}
           </View>
@@ -3701,13 +3729,13 @@ function GuestExperience({
           onOpenListing={(job) => {
             void openOfficialApplication(job.applyUrl);
           }}
-          onSaveForWeb={async () => { setShowAccount(true); return false; }}
+          onSaveForWeb={async () => { openAccount(); return false; }}
           onHideLocally={onHideLocally}
         />
       </SafeAreaView>
       {showAccount ? (
         <View style={styles.authOverlay}>
-          <SignIn onSession={onSession} onBrowse={() => setShowAccount(false)} />
+          <SignIn onSession={onSession} onBrowse={closeAccount} />
         </View>
       ) : null}
     </View>
