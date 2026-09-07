@@ -29,7 +29,7 @@ import type {
 // Increment whenever a parser change can produce a different result from an
 // unchanged artifact. This makes the collection scheduler revisit both a
 // previous negative result and an already-enriched posting.
-export const ROLE_METADATA_EXTRACTION_VERSION = 14;
+export const ROLE_METADATA_EXTRACTION_VERSION = 15;
 export const VERIFIED_PAGE_METADATA_SOURCES = ['official-json-ld', 'official-page'] as const;
 const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   // Exact-role detail retrieval owns its own slot; a later board-list poll
@@ -417,7 +417,15 @@ export function extractCompensationRanges(
     // Adjacent employer min/max fields describe one range, not two offers.
     // Require the same label and currency notation on both endpoints.
     .replace(new RegExp(String.raw`\b(salary\s*\/\s*rate)\s+minimum\s*:\s*((?:${CURRENCY_CODE}\s*)?[$€£])\s*(${MONEY_AMOUNT})\s*\n\s*\1\s+maximum\s*:\s*\2\s*(${MONEY_AMOUNT})`, 'giu'), '$1: $2$3 - $2$4')
-    .replace(new RegExp(String.raw`\bminimum\s+(pay|salary)\s*:\s*((?:${CURRENCY_CODE}\s*)?[$€£])\s*(${MONEY_AMOUNT})\s*\n\s*maximum\s+\1\s*:\s*\2\s*(${MONEY_AMOUNT})`, 'giu'), '$1: $2$3 - $2$4')
+    .replace(new RegExp(String.raw`\bminimum\s+(pay|salary)\s*:?\s*((?:${CURRENCY_CODE}\s*)?[$€£])\s*(${MONEY_AMOUNT})\s*\n\s*maximum\s+\1\s*:?\s*\2\s*(${MONEY_AMOUNT})`, 'giu'),
+      (matched: string, label: string, currency: string, first: string, second: string, offset: number, full: string) => {
+        // Rendered employer fact tables may state cadence in a separate field.
+        // Only carry an explicit Hourly value through bounded metadata rows;
+        // prose, other money, related jobs, or "Salaried" cannot supply a unit.
+        const trailingFields = full.slice(offset + matched.length, offset + matched.length + 2000);
+        const hourly = /^\s*\n(?:(?:Line of Business|Banner Name|Education Level|Required License and Certification|Job Schedule|Job Category|Job Identification|Locations)[^\n$€£]{0,200}\n){0,8}Hourly or Salaried\s*:?\s*Hourly(?:\n|$)/iu.test(trailingFields);
+        return `${label}: ${currency}${first} - ${currency}${second}${hourly ? '/hour' : ''}`;
+      })
     .replace(new RegExp(String.raw`\bpay range\s*[-–—]\s*start\s*:\s*((?:${CURRENCY_CODE}\s*)?[$€£])\s*(${MONEY_AMOUNT})\s*\n\s*pay range\s*[-–—]\s*end\s*:\s*\1\s*(${MONEY_AMOUNT})`, 'giu'), 'Pay range: $1$2 - $1$3')
     .replace(new RegExp(String.raw`([$€£]\s*${MONEY_AMOUNT})\s+through\s+(?=[$€£]\s*\d)`, 'giu'), '$1 - ')
     .replace(/\bD\.C\./gu, 'DC')

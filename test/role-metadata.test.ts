@@ -474,6 +474,29 @@ describe('provider-neutral role metadata', () => {
     ]) expect(extractCompensationRanges(text, input)).toEqual([]);
   });
 
+  it.each([' ', '\n'])('joins explicit min/max salary fields and their table-scoped hourly unit (%j)', (separator) => {
+    const text = `Minimum Salary${separator}$28.25\nMaximum Salary${separator}$31.50\nLine of Business Health and Wellness\nBanner Name King Soopers\nEducation Level Bachelor’s degree\nRequired License and Certification Pharmacy Board License\nHourly or Salaried${separator}Hourly\nApply Now`;
+    expect(extractCompensationRanges(text, { provenance: field, requirePayContext: true }))
+      .toMatchObject([{ minAmount: 28.25, maxAmount: 31.5, currency: 'XXX', period: 'hourly' }]);
+  });
+
+  it('does not borrow cadence or merge incompatible salary endpoints', () => {
+    const input = { provenance: field, requirePayContext: true };
+    for (const tail of [
+      '', '\nHourly or Salaried Salaried',
+      '\nOther jobs\nHourly or Salaried Hourly',
+      '\nEducation Level tuition costs $500\nHourly or Salaried Hourly',
+      '\nThis role may be hourly\nHourly or Salaried Hourly',
+    ]) {
+      expect(extractCompensationRanges(`Minimum Salary $28.25\nMaximum Salary $31.50${tail}`, input))
+        .toMatchObject([{ minAmount: 28.25, maxAmount: 31.5, currency: 'XXX', period: 'unknown' }]);
+    }
+    const differentCurrencies = extractCompensationRanges('Minimum Salary USD $28.25\nMaximum Salary CAD $31.50\nHourly or Salaried Hourly', input);
+    expect(differentCurrencies.some(range => range.minAmount !== range.maxAmount)).toBe(false);
+    expect(extractCompensationRanges('Minimum Salary $28.25\nRelocation stipend $2000\nMaximum Salary $31.50', input)
+      .some(range => range.minAmount === 28.25 && range.maxAmount === 31.5)).toBe(false);
+  });
+
   it('keeps malformed thousands separators and between amounts as full ranges', () => {
     expect(extractCompensationRanges('The estimated salary range is $ 95 ,000-$120 ,000, dependent on academic level (Bachelors, Masters, or PhD).', { provenance: field, requirePayContext: true }))
       .toMatchObject([{ minAmount: 95000, maxAmount: 120000, period: 'unknown' }]);
