@@ -364,7 +364,13 @@ async function openOfficialApplication(url: string) {
   }
 }
 
-function JobSource({ source }: { source: ReturnType<typeof sourcePresentation> }) {
+function JobSource({
+  source,
+  identityUnconfirmed = false,
+}: {
+  source: ReturnType<typeof sourcePresentation>;
+  identityUnconfirmed?: boolean;
+}) {
   const icon = source.primary === "Employer submitted"
     ? "business-outline"
     : source.primary.startsWith("Official")
@@ -377,6 +383,13 @@ function JobSource({ source }: { source: ReturnType<typeof sourcePresentation> }
       <Ionicons name={icon} size={14} color={colors.muted} />
       <Text style={styles.jobSourceText}>{source.primary}</Text>
       {source.corroboration ? <Text style={styles.jobSourceCorroboration}>{source.corroboration}</Text> : null}
+      {identityUnconfirmed ? (
+        <>
+          <Text style={styles.jobTrustSeparator}>·</Text>
+          <Ionicons name="shield-outline" size={14} color={colors.muted} />
+          <Text style={styles.identityTrustText}>Identity unconfirmed</Text>
+        </>
+      ) : null}
     </View>
   );
 }
@@ -608,8 +621,7 @@ function JobCard({
             <Text style={styles.muted} numberOfLines={2}>
               {display.location} · {display.season}
             </Text>
-            <JobSource source={source} />
-            {job.postingIdentityStatus === "unconfirmed" ? <IdentityTrustLabel /> : null}
+            <JobSource source={source} identityUnconfirmed={job.postingIdentityStatus === "unconfirmed"} />
             <Text style={styles.postingTiming}>{postingTiming.summary}</Text>
             {!job.open ? <Text style={styles.closedStatus}>Closed</Text> : null}
             {display.compensation ? (
@@ -3952,8 +3964,7 @@ function Applications({
           <View style={styles.card}>
             <Text style={styles.company}>{job?.company ?? "Saved role"}</Text>
             <Text style={styles.title}>{job?.title ?? "Role details unavailable"}</Text>
-            {job ? <JobSource source={source} /> : null}
-            {job?.postingIdentityStatus === "unconfirmed" ? <IdentityTrustLabel /> : null}
+            {job ? <JobSource source={source} identityUnconfirmed={job.postingIdentityStatus === "unconfirmed"} /> : null}
             <View style={styles.statusPill}>
               <Text style={styles.statusPillText}>{item.status.toUpperCase()}</Text>
             </View>
@@ -5882,6 +5893,7 @@ const styles = StyleSheet.create({
   jobSourceRow: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 7 },
   jobSourceText: { color: colors.muted, flexShrink: 1, fontSize: 13, fontWeight: "600", lineHeight: 18 },
   jobSourceCorroboration: { color: colors.signal, fontSize: 12, fontWeight: "700", lineHeight: 18 },
+  jobTrustSeparator: { color: colors.muted, fontSize: 13, lineHeight: 18 },
   pay: { color: colors.success, fontSize: 13, fontWeight: "700", marginTop: 6 },
   closedStatus: { marginTop: 8, color: colors.danger, fontWeight: "700" },
   jobCardAction: { alignItems: "center", flexDirection: "row", marginTop: 14 },
