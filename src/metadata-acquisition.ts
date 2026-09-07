@@ -93,6 +93,27 @@ export function greenhouseCompensationBand(input: {
     period, ...(label ? { label } : {}), sourceText: input.sourceText };
 }
 
+/** Extracts the labeled regional bands published in Greenhouse board HTML.
+ * Keep this alongside the API band normalizer so list and detail routes produce
+ * the same scoped evidence. Unlabeled prose and non-pay labels are ignored. */
+export function extractGreenhouseCompensationBands(value: unknown): NonNullable<RoleMetadataArtifact['compensationBands']> {
+  const lines = description(value).split('\n');
+  return lines.flatMap((label, index) => {
+    const amount = lines[index + 1];
+    if (!amount || !/\b(?:hourly|annual)\s+(?:rate|pay|salary)\b/iu.test(label)) return [];
+    const match = /^(?:(?<prefix>[A-Z]{3})\s+)?(?:[$€£])?\s*(?<min>\d+(?:\.\d+)?)\s*[–—-]\s*(?:[$€£])?\s*(?<max>\d+(?:\.\d+)?)(?:\s+(?<suffix>[A-Z]{3}))?$/u.exec(amount);
+    if (!match?.groups) return [];
+    const band = greenhouseCompensationBand({
+      label,
+      sourceText: `${label}: ${amount}`,
+      currency: match.groups.prefix ?? match.groups.suffix ?? 'XXX',
+      minAmount: Number(match.groups.min),
+      maxAmount: Number(match.groups.max),
+    });
+    return band ? [band] : [];
+  });
+}
+
 export function parseMetadataApiResponse(identity: ProviderIdentity, method: MetadataAcquisition['method'], payload: unknown, requestUrl?: string): RoleMetadataArtifact | undefined {
   if (!record(payload)) return undefined;
   const expected = identity.postingId;

@@ -63,17 +63,17 @@ describe('mapGreenhouseJob', () => {
 
 describe('GreenhouseBoardAdapter', () => {
   it.each([
-    ['Product Management Intern (Summer 2027)', '$54 — $56 USD', '$51.50 — $53.50 USD', 56, 53.5],
-    ['Software Engineering Intern (2027 Start) - Winter', '$54 — $60 USD', '$51.50 — $60 USD', 60, 60],
-  ])('preserves Databricks regional pay rows from the board path for %s', async (title, sfPay, bellevuePay, sfMax, bellevueMax) => {
+    ['Product Management Intern (Summer 2027)', 6883068002, '$54 — $56 USD', '$51.50 — $53.50 USD', 56, 53.5],
+    ['Software Engineering Intern (2027 Start) - Winter', 8732364002, '$54 — $60 USD', '$51.50 — $60 USD', 60, 60],
+  ])('preserves Databricks regional pay rows from the board path for %s', async (title, id, sfPay, bellevuePay, sfMax, bellevueMax) => {
     const source = { ...acmeSource, id: 'greenhouse-databricks', boardToken: 'databricks', displayName: 'Databricks' };
     const content = `&lt;p&gt;Pay Range Transparency&lt;/p&gt;
       &lt;p&gt;SF Bay Area Hourly Rate&lt;/p&gt;&lt;p&gt;${sfPay}&lt;/p&gt;
       &lt;p&gt;Pay Range Transparency&lt;/p&gt;
       &lt;p&gt;Bellevue, Washington Hourly Rate&lt;/p&gt;&lt;p&gt;${bellevuePay}&lt;/p&gt;`;
     const adapter = new GreenhouseBoardAdapter({ source, fetchImpl: async () => jsonResponse({ jobs: [{
-      id: title.startsWith('Product') ? 6883068002 : 8732364002, internal_job_id: 1, title, content,
-      absolute_url: `https://job-boards.greenhouse.io/databricks/jobs/${title.startsWith('Product') ? 6883068002 : 8732364002}`,
+      id, internal_job_id: 1, title, content,
+      absolute_url: `https://job-boards.greenhouse.io/databricks/jobs/${id}`,
       location: { name: 'Bellevue, Washington; Mountain View, California; San Francisco, California' },
     }] }) });
 

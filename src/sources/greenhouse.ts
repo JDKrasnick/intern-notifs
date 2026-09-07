@@ -3,8 +3,7 @@ import { isTechnicalJob } from '../core/filters.js';
 import { parseCompensation } from '../core/normalize.js';
 import { platformFetch } from '../core/platform-fetch.js';
 import { earlyCareerRequirements, hasLifecycleTitleSignal, htmlToText, inferSeason, inferWorkMode } from '../core/early-career.js';
-import { metadataDescriptionText } from '../core/metadata-text.js';
-import { greenhouseCompensationBand } from '../metadata-acquisition.js';
+import { extractGreenhouseCompensationBands } from '../metadata-acquisition.js';
 import { greenhouseApplicationUrlRejection } from './quality.js';
 import { GREENHOUSE_BOARD_API_HOST, assertBoardToken, boardIdentityUrl, validateBoardToken, type ReviewedGreenhouseSource } from './greenhouse-config.js';
 import { SourceFetchError } from './source-error.js';
@@ -263,18 +262,7 @@ export function mapGreenhouseSourcedPosting(
   const title = htmlToText(job.title);
   if (!externalId || !title || !job.absolute_url) return undefined;
   const description = job.content ?? '';
-  const descriptionLines = metadataDescriptionText(description).split('\n');
-  const compensationBands = descriptionLines.flatMap((label, index) => {
-    const amount = descriptionLines[index + 1];
-    const unit = /\bhourly\s+(?:rate|pay|salary)\b/iu.test(label) ? 'hourly' as const
-      : /\bannual\s+(?:rate|pay|salary)\b/iu.test(label) ? 'annual' as const : undefined;
-    const match = amount ? /^(?:(?<prefix>[A-Z]{3})\s+)?(?:[$€£])?\s*(?<min>\d+(?:\.\d+)?)\s*[–—-]\s*(?:[$€£])?\s*(?<max>\d+(?:\.\d+)?)(?:\s+(?<suffix>[A-Z]{3}))?$/u.exec(amount) : undefined;
-    if (!unit || !match?.groups) return [];
-    const currency = match.groups.prefix ?? match.groups.suffix ?? 'XXX';
-    const band = greenhouseCompensationBand({ label, sourceText: `${label}: ${amount}`, currency,
-      minAmount: Number(match.groups.min), maxAmount: Number(match.groups.max) });
-    return band ? [band] : [];
-  });
+  const compensationBands = extractGreenhouseCompensationBands(description);
   return {
     sourceId: source.id,
     provenance: 'official-ats',
