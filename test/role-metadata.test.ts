@@ -459,6 +459,21 @@ describe('provider-neutral role metadata', () => {
     ]) expect(extractCompensationRanges(text, { provenance: field, requirePayContext: true })).toEqual([]);
   });
 
+  it('limits new pay-table scopes to explicit amount rows', () => {
+    const input = { provenance: field, requirePayContext: true, knownLocations: ['New York City, New York'] };
+    const senior = extractCompensationRanges('Senior Software Engineer salary: $50/hour', input);
+    expect(senior).toHaveLength(1);
+    expect(senior[0]?.applicabilityLabel).not.toBe('Senior');
+    const regional = extractCompensationRanges('Pay Range\nYork, Pennsylvania | ($30 - $40 Hourly)', input);
+    expect(regional).toHaveLength(1);
+    expect(regional[0]?.applicableLocations).toEqual(['York, Pennsylvania']);
+    for (const text of [
+      'Pay Scale\nFreshman tuition reimbursement: $1000',
+      'Pay Scale\nSenior relocation stipend: $5000',
+      'About the office\nAustin, Texas | ($28 - $49 Hourly)',
+    ]) expect(extractCompensationRanges(text, input)).toEqual([]);
+  });
+
   it('keeps malformed thousands separators and between amounts as full ranges', () => {
     expect(extractCompensationRanges('The estimated salary range is $ 95 ,000-$120 ,000, dependent on academic level (Bachelors, Masters, or PhD).', { provenance: field, requirePayContext: true }))
       .toMatchObject([{ minAmount: 95000, maxAmount: 120000, period: 'unknown' }]);

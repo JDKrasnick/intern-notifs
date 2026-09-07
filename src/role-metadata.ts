@@ -29,7 +29,7 @@ import type {
 // Increment whenever a parser change can produce a different result from an
 // unchanged artifact. This makes the collection scheduler revisit both a
 // previous negative result and an already-enriched posting.
-export const ROLE_METADATA_EXTRACTION_VERSION = 13;
+export const ROLE_METADATA_EXTRACTION_VERSION = 14;
 export const VERIFIED_PAGE_METADATA_SOURCES = ['official-json-ld', 'official-page'] as const;
 const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   // Exact-role detail retrieval owns its own slot; a later board-list poll
@@ -336,7 +336,14 @@ function compensationPeriod(value: string): CompensationPeriod {
   return 'other';
 }
 
+// A standalone school-year/degree row or city/state table cell is explicit
+// scope. Do not shorten richer labels (e.g. "PhD students") or interpret
+// "Senior Software Engineer" as a school-year tier.
+const EDUCATION_PAY_ROW = /^(freshman|sophomore|junior|senior|masters?|ph\.?d\.?)\s*(?=[$€£]\s*\d)/iu;
+const LOCATION_PAY_ROW = /^([A-Z][A-Za-z .'-]{1,60},\s+[A-Z][A-Za-z .'-]{1,60})\s*\|\s*\(?\s*(?=(?:[A-Z]{3}\s*)?[$€£]\s*\d)/u;
+
 function applicability(segment: string, knownLocations: readonly string[]): Pick<CompensationRange, 'applicableLocations' | 'applicableEducationLevels' | 'applicabilityLabel'> {
+  const explicitLocation = LOCATION_PAY_ROW.exec(segment)?.[1]?.trim();
   const locations = knownLocations.filter((location) => {
     const terms = location.toLowerCase().split(/[^a-z0-9]+/u).filter((term) => term.length > 2 && !['remote', 'united', 'states'].includes(term));
     return terms.length > 0 && terms.every((term) => segment.toLowerCase().includes(term));
@@ -353,10 +360,12 @@ function applicability(segment: string, knownLocations: readonly string[]): Pick
     && !/\bfull[ -]time\b/iu.test(prefix);
   const genericHeading = prefix && /^(?:base|required skills|additional requirements|what we offer|requirements|qualifications)$/iu.test(prefix);
   const levels = educationLevels(segment);
+  const educationTier = EDUCATION_PAY_ROW.exec(segment)?.[1];
   return {
-    ...(locations.length ? { applicableLocations: normalizeLocations(locations) } : {}),
+    ...(explicitLocation ? { applicableLocations: normalizeLocations([explicitLocation]) } : locations.length ? { applicableLocations: normalizeLocations(locations) } : {}),
     ...(levels.length ? { applicableEducationLevels: levels } : {}),
     ...(starting ? { applicabilityLabel: 'Starting rate (lower bound)' }
+      : educationTier ? { applicabilityLabel: educationTier }
       : !locations.length && prefix && !compensationLabel && !genericHeading ? { applicabilityLabel: boundedText(prefix, 120) } : {}),
   };
 }
@@ -447,7 +456,8 @@ export function extractCompensationRanges(
       inheritedPayContext = segment.length <= 160 && payContext.test(segment);
       continue;
     }
-    const salaryRow = /^(?:[A-Za-z][^$€£\n]{0,120}:\s*|(?:Level\w*\s+[\w.]+\s*[-–—]\s*)?Minimum\s*|[$€£]|[A-Z]{3}\s)/iu.test(segment);
+    const salaryRow = EDUCATION_PAY_ROW.test(segment) || LOCATION_PAY_ROW.test(segment)
+      || /^(?:[A-Za-z][^$€£\n]{0,120}:\s*|(?:Level\w*\s+[\w.]+\s*[-–—]\s*)?Minimum\s*|[$€£]|[A-Z]{3}\s)/iu.test(segment);
     currentPayContext = inlinePayContext || payContext.test(segment) || inheritedPayContext && salaryRow;
     inheritedPayContext = inheritedPayContext && salaryRow;
     // Benefits, equity and application questions are not base compensation.

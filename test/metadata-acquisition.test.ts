@@ -63,6 +63,41 @@ describe('identity-bound public metadata APIs', () => {
     expect(artifact).toMatchObject({ deadline: '2026-12-02' }); expect(artifact?.publishedAt).toBeUndefined();
     expect(parseMetadataApiResponse(id, 'workday-api', { jobPostingInfo: { jobReqId: 'R999', title: 'Software Intern', jobDescription: 'Salary USD 30 per hour' } })).toBeUndefined();
   });
+  it('preserves Magna education-labeled pay scale rows from Workday API text', () => {
+    const id = { ...identity('workday', 'R00247602'), tenant: 'magna' };
+    const artifact = parseMetadataApiResponse(id, 'workday-api', { jobPostingInfo: {
+      jobReqId: 'R00247602', title: 'Intern - Infrared Imaging & Algorithms',
+      jobDescription: '<p><b>Pay Scale:</b></p><p>Freshman $17.00</p><p>Sophomore$20.00</p><p>Junior$22.00</p><p>Senior$24.00</p><p>Masters$26.00</p><p>PHD$38.00</p>', location: 'Goleta, California, US',
+    } });
+    const result = reconcileRoleMetadata(extract(artifact!));
+    expect(result.conflicts).toEqual([]);
+    expect(result.compensation?.ranges).toHaveLength(6);
+    expect(result.compensation?.ranges?.map(({ minAmount, maxAmount, currency, period, applicabilityLabel }) =>
+      ({ minAmount, maxAmount, currency, period, applicabilityLabel }))).toEqual(expect.arrayContaining(
+      [['Freshman', 17], ['Sophomore', 20], ['Junior', 22], ['Senior', 24], ['Masters', 26], ['PHD', 38]].map(([applicabilityLabel, amount]) =>
+        ({ minAmount: amount, maxAmount: amount, currency: 'XXX', period: 'unknown', applicabilityLabel })),
+    ));
+    expect(result.compensation?.ranges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ minAmount: 17, applicabilityLabel: 'Freshman' }),
+      expect.objectContaining({ minAmount: 26, applicableEducationLevels: ['masters'], applicabilityLabel: 'Masters' }),
+      expect.objectContaining({ minAmount: 38, applicableEducationLevels: ['doctoral'], applicabilityLabel: 'PHD' }),
+    ]));
+  });
+  it('preserves all explicitly labeled PayPal location bands from Workday API text', () => {
+    const id = { ...identity('workday', 'R0137285'), tenant: 'paypal' };
+    const artifact = parseMetadataApiResponse(id, 'workday-api', { jobPostingInfo: {
+      jobReqId: 'R0137285', title: 'Software Engineer Intern', location: 'San Jose, California, United States of America',
+      jobDescription: '<p>The expected range of pay for this role by location is:</p><p><b>Primary Location | Pay Range:</b></p><p>San Jose, California | ($32 - $55 Hourly)</p><p><b>Additional Location(s) | Pay Range:</b></p><p>Austin, Texas | ($28- $49 Hourly)</p><p>Chicago, Illinois | ($28- $49 Hourly)</p>',
+    } });
+    const result = reconcileRoleMetadata(extract(artifact!));
+    expect(result.conflicts).toEqual([]);
+    expect(result.compensation?.ranges).toHaveLength(3);
+    expect(result.compensation?.ranges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ minAmount: 32, maxAmount: 55, currency: 'XXX', period: 'hourly', applicableLocations: ['San Jose, California'] }),
+      expect.objectContaining({ minAmount: 28, maxAmount: 49, currency: 'XXX', period: 'hourly', applicableLocations: ['Austin, Texas'] }),
+      expect.objectContaining({ minAmount: 28, maxAmount: 49, currency: 'XXX', period: 'hourly', applicableLocations: ['Chicago, Illinois'] }),
+    ]));
+  });
   it('matches the entire Workday presentation suffix instead of merging requisitions', () => {
     const id = { ...identity('workday', 'jr340771-1'), tenant: 'salesforce' };
     const url = 'https://salesforce.wd12.myworkdayjobs.com/wday/cxs/salesforce/External_Career_Site/job/California/Intern_JR340771-1';
