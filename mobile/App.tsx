@@ -32,8 +32,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { ApiError, api, authenticatedRead, responseCache, sessionStorage } from "./src/api";
 import { appendGroupedCatalogPage, catalogCardKind, type GroupedCatalogPage } from "./src/catalog";
 import { boundedCatalogText, compactLocations, presentCatalogRole, seasonLabel } from "./src/catalog-quality";
-import { catalogGroupAvailabilityLabel, groupedCatalogParameters } from "./src/catalog-filters";
-import { disciplineStyleFor } from "../shared/discipline-display";
+import { catalogGroupAvailabilityLabel, countActiveCatalogFilters, educationFilterOptions, emptyCatalogFilters, groupedCatalogParameters, seasonFilterOptions, workModeFilterOptions, type CatalogFilterValues, type ChipOption } from "./src/catalog-filters";
+import { allDisciplineStyles, disciplineStyleFor } from "../shared/discipline-display";
 import { createLatestRequestGuard } from "./src/latest-request";
 import { uploadDocumentContent } from "./src/document-upload";
 import { installationApi } from "./src/installation";
@@ -1425,91 +1425,145 @@ function RequirementFilter({
   );
 }
 
-function RoleFilters({
-  expanded,
-  onToggle,
-  employerFilter,
-  onEmployerFilterChange,
-  jobStatus,
-  onJobStatusChange,
-  sourceFilter,
-  onSourceFilterChange,
-  hideUsCitizenshipRequired,
-  hideAdvancedDegreeRequired,
-  onHideUsCitizenshipRequiredChange,
-  onHideAdvancedDegreeRequiredChange,
+const disciplineChipOptions: ChipOption[] = (() => {
+  const order = ['software', 'ai-ml', 'data', 'infrastructure-cloud', 'security', 'quant', 'product', 'technical-design'] as const;
+  const byTag = new Map(allDisciplineStyles().map(({ tag, style }) => [tag, style] as const));
+  return order.filter((tag) => byTag.has(tag)).map((tag) => ({ value: byTag.get(tag)!.filterValue, label: byTag.get(tag)!.label }));
+})();
+
+function toggleChipValue(selected: string[], value: string): string[] {
+  return selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value];
+}
+
+function MultiChipFilter({
+  label,
+  options,
+  selected,
+  onChange,
 }: {
-  expanded: boolean;
-  onToggle: () => void;
-  employerFilter: EmployerCategory | "all";
-  onEmployerFilterChange: (value: EmployerCategory | "all") => void;
-  jobStatus: "open" | "closed";
-  onJobStatusChange: (value: "open" | "closed") => void;
-  sourceFilter: CatalogSource;
-  onSourceFilterChange: (value: CatalogSource) => void;
-  hideUsCitizenshipRequired: boolean;
-  hideAdvancedDegreeRequired: boolean;
-  onHideUsCitizenshipRequiredChange: (value: boolean) => void;
-  onHideAdvancedDegreeRequiredChange: (value: boolean) => void;
+  label: string;
+  options: ChipOption[];
+  selected: string[];
+  onChange: (next: string[]) => void;
 }) {
-  const activeFilterCount = [
-    employerFilter !== "all",
-    jobStatus !== "open",
-    sourceFilter !== "all",
-    hideUsCitizenshipRequired,
-    hideAdvancedDegreeRequired,
-  ].filter(Boolean).length;
-  const clearFilters = () => {
-    onEmployerFilterChange("all");
-    onJobStatusChange("open");
-    onSourceFilterChange("all");
-    onHideUsCitizenshipRequiredChange(false);
-    onHideAdvancedDegreeRequiredChange(false);
-  };
+  return (
+    <View style={styles.companyFilter} accessibilityLabel={label}>
+      {options.map((option) => {
+        const active = selected.includes(option.value);
+        return (
+          <TouchableOpacity
+            key={option.value}
+            accessibilityRole="checkbox"
+            accessibilityLabel={`Filter ${option.label}`}
+            aria-checked={active}
+            style={[styles.chip, active && styles.chipOn]}
+            onPress={() => onChange(toggleChipValue(selected, option.value))}
+          >
+            <Text style={[styles.chipLabel, active && styles.chipLabelOn]}>{option.label}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+function FilterBar({
+  activeCount,
+  onOpen,
+}: {
+  activeCount: number;
+  onOpen: () => void;
+}) {
   return (
     <View style={styles.filterRegion}>
       <View style={styles.filterBar}>
         <TouchableOpacity
           accessibilityRole="button"
-          aria-expanded={expanded}
-          onPress={onToggle}
+          onPress={onOpen}
           style={styles.filterToggle}
         >
           <Text style={styles.filterToggleText}>
-            {expanded ? "Hide filters" : activeFilterCount ? `Filters · ${activeFilterCount}` : "Filter roles"}
+            {activeCount ? `Filters · ${activeCount}` : "Filter roles"}
           </Text>
-          <Text style={styles.filterToggleGlyph}>{expanded ? "−" : "+"}</Text>
+          <Text style={styles.filterToggleGlyph}>+</Text>
         </TouchableOpacity>
-        {activeFilterCount ? (
-          <TouchableOpacity accessibilityRole="button" onPress={clearFilters} style={styles.clearFilters}>
-            <Text style={styles.clearFiltersText}>Clear</Text>
-          </TouchableOpacity>
-        ) : null}
       </View>
-      {expanded ? (
-        <View style={styles.filterPanel}>
-          <Text style={styles.filterLabel}>Company type</Text>
-          <EmployerCategoryFilter selected={employerFilter} onChange={onEmployerFilterChange} />
-          <Text style={styles.filterLabel}>Availability</Text>
-          <JobStatusFilter status={jobStatus} onChange={onJobStatusChange} />
-          <Text style={styles.filterLabel}>Source</Text>
-          <View style={styles.companyFilter} accessibilityRole="radiogroup" accessibilityLabel="Source">
-            {([['all', 'All'], ['direct', 'Direct'], ['community', 'Community'], ['corroborated', 'Direct + community']] as const).map(([value, label]) => (
-              <TouchableOpacity key={value} accessibilityRole="radio" aria-checked={sourceFilter === value} style={[styles.chip, sourceFilter === value && styles.chipOn]} onPress={() => onSourceFilterChange(value)}>
-                <Text style={[styles.chipLabel, sourceFilter === value && styles.chipLabelOn]}>{label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <Text style={styles.filterLabel}>Requirements</Text>
-          <RequirementFilter
-            hideUsCitizenshipRequired={hideUsCitizenshipRequired}
-            hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
-            onHideUsCitizenshipRequiredChange={onHideUsCitizenshipRequiredChange}
-            onHideAdvancedDegreeRequiredChange={onHideAdvancedDegreeRequiredChange}
-          />
-        </View>
-      ) : null}
     </View>
+  );
+}
+
+function FilterSheet({
+  visible,
+  initial,
+  onApply,
+  onClose,
+}: {
+  visible: boolean;
+  initial: CatalogFilterValues;
+  onApply: (filters: CatalogFilterValues) => void;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState(initial);
+  useEffect(() => {
+    if (visible) setDraft(initial);
+  }, [visible]);
+  const set = (patch: Partial<CatalogFilterValues>) => setDraft((current) => ({ ...current, ...patch }));
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.sheetOverlay}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close filters" style={styles.sheetDismissArea} onPress={onClose} />
+        <View style={styles.filterSheet}>
+          <Text style={styles.sheetTitle}>Filter roles</Text>
+          <ScrollView style={styles.filterSheetScroll} contentContainerStyle={styles.filterSheetContent}>
+            <Text style={styles.filterLabel}>Role focus</Text>
+            <MultiChipFilter label="Role focus" options={disciplineChipOptions} selected={draft.disciplines} onChange={(disciplines) => set({ disciplines })} />
+            <Text style={styles.filterLabel}>Season</Text>
+            <MultiChipFilter label="Season" options={seasonFilterOptions} selected={draft.seasons} onChange={(seasons) => set({ seasons })} />
+            <Text style={styles.filterLabel}>Work mode</Text>
+            <MultiChipFilter label="Work mode" options={workModeFilterOptions} selected={draft.workModes} onChange={(workModes) => set({ workModes })} />
+            <Text style={styles.filterLabel}>Education</Text>
+            <MultiChipFilter label="Education" options={educationFilterOptions} selected={draft.educationLevels} onChange={(educationLevels) => set({ educationLevels })} />
+            <Text style={styles.filterLabel}>Pay</Text>
+            <View style={styles.companyFilter}>
+              <TouchableOpacity
+                accessibilityRole="checkbox"
+                accessibilityLabel="Only roles with pay listed"
+                aria-checked={draft.hasCompensation}
+                style={[styles.chip, draft.hasCompensation && styles.chipOn]}
+                onPress={() => set({ hasCompensation: !draft.hasCompensation })}
+              >
+                <Text style={[styles.chipLabel, draft.hasCompensation && styles.chipLabelOn]}>Pay listed</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.filterLabel}>Company type</Text>
+            <EmployerCategoryFilter selected={draft.employerFilter} onChange={(employerFilter) => set({ employerFilter })} />
+            <Text style={styles.filterLabel}>Availability</Text>
+            <JobStatusFilter status={draft.jobStatus} onChange={(jobStatus) => set({ jobStatus })} />
+            <Text style={styles.filterLabel}>Source</Text>
+            <View style={styles.companyFilter} accessibilityRole="radiogroup" accessibilityLabel="Source">
+              {([['all', 'All'], ['direct', 'Direct'], ['community', 'Community'], ['corroborated', 'Direct + community']] as const).map(([value, label]) => (
+                <TouchableOpacity key={value} accessibilityRole="radio" aria-checked={draft.sourceFilter === value} style={[styles.chip, draft.sourceFilter === value && styles.chipOn]} onPress={() => set({ sourceFilter: value })}>
+                  <Text style={[styles.chipLabel, draft.sourceFilter === value && styles.chipLabelOn]}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={styles.filterLabel}>Requirements</Text>
+            <RequirementFilter
+              hideUsCitizenshipRequired={draft.hideUsCitizenshipRequired}
+              hideAdvancedDegreeRequired={draft.hideAdvancedDegreeRequired}
+              onHideUsCitizenshipRequiredChange={(hideUsCitizenshipRequired) => set({ hideUsCitizenshipRequired })}
+              onHideAdvancedDegreeRequiredChange={(hideAdvancedDegreeRequired) => set({ hideAdvancedDegreeRequired })}
+            />
+          </ScrollView>
+          <View style={styles.filterSheetActions}>
+            <ActionButton label="Show roles" onPress={() => onApply(draft)} />
+            <TouchableOpacity accessibilityRole="button" onPress={() => setDraft(emptyCatalogFilters)} style={styles.filterSheetClear}>
+              <Text style={styles.clearFiltersText}>Clear</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -2097,18 +2151,8 @@ function GroupedCatalogFeed({
   groups,
   query,
   onQueryChange,
-  source,
-  onSourceChange,
-  employerFilter,
-  onEmployerFilterChange,
-  jobStatus,
-  onJobStatusChange,
-  filtersExpanded,
-  onFiltersExpandedChange,
-  hideUsCitizenshipRequired,
-  onHideUsCitizenshipRequiredChange,
-  hideAdvancedDegreeRequired,
-  onHideAdvancedDegreeRequiredChange,
+  filters,
+  onFiltersChange,
   loading,
   error,
   loadingMore,
@@ -2128,18 +2172,8 @@ function GroupedCatalogFeed({
   groups: CatalogGroupRow[];
   query: string;
   onQueryChange: (value: string) => void;
-  source: CatalogSource;
-  onSourceChange: (value: CatalogSource) => void;
-  employerFilter: EmployerCategory | "all";
-  onEmployerFilterChange: (value: EmployerCategory | "all") => void;
-  jobStatus: "open" | "closed";
-  onJobStatusChange: (value: "open" | "closed") => void;
-  filtersExpanded: boolean;
-  onFiltersExpandedChange: (value: boolean) => void;
-  hideUsCitizenshipRequired: boolean;
-  onHideUsCitizenshipRequiredChange: (value: boolean) => void;
-  hideAdvancedDegreeRequired: boolean;
-  onHideAdvancedDegreeRequiredChange: (value: boolean) => void;
+  filters: CatalogFilterValues;
+  onFiltersChange: (next: CatalogFilterValues) => void;
   loading: boolean;
   error?: string;
   loadingMore: boolean;
@@ -2156,6 +2190,7 @@ function GroupedCatalogFeed({
   savingJobIds?: Set<string>;
   applicationStatuses?: Map<string, string>;
 }) {
+  const [sheetVisible, setSheetVisible] = useState(false);
   return (
     <>
       <View style={styles.roleFeedControls}>
@@ -2171,19 +2206,12 @@ function GroupedCatalogFeed({
           placeholderTextColor={colors.placeholder}
           style={styles.feedSearch}
         />
-        <RoleFilters
-          expanded={filtersExpanded}
-          onToggle={() => onFiltersExpandedChange(!filtersExpanded)}
-          employerFilter={employerFilter}
-          onEmployerFilterChange={onEmployerFilterChange}
-          jobStatus={jobStatus}
-          onJobStatusChange={onJobStatusChange}
-          sourceFilter={source}
-          onSourceFilterChange={onSourceChange}
-          hideUsCitizenshipRequired={hideUsCitizenshipRequired}
-          hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
-          onHideUsCitizenshipRequiredChange={onHideUsCitizenshipRequiredChange}
-          onHideAdvancedDegreeRequiredChange={onHideAdvancedDegreeRequiredChange}
+        <FilterBar activeCount={countActiveCatalogFilters(filters)} onOpen={() => setSheetVisible(true)} />
+        <FilterSheet
+          visible={sheetVisible}
+          initial={filters}
+          onApply={(next) => { setSheetVisible(false); onFiltersChange(next); }}
+          onClose={() => setSheetVisible(false)}
         />
       </View>
       <FlatList
@@ -2199,7 +2227,7 @@ function GroupedCatalogFeed({
           return (
             <CatalogGroupCard
               group={item}
-              status={jobStatus}
+              status={filters.jobStatus}
               onOpenGroup={() => onOpenGroup(item)}
               onOpenRole={onOpenRole}
               onSaveForWeb={featuredJob && onSaveForWeb ? () => { void onSaveForWeb(featuredJob); } : undefined}
@@ -2390,12 +2418,7 @@ function AppContent() {
   const [hiddenFeedbackJob, setHiddenFeedbackJob] = useState<Job>();
   const [query, setQuery] = useState("");
   const [guestSearchQuery, setGuestSearchQuery] = useState("");
-  const [employerFilter, setEmployerFilter] = useState<EmployerCategory | "all">("all");
-  const [jobStatus, setJobStatus] = useState<"open" | "closed">("open");
-  const [catalogSource, setCatalogSource] = useState<CatalogSource>("all");
-  const [hideUsCitizenshipRequired, setHideUsCitizenshipRequired] = useState(false);
-  const [hideAdvancedDegreeRequired, setHideAdvancedDegreeRequired] = useState(false);
-  const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [catalogFilters, setCatalogFilters] = useState<CatalogFilterValues>(emptyCatalogFilters);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string>();
   const [selectedGroup, setSelectedGroup] = useState<CatalogGroupDetails>();
@@ -2530,7 +2553,7 @@ function AppContent() {
     setCatalogError(undefined);
     setCatalogMoreError(undefined);
     const catalogQuery = (token ? query : guestSearchQuery).trim();
-    const params = groupedCatalogParameters({ query: catalogQuery, source: catalogSource, status: jobStatus, employerCategory: employerFilter, hideUsCitizenshipRequired, hideAdvancedDegreeRequired });
+    const params = groupedCatalogParameters({ query: catalogQuery, source: catalogFilters.sourceFilter, status: catalogFilters.jobStatus, employerCategory: catalogFilters.employerFilter, disciplines: catalogFilters.disciplines, seasons: catalogFilters.seasons, workModes: catalogFilters.workModes, educationLevels: catalogFilters.educationLevels, hasCompensation: catalogFilters.hasCompensation, hideUsCitizenshipRequired: catalogFilters.hideUsCitizenshipRequired, hideAdvancedDegreeRequired: catalogFilters.hideAdvancedDegreeRequired });
     void api<GroupedCatalogPage<CatalogGroupRow>>(`/catalog?${params.toString()}`, "")
       .then((page) => {
         if (catalogRequestGeneration.current !== requestGeneration) return;
@@ -2538,8 +2561,7 @@ function AppContent() {
         catalogCursorRef.current = page.cursor;
         setCatalogGroups(page.groups);
         setNextCatalogCursor(page.cursor);
-        if (!catalogQuery && catalogSource === "all" && jobStatus === "open" && employerFilter === "all"
-          && !hideUsCitizenshipRequired && !hideAdvancedDegreeRequired) {
+        if (!catalogQuery && countActiveCatalogFilters(catalogFilters) === 0) {
           void responseCache.set(catalogCacheKey, page);
         }
       })
@@ -2564,7 +2586,7 @@ function AppContent() {
         catalogRequestInFlight.current = false;
       }
     };
-  }, [catalogRefresh, query, guestSearchQuery, catalogSource, jobStatus, employerFilter, hideUsCitizenshipRequired, hideAdvancedDegreeRequired, token]);
+  }, [catalogRefresh, query, guestSearchQuery, catalogFilters, token]);
   const loadNextCatalogPage = (retry = false) => {
     const cursor = catalogCursorRef.current;
     if (!cursor || catalogRequestInFlight.current || (!retry && catalogMoreError)) return;
@@ -2574,7 +2596,7 @@ function AppContent() {
     setCatalogMoreError(undefined);
     const catalogQuery = (token ? query : guestSearchQuery).trim();
     const params = groupedCatalogParameters(
-      { query: catalogQuery, source: catalogSource, status: jobStatus, employerCategory: employerFilter, hideUsCitizenshipRequired, hideAdvancedDegreeRequired },
+      { query: catalogQuery, source: catalogFilters.sourceFilter, status: catalogFilters.jobStatus, employerCategory: catalogFilters.employerFilter, disciplines: catalogFilters.disciplines, seasons: catalogFilters.seasons, workModes: catalogFilters.workModes, educationLevels: catalogFilters.educationLevels, hasCompensation: catalogFilters.hasCompensation, hideUsCitizenshipRequired: catalogFilters.hideUsCitizenshipRequired, hideAdvancedDegreeRequired: catalogFilters.hideAdvancedDegreeRequired },
       { cursor },
     );
     void api<GroupedCatalogPage<CatalogGroupRow>>(`/catalog?${params.toString()}`, "")
@@ -2845,8 +2867,8 @@ function AppContent() {
     setSelectedGroupLoading(true);
     setSelectedGroupError(undefined);
     const params = groupedCatalogParameters({
-      query: (token ? query : guestSearchQuery).trim(), source: catalogSource, status: jobStatus,
-      employerCategory: employerFilter, hideUsCitizenshipRequired, hideAdvancedDegreeRequired,
+      query: (token ? query : guestSearchQuery).trim(), source: catalogFilters.sourceFilter, status: catalogFilters.jobStatus,
+      employerCategory: catalogFilters.employerFilter, disciplines: catalogFilters.disciplines, seasons: catalogFilters.seasons, workModes: catalogFilters.workModes, educationLevels: catalogFilters.educationLevels, hasCompensation: catalogFilters.hasCompensation, hideUsCitizenshipRequired: catalogFilters.hideUsCitizenshipRequired, hideAdvancedDegreeRequired: catalogFilters.hideAdvancedDegreeRequired,
     });
     params.delete("limit");
     void api<CatalogGroupDetails>(`/catalog/groups/${encodeURIComponent(groupId)}?${params.toString()}`, "")
@@ -2937,32 +2959,32 @@ function AppContent() {
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
   const catalogJobs = useMemo(() => {
-    const newJobs = jobStatus === "open" ? launchInbox?.jobs ?? [] : [];
+    const newJobs = catalogFilters.jobStatus === "open" ? launchInbox?.jobs ?? [] : [];
     return [
       ...newJobs,
       ...jobs.filter((job) => !newJobs.some((newJob) => newJob.jobId === job.jobId)),
     ];
-  }, [jobStatus, jobs, launchInbox]);
+  }, [catalogFilters.jobStatus, jobs, launchInbox]);
   const filtered = useMemo(
     () =>
       catalogJobs
         .filter((job) => !hiddenJobIds.has(job.jobId) || hiddenFeedbackJob?.jobId === job.jobId)
-        .filter((job) => employerFilter === "all" || (job.employerCategory ?? "normal") === employerFilter)
-        .filter((job) => !hideUsCitizenshipRequired || !job.requirements?.requiresUsCitizenship)
-        .filter((job) => !hideAdvancedDegreeRequired || !job.requirements?.advancedDegreeRequired)
+        .filter((job) => catalogFilters.employerFilter === "all" || (job.employerCategory ?? "normal") === catalogFilters.employerFilter)
+        .filter((job) => !catalogFilters.hideUsCitizenshipRequired || !job.requirements?.requiresUsCitizenship)
+        .filter((job) => !catalogFilters.hideAdvancedDegreeRequired || !job.requirements?.advancedDegreeRequired)
         .filter((job) =>
           `${job.company} ${job.title} ${job.location}`
             .toLowerCase()
             .includes(query.toLowerCase()),
         ),
-    [catalogJobs, employerFilter, hiddenFeedbackJob, hiddenJobIds, hideAdvancedDegreeRequired, hideUsCitizenshipRequired, query],
+    [catalogFilters, catalogJobs, hiddenFeedbackJob, hiddenJobIds, query],
   );
   const applicationStatuses = useMemo(
     () => new Map(applications.map((application) => [application.jobId, application.status])),
     [applications],
   );
   const roleSections = useMemo<RoleSection[]>(() => {
-    const newJobIds = new Set(jobStatus === "open" ? launchInbox?.jobs.map((job) => job.jobId) ?? [] : []);
+    const newJobIds = new Set(catalogFilters.jobStatus === "open" ? launchInbox?.jobs.map((job) => job.jobId) ?? [] : []);
     if (!newJobIds.size) return [{ kind: "all", data: filtered }];
     const newJobs = filtered.filter((job) => newJobIds.has(job.jobId));
     if (!newJobs.length) return [{ kind: "all", data: filtered }];
@@ -2971,7 +2993,7 @@ function AppContent() {
       { kind: "new", data: newJobs },
       ...(seenJobs.length ? [{ kind: "seen" as const, data: seenJobs }] : []),
     ];
-  }, [filtered, jobStatus, launchInbox]);
+  }, [catalogFilters.jobStatus, filtered, launchInbox]);
   const hideLocally = (job: Job) => {
     if (hiddenJobIds.has(job.jobId)) return;
     setHiddenJobIds((current) => {
@@ -3027,19 +3049,9 @@ function AppContent() {
         onDismissRoute={dismissRoutedJob}
         onModalDismissedRoute={finishDetailDismissal}
         onRetryRoute={retryRoutedJob}
-        jobStatus={jobStatus}
-        onJobStatusChange={setJobStatus}
-        employerFilter={employerFilter}
-        onEmployerFilterChange={setEmployerFilter}
-        filtersExpanded={filtersExpanded}
-        onFiltersExpandedChange={setFiltersExpanded}
-        hideUsCitizenshipRequired={hideUsCitizenshipRequired}
-        onHideUsCitizenshipRequiredChange={setHideUsCitizenshipRequired}
-        hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
-        onHideAdvancedDegreeRequiredChange={setHideAdvancedDegreeRequired}
+        filters={catalogFilters}
+        onFiltersChange={setCatalogFilters}
         onSearchQueryChange={setGuestSearchQuery}
-        sourceFilter={catalogSource}
-        onSourceFilterChange={setCatalogSource}
         catalogInitialLoading={catalogInitialLoading}
         catalogError={catalogError}
         catalogLoadingMore={catalogLoadingMore}
@@ -3182,18 +3194,8 @@ function AppContent() {
                 groups={catalogGroups}
                 query={query}
                 onQueryChange={setQuery}
-                source={catalogSource}
-                onSourceChange={setCatalogSource}
-                employerFilter={employerFilter}
-                onEmployerFilterChange={setEmployerFilter}
-                jobStatus={jobStatus}
-                onJobStatusChange={setJobStatus}
-                filtersExpanded={filtersExpanded}
-                onFiltersExpandedChange={setFiltersExpanded}
-                hideUsCitizenshipRequired={hideUsCitizenshipRequired}
-                onHideUsCitizenshipRequiredChange={setHideUsCitizenshipRequired}
-                hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
-                onHideAdvancedDegreeRequiredChange={setHideAdvancedDegreeRequired}
+                filters={catalogFilters}
+                onFiltersChange={setCatalogFilters}
                 loading={catalogInitialLoading}
                 error={catalogError}
                 loadingMore={catalogLoadingMore}
@@ -3604,19 +3606,9 @@ function GuestExperience({
   onDismissRoute,
   onModalDismissedRoute,
   onRetryRoute,
-  jobStatus,
-  onJobStatusChange,
-  employerFilter,
-  onEmployerFilterChange,
-  filtersExpanded,
-  onFiltersExpandedChange,
-  hideUsCitizenshipRequired,
-  onHideUsCitizenshipRequiredChange,
-  hideAdvancedDegreeRequired,
-  onHideAdvancedDegreeRequiredChange,
+  filters,
+  onFiltersChange,
   onSearchQueryChange,
-  sourceFilter,
-  onSourceFilterChange,
   catalogInitialLoading,
   catalogError,
   catalogLoadingMore,
@@ -3645,19 +3637,9 @@ function GuestExperience({
   onDismissRoute: () => void;
   onModalDismissedRoute: () => void;
   onRetryRoute: () => void;
-  jobStatus: "open" | "closed";
-  onJobStatusChange: (status: "open" | "closed") => void;
-  employerFilter: EmployerCategory | "all";
-  onEmployerFilterChange: (value: EmployerCategory | "all") => void;
-  filtersExpanded: boolean;
-  onFiltersExpandedChange: (value: boolean) => void;
-  hideUsCitizenshipRequired: boolean;
-  onHideUsCitizenshipRequiredChange: (value: boolean) => void;
-  hideAdvancedDegreeRequired: boolean;
-  onHideAdvancedDegreeRequiredChange: (value: boolean) => void;
+  filters: CatalogFilterValues;
+  onFiltersChange: (next: CatalogFilterValues) => void;
   onSearchQueryChange: (query: string) => void;
-  sourceFilter: CatalogSource;
-  onSourceFilterChange: (source: CatalogSource) => void;
   catalogInitialLoading: boolean;
   catalogError?: string;
   catalogLoadingMore: boolean;
@@ -3729,18 +3711,8 @@ function GuestExperience({
                 groups={groups}
                 query={query}
                 onQueryChange={(value) => { setQuery(value); onSearchQueryChange(value); }}
-                source={sourceFilter}
-                onSourceChange={onSourceFilterChange}
-                employerFilter={employerFilter}
-                onEmployerFilterChange={onEmployerFilterChange}
-                jobStatus={jobStatus}
-                onJobStatusChange={onJobStatusChange}
-                filtersExpanded={filtersExpanded}
-                onFiltersExpandedChange={onFiltersExpandedChange}
-                hideUsCitizenshipRequired={hideUsCitizenshipRequired}
-                onHideUsCitizenshipRequiredChange={onHideUsCitizenshipRequiredChange}
-                hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
-                onHideAdvancedDegreeRequiredChange={onHideAdvancedDegreeRequiredChange}
+                filters={filters}
+                onFiltersChange={onFiltersChange}
                 loading={catalogInitialLoading}
                 error={catalogError}
                 loadingMore={catalogLoadingMore}
@@ -6076,14 +6048,21 @@ const styles = StyleSheet.create({
   },
   filterToggleText: { color: colors.signal, fontSize: 15, fontWeight: "700" },
   filterToggleGlyph: { color: colors.signal, fontSize: 20, fontWeight: "400", marginLeft: 8 },
-  clearFilters: { minHeight: 48, justifyContent: "center", marginLeft: 16 },
   clearFiltersText: { color: colors.muted, fontSize: 15, fontWeight: "600" },
-  filterPanel: {
-    borderTopWidth: 1,
-    borderTopColor: colors.separator,
-    marginTop: 4,
-    paddingTop: 16,
+  filterSheet: {
+    backgroundColor: colors.canvas,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: "88%",
+    minHeight: 280,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 28,
   },
+  filterSheetScroll: { marginTop: 8 },
+  filterSheetContent: { paddingBottom: 16 },
+  filterSheetActions: { alignItems: "center", flexDirection: "row", gap: 16, marginTop: 8 },
+  filterSheetClear: { minHeight: 48, justifyContent: "center", paddingHorizontal: 12 },
   coverageRegion: {
     borderTopColor: colors.separator,
     borderTopWidth: 1,
