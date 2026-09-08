@@ -25,7 +25,9 @@ describe('Cloudflare deployment configuration', () => {
 
   it('assigns every cron and queue consumer to ingestion only', () => {
     const api = JSON.parse(read('wrangler.api.jsonc')) as { queues?: { producers?: Array<{ binding: string }>; consumers?: unknown[] }; triggers?: unknown };
-    const ingestion = JSON.parse(read('wrangler.ingestion.jsonc')) as { queues: { producers: Array<{ binding: string }>; consumers: Array<{ queue: string }> }; triggers: { crons: string[] }; workers_dev: boolean; preview_urls: boolean };
+    const ingestion = JSON.parse(read('wrangler.ingestion.jsonc')) as { queues: { producers: Array<{ binding: string }>; consumers: Array<{
+      queue: string; max_batch_size: number; max_batch_timeout?: number; max_concurrency?: number; max_retries: number; dead_letter_queue: string;
+    }> }; triggers: { crons: string[] }; workers_dev: boolean; preview_urls: boolean };
 
     expect(api.queues?.consumers ?? []).toEqual([]);
     expect(api.triggers).toBeUndefined();
@@ -36,6 +38,29 @@ describe('Cloudflare deployment configuration', () => {
     expect(ingestion.triggers.crons).toHaveLength(9);
     expect(ingestion.workers_dev).toBe(false);
     expect(ingestion.preview_urls).toBe(false);
+  });
+
+  it('keeps destination-verification consumer limits synchronized across Wrangler and OpenTofu', () => {
+    const ingestion = JSON.parse(read('wrangler.ingestion.jsonc')) as { queues: { consumers: Array<{
+      queue: string; max_batch_size: number; max_batch_timeout?: number; max_concurrency?: number; max_retries: number; dead_letter_queue: string;
+    }> } };
+    const consumer = ingestion.queues.consumers.find(({ queue }) => queue === 'intern-notifs-destination-verification');
+    expect(consumer).toEqual({
+      queue: 'intern-notifs-destination-verification',
+      max_batch_size: 5,
+      max_batch_timeout: 60,
+      max_concurrency: 1,
+      max_retries: 2,
+      dead_letter_queue: 'intern-notifs-destination-verification-dlq',
+    });
+
+    const terraform = read('infra/cloudflare/main.tf');
+    const start = terraform.indexOf('resource "cloudflare_queue_consumer" "ingestion"');
+    const end = terraform.indexOf('resource "cloudflare_workers_cron_trigger" "ingestion"', start);
+    const queueConsumer = terraform.slice(start, end);
+    expect(queueConsumer).toContain('batch_size       = each.key == "destination-verification" ? 5 : 1');
+    expect(queueConsumer).toContain('max_concurrency  = contains(["greenhouse", "github"], each.key) ? 2 : 1');
+    expect(queueConsumer).toContain('max_wait_time_ms = each.key == "destination-verification" ? 60000 : 5000');
   });
 
   it('requires explicit Worker configuration rather than retaining a shared default', () => {

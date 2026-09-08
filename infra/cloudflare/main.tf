@@ -140,7 +140,7 @@ resource "cloudflare_queue_consumer" "ingestion" {
   script_name       = cloudflare_workers_script.ingestion.script_name
   dead_letter_queue = cloudflare_queue.dead_letter[each.key].queue_name
   settings = {
-    batch_size       = each.key == "destination-verification" ? 20 : 1
+    batch_size       = each.key == "destination-verification" ? 5 : 1
     max_concurrency  = contains(["greenhouse", "github"], each.key) ? 2 : 1
     max_retries      = each.key == "gmail" ? 5 : 2
     max_wait_time_ms = each.key == "destination-verification" ? 60000 : 5000

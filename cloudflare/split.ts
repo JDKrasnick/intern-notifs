@@ -17,6 +17,7 @@ export function isIngestionOperationPath(pathname: string): boolean {
     || pathname === '/internal/poll-source'
     || pathname === '/internal/backfill'
     || pathname.startsWith('/internal/admission/')
+    || pathname.startsWith('/internal/role-metadata/')
     || pathname.startsWith('/internal/operations/')
     || pathname.startsWith('/operations/');
 }

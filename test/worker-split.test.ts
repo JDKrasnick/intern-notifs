@@ -19,6 +19,7 @@ describe('API and ingestion Worker boundary', () => {
     expect(response.status).toBe(200);
     expect(forwarded?.headers.get('X-InternNotifs-Service-Key')).toBe('internal-test-secret');
     expect(isIngestionOperationPath('/internal/backfill')).toBe(true);
+    expect(isIngestionOperationPath('/internal/role-metadata/backfill')).toBe(true);
     expect(isIngestionOperationPath('/jobs')).toBe(false);
   });
 
