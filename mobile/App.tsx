@@ -364,7 +364,7 @@ async function openOfficialApplication(url: string) {
   }
 }
 
-function JobSource({ source }: { source: ReturnType<typeof sourcePresentation> }) {
+function JobSource({ source, showIdentityUnconfirmed = false }: { source: ReturnType<typeof sourcePresentation>; showIdentityUnconfirmed?: boolean }) {
   const icon = source.primary === "Employer submitted"
     ? "business-outline"
     : source.primary.startsWith("Official")
@@ -377,6 +377,13 @@ function JobSource({ source }: { source: ReturnType<typeof sourcePresentation> }
       <Ionicons name={icon} size={14} color={colors.muted} />
       <Text style={styles.jobSourceText}>{source.primary}</Text>
       {source.corroboration ? <Text style={styles.jobSourceCorroboration}>{source.corroboration}</Text> : null}
+      {showIdentityUnconfirmed ? (
+        <>
+          <Text style={styles.jobSourceText}>·</Text>
+          <Ionicons name="shield-outline" size={14} color={colors.muted} />
+          <Text style={styles.jobSourceText} accessibilityLabel="Identity unconfirmed">Identity unconfirmed</Text>
+        </>
+      ) : null}
     </View>
   );
 }
@@ -426,6 +433,7 @@ function JobCard({
   onSaveForWeb,
   isSavingForWeb = false,
   onHideLocally,
+  onUnsave,
 }: {
   job: Job;
   onOpen: () => void;
@@ -435,6 +443,7 @@ function JobCard({
   onSaveForWeb?: () => void;
   isSavingForWeb?: boolean;
   onHideLocally?: () => void;
+  onUnsave?: () => void;
 }) {
   const display = presentCatalogRole(job);
   const motionAllowed = useContext(MotionAllowedContext);
@@ -464,6 +473,10 @@ function JobCard({
   const handleSave = () => {
     if (isHiding || !onSaveForWeb) return;
     onSaveForWeb();
+  };
+  const handleUnsave = () => {
+    if (isHiding || !onUnsave) return;
+    onUnsave();
   };
   const resetPosition = () => {
     if (!motionAllowed) {
@@ -605,38 +618,35 @@ function JobCard({
               ) : null}
             </View>
             <Text style={styles.title} numberOfLines={2}>{display.title}</Text>
-            <Text style={styles.muted} numberOfLines={2}>
+            <Text style={styles.muted} numberOfLines={3}>
               {display.location} · {display.season}
+              {display.compensation ? <Text style={styles.payInline}> · {display.compensation}</Text> : null}
             </Text>
-            <JobSource source={source} />
-            {job.postingIdentityStatus === "unconfirmed" ? <IdentityTrustLabel /> : null}
+            <JobSource source={source} showIdentityUnconfirmed={job.postingIdentityStatus === "unconfirmed"} />
             <Text style={styles.postingTiming}>{postingTiming.summary}</Text>
             {!job.open ? <Text style={styles.closedStatus}>Closed</Text> : null}
-            {display.compensation ? (
-              <View style={styles.jobCardMidPills}>
-                <Text style={styles.pay} numberOfLines={2}>{display.compensation}</Text>
-              </View>
-            ) : null}
-            {applicationStatus ? (
-              <View style={styles.jobApplicationStatus}>
-                <Text style={styles.jobApplicationStatusText}>{applicationStatus.toUpperCase()}</Text>
-              </View>
-            ) : null}
             <View style={styles.jobCardFooterLeft}>
               <View style={styles.jobCardActionCompact}>
                 <Text style={styles.jobCardActionText}>View role</Text>
                 <Text style={styles.jobCardActionArrow}>›</Text>
               </View>
               <View style={styles.jobCardBottomActions}>
-                {canSaveForWeb ? (
-                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Save for web" onPress={handleSave} style={styles.webSaveButtonCompact}>
-                    <Ionicons name="bookmark" size={14} color="#FFFFFF" />
-                    <Text style={styles.webSaveButtonText}>Save</Text>
-                  </TouchableOpacity>
-                ) : isSavingForWeb ? (
+                {isSavingForWeb ? (
                   <View style={styles.webSaveButtonCompact}>
                     <Text style={styles.webSaveButtonText}>Saving…</Text>
                   </View>
+                ) : null}
+                {!isSavingForWeb && applicationStatus ? (
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Unsave" onPress={handleUnsave} style={styles.webUnsaveButtonCompact}>
+                    <Ionicons name="bookmark" size={14} color={colors.signal} />
+                    <Text style={styles.webUnsaveButtonText}>Saved</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {!isSavingForWeb && !applicationStatus && canSaveForWeb ? (
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Save for web" onPress={handleSave} style={styles.webSaveButtonCompact}>
+                    <Ionicons name="bookmark" size={14} color={colors.onDark} />
+                    <Text style={styles.webSaveButtonText}>Save</Text>
+                  </TouchableOpacity>
                 ) : null}
                 {canHideLocally ? (
                   <TouchableOpacity accessibilityRole="button" accessibilityLabel="Hide on this device" onPress={handleHide} style={styles.webHideButtonCompact}>
@@ -687,6 +697,8 @@ function CatalogGroupCard({
   onSaveForWeb,
   isSavingForWeb = false,
   onHideLocally,
+  applicationStatus,
+  onUnsave,
 }: {
   group: CatalogGroupRow;
   onOpenGroup: () => void;
@@ -695,6 +707,8 @@ function CatalogGroupCard({
   onSaveForWeb?: () => void;
   isSavingForWeb?: boolean;
   onHideLocally?: () => void;
+  applicationStatus?: string;
+  onUnsave?: () => void;
 }) {
   const motionAllowed = useContext(MotionAllowedContext);
   const hideFade = useRef(new Animated.Value(1)).current;
@@ -702,7 +716,8 @@ function CatalogGroupCard({
   const hideTranslateY = useRef(new Animated.Value(0)).current;
   const [isHiding, setIsHiding] = useState(false);
   const translateX = useRef(new Animated.Value(0)).current;
-  const canSaveForWeb = Boolean(onSaveForWeb) && !isSavingForWeb;
+  const isSaved = Boolean(applicationStatus);
+  const canSaveForWeb = Boolean(onSaveForWeb) && !isSaved && !isSavingForWeb;
   const canHideLocally = Boolean(onHideLocally);
   const handleHide = () => {
     if (isHiding || !onHideLocally) return;
@@ -751,7 +766,7 @@ function CatalogGroupCard({
   const hideActionProgress = translateX.interpolate({ inputRange: [0, 36, 108], outputRange: [0, 0.32, 1], extrapolate: "clamp" });
   if (catalogCardKind(group) === "role") {
     const job = catalogRoleJob(group.featuredRole);
-    return <JobCard job={job} onOpen={() => onOpenRole(job)} onSaveForWeb={onSaveForWeb} isSavingForWeb={isSavingForWeb} onHideLocally={onHideLocally} />;
+    return <JobCard job={job} onOpen={() => onOpenRole(job)} onSaveForWeb={onSaveForWeb} isSavingForWeb={isSavingForWeb} onHideLocally={onHideLocally} applicationStatus={applicationStatus} onUnsave={onUnsave} />;
   }
   const label = catalogGroupAvailabilityLabel(group, status);
   const education = group.education
@@ -811,18 +826,12 @@ function CatalogGroupCard({
             <Text style={styles.catalogGroupTitle} numberOfLines={group.roleCount === 1 ? 2 : 3}>
               {groupTitles.join(" · ")}
             </Text>
-            <Text style={styles.catalogGroupMeta} numberOfLines={2}>
+            <Text style={styles.catalogGroupMeta} numberOfLines={3}>
               {[groupLocation, group.seasons.map(seasonLabel).join(" · ")].filter(Boolean).join("  •  ")}
+              {compensation.length ? <Text style={styles.payInline}> · {compensation.slice(0, 2).join(" · ")}{compensation.length > 2 ? ` + ${compensation.length - 2} more` : ""}</Text> : null}
             </Text>
             {featuredRole ? <JobSource source={source} /> : null}
             {postingTiming ? <Text style={styles.postingTiming}>{postingTiming.summary}</Text> : null}
-            {compensation.length ? (
-              <View style={styles.jobCardMidPills}>
-                <Text style={styles.catalogGroupRolePay} numberOfLines={2}>
-                  {compensation.slice(0, 2).join(" · ")}{compensation.length > 2 ? ` + ${compensation.length - 2} more` : ""}
-                </Text>
-              </View>
-            ) : null}
             {education ? <Text style={styles.catalogGroupEducation} numberOfLines={2}>{education}</Text> : null}
             {group.unconfirmedRoleCount ? (
               <Text style={styles.catalogGroupIdentity} accessibilityLabel={`${group.unconfirmedRoleCount} ${group.unconfirmedRoleCount === 1 ? "role" : "roles"}: identity unconfirmed`}>
@@ -835,9 +844,20 @@ function CatalogGroupCard({
                 <Ionicons name="chevron-forward" size={17} color={colors.signal} />
               </View>
               <View style={styles.jobCardBottomActions}>
+                {isSavingForWeb ? (
+                  <View style={styles.webSaveButtonCompact}>
+                    <Text style={styles.webSaveButtonText}>Saving…</Text>
+                  </View>
+                ) : null}
+                {!isSavingForWeb && isSaved ? (
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Unsave" onPress={() => { if (!onUnsave) return; onUnsave(); }} style={styles.webUnsaveButtonCompact}>
+                    <Ionicons name="bookmark" size={14} color={colors.signal} />
+                    <Text style={styles.webUnsaveButtonText}>Saved</Text>
+                  </TouchableOpacity>
+                ) : null}
                 {canSaveForWeb ? (
                   <TouchableOpacity accessibilityRole="button" accessibilityLabel="Save for web" onPress={handleSave} style={styles.webSaveButtonCompact}>
-                    <Ionicons name="bookmark" size={14} color="#FFFFFF" />
+                    <Ionicons name="bookmark" size={14} color={colors.onDark} />
                     <Text style={styles.webSaveButtonText}>Save</Text>
                   </TouchableOpacity>
                 ) : null}
@@ -1184,7 +1204,7 @@ function JobDetailSheet({
                     }}
                     style={styles.sheetSaveBar}
                   >
-                    <Ionicons name="bookmark" size={18} color="#FFFFFF" />
+                    <Ionicons name="bookmark" size={18} color={colors.onDark} />
                     <Text style={styles.sheetSaveBarText}>Save</Text>
                   </TouchableOpacity>
                 ) : isSaved && onUnsave && role ? (
@@ -1194,7 +1214,7 @@ function JobDetailSheet({
                     onPress={() => { onUnsave(role); onDismiss(); }}
                     style={styles.sheetSavedBar}
                   >
-                    <Ionicons name="bookmark" size={18} color="#92400E" />
+                    <Ionicons name="bookmark" size={18} color={colors.signal} />
                     <Text style={styles.sheetSavedBarText}>Saved</Text>
                   </TouchableOpacity>
                 ) : isSavingForWeb ? (
@@ -1489,7 +1509,6 @@ function RoleFilters({
           />
         </View>
       ) : null}
-      <CompanyCoverageDisclosure />
     </View>
   );
 }
@@ -2100,6 +2119,11 @@ function GroupedCatalogFeed({
   onRetry,
   onOpenGroup,
   onOpenRole,
+  onSaveForWeb,
+  onHideLocally,
+  onUnsave,
+  savingJobIds,
+  applicationStatuses,
 }: {
   groups: CatalogGroupRow[];
   query: string;
@@ -2126,6 +2150,11 @@ function GroupedCatalogFeed({
   onRetry: () => void;
   onOpenGroup: (group: CatalogGroupRow) => void;
   onOpenRole: (job: Job) => void;
+  onSaveForWeb?: (job: Job) => void | Promise<boolean>;
+  onHideLocally?: (job: Job) => void;
+  onUnsave?: (job: Job) => void;
+  savingJobIds?: Set<string>;
+  applicationStatuses?: Map<string, string>;
 }) {
   return (
     <>
@@ -2163,14 +2192,24 @@ function GroupedCatalogFeed({
         contentContainerStyle={styles.feedListContent}
         onEndReached={onLoadMore}
         onEndReachedThreshold={0.6}
-        renderItem={({ item }) => (
-          <CatalogGroupCard
-            group={item}
-            status={jobStatus}
-            onOpenGroup={() => onOpenGroup(item)}
-            onOpenRole={onOpenRole}
-          />
-        )}
+        renderItem={({ item }) => {
+          const featuredJob = item.featuredRole ? catalogRoleJob(item.featuredRole) : undefined;
+          const isSaving = featuredJob ? savingJobIds?.has(featuredJob.jobId) : false;
+          const applicationStatus = featuredJob ? applicationStatuses?.get(featuredJob.jobId) : undefined;
+          return (
+            <CatalogGroupCard
+              group={item}
+              status={jobStatus}
+              onOpenGroup={() => onOpenGroup(item)}
+              onOpenRole={onOpenRole}
+              onSaveForWeb={featuredJob && onSaveForWeb ? () => { void onSaveForWeb(featuredJob); } : undefined}
+              isSavingForWeb={isSaving}
+              onHideLocally={featuredJob && onHideLocally ? () => onHideLocally(featuredJob) : undefined}
+              applicationStatus={applicationStatus}
+              onUnsave={featuredJob && onUnsave ? () => onUnsave(featuredJob) : undefined}
+            />
+          );
+        }}
         ListEmptyComponent={
           loading ? <CatalogInitialLoading /> : error ? (
             <View style={styles.catalogUnavailable}>
@@ -2220,19 +2259,21 @@ function AppLoadingSkeleton() {
             <Skeleton width={46} height={14} />
           </View>
         ) : null}
-        <View style={styles.skeletonPage}>
-          <View style={styles.loadingTitleGroup}>
-            <Skeleton width={94} height={12} />
-            <View style={styles.skeletonGap8} />
-            <Skeleton width={168} height={28} />
+        <View style={styles.appMain}>
+          <View style={styles.skeletonPage}>
+            <View style={styles.loadingTitleGroup}>
+              <Skeleton width={94} height={12} />
+              <View style={styles.skeletonGap8} />
+              <Skeleton width={168} height={28} />
+            </View>
+            <View style={styles.skeletonSearch} />
+            <View style={styles.skeletonSection}>
+              <Skeleton width={132} height={12} />
+              <View style={styles.skeletonGap8} />
+              <Skeleton width={248} height={14} />
+            </View>
+            {[0, 1, 2].map((index) => <LoadingRoleCard key={index} index={index} />)}
           </View>
-          <View style={styles.skeletonSearch} />
-          <View style={styles.skeletonSection}>
-            <Skeleton width={132} height={12} />
-            <View style={styles.skeletonGap8} />
-            <Skeleton width={248} height={14} />
-          </View>
-          {[0, 1, 2].map((index) => <LoadingRoleCard key={index} index={index} />)}
         </View>
         {!usesNavigationRail ? (
           <View style={styles.skeletonNav}>
@@ -2681,6 +2722,11 @@ function AppContent() {
     setSelectedMatchReasons(destination.reasons);
     setSelectedExclusionsApplied(destination.exclusionsApplied);
     setJobRouteState("loading");
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("job", destination.jobId);
+      window.history.pushState({ jobId: destination.jobId }, "", url.toString());
+    }
     void api<Job>(`/jobs/${encodeURIComponent(destination.jobId)}`, "")
       .then((job) => {
         if (routedJobId.current !== destination.jobId) return;
@@ -2709,6 +2755,23 @@ function AppContent() {
     setSelectedMatchReasons([]);
     setSelectedExclusionsApplied(false);
     setJobRouteState("idle");
+    if (Platform.OS === "web" && typeof window !== "undefined" && wasVisible) {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("job")) {
+        url.searchParams.delete("job");
+        // If we pushed a job state, back will return to catalog without empty page.
+        // Use back when possible, otherwise replace.
+        if (window.history.state?.jobId) {
+          window.history.back();
+        } else {
+          window.history.replaceState({}, "", url.toString());
+        }
+        // Prevent double-dismiss from popstate
+        wasVisible && (detailDismissalPending.current = true);
+        InteractionManager.runAfterInteractions(finishDetailDismissal);
+        return;
+      }
+    }
     if (!wasVisible) return;
     detailDismissalPending.current = true;
     // React Native does not emit Modal.onDismiss on Android. Waiting for
@@ -2771,6 +2834,11 @@ function AppContent() {
     setSelectedExclusionsApplied(false);
     setJobRouteState("idle");
     setSelectedJob(job);
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("job", job.jobId);
+      window.history.pushState({ jobId: job.jobId }, "", url.toString());
+    }
   };
   const loadCatalogGroup = (groupId: string) => {
     const requestGeneration = groupRequestGuard.current.begin(groupId);
@@ -2848,6 +2916,25 @@ function AppContent() {
       notificationSubscription.remove();
       urlSubscription.remove();
     };
+  }, []);
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+    // Handle initial ?job param and back/forward navigation
+    const initialJobId = new URL(window.location.href).searchParams.get("job");
+    if (initialJobId && !detailVisible.current) {
+      openDestination({ kind: "job", jobId: initialJobId, reasons: [], exclusionsApplied: false });
+    }
+    const onPopState = () => {
+      const url = new URL(window.location.href);
+      const jobId = url.searchParams.get("job");
+      if (!jobId && detailVisible.current) {
+        dismissRoutedJob();
+      } else if (jobId && routedJobId.current !== jobId) {
+        openDestination({ kind: "job", jobId, reasons: [], exclusionsApplied: false });
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
   }, []);
   const catalogJobs = useMemo(() => {
     const newJobs = jobStatus === "open" ? launchInbox?.jobs ?? [] : [];
@@ -3049,6 +3136,27 @@ function AppContent() {
       }
     })();
   };
+  const unsaveForWeb = (job: Job) => {
+    const app = applications.find((a) => a.jobId === job.jobId);
+    if (!app) return;
+    if (savingJobIds.has(job.jobId)) return;
+    setSavingJobIds((current) => new Set(current).add(job.jobId));
+    void (async () => {
+      try {
+        await api(`/me/applications/${encodeURIComponent(app.applicationId)}`, token, { method: "DELETE" });
+        setApplications((current) => current.filter((item) => item.applicationId !== app.applicationId));
+        void clearApplicationFollowUp(app.applicationId).catch(() => undefined);
+      } catch (error) {
+        Alert.alert("Could not unsave role", error instanceof Error ? error.message : "Please try again.");
+      } finally {
+        setSavingJobIds((current) => {
+          const updated = new Set(current);
+          updated.delete(job.jobId);
+          return updated;
+        });
+      }
+    })();
+  };
   return (
     <SafeAreaView style={styles.screen}>
       <View style={[styles.appShell, usesNavigationRail && styles.appShellWide]}>
@@ -3096,6 +3204,11 @@ function AppContent() {
                 onRetry={() => setCatalogRefresh((value) => value + 1)}
                 onOpenGroup={openCatalogGroup}
                 onOpenRole={openCatalogJob}
+                onSaveForWeb={saveForWeb}
+                onHideLocally={hideLocally}
+                onUnsave={unsaveForWeb}
+                savingJobIds={savingJobIds}
+                applicationStatuses={applicationStatuses}
               />
             )
           ) : tab === "saved" ? (
@@ -3568,6 +3681,34 @@ function GuestExperience({
   const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
   const [query, setQuery] = useState("");
   const [showAccount, setShowAccount] = useState(false);
+  const openAccount = () => {
+    setShowAccount(true);
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("auth", "signin");
+      window.history.pushState({ auth: true }, "", url.toString());
+    }
+  };
+  const closeAccount = () => {
+    setShowAccount(false);
+    if (Platform.OS === "web" && typeof window !== "undefined" && window.history.state?.auth) {
+      window.history.back();
+    } else if (Platform.OS === "web" && typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("auth");
+      window.history.replaceState({}, "", url.toString());
+    }
+  };
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+    const onPopState = () => {
+      const hasAuth = new URL(window.location.href).searchParams.has("auth") || Boolean(window.history.state?.auth);
+      if (!hasAuth && showAccount) setShowAccount(false);
+      if (hasAuth && !showAccount) setShowAccount(true);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [showAccount]);
   return (
     <View style={styles.guestRoot}>
       <SafeAreaView
@@ -3610,12 +3751,14 @@ function GuestExperience({
                 onRetry={onRetryCatalog}
                 onOpenGroup={onOpenGroup}
                 onOpenRole={onOpenJob}
+                onSaveForWeb={async () => { openAccount(); return false; }}
+                onHideLocally={onHideLocally as unknown as (job: Job) => void}
               />
             </View>
             {tab === "saved" ? (
               <AccountGate
                 feature="save and track applications"
-                onSignIn={() => setShowAccount(true)}
+                onSignIn={openAccount}
               />
             ) : tab === "profile" ? (
               <Profile
@@ -3623,7 +3766,7 @@ function GuestExperience({
                 hiddenJobs={hiddenJobs}
                 onRestoreHiddenRole={onRestoreHiddenRole}
                 onPreferencesChanged={onPreferencesChanged}
-                onSignIn={() => setShowAccount(true)}
+                onSignIn={openAccount}
               />
             ) : null}
           </View>
@@ -3644,11 +3787,13 @@ function GuestExperience({
           onOpenListing={(job) => {
             void openOfficialApplication(job.applyUrl);
           }}
+          onSaveForWeb={async () => { openAccount(); return false; }}
+          onHideLocally={onHideLocally}
         />
       </SafeAreaView>
       {showAccount ? (
         <View style={styles.authOverlay}>
-          <SignIn onSession={onSession} onBrowse={() => setShowAccount(false)} />
+          <SignIn onSession={onSession} onBrowse={closeAccount} />
         </View>
       ) : null}
     </View>
@@ -5680,7 +5825,7 @@ const styles = StyleSheet.create({
   swipeCardSurface: { marginBottom: 0 },
   swipeSaveAction: {
     alignItems: "center",
-    backgroundColor: "#F59E0B",
+    backgroundColor: colors.ink,
     borderRadius: 14,
     bottom: 0,
     flexDirection: "row",
@@ -5718,18 +5863,18 @@ const styles = StyleSheet.create({
   catalogGroupFooterLeft: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12, gap: 12 },
   jobCardActionCompact: { alignItems: "center", flexDirection: "row", gap: 4 },
   jobCompanyLeft: { flexDirection: "row", alignItems: "center", flex: 1, minWidth: 0 },
-  sheetSaveBar: { alignItems: "center", backgroundColor: "#F59E0B", borderColor: "#F59E0B", borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
-  sheetSaveBarText: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
-  sheetSavedBar: { alignItems: "center", backgroundColor: "#FFFBEB", borderColor: "#FDE68A", borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
-  sheetSavedBarText: { color: "#92400E", fontSize: 16, fontWeight: "800" },
+  sheetSaveBar: { alignItems: "center", backgroundColor: colors.ink, borderColor: colors.ink, borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
+  sheetSaveBarText: { color: colors.onDark, fontSize: 16, fontWeight: "800" },
+  sheetSavedBar: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
+  sheetSavedBarText: { color: colors.signal, fontSize: 16, fontWeight: "800" },
   sheetHideBar: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
   sheetHideBarText: { color: colors.body, fontSize: 16, fontWeight: "700" },
-  webSaveButton: { alignItems: "center", backgroundColor: "#F59E0B", borderColor: "#F59E0B", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
-  webSaveButtonCompact: { alignItems: "center", backgroundColor: "#F59E0B", borderColor: "#F59E0B", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
-  webSaveButtonText: { color: "#FFFFFF", fontSize: 13, fontWeight: "800" },
-  webUnsaveButton: { alignItems: "center", backgroundColor: "#FFFBEB", borderColor: "#FDE68A", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
-  webUnsaveButtonCompact: { alignItems: "center", backgroundColor: "#FFFBEB", borderColor: "#FDE68A", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
-  webUnsaveButtonText: { color: "#92400E", fontSize: 13, fontWeight: "800" },
+  webSaveButton: { alignItems: "center", backgroundColor: colors.ink, borderColor: colors.ink, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
+  webSaveButtonCompact: { alignItems: "center", backgroundColor: colors.ink, borderColor: colors.ink, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
+  webSaveButtonText: { color: colors.onDark, fontSize: 13, fontWeight: "800" },
+  webUnsaveButton: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
+  webUnsaveButtonCompact: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
+  webUnsaveButtonText: { color: colors.signal, fontSize: 13, fontWeight: "800" },
   webHideButton: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
   webHideButtonCompact: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
   webHideButtonText: { color: colors.muted, fontSize: 13, fontWeight: "700" },
@@ -5883,21 +6028,13 @@ const styles = StyleSheet.create({
   jobSourceText: { color: colors.muted, flexShrink: 1, fontSize: 13, fontWeight: "600", lineHeight: 18 },
   jobSourceCorroboration: { color: colors.signal, fontSize: 12, fontWeight: "700", lineHeight: 18 },
   pay: { color: colors.success, fontSize: 13, fontWeight: "700", marginTop: 6 },
+  payInline: { color: colors.success, fontSize: 13, fontWeight: "700" },
   closedStatus: { marginTop: 8, color: colors.danger, fontWeight: "700" },
   jobCardAction: { alignItems: "center", flexDirection: "row", marginTop: 14 },
   jobCardActionText: { color: colors.signal, fontSize: 15, fontWeight: "700" },
   jobCardActionArrow: { color: colors.signal, fontSize: 22, lineHeight: 20, marginLeft: 5 },
   identityTrustRow: { alignItems: "center", flexDirection: "row", gap: 5, marginTop: 6 },
   identityTrustText: { color: colors.muted, fontSize: 13, fontWeight: "600", lineHeight: 18 },
-  jobApplicationStatus: {
-    alignSelf: "flex-start",
-    backgroundColor: colors.signalSoft,
-    borderRadius: 999,
-    marginTop: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  jobApplicationStatusText: { color: colors.signal, fontSize: 12, fontWeight: "800", letterSpacing: 0.5 },
   search: {
     backgroundColor: colors.surface,
     borderWidth: 1,
