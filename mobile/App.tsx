@@ -326,7 +326,9 @@ if (Platform.OS === 'web' && typeof document !== 'undefined') {
 const MotionAllowedContext = createContext(false);
 
 function useMotionAllowed() {
-  const [motionAllowed, setMotionAllowed] = useState(false);
+  // Start enabled so the first interaction does not render without motion and
+  // then restart its transition when the async accessibility check resolves.
+  const [motionAllowed, setMotionAllowed] = useState(true);
   useEffect(() => {
     let mounted = true;
     void AccessibilityInfo.isReduceMotionEnabled()
@@ -450,6 +452,8 @@ function JobCard({
 }) {
   const display = presentCatalogRole(job);
   const motionAllowed = useContext(MotionAllowedContext);
+  const { width } = useWindowDimensions();
+  const compactMobile = width < 600;
   const source = sourcePresentation(job.sourceReferences);
   const translateX = useRef(new Animated.Value(0)).current;
   const hideFade = useRef(new Animated.Value(1)).current;
@@ -598,7 +602,7 @@ function JobCard({
               if (event.nativeEvent.actionName === "unsave") handleUnsave();
               if (event.nativeEvent.actionName === "hide") handleHide();
             }}
-            style={[styles.card, styles.swipeCardSurface]}
+            style={[styles.card, styles.swipeCardSurface, compactMobile && styles.mobileRoleCard]}
             onPress={onOpen}
           >
             <View style={styles.jobCompanyRow}>
@@ -624,15 +628,15 @@ function JobCard({
                 </View>
               ) : null}
             </View>
-            <Text style={styles.title} numberOfLines={2}>{display.title}</Text>
-            <Text style={styles.muted} numberOfLines={3}>
+            <Text style={[styles.title, compactMobile && styles.mobileRoleTitle]} numberOfLines={2}>{display.title}</Text>
+            <Text style={[styles.muted, compactMobile && styles.mobileRoleMeta]} numberOfLines={3}>
               {display.location} · {display.season}
               {display.compensation ? <Text style={styles.payInline}> · {display.compensation}</Text> : null}
             </Text>
-            <JobSource source={source} showIdentityUnconfirmed={job.postingIdentityStatus === "unconfirmed"} />
-            <Text style={styles.postingTiming}>{postingTiming.summary}</Text>
+            <View style={compactMobile && styles.mobileRoleSource}><JobSource source={source} showIdentityUnconfirmed={job.postingIdentityStatus === "unconfirmed"} /></View>
+            <Text style={[styles.postingTiming, compactMobile && styles.mobileRoleTiming]}>{postingTiming.summary}</Text>
             {!job.open ? <Text style={styles.closedStatus}>Closed</Text> : null}
-            <View style={styles.jobCardFooterLeft}>
+            <View style={[styles.jobCardFooterLeft, compactMobile && styles.mobileRoleFooter]}>
               <View style={styles.jobCardActionCompact}>
                 <Text style={styles.jobCardActionText}>View role</Text>
                 <Text style={styles.jobCardActionArrow}>›</Text>
@@ -1062,7 +1066,8 @@ function JobDetailSheet({
   onUnsave?: (job: Job) => void;
 }) {
   const motionAllowed = useContext(MotionAllowedContext);
-  const sheetOffset = useRef(new Animated.Value(800)).current;
+  const { height: windowHeight } = useWindowDimensions();
+  const sheetOffset = useRef(new Animated.Value(windowHeight)).current;
   const displayedJob = useRef<Job | null>(null);
   const pendingAction = useRef<{ job: Job; kind: "apply" | "listing" } | null>(null);
   const [handoffPending, setHandoffPending] = useState(false);
@@ -1073,11 +1078,11 @@ function JobDetailSheet({
 
   useEffect(() => {
     if (!visible) {
-      sheetOffset.setValue(800);
+      sheetOffset.setValue(windowHeight);
       return;
     }
 
-    sheetOffset.setValue(800);
+    sheetOffset.setValue(windowHeight);
     if (!motionAllowed) {
       sheetOffset.setValue(0);
       return;
@@ -1091,7 +1096,7 @@ function JobDetailSheet({
     });
     animation.start();
     return () => animation.stop();
-  }, [motionAllowed, sheetOffset, visible]);
+  }, [motionAllowed, sheetOffset, visible, windowHeight]);
 
   const role = job ?? displayedJob.current;
   const roleDisplay = role ? presentCatalogRole(role) : undefined;
@@ -1109,8 +1114,8 @@ function JobDetailSheet({
     ? postingTimingPresentation(role.sourceReferences, role.firstSeenAt)
     : undefined;
   const closedListingUrl = role && !role.open ? validatedOfficialUrl(role) : undefined;
-  const canSave = Boolean(role && onSaveForWeb && !applicationStatus && !isSavingForWeb);
   const isSaved = applicationStatus === "saved";
+  const canSave = Boolean(role && onSaveForWeb && !isSaved && !isSavingForWeb);
   return (
     <Modal
       animationType="none"
@@ -1212,7 +1217,11 @@ function JobDetailSheet({
                     onPress={() => startRoleAction("apply")}
                   />
                 ) : null}
-                {canSave ? (
+                {isSavingForWeb ? (
+                  <View style={styles.sheetSaveBar}>
+                    <Text style={styles.sheetSaveBarText}>{isSaved ? "Unsaving…" : "Saving…"}</Text>
+                  </View>
+                ) : canSave ? (
                   <TouchableOpacity
                     accessibilityRole="button"
                     accessibilityLabel="Save for web"
@@ -1235,10 +1244,6 @@ function JobDetailSheet({
                     <Ionicons name="bookmark" size={18} color={colors.signal} />
                     <Text style={styles.sheetSavedBarText}>Saved</Text>
                   </TouchableOpacity>
-                ) : isSavingForWeb ? (
-                  <View style={styles.sheetSaveBar}>
-                    <Text style={styles.sheetSaveBarText}>Saving…</Text>
-                  </View>
                 ) : null}
                 {onHideLocally && role ? (
                   <TouchableOpacity
@@ -1261,7 +1266,7 @@ function JobDetailSheet({
                   : greenhouseQuickApply
                   ? "If this employer enables Quick Apply, MyGreenhouse can fill the details you have saved there. Review every answer before submitting."
                   : signedIn
-                  ? "Apply now opens the employer form. Viewed roles save to your list automatically."
+                  ? "Apply now opens the employer form. Save a role to keep it in your list."
                   : "You’ll complete the employer’s application in your browser."}
               </Text>
             </ScrollView>
@@ -3051,18 +3056,6 @@ function AppContent() {
     });
     if (hiddenFeedbackJob?.jobId === job.jobId) setHiddenFeedbackJob(undefined);
   };
-  const autoSavedJobId = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    const job = selectedJob;
-    if (!job) {
-      autoSavedJobId.current = undefined;
-      return;
-    }
-    if (!token || autoSavedJobId.current === job.jobId) return;
-    if (applicationStatuses.has(job.jobId) || savingJobIds.has(job.jobId)) return;
-    autoSavedJobId.current = job.jobId;
-    saveForWeb(job, { silent: true });
-  }, [token, selectedJob, applicationStatuses, savingJobIds]);
   if (!ready)
     return <AppLoadingSkeleton />;
   if (sessionRecoveryMessage)
@@ -3153,7 +3146,7 @@ function AppContent() {
     // immediately background the native app and suspend later JavaScript work.
     void openOfficialApplication(job.applyUrl);
   };
-  const saveForWeb = (job: Job, options?: { silent?: boolean }) => {
+  const saveForWeb = (job: Job) => {
     if (applicationStatuses.has(job.jobId) || savingJobIds.has(job.jobId)) return;
     setSavingJobIds((current) => new Set(current).add(job.jobId));
     void (async () => {
@@ -3175,12 +3168,10 @@ function AppContent() {
           ).catch(() => undefined);
         }
       } catch (error) {
-        if (!options?.silent) {
-          Alert.alert(
-            "Could not save role",
-            error instanceof Error ? error.message : "Please try again.",
-          );
-        }
+        Alert.alert(
+          "Could not save role",
+          error instanceof Error ? error.message : "Please try again.",
+        );
       } finally {
         setSavingJobIds((current) => {
           const updated = new Set(current);
@@ -5789,6 +5780,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.separator,
   },
+  mobileRoleCard: { marginBottom: 10, padding: 13 },
+  mobileRoleTitle: { fontSize: 16, lineHeight: 22, marginTop: 3 },
+  mobileRoleMeta: { fontSize: 13, lineHeight: 19, marginTop: 3 },
+  mobileRoleSource: { marginTop: -2 },
+  mobileRoleTiming: { fontSize: 12, lineHeight: 17 },
+  mobileRoleFooter: { marginTop: 9 },
   catalogGroupCard: {
     backgroundColor: colors.surface,
     borderColor: colors.separator,
