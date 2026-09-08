@@ -4115,8 +4115,7 @@ function Applications({
           <View style={styles.card}>
             <Text style={styles.company}>{job?.company ?? "Saved role"}</Text>
             <Text style={styles.title}>{job?.title ?? "Role details unavailable"}</Text>
-            {job ? <JobSource source={source} /> : null}
-            {job?.postingIdentityStatus === "unconfirmed" ? <IdentityTrustLabel /> : null}
+            {job ? <JobSource source={source} showIdentityUnconfirmed={job.postingIdentityStatus === "unconfirmed"} /> : null}
             <View style={styles.statusPill}>
               <Text style={styles.statusPillText}>{item.status.toUpperCase()}</Text>
             </View>
