@@ -1989,6 +1989,7 @@ function LaunchInbox({
     <FlatList
       style={styles.list}
       data={groupedRows}
+      extraData={[applicationStatuses, savingJobIds]}
       keyExtractor={(group) => group.groupId}
       contentContainerStyle={styles.feedListContent}
       ListHeaderComponent={
@@ -2047,6 +2048,7 @@ function LaunchInbox({
     <FlatList
       style={styles.list}
       data={visibleJobs}
+      extraData={[applicationStatuses, savingJobIds]}
       keyExtractor={(job) => job.jobId}
       contentContainerStyle={styles.feedListContent}
       ListHeaderComponent={
@@ -2239,6 +2241,7 @@ function GroupedCatalogFeed({
       </View>
       <FlatList
         data={groups}
+        extraData={[applicationStatuses, savingJobIds]}
         keyExtractor={(group) => group.groupId}
         contentContainerStyle={styles.feedListContent}
         onEndReached={onLoadMore}

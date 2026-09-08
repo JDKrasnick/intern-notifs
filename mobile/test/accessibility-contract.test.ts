@@ -10,6 +10,11 @@ const require = createRequire(import.meta.url);
 const { Text, TouchableOpacity } = require('react-native-web') as typeof import('react-native');
 
 describe('cross-platform accessibility state contract', () => {
+  it('refreshes virtualized role cards when save state changes', () => {
+    const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+    expect(app.match(/extraData=\{\[applicationStatuses, savingJobIds\]\}/g)).toHaveLength(3);
+  });
+
   it('lets the primary application label wrap without overlapping its icon at large text sizes', () => {
     const source = ts.createSourceFile('App.tsx', readFileSync(new URL('../App.tsx', import.meta.url), 'utf8'),
       ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
