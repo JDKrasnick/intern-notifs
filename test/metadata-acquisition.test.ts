@@ -4,6 +4,9 @@ import { extractPostingMetadataEvidence, compensationFromRanges, reconcileRoleMe
 import { exactPostingRecoveryUrl, renderedDescriptionReady } from '../src/rendered-destination-evidence.js';
 import { compareMetadataCohort, decodeMetadataCursor, encodeMetadataCursor, metadataFieldOutcomes } from '../src/metadata-audit.js';
 import type { ProviderIdentity } from '../src/types.js';
+import tenstorrentProbe from './fixtures/trusted-catalog/tenstorrent-5221670007.json' with { type: 'json' };
+import boozAllenProbe from './fixtures/trusted-catalog/booz-allen-r0248143.json' with { type: 'json' };
+import fab2Probe from './fixtures/trusted-catalog/fab2-0c4dc4f4-01c9-4138-a666-e7234cda7e95.json' with { type: 'json' };
 
 const uuid = 'ef725594-42dd-4f0d-ba8e-df8179dbc6cb';
 const identity = (provider: ProviderIdentity['provider'], postingId = uuid): ProviderIdentity => ({ provider, postingId, tenant: 'acme', sourceId: 'github-discovery', sourceUrl: 'https://github.test/jobs' });
@@ -62,6 +65,60 @@ describe('identity-bound public metadata APIs', () => {
     const artifact = parseMetadataApiResponse(id, 'workday-api', { jobPostingInfo: { jobReqId: 'R0248143', title: 'Software Intern', jobDescription: 'Salary USD 30 per hour', startDate: '2026-09-04', endDate: '2026-12-02' } });
     expect(artifact).toMatchObject({ deadline: '2026-12-02' }); expect(artifact?.publishedAt).toBeUndefined();
     expect(parseMetadataApiResponse(id, 'workday-api', { jobPostingInfo: { jobReqId: 'R999', title: 'Software Intern', jobDescription: 'Salary USD 30 per hour' } })).toBeUndefined();
+  });
+  it('keeps Tenstorrent’s first publication distinct from its latest update', () => {
+    const id = { ...identity('greenhouse', '5221670007'), tenant: 'tenstorrentuniversity' };
+    const artifact = parseMetadataApiResponse(id, 'greenhouse-api', tenstorrentProbe);
+    expect(artifact).toMatchObject({
+      title: 'Software Engineering Intern (Oct 2026 start)', locations: ['Belgrade, Serbia'],
+      publishedAt: '2026-08-26T14:58:59-04:00', updatedAt: '2026-09-02T17:54:05-04:00',
+    });
+    expect(artifact?.publishedAt).not.toBe(artifact?.updatedAt);
+    const result = reconcileRoleMetadata(extract(artifact!));
+    expect(result.metadata?.employerPublishedAt?.value).toBe('2026-08-26T18:58:59.000Z');
+    expect(result.metadata?.employerUpdatedAt?.value).toBe('2026-09-02T21:54:05.000Z');
+    expect(result.compensation).toBeUndefined();
+    expect(result.metadata?.housing).toBeUndefined();
+    expect(result.metadata?.workMode?.value).toBe('onsite');
+  });
+  it('preserves the complete Booz Allen 2027 role without treating generic work-model copy as role mode', () => {
+    const id = { ...identity('workday', 'R0248143'), tenant: 'bah' };
+    const url = 'https://bah.wd1.myworkdayjobs.com/wday/cxs/bah/BAH_Jobs/job/Rome-NY/University--2027-Summer-Games-Data-Scientist-Intern_R0248143';
+    const artifact = parseMetadataApiResponse(id, 'workday-api', boozAllenProbe, url);
+    expect(artifact).toMatchObject({
+      title: 'University, 2027 Summer Games Data Scientist Intern - Rome, NY', locations: ['Rome, NY'],
+    });
+    expect(artifact?.title).toContain('2027 Summer Games Data Scientist Intern');
+    const result = reconcileRoleMetadata(extract(artifact!));
+    expect(result.compensation?.ranges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ minAmount: 61900, maxAmount: 141000, currency: 'USD', period: 'annual' }),
+    ]));
+    expect(result.metadata?.education).toMatchObject({ levels: ['undergraduate'] });
+    // The degree date qualifies the student; the role's 2027 season remains
+    // part of its exact employer title and must not be replaced by that date.
+    expect(artifact?.title).toContain('2027 Summer Games');
+    expect(artifact?.title).not.toContain('2028');
+    expect(result.metadata?.workMode).toBeUndefined();
+  });
+  it('retains Fab2’s exact Ashby role, structured locations, onsite mode, annualized pay, housing, and education alternative', () => {
+    const id = { ...identity('ashby', '0c4dc4f4-01c9-4138-a666-e7234cda7e95'), tenant: 'fab2' };
+    const artifact = parseMetadataApiResponse(id, 'ashby-api', fab2Probe);
+    expect(artifact).toMatchObject({
+      title: 'Fab Software Engineering Intern - Winter', locations: ['Austin', 'San Francisco Office'], workMode: 'OnSite',
+    });
+    const result = reconcileRoleMetadata(extract(artifact!));
+    expect(result.compensation?.ranges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ minAmount: 114000, maxAmount: 131000, currency: 'USD', period: 'annual' }),
+    ]));
+    expect(result.compensation?.minHourlyUSD).toBeUndefined();
+    expect(result.metadata?.locations?.map(item => item.name)).toEqual(['Austin', 'San Francisco Office']);
+    expect(result.metadata?.workMode?.value).toBe('onsite');
+    expect(result.metadata?.housing).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'stipend' }),
+    ]));
+    expect('amount' in (result.metadata?.housing?.[0] ?? {})).toBe(false);
+    expect(result.metadata?.education).toMatchObject({ levels: ['undergraduate'] });
+    expect(result.metadata?.education?.minimumDegree).toBeUndefined();
   });
   it('preserves Magna education-labeled pay scale rows from Workday API text', () => {
     const id = { ...identity('workday', 'R00247602'), tenant: 'magna' };
