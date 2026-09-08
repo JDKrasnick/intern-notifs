@@ -14,6 +14,7 @@ import {
   postingRecencyBadge,
   releaseDeepLink,
   routeFailureState,
+  shouldPushJobHistory,
   sourcePresentation,
   validatedOfficialUrl,
 } from '../src/job-detail.js';
@@ -76,6 +77,12 @@ describe('mobile job routes', () => {
     expect(jobOpenDisposition('role-1', 'role-1')).toBe('ignore');
     expect(jobOpenDisposition('role-1', 'role-2')).toBe('replace');
     expect(jobOpenDisposition(undefined, 'role-2', true)).toBe('replace');
+  });
+
+  it('does not push a duplicate history entry for an initial job URL', () => {
+    expect(shouldPushJobHistory('role-1', 'role-1')).toBe(false);
+    expect(shouldPushJobHistory('role-1', 'role-2')).toBe(true);
+    expect(shouldPushJobHistory(null, 'role-1')).toBe(true);
   });
 
   it('keeps one sheet mounted while a routed role changes from loading to detail', () => {

@@ -63,6 +63,13 @@ export function jobDeepLink(jobId: string) {
   return `internnotifs://jobs/${encodeURIComponent(jobId)}`;
 }
 
+// A job supplied in the URL is already the current browser-history entry.
+// Pushing it again would make dismissing the detail sheet navigate back to the
+// same URL, which immediately reopens the sheet through the popstate handler.
+export function shouldPushJobHistory(currentJobId: string | null, nextJobId: string) {
+  return currentJobId !== nextJobId;
+}
+
 export function releaseDeepLink(releaseId: string) {
   return `internnotifs://releases/${encodeURIComponent(releaseId)}`;
 }

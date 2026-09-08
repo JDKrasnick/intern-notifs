@@ -60,6 +60,7 @@ import {
   postingTimingPresentation,
   postingRecencyBadge,
   routeFailureState,
+  shouldPushJobHistory,
   sourcePresentation,
   validatedOfficialUrl,
   type AppDestination,
@@ -2804,8 +2805,10 @@ function AppContent() {
     setJobRouteState("loading");
     if (Platform.OS === "web" && typeof window !== "undefined") {
       const url = new URL(window.location.href);
-      url.searchParams.set("job", destination.jobId);
-      window.history.pushState({ jobId: destination.jobId }, "", url.toString());
+      if (shouldPushJobHistory(url.searchParams.get("job"), destination.jobId)) {
+        url.searchParams.set("job", destination.jobId);
+        window.history.pushState({ jobId: destination.jobId }, "", url.toString());
+      }
     }
     void api<Job>(`/jobs/${encodeURIComponent(destination.jobId)}`, "")
       .then((job) => {
@@ -2916,8 +2919,10 @@ function AppContent() {
     setSelectedJob(job);
     if (Platform.OS === "web" && typeof window !== "undefined") {
       const url = new URL(window.location.href);
-      url.searchParams.set("job", job.jobId);
-      window.history.pushState({ jobId: job.jobId }, "", url.toString());
+      if (shouldPushJobHistory(url.searchParams.get("job"), job.jobId)) {
+        url.searchParams.set("job", job.jobId);
+        window.history.pushState({ jobId: job.jobId }, "", url.toString());
+      }
     }
   };
   const loadCatalogGroup = (groupId: string) => {
