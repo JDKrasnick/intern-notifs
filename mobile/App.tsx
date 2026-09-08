@@ -1243,7 +1243,7 @@ function JobDetailSheet({
                   : greenhouseQuickApply
                   ? "If this employer enables Quick Apply, MyGreenhouse can fill the details you have saved there. Review every answer before submitting."
                   : signedIn
-                  ? "Apply now opens the employer form. Use Save if you want to track it."
+                  ? "Apply now opens the employer form. Viewed roles save to your list automatically."
                   : "You’ll complete the employer’s application in your browser."}
               </Text>
             </ScrollView>
@@ -1494,70 +1494,68 @@ function FilterBar({
 
 function FilterSheet({
   visible,
-  initial,
-  onApply,
+  filters,
+  onFiltersChange,
   onClose,
 }: {
   visible: boolean;
-  initial: CatalogFilterValues;
-  onApply: (filters: CatalogFilterValues) => void;
+  filters: CatalogFilterValues;
+  onFiltersChange: (next: CatalogFilterValues) => void;
   onClose: () => void;
 }) {
-  const [draft, setDraft] = useState(initial);
-  useEffect(() => {
-    if (visible) setDraft(initial);
-  }, [visible]);
-  const set = (patch: Partial<CatalogFilterValues>) => setDraft((current) => ({ ...current, ...patch }));
+  const set = (patch: Partial<CatalogFilterValues>) => onFiltersChange({ ...filters, ...patch });
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.sheetOverlay}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.filterSheetOverlay}>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close filters" style={styles.sheetDismissArea} onPress={onClose} />
         <View style={styles.filterSheet}>
           <Text style={styles.sheetTitle}>Filter roles</Text>
           <ScrollView style={styles.filterSheetScroll} contentContainerStyle={styles.filterSheetContent}>
             <Text style={styles.filterLabel}>Role focus</Text>
-            <MultiChipFilter label="Role focus" options={disciplineChipOptions} selected={draft.disciplines} onChange={(disciplines) => set({ disciplines })} />
+            <MultiChipFilter label="Role focus" options={disciplineChipOptions} selected={filters.disciplines} onChange={(disciplines) => set({ disciplines })} />
             <Text style={styles.filterLabel}>Season</Text>
-            <MultiChipFilter label="Season" options={seasonFilterOptions} selected={draft.seasons} onChange={(seasons) => set({ seasons })} />
+            <MultiChipFilter label="Season" options={seasonFilterOptions} selected={filters.seasons} onChange={(seasons) => set({ seasons })} />
             <Text style={styles.filterLabel}>Work mode</Text>
-            <MultiChipFilter label="Work mode" options={workModeFilterOptions} selected={draft.workModes} onChange={(workModes) => set({ workModes })} />
+            <MultiChipFilter label="Work mode" options={workModeFilterOptions} selected={filters.workModes} onChange={(workModes) => set({ workModes })} />
             <Text style={styles.filterLabel}>Education</Text>
-            <MultiChipFilter label="Education" options={educationFilterOptions} selected={draft.educationLevels} onChange={(educationLevels) => set({ educationLevels })} />
+            <MultiChipFilter label="Education" options={educationFilterOptions} selected={filters.educationLevels} onChange={(educationLevels) => set({ educationLevels })} />
             <Text style={styles.filterLabel}>Pay</Text>
             <View style={styles.companyFilter}>
               <TouchableOpacity
                 accessibilityRole="checkbox"
                 accessibilityLabel="Only roles with pay listed"
-                aria-checked={draft.hasCompensation}
-                style={[styles.chip, draft.hasCompensation && styles.chipOn]}
-                onPress={() => set({ hasCompensation: !draft.hasCompensation })}
+                aria-checked={filters.hasCompensation}
+                style={[styles.chip, filters.hasCompensation && styles.chipOn]}
+                onPress={() => set({ hasCompensation: !filters.hasCompensation })}
               >
-                <Text style={[styles.chipLabel, draft.hasCompensation && styles.chipLabelOn]}>Pay listed</Text>
+                <Text style={[styles.chipLabel, filters.hasCompensation && styles.chipLabelOn]}>Pay listed</Text>
               </TouchableOpacity>
             </View>
             <Text style={styles.filterLabel}>Company type</Text>
-            <EmployerCategoryFilter selected={draft.employerFilter} onChange={(employerFilter) => set({ employerFilter })} />
+            <EmployerCategoryFilter selected={filters.employerFilter} onChange={(employerFilter) => set({ employerFilter })} />
             <Text style={styles.filterLabel}>Availability</Text>
-            <JobStatusFilter status={draft.jobStatus} onChange={(jobStatus) => set({ jobStatus })} />
+            <JobStatusFilter status={filters.jobStatus} onChange={(jobStatus) => set({ jobStatus })} />
             <Text style={styles.filterLabel}>Source</Text>
             <View style={styles.companyFilter} accessibilityRole="radiogroup" accessibilityLabel="Source">
               {([['all', 'All'], ['direct', 'Direct'], ['community', 'Community'], ['corroborated', 'Direct + community']] as const).map(([value, label]) => (
-                <TouchableOpacity key={value} accessibilityRole="radio" aria-checked={draft.sourceFilter === value} style={[styles.chip, draft.sourceFilter === value && styles.chipOn]} onPress={() => set({ sourceFilter: value })}>
-                  <Text style={[styles.chipLabel, draft.sourceFilter === value && styles.chipLabelOn]}>{label}</Text>
+                <TouchableOpacity key={value} accessibilityRole="radio" aria-checked={filters.sourceFilter === value} style={[styles.chip, filters.sourceFilter === value && styles.chipOn]} onPress={() => set({ sourceFilter: value })}>
+                  <Text style={[styles.chipLabel, filters.sourceFilter === value && styles.chipLabelOn]}>{label}</Text>
                 </TouchableOpacity>
               ))}
             </View>
             <Text style={styles.filterLabel}>Requirements</Text>
             <RequirementFilter
-              hideUsCitizenshipRequired={draft.hideUsCitizenshipRequired}
-              hideAdvancedDegreeRequired={draft.hideAdvancedDegreeRequired}
+              hideUsCitizenshipRequired={filters.hideUsCitizenshipRequired}
+              hideAdvancedDegreeRequired={filters.hideAdvancedDegreeRequired}
               onHideUsCitizenshipRequiredChange={(hideUsCitizenshipRequired) => set({ hideUsCitizenshipRequired })}
               onHideAdvancedDegreeRequiredChange={(hideAdvancedDegreeRequired) => set({ hideAdvancedDegreeRequired })}
             />
           </ScrollView>
           <View style={styles.filterSheetActions}>
-            <ActionButton label="Show roles" onPress={() => onApply(draft)} />
-            <TouchableOpacity accessibilityRole="button" onPress={() => setDraft(emptyCatalogFilters)} style={styles.filterSheetClear}>
+            <View style={styles.filterSheetApply}>
+              <ActionButton label="Show roles" onPress={onClose} />
+            </View>
+            <TouchableOpacity accessibilityRole="button" onPress={() => onFiltersChange(emptyCatalogFilters)} style={styles.filterSheetClear}>
               <Text style={styles.clearFiltersText}>Clear</Text>
             </TouchableOpacity>
           </View>
@@ -2209,8 +2207,8 @@ function GroupedCatalogFeed({
         <FilterBar activeCount={countActiveCatalogFilters(filters)} onOpen={() => setSheetVisible(true)} />
         <FilterSheet
           visible={sheetVisible}
-          initial={filters}
-          onApply={(next) => { setSheetVisible(false); onFiltersChange(next); }}
+          filters={filters}
+          onFiltersChange={onFiltersChange}
           onClose={() => setSheetVisible(false)}
         />
       </View>
@@ -3023,6 +3021,18 @@ function AppContent() {
     });
     if (hiddenFeedbackJob?.jobId === job.jobId) setHiddenFeedbackJob(undefined);
   };
+  const autoSavedJobId = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const job = selectedJob;
+    if (!job) {
+      autoSavedJobId.current = undefined;
+      return;
+    }
+    if (!token || autoSavedJobId.current === job.jobId) return;
+    if (applicationStatuses.has(job.jobId) || savingJobIds.has(job.jobId)) return;
+    autoSavedJobId.current = job.jobId;
+    saveForWeb(job, { silent: true });
+  }, [token, selectedJob, applicationStatuses, savingJobIds]);
   if (!ready)
     return <AppLoadingSkeleton />;
   if (sessionRecoveryMessage)
@@ -3113,7 +3123,7 @@ function AppContent() {
     // immediately background the native app and suspend later JavaScript work.
     void openOfficialApplication(job.applyUrl);
   };
-  const saveForWeb = (job: Job) => {
+  const saveForWeb = (job: Job, options?: { silent?: boolean }) => {
     if (applicationStatuses.has(job.jobId) || savingJobIds.has(job.jobId)) return;
     setSavingJobIds((current) => new Set(current).add(job.jobId));
     void (async () => {
@@ -3135,10 +3145,12 @@ function AppContent() {
           ).catch(() => undefined);
         }
       } catch (error) {
-        Alert.alert(
-          "Could not save role",
-          error instanceof Error ? error.message : "Please try again.",
-        );
+        if (!options?.silent) {
+          Alert.alert(
+            "Could not save role",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        }
       } finally {
         setSavingJobIds((current) => {
           const updated = new Set(current);
@@ -3237,7 +3249,6 @@ function AppContent() {
             />
           )}
         </View>
-        {!usesNavigationRail ? <TabNavigation active={tab} onChange={changeTab} /> : null}
       </View>
       <JobDetailSheet
         job={selectedJob}
@@ -3254,6 +3265,10 @@ function AppContent() {
         onOpenListing={(job) => {
           void openOfficialApplication(job.applyUrl);
         }}
+        onSaveForWeb={(job) => saveForWeb(job)}
+        isSavingForWeb={selectedJob ? savingJobIds.has(selectedJob.jobId) : false}
+        applicationStatus={selectedJob ? applicationStatuses.get(selectedJob.jobId) : undefined}
+        onUnsave={unsaveForWeb}
       />
       <CatalogGroupSheet
         groupId={selectedGroupVisible ? selectedGroupId : undefined}
@@ -6044,25 +6059,34 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     minHeight: 48,
-    paddingHorizontal: 2,
+    paddingHorizontal: 16,
   },
   filterToggleText: { color: colors.signal, fontSize: 15, fontWeight: "700" },
   filterToggleGlyph: { color: colors.signal, fontSize: 20, fontWeight: "400", marginLeft: 8 },
-  clearFiltersText: { color: colors.muted, fontSize: 15, fontWeight: "600" },
+  filterSheetOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.4)" },
   filterSheet: {
-    backgroundColor: colors.canvas,
+    backgroundColor: colors.surface,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
+    borderTopWidth: 1,
+    borderTopColor: colors.separator,
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: -2 },
+    elevation: 8,
     maxHeight: "88%",
     minHeight: 280,
     paddingHorizontal: 20,
     paddingTop: 12,
-    paddingBottom: 28,
+    paddingBottom: 34,
   },
+  filterSheetApply: { alignSelf: "stretch" },
+  filterSheetClear: { alignSelf: "center", minHeight: 48, justifyContent: "center", paddingHorizontal: 16 },
   filterSheetScroll: { marginTop: 8 },
   filterSheetContent: { paddingBottom: 16 },
-  filterSheetActions: { alignItems: "center", flexDirection: "row", gap: 16, marginTop: 8 },
-  filterSheetClear: { minHeight: 48, justifyContent: "center", paddingHorizontal: 12 },
+  filterSheetActions: { alignItems: "stretch", flexDirection: "column", gap: 4, marginTop: 12, borderTopWidth: 1, borderTopColor: colors.separator, paddingTop: 12 },
+  clearFiltersText: { color: colors.muted, fontSize: 15, fontWeight: "600" },
   coverageRegion: {
     borderTopColor: colors.separator,
     borderTopWidth: 1,
@@ -6177,7 +6201,7 @@ const styles = StyleSheet.create({
     minHeight: 48,
     paddingHorizontal: 14,
     justifyContent: "center",
-    borderRadius: 20,
+    borderRadius: 999,
     backgroundColor: colors.surface,
   },
   chipOn: { backgroundColor: colors.signalSoft, borderColor: colors.signal },
