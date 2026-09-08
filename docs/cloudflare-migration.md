@@ -47,15 +47,21 @@ database, so storage growth must be monitored before public scale.
 npm ci
 npm run typecheck
 npm test
-npm run build:cloudflare
+npm run test:integration
+npm run test:e2e
 npm run cloudflare:migrate:local
 cp .dev.vars.example .dev.vars
-npx wrangler dev --local
+npx wrangler dev --local --config wrangler.api.jsonc
 ```
 
 Use throwaway local values in `.dev.vars`. The file is ignored. Wrangler can
 also read the repository `.env`; never place AWS credentials or production
 secrets in Worker variables.
+
+`npm run test:e2e` compiles both Worker entrypoints and starts them as separate
+services in an ephemeral local `workerd` process. The harness applies the
+checked-in D1 migrations, exercises the real `INGESTION` service binding, and
+uses test-only secrets. It does not contact or mutate Cloudflare resources.
 
 ## Provision infrastructure
 
@@ -72,8 +78,8 @@ export TF_VAR_zone_id='cloudflare-zone-id'
 
 npm run build:cloudflare
 tofu -chdir=infra/cloudflare init
-tofu -chdir=infra/cloudflare plan -out=.context/cloudflare.tfplan
-tofu -chdir=infra/cloudflare apply .context/cloudflare.tfplan
+tofu -chdir=infra/cloudflare plan -out=../../.context/cloudflare.tfplan
+tofu -chdir=infra/cloudflare apply ../../.context/cloudflare.tfplan
 ```
 
 Do not put the token, account identifiers, email addresses, or secret values in
@@ -82,10 +88,9 @@ second operator or CI starts applying infrastructure.
 
 ## Initialize D1 and secrets
 
-After apply, replace the placeholder `database_id` in a temporary copy of
-`wrangler.jsonc` with `tofu -chdir=infra/cloudflare output -raw d1_database_id`,
-then apply `cloudflare/migrations/` with that temporary configuration. Do not
-commit the generated configuration.
+After apply, update the D1 identifier in both explicit Worker configurations
+only when provisioning a new database, then apply `cloudflare/migrations/` with
+`wrangler.api.jsonc`. Do not restore a shared default `wrangler.jsonc`.
 
 Apply every pending D1 migration before deploying Worker code that depends on
 its schema. In particular, migration `0005_auth_consent.sql` must land before
@@ -93,10 +98,10 @@ the consent-aware signup handler. With the temporary remote configuration:
 
 ```bash
 npx wrangler d1 migrations apply intern-notifs-db --remote \
-  --config .context/wrangler.remote.json
+  --config wrangler.api.jsonc
 npm run build:cloudflare
-tofu -chdir=infra/cloudflare plan -out=.context/cloudflare.tfplan
-tofu -chdir=infra/cloudflare apply .context/cloudflare.tfplan
+tofu -chdir=infra/cloudflare plan -out=../../.context/cloudflare.tfplan
+tofu -chdir=infra/cloudflare apply ../../.context/cloudflare.tfplan
 ```
 
 Review the migration list and Terraform plan before applying either one. Never
@@ -105,10 +110,15 @@ deploy the Worker first: the new signup query requires the consent columns.
 Create separate random secrets for user sessions and operator access:
 
 ```bash
-npx wrangler secret put AUTH_SESSION_SECRET --name intern-notifs
-npx wrangler secret put OPERATIONS_SHARED_SECRET --name intern-notifs
-npx wrangler secret put RESEND_API_KEY --name intern-notifs
+npx wrangler secret put AUTH_SESSION_SECRET --name intern-notifs --config wrangler.api.jsonc
+npx wrangler secret put OPERATIONS_SHARED_SECRET --name intern-notifs --config wrangler.api.jsonc
+npx wrangler secret put RESEND_API_KEY --name intern-notifs --config wrangler.api.jsonc
 ```
+
+Before the API/ingestion split cutover, configure the complete per-Worker
+secret inventory in [`api-ingestion-split.md`](api-ingestion-split.md). Several
+values are required on both Workers; the API-only commands above are not a
+complete split deployment.
 
 Set `auth_dev_mode=false` before any non-development deployment. `true` returns
 the email confirmation code in the signup response and is intentionally local/dev
@@ -151,23 +161,27 @@ warning rather than waiting for the billing cycle to close.
 
 The $5 alert also targets a generic webhook at
 `/internal/billing-shutdown`. Cloudflare authenticates it with the
-`cf-webhook-auth` header. When invoked, the Worker latches
-`billing_shutdown=stopped` in D1, removes every application queue consumer,
-clears the Worker schedules, and disables its workers.dev subdomain. The D1
-latch makes scheduled, queued, and HTTP work fail closed even if a management
-API call is delayed. Test webhook payloads are ignored; shutdown requires the
-signed `billing_budget_alert` payload for the named $5 policy and account.
+`cf-webhook-auth` header. The API Worker forwards the authenticated webhook to
+the ingestion Worker, which latches `billing_shutdown=stopped` in D1, removes
+all six ingestion queue consumers, clears the ingestion Worker schedules, and
+keeps its workers.dev subdomain disabled. The public API Worker remains routed
+but returns the latched 503 response. The D1 latch makes scheduled, queued, and
+HTTP work fail closed even if a management API call is delayed. Test webhook
+payloads are ignored; shutdown requires the signed `billing_budget_alert`
+payload for the named $5 policy and account.
 
 To recover after reviewing the bill, reapply `infra/cloudflare` to restore the
-subdomain and consumers. The provider does not currently detect an externally
-emptied cron list, so restore the schedules explicitly, then clear the latch:
+ingestion consumers. The provider does not currently detect an externally
+emptied cron list, so restore only the ingestion schedules explicitly. Confirm
+that all six queues and all nine schedules have exactly one owner and that the
+API Worker owns none of them before clearing the latch:
 
 ```sh
-npx wrangler triggers deploy --name intern-notifs \
-  --config .context/wrangler.remote.json
+npx wrangler triggers deploy --name intern-notifs-ingestion \
+  --config wrangler.ingestion.jsonc
 
 npx wrangler d1 execute intern-notifs-db --remote \
-  --config .context/wrangler.remote.json \
+  --config wrangler.api.jsonc \
   --command "DELETE FROM system_state WHERE key = 'billing_shutdown'"
 ```
 

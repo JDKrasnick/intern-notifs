@@ -19,11 +19,19 @@ AWS resources are rollback/export infrastructure, not active application targets
 | Job catalog | D1 indexed canonical records and grouped projections |
 | Personal data | D1 user records and releases |
 | Résumés | Private R2 objects behind authenticated Worker routes |
-| Ingestion, delivery, and Gmail sync | Cron Triggers, five Queues with DLQs, Worker consumers, Gmail read-only API, Expo Push Service |
+| Ingestion, delivery, and Gmail sync | Cron Triggers, six Queues with DLQs, Worker consumers, Gmail read-only API, Expo Push Service |
 | Infrastructure | OpenTofu with Cloudflare provider v5 in `infra/cloudflare/` |
 | CI | GitHub Actions in `.github/workflows/ci.yml` |
 
 The catalog is public. Accounts, preferences, device tokens, profiles, documents, and application tracking are private to the verified user identity.
+
+## API and ingestion deployment boundary
+
+The API Worker and ingestion Worker have separate, explicit Wrangler
+configurations. Use `npm run build:cloudflare` to validate both; do not run a
+bare `wrangler deploy`. The cutover sequence, binding inventory, smoke checks,
+and rollback procedure are in [`api-ingestion-split.md`](api-ingestion-split.md).
+The coordinator alone performs that cutover.
 
 ## OpenTofu state adoption
 
@@ -48,14 +56,25 @@ export AWS_REGION='auto'
 tofu -chdir=infra/cloudflare init -reconfigure
 ```
 
-Before the first plan, import every existing production resource. This includes
-`cloudflare_d1_database.application`, `cloudflare_r2_bucket.documents`,
-`cloudflare_workers_script.application`,
-`cloudflare_workers_script_subdomain.application`,
+State adoption is deployment-phase-sensitive. During the API/ingestion split,
+follow the serialized imports in [`api-ingestion-split.md`](api-ingestion-split.md)
+instead of bootstrapping the steady-state configuration directly. An existing
+pre-split state keeps `cloudflare_workers_cron_trigger.application` and
+`cloudflare_queue_consumer.application` until the checked-in `moved` blocks
+transfer them during that cutover; do not re-import those old addresses from
+the post-split configuration.
+
+For a fresh adoption after the split is complete, import every existing
+production resource at its current address. This includes
+`cloudflare_d1_database.application`, `cloudflare_r2_bucket.documents`, both
+`cloudflare_workers_script.application` and
+`cloudflare_workers_script.ingestion`, both
+`cloudflare_workers_script_subdomain.application` and
+`cloudflare_workers_script_subdomain.ingestion`,
 `cloudflare_workers_custom_domain.api[0]` when configured,
-`cloudflare_workers_cron_trigger.application`, and all keys in each of
+`cloudflare_workers_cron_trigger.ingestion`, and all keys in each of
 `cloudflare_queue.work`, `cloudflare_queue.dead_letter`, and
-`cloudflare_queue_consumer.application`: `greenhouse`, `lever`, `ashby`,
+`cloudflare_queue_consumer.ingestion`: `greenhouse`, `lever`, `ashby`,
 `github`, `gmail`, and `destination-verification`. Resolve import IDs from the
 live Cloudflare account and provider-v5 import contract; never guess an ID or
 allow a failed import to turn into a create. Import one address at a time and
@@ -110,9 +129,12 @@ Set secrets interactively; never put their values in Git, Terraform variables,
 shell arguments, mobile configuration, or `EXPO_PUBLIC_*` values:
 
 ```bash
-npx wrangler secret put GMAIL_CLIENT_SECRET
-npx wrangler secret put GMAIL_TOKEN_ENCRYPTION_KEY
-npx wrangler secret put GMAIL_MESSAGE_HMAC_KEY
+npx wrangler secret put GMAIL_CLIENT_SECRET --config wrangler.api.jsonc
+npx wrangler secret put GMAIL_TOKEN_ENCRYPTION_KEY --config wrangler.api.jsonc
+npx wrangler secret put GMAIL_MESSAGE_HMAC_KEY --config wrangler.api.jsonc
+npx wrangler secret put GMAIL_CLIENT_SECRET --config wrangler.ingestion.jsonc
+npx wrangler secret put GMAIL_TOKEN_ENCRYPTION_KEY --config wrangler.ingestion.jsonc
+npx wrangler secret put GMAIL_MESSAGE_HMAC_KEY --config wrangler.ingestion.jsonc
 ```
 
 The encryption key and message-HMAC key must be independently generated and
@@ -153,7 +175,7 @@ Keep `EMPLOYER_PORTAL_ENABLED=false` while deploying the persistence layer. Appl
 ```bash
 npm run cloudflare:migrate:remote
 npm run build:cloudflare
-npx wrangler deploy
+# Follow docs/api-ingestion-split.md for the serialized two-Worker cutover.
 ```
 
 The first provider dispatch idempotently seeds the checked-in Greenhouse, Lever, and Ashby records into `reviewed_source_registry`; scheduled dispatch and queue consumers then read reviewed runtime configuration from D1. Before enabling the portal, compare D1 registry counts and exact source IDs with the checked-in manifests, then verify source health, catalog ordering, grouped projections, and notification outbox counts are unchanged.
@@ -343,7 +365,7 @@ Apply the migration and deploy only after reviewing the generated resource diff:
 ```bash
 npm run build:cloudflare
 npm run cloudflare:migrate:remote
-npx wrangler deploy
+# Follow docs/api-ingestion-split.md for the serialized two-Worker cutover.
 ```
 
 All review and repair endpoints are hidden behind the existing operations

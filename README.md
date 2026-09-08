@@ -153,7 +153,12 @@ npm ci
 npm run lint
 npm run typecheck
 npm test
+npm run test:integration
+npm run test:e2e
 ```
+
+`test:e2e` builds both Cloudflare Workers and runs them as separate services in
+a local `workerd` process. It requires no Cloudflare account or credentials.
 
 ### Mobile client
 

@@ -1,18 +1,41 @@
 locals {
-  worker_bundle       = "${path.module}/../../cloudflare/dist/worker.js"
-  catalog_providers   = toset(["greenhouse", "lever", "ashby", "github"])
-  asynchronous_queues = setunion(local.catalog_providers, toset(["gmail", "destination-verification"]))
-  plain_bindings = concat(
+  api_worker_bundle       = "${path.module}/../../cloudflare/dist/api/api-worker.js"
+  ingestion_worker_bundle = "${path.module}/../../cloudflare/dist/ingestion/ingestion-worker.js"
+  ingestion_worker_name   = "${var.worker_name}-ingestion"
+  catalog_providers       = toset(["greenhouse", "lever", "ashby", "github"])
+  asynchronous_queues     = setunion(local.catalog_providers, toset(["gmail", "destination-verification"]))
+
+  api_plain_bindings = concat(
     [
       { name = "PUBLIC_API_URL", type = "plain_text", text = var.public_api_url },
       { name = "AUTH_DEV_MODE", type = "plain_text", text = tostring(var.auth_dev_mode) },
+      { name = "EMPLOYER_PORTAL_ENABLED", type = "plain_text", text = tostring(var.employer_portal_enabled) },
+      { name = "GMAIL_ENABLED", type = "plain_text", text = tostring(var.gmail_enabled) },
+      { name = "IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED", type = "plain_text", text = tostring(var.identity_unconfirmed_publication_enabled) },
+      { name = "DEPLOYMENT_ROLE", type = "plain_text", text = "api" },
+    ],
+    var.auth_from_email == null ? [] : [{ name = "AUTH_FROM_EMAIL", type = "plain_text", text = var.auth_from_email }],
+    var.gmail_client_id == null ? [] : [{ name = "GMAIL_CLIENT_ID", type = "plain_text", text = var.gmail_client_id }],
+    var.gmail_redirect_uri == null ? [] : [{ name = "GMAIL_REDIRECT_URI", type = "plain_text", text = var.gmail_redirect_uri }],
+  )
+
+  ingestion_plain_bindings = concat(
+    [
+      { name = "PUBLIC_API_URL", type = "plain_text", text = var.public_api_url },
+      { name = "EMPLOYER_PORTAL_ENABLED", type = "plain_text", text = tostring(var.employer_portal_enabled) },
       { name = "GMAIL_ENABLED", type = "plain_text", text = tostring(var.gmail_enabled) },
       { name = "IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED", type = "plain_text", text = tostring(var.identity_unconfirmed_publication_enabled) },
       { name = "TRUSTED_COMMUNITY_CATALOG_ENABLED", type = "plain_text", text = tostring(var.trusted_community_catalog_enabled) },
       { name = "IDENTITY_CONFIRMED_COVERAGE_FLOOR", type = "plain_text", text = tostring(var.identity_confirmed_coverage_floor) },
+      { name = "CLOUDFLARE_ACCOUNT_ID", type = "plain_text", text = var.cloudflare_account_id },
+      { name = "WORKER_NAME", type = "plain_text", text = local.ingestion_worker_name },
+      { name = "GMAIL_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["gmail"].queue_id },
+      { name = "DESTINATION_VERIFICATION_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["destination-verification"].queue_id },
+      { name = "DEPLOYMENT_ROLE", type = "plain_text", text = "ingestion" },
       { name = "ADMISSION_QUEUE_AGE_ALERT_HOURS", type = "plain_text", text = tostring(var.admission_queue_age_alert_hours) },
       { name = "ADMISSION_STALE_ALERT_THRESHOLD", type = "plain_text", text = tostring(var.admission_stale_alert_threshold) },
     ],
+    [for provider in local.catalog_providers : { name = "${upper(provider)}_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work[provider].queue_id }],
     var.auth_from_email == null ? [] : [{ name = "AUTH_FROM_EMAIL", type = "plain_text", text = var.auth_from_email }],
     var.digest_to_email == null ? [] : [{ name = "DIGEST_TO_EMAIL", type = "plain_text", text = var.digest_to_email }],
     var.ntfy_topic == null ? [] : [{ name = "NTFY_TOPIC", type = "plain_text", text = var.ntfy_topic }],
@@ -26,9 +49,7 @@ resource "cloudflare_d1_database" "application" {
   account_id            = var.cloudflare_account_id
   name                  = "${var.worker_name}-db"
   primary_location_hint = "wnam"
-  read_replication = {
-    mode = "disabled"
-  }
+  read_replication      = { mode = "disabled" }
 }
 
 resource "cloudflare_r2_bucket" "documents" {
@@ -52,18 +73,48 @@ resource "cloudflare_queue" "dead_letter" {
   for_each   = local.asynchronous_queues
   account_id = var.cloudflare_account_id
   queue_name = "${var.worker_name}-${each.key}-dlq"
-  settings = {
-    message_retention_period = 1209600
-  }
+  settings   = { message_retention_period = 1209600 }
+}
+
+resource "cloudflare_workers_script" "ingestion" {
+  account_id          = var.cloudflare_account_id
+  script_name         = local.ingestion_worker_name
+  main_module         = "ingestion-worker.js"
+  content_file        = local.ingestion_worker_bundle
+  content_sha256      = filesha256(local.ingestion_worker_bundle)
+  compatibility_date  = "2026-09-08"
+  compatibility_flags = ["nodejs_compat"]
+  keep_bindings       = ["secret_text"]
+
+  bindings = concat(
+    [
+      { name = "DB", type = "d1", id = cloudflare_d1_database.application.id },
+      { name = "DESTINATION_BROWSER", type = "browser" },
+      { name = "VERSION_METADATA", type = "version_metadata" },
+    ],
+    [for queue in local.asynchronous_queues : { name = "${upper(replace(queue, "-", "_"))}_QUEUE", type = "queue", queue_name = cloudflare_queue.work[queue].queue_name }],
+    [for queue in local.asynchronous_queues : { name = "${upper(replace(queue, "-", "_"))}_DLQ", type = "queue", queue_name = cloudflare_queue.dead_letter[queue].queue_name }],
+    local.ingestion_plain_bindings,
+  )
+
+  limits        = { cpu_ms = 30000, subrequests = 10000 }
+  observability = { enabled = true, head_sampling_rate = 1, logs = { enabled = true, invocation_logs = true, head_sampling_rate = 1, persist = true } }
+}
+
+resource "cloudflare_workers_script_subdomain" "ingestion" {
+  account_id       = var.cloudflare_account_id
+  script_name      = cloudflare_workers_script.ingestion.script_name
+  enabled          = false
+  previews_enabled = false
 }
 
 resource "cloudflare_workers_script" "application" {
   account_id          = var.cloudflare_account_id
   script_name         = var.worker_name
-  main_module         = "worker.js"
-  content_file        = local.worker_bundle
-  content_sha256      = filesha256(local.worker_bundle)
-  compatibility_date  = "2026-08-26"
+  main_module         = "api-worker.js"
+  content_file        = local.api_worker_bundle
+  content_sha256      = filesha256(local.api_worker_bundle)
+  compatibility_date  = "2026-09-08"
   compatibility_flags = ["nodejs_compat"]
   keep_bindings       = ["secret_text"]
 
@@ -72,47 +123,14 @@ resource "cloudflare_workers_script" "application" {
       { name = "DB", type = "d1", id = cloudflare_d1_database.application.id },
       { name = "DOCUMENTS", type = "r2_bucket", bucket_name = cloudflare_r2_bucket.documents.name },
       { name = "GMAIL_QUEUE", type = "queue", queue_name = cloudflare_queue.work["gmail"].queue_name },
-      { name = "GMAIL_DLQ", type = "queue", queue_name = cloudflare_queue.dead_letter["gmail"].queue_name },
-      { name = "DESTINATION_VERIFICATION_QUEUE", type = "queue", queue_name = cloudflare_queue.work["destination-verification"].queue_name },
-      { name = "DESTINATION_VERIFICATION_DLQ", type = "queue", queue_name = cloudflare_queue.dead_letter["destination-verification"].queue_name },
-      { name = "DESTINATION_BROWSER", type = "browser" },
-      { name = "CLOUDFLARE_ACCOUNT_ID", type = "plain_text", text = var.cloudflare_account_id },
-      { name = "WORKER_NAME", type = "plain_text", text = var.worker_name },
-      { name = "GMAIL_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["gmail"].queue_id },
-      { name = "DESTINATION_VERIFICATION_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["destination-verification"].queue_id },
+      { name = "INGESTION", type = "service", service = cloudflare_workers_script.ingestion.script_name },
+      { name = "VERSION_METADATA", type = "version_metadata" },
     ],
-    [for provider in local.catalog_providers : {
-      name       = "${upper(provider)}_QUEUE"
-      type       = "queue"
-      queue_name = cloudflare_queue.work[provider].queue_name
-    }],
-    [for provider in local.catalog_providers : {
-      name       = "${upper(provider)}_DLQ"
-      type       = "queue"
-      queue_name = cloudflare_queue.dead_letter[provider].queue_name
-    }],
-    [for provider in local.catalog_providers : {
-      name = "${upper(provider)}_QUEUE_ID"
-      type = "plain_text"
-      text = cloudflare_queue.work[provider].queue_id
-    }],
-    local.plain_bindings,
+    local.api_plain_bindings,
   )
 
-  limits = {
-    cpu_ms      = 30000
-    subrequests = 10000
-  }
-  observability = {
-    enabled            = true
-    head_sampling_rate = 1
-    logs = {
-      enabled            = true
-      invocation_logs    = true
-      head_sampling_rate = 1
-      persist            = true
-    }
-  }
+  limits        = { cpu_ms = 30000, subrequests = 10000 }
+  observability = { enabled = true, head_sampling_rate = 1, logs = { enabled = true, invocation_logs = true, head_sampling_rate = 1, persist = true } }
 }
 
 resource "cloudflare_workers_script_subdomain" "application" {
@@ -122,12 +140,12 @@ resource "cloudflare_workers_script_subdomain" "application" {
   previews_enabled = false
 }
 
-resource "cloudflare_queue_consumer" "application" {
+resource "cloudflare_queue_consumer" "ingestion" {
   for_each          = cloudflare_queue.work
   account_id        = var.cloudflare_account_id
   queue_id          = each.value.queue_id
   type              = "worker"
-  script_name       = cloudflare_workers_script.application.script_name
+  script_name       = cloudflare_workers_script.ingestion.script_name
   dead_letter_queue = cloudflare_queue.dead_letter[each.key].queue_name
   settings = {
     batch_size = each.key == "destination-verification" ? 5 : 1
@@ -139,19 +157,13 @@ resource "cloudflare_queue_consumer" "application" {
   }
 }
 
-resource "cloudflare_workers_cron_trigger" "application" {
+resource "cloudflare_workers_cron_trigger" "ingestion" {
   account_id  = var.cloudflare_account_id
-  script_name = cloudflare_workers_script.application.script_name
+  script_name = cloudflare_workers_script.ingestion.script_name
   schedules = [
-    { cron = "*/5 * * * *" },
-    { cron = "7-57/10 * * * *" },
-    { cron = "9-59/10 * * * *" },
-    { cron = "12,42 * * * *" },
-    { cron = "22,52 * * * *" },
-    { cron = "2,32 * * * *" },
-    { cron = "0 * * * *" },
-    { cron = "42 8 * * *" },
-    { cron = "17 9 * * *" },
+    { cron = "*/5 * * * *" }, { cron = "7-57/10 * * * *" }, { cron = "9-59/10 * * * *" },
+    { cron = "12,42 * * * *" }, { cron = "22,52 * * * *" }, { cron = "2,32 * * * *" },
+    { cron = "0 * * * *" }, { cron = "42 8 * * *" }, { cron = "17 9 * * *" },
   ]
 }
 
@@ -161,11 +173,23 @@ resource "cloudflare_workers_custom_domain" "api" {
   service    = cloudflare_workers_script.application.script_name
   hostname   = var.api_hostname
   zone_id    = var.zone_id
-
   lifecycle {
     precondition {
       condition     = var.zone_id != null
       error_message = "zone_id is required when api_hostname is set."
     }
   }
+}
+
+# Preserve the existing resource instances while transferring their Worker
+# ownership. Without these moves, OpenTofu treats the address changes as
+# unrelated destroy/create operations before it evaluates the script change.
+moved {
+  from = cloudflare_queue_consumer.application
+  to   = cloudflare_queue_consumer.ingestion
+}
+
+moved {
+  from = cloudflare_workers_cron_trigger.application
+  to   = cloudflare_workers_cron_trigger.ingestion
 }

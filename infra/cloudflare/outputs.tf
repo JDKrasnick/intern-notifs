@@ -10,6 +10,10 @@ output "worker_name" {
   value = cloudflare_workers_script.application.script_name
 }
 
+output "ingestion_worker_name" {
+  value = cloudflare_workers_script.ingestion.script_name
+}
+
 output "queue_names" {
   value = { for provider, queue in cloudflare_queue.work : provider => queue.queue_name }
 }
