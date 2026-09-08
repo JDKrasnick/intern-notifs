@@ -14,6 +14,7 @@ import type {
 const GENERIC_EMPLOYER = /\b(?:talent community|job board|open roles?|careers?|external|private|job wrapping|university jobs?|early career)\b/iu;
 const ELLIPSIS = /(?:\.{2,}|…)/u;
 const TRAILING_FRAGMENT = /[,/(&[{-]\s*$/u;
+const DESTINATION_EVIDENCE_TTL_MS = 7 * 86_400_000;
 
 export function isGenericEmployerLabel(value: string): boolean {
   const normalized = value.replace(/\s+/gu, ' ').trim();
@@ -152,6 +153,8 @@ export function evaluateCatalogAdmission(input: {
       ...destination,
       finalUrl: previous.destination.finalUrl ?? previous.destination.candidateUrl,
       ...(verifiedAt ? { lastKnownGoodAt: verifiedAt } : {}),
+      ...(previous.destination.validThrough ? { validThrough: previous.destination.validThrough } : {}),
+      ...(previous.destination.freshUntil ? { freshUntil: previous.destination.freshUntil } : {}),
     } : destination,
     metadata,
     catalogEligible,
@@ -220,12 +223,40 @@ export function deriveCanonicalAdmission(references: readonly SourceOccurrence[]
   return { ...latest, catalogEligible: false, alertEligible: false, evaluatedAt };
 }
 
-export function catalogEligible(job: { admission?: CatalogAdmission }): boolean {
-  return job.admission?.catalogEligible ?? true;
+function freshnessDeadlines(admission: CatalogAdmission): { freshUntil?: number; graceDeadline?: number } {
+  const storedFreshUntil = admission.destination.freshUntil ? Date.parse(admission.destination.freshUntil) : Number.NaN;
+  const observedAt = [admission.lastVerifiedAt, admission.destination.lastKnownGoodAt, admission.destination.inspectedAt, admission.evidenceObservedAt]
+    .map((value) => value ? Date.parse(value) : Number.NaN)
+    .find(Number.isFinite);
+  const verifiedDeadline = observedAt === undefined ? undefined : observedAt + DESTINATION_EVIDENCE_TTL_MS;
+  const freshUntil = verifiedDeadline === undefined ? undefined
+    : Number.isFinite(storedFreshUntil) ? Math.min(storedFreshUntil, verifiedDeadline) : verifiedDeadline;
+  // An admitted record with no trustworthy evidence timestamp must not become
+  // permanently eligible merely because it predates the freshUntil field.
+  if (freshUntil === undefined) return { freshUntil: 0, graceDeadline: 0 };
+  const storedGrace = admission.graceDeadline ? Date.parse(admission.graceDeadline) : Number.NaN;
+  return { freshUntil, graceDeadline: Number.isFinite(storedGrace)
+    ? Math.min(storedGrace, freshUntil) : freshUntil };
 }
 
-export function alertEligible(job: { admission?: CatalogAdmission }): boolean {
-  return job.admission?.alertEligible ?? true;
+/** Stored decisions are bounded by evidence time even if the verifier or queue is unavailable. */
+export function catalogEligible(job: { admission?: CatalogAdmission }, at = new Date()): boolean {
+  const admission = job.admission;
+  if (!admission) return true;
+  if (!admission.catalogEligible) return false;
+  const validThrough = admission.destination.validThrough ? Date.parse(admission.destination.validThrough) : Number.NaN;
+  if (Number.isFinite(validThrough) && at.getTime() >= validThrough) return false;
+  const { graceDeadline } = freshnessDeadlines(admission);
+  return graceDeadline === undefined || at.getTime() < graceDeadline;
+}
+
+/** Inconclusive checks pause alerts immediately; no result extends the last verified deadline. */
+export function alertEligible(job: { admission?: CatalogAdmission }, at = new Date()): boolean {
+  const admission = job.admission;
+  if (!admission) return true;
+  if (!admission.alertEligible) return false;
+  const { freshUntil } = freshnessDeadlines(admission);
+  return freshUntil === undefined || at.getTime() < freshUntil;
 }
 
 export function evidenceHash(value: unknown): string {

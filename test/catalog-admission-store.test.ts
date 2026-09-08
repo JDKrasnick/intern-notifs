@@ -1,21 +1,29 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import { persistDestinationAdmission, reachabilityFromHttpStatus, type DestinationVerificationMessage } from '../cloudflare/destination-verification.js';
 import { evaluateCatalogAdmission } from '../src/catalog-admission.js';
 import { classifyDestination, matchingBrowserDestination } from '../src/destination-verification.js';
 import { processPosting } from '../src/ingestion/processor.js';
+import { newJobNotificationEvent } from '../src/ingestion/catalog-reconciler.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 import type { CatalogAdmission, Internship } from '../src/types.js';
 
-function sqliteD1(database: DatabaseSync): D1Database {
+type QueryBudget = { used: number; maximum: number };
+
+function sqliteD1(database: DatabaseSync, budget?: QueryBudget): D1Database {
+  const count = () => {
+    if (!budget) return;
+    budget.used += 1;
+    if (budget.used > budget.maximum) throw new Error(`D1 query budget exceeded: ${budget.used}/${budget.maximum}`);
+  };
   const prepared = (query: string, values: SQLInputValue[] = []): D1PreparedStatement => ({
     bind(...next: unknown[]) { return prepared(query, next as SQLInputValue[]); },
-    async first<T>() { return database.prepare(query).get(...values) as T | null; },
-    async all<T>() { return { results: database.prepare(query).all(...values) as T[] }; },
-    async run() { const result = database.prepare(query).run(...values); return { meta: { changes: Number(result.changes) } }; },
+    async first<T>() { count(); return database.prepare(query).get(...values) as T | null; },
+    async all<T>() { count(); return { results: database.prepare(query).all(...values) as T[] }; },
+    async run() { count(); const result = database.prepare(query).run(...values); return { meta: { changes: Number(result.changes) } }; },
   });
   return {
     prepare: (query) => prepared(query),
@@ -51,6 +59,8 @@ function job(): Internship {
 function subject() {
   const database = new DatabaseSync(':memory:');
   for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0008_catalog_admission_occurrence_repair.sql',
+    '0010_posting_identity.sql',
+    '0012_destination_verification_schedule.sql',
     '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql', '0017_metadata_acquisition.sql', '0018_metadata_review.sql', '0019_metadata_job_review_revision.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
@@ -59,6 +69,7 @@ function subject() {
 }
 
 describe('D1 catalog admission operations', () => {
+  afterEach(() => vi.useRealTimers());
   it('forwards verified-page replacement through the internship store adapter', async () => {
     const { database, jobs } = subject();
     const evidence = (sourceClass: 'official-json-ld' | 'official-page', artifactHash: string) => ({
@@ -184,6 +195,7 @@ describe('D1 catalog admission operations', () => {
       sourceUrl: 'https://github.com/example/jobs', row: 1, company: 'Acme', title: current.title,
       location: current.location, locations: [current.location], season: current.season,
       applyUrl: 'https://careers.acme.test/openings?gh_jid=7654321', compensation: current.compensation, state: 'open',
+      employerLabelOrigin: 'explicit',
     }];
     await jobs.putInternship(current);
 
@@ -192,7 +204,260 @@ describe('D1 catalog admission operations', () => {
       candidateUrl: 'https://careers.acme.test/openings?gh_jid=7654321',
       providerIdentity: { provider: 'greenhouse', sourceId: 'community-list', sourceUrl: 'https://github.com/example/jobs',
         employerScope: 'employer:acme', postingId: '7654321' },
+      occurrenceSnapshotHash: expect.any(String),
     }]);
+  });
+
+  it('never reconstructs an employer scope for cross-tenant inherited community rows', async () => {
+    const { admission: store, jobs } = subject();
+    const current = job();
+    delete current.admission;
+    const reference = {
+      sourceId: 'community-list', provenance: 'reviewed-community' as const, externalId: 'row-2', document: 'README.md',
+      sourceUrl: 'https://github.com/example/jobs', row: 2, company: 'Acme', title: current.title,
+      location: current.location, season: current.season,
+      applyUrl: 'https://other.wd1.myworkdayjobs.com/en-US/jobs/job/Security_R-102', compensation: current.compensation,
+      state: 'open' as const, employerLabelOrigin: 'inherited' as const, employerInheritance: 'conflict' as const,
+    };
+    current.sourceReferences = [reference];
+    await jobs.putInternship(current);
+    const [candidate] = await store.legacyVerificationCandidates();
+    expect(candidate?.providerIdentity).toMatchObject({ provider: 'workday', tenant: 'other', postingId: 'r-102' });
+    expect(candidate?.providerIdentity).not.toHaveProperty('employerScope');
+
+    const admitted = admission(true);
+    admitted.destination = { ...admitted.destination, provider: 'workday', tenant: 'other', expectedPostingId: 'r-102',
+      nextCheckAt: '2026-08-30T00:00:00Z' };
+    await jobs.putInternship({ ...current, admission: admitted, sourceReferences: [{ ...reference, admission: admitted }] });
+    await store.syncVerificationSchedule('2026-08-30T00:00:00Z');
+    const [scheduled] = await store.leaseDueVerifications('2026-08-30T00:00:00Z');
+    expect(scheduled?.providerIdentity).not.toHaveProperty('employerScope');
+  });
+
+  it('freezes resumable backfill generations and stores historical evidence without changing catalog JSON', async () => {
+    const { database, admission: store, jobs } = subject();
+    await store.putCanonicalEmployer({ id: 'acme', displayName: 'Acme', reviewedAt: '2026-08-30T00:00:00Z',
+      reviewedBy: 'reviewer' }, '2026-08-30T00:00:00Z');
+    await store.supersedeEmployerMapping({ id: 'greenhouse-acme', provider: 'greenhouse', scope: 'greenhouse-acme',
+      canonicalEmployerId: 'acme', reviewedAt: '2026-08-30T00:00:00Z', reviewedBy: 'reviewer' });
+    const current = job();
+    delete current.admission;
+    current.sourceReferences = [{ sourceId: 'greenhouse-acme', provenance: 'official-ats', externalId: '7654321', document: '7654321',
+      sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs', row: 1, company: 'Acme', title: current.title,
+      location: current.location, locations: [current.location], season: current.season,
+      applyUrl: 'https://job-boards.greenhouse.io/acme/jobs/7654321', compensation: current.compensation, state: 'open' }];
+    await jobs.putInternship(current);
+    await jobs.putSourceOccurrence({ sourceId: 'greenhouse-acme', externalId: '7654321', jobId: current.jobId,
+      occurrence: current.sourceReferences[0]!, present: true, consecutiveOmissions: 0,
+      changedSnapshotHash: 'snapshot', changedAt: '2026-08-29T00:00:00Z' });
+    const before = await jobs.getJob(current.jobId);
+    const generation = await store.previewBackfill('2026-08-30T00:00:00Z');
+    expect(generation).toMatchObject({ state: 'previewed', total: 1, queued: 0, completed: 0 });
+    const page = await store.backfillPage(generation.id, 0, 100);
+    expect(page).toMatchObject([{ jobId: current.jobId, sourceId: 'greenhouse-acme', externalId: '7654321' }]);
+    await store.markBackfillQueued(generation.id, [page[0]!.occurrenceKey], '2026-08-30T00:01:00Z');
+    await store.recordBackfillEvidence({ generationId: generation.id, occurrenceKey: page[0]!.occurrenceKey,
+      evidenceHash: 'candidate-hash', classification: 'posting-detail', value: {
+        classification: 'posting-detail', candidateUrl: current.applyUrl, provider: 'greenhouse', tenant: 'acme',
+        expectedPostingId: '7654321', inspectedAt: '2026-08-30T00:02:00Z', freshUntil: '2026-09-06T00:02:00Z',
+      }, observedAt: '2026-08-30T00:02:00Z' });
+    await store.recordBackfillEvidence({ generationId: generation.id, occurrenceKey: page[0]!.occurrenceKey,
+      evidenceHash: 'redelivery-hash', classification: 'gone', value: { classification: 'gone' },
+      observedAt: '2026-08-30T00:02:30Z' });
+    expect(database.prepare(`SELECT evidence_hash, classification FROM admission_backfill_evidence
+      WHERE generation_id = ? AND occurrence_key = ?`).get(generation.id, page[0]!.occurrenceKey))
+      .toEqual({ evidence_hash: 'candidate-hash', classification: 'posting-detail' });
+    expect(await store.backfillProgress(generation.id)).toMatchObject({ state: 'complete', queued: 1, completed: 1 });
+    expect(await jobs.getJob(current.jobId)).toEqual(before);
+    await jobs.putInternship({ ...current,
+      sourceReferences: [{ ...current.sourceReferences[0]!, title: 'Completely Different Security Role' }] });
+    await expect(store.deriveBackfillRepairBatch(generation.id, 'greenhouse-acme')).rejects.toThrow('drifted');
+    await jobs.putInternship({ ...current, applyUrl: 'https://job-boards.greenhouse.io/acme/jobs/9999999',
+      sourceReferences: [{ ...current.sourceReferences[0]!, applyUrl: 'https://job-boards.greenhouse.io/acme/jobs/9999999' }] });
+    await expect(store.deriveBackfillRepairBatch(generation.id, 'greenhouse-acme')).rejects.toThrow('drifted');
+    await jobs.putInternship(before!);
+    const derived = await store.deriveBackfillRepairBatch(generation.id, 'greenhouse-acme');
+    expect(derived).toMatchObject({ records: 2, changes: [{ jobId: current.jobId,
+      admission: { catalogEligible: true, alertEligible: true } }] });
+    const staged = await store.stageRepair(derived.changes, '2026-08-30T00:03:00Z');
+    await store.applyRepair(staged.repairToken, staged.changed, '2026-08-30T00:04:00Z', staged.occurrencesChanged);
+    expect(await jobs.getJob(current.jobId)).toMatchObject({ applicationUrlValidatedAt: '2026-08-30T00:02:00Z',
+      admission: { catalogEligible: true },
+      sourceReferences: [{ admission: { catalogEligible: true } }] });
+    const zero = await store.stageRepair((await store.deriveBackfillRepairBatch(generation.id, 'greenhouse-acme')).changes,
+      '2026-08-30T00:05:00Z');
+    expect(zero).toMatchObject({ changed: 0, occurrencesChanged: 0 });
+  });
+
+  it('freezes more than 1,000 legacy occurrences without exceeding the D1 invocation query budget', async () => {
+    const { database, jobs } = subject();
+    const current = job();
+    delete current.admission;
+    current.sourceReferences = Array.from({ length: 1_100 }, (_, index) => ({
+      sourceId: 'greenhouse-acme', provenance: 'official-ats' as const, externalId: `legacy-${index}`, document: `legacy-${index}`,
+      sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs', row: index + 1, company: current.company,
+      title: current.title, location: current.location, season: current.season,
+      applyUrl: `https://job-boards.greenhouse.io/acme/jobs/${1_000_000 + index}`,
+      compensation: current.compensation, state: 'open' as const,
+    }));
+    await jobs.putInternship(current);
+    const budget = { used: 0, maximum: 1_000 };
+    const store = new D1CatalogAdmissionStore(sqliteD1(database, budget));
+
+    const generation = await store.previewBackfill('2026-08-30T00:00:00Z');
+
+    expect(generation.total).toBe(1_100);
+    expect(budget.used).toBeLessThan(10);
+    await expect(store.deriveBackfillRepairBatch(generation.id, 'greenhouse-acme', 0, 121))
+      .rejects.toThrow('between 1 and 120');
+  });
+
+  it('resumes schedule synchronization and prunes stale rows only after a complete bounded pass', async () => {
+    const { database, jobs } = subject();
+    const current = job();
+    current.admission = admission(true);
+    current.sourceReferences = Array.from({ length: 1_100 }, (_, index) => ({
+      sourceId: 'greenhouse-acme', provenance: 'official-ats' as const, externalId: `role-${index}`, document: `role-${index}`,
+      sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs', row: index + 1, company: current.company,
+      title: current.title, location: current.location, season: current.season,
+      applyUrl: `https://job-boards.greenhouse.io/acme/jobs/${2_000_000 + index}`,
+      compensation: current.compensation, state: 'open' as const, admission: current.admission,
+    }));
+    await jobs.putInternship(current);
+    database.prepare(`INSERT INTO destination_verification_schedule
+      (occurrence_key, job_id, source_id, external_id, candidate_url, provider_identity, next_check_at, updated_at)
+      VALUES ('stale', 'removed-job', 'removed-source', 'removed-role', 'https://example.test/removed', '{}', ?, ?)`)
+      .run('2026-08-30T00:00:00Z', '2026-08-30T00:00:00Z');
+    const budget = { used: 0, maximum: 1_000 };
+    const store = new D1CatalogAdmissionStore(sqliteD1(database, budget));
+
+    for (let invocation = 0; invocation < 5; invocation += 1) {
+      budget.used = 0;
+      await store.syncVerificationSchedule(`2026-08-30T00:0${invocation}:00Z`);
+      expect(budget.used).toBeLessThan(1_000);
+      if (invocation < 4) expect(database.prepare("SELECT count(*) AS count FROM destination_verification_schedule WHERE occurrence_key = 'stale'").get())
+        .toEqual({ count: 1 });
+    }
+    expect(database.prepare('SELECT count(*) AS count FROM destination_verification_schedule').get()).toEqual({ count: 1_100 });
+    expect(database.prepare('SELECT count(*) AS count FROM destination_verification_schedule_sync').get()).toEqual({ count: 0 });
+    budget.used = 0;
+    await expect(store.leaseDueVerifications('2026-09-02T00:00:00Z', 1_000)).resolves.toHaveLength(100);
+    expect(budget.used).toBe(101);
+  });
+
+  it('leases due occurrence checks once and resumes after the lease expires', async () => {
+    const { admission: store, jobs } = subject();
+    const current = job();
+    current.admission = admission(true);
+    current.admission.destination.nextCheckAt = '2026-08-30T00:00:00Z';
+    current.sourceReferences = [{ sourceId: 'greenhouse-acme', provenance: 'official-ats', externalId: 'role-1', document: 'role-1',
+      sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs', row: 1, company: 'Acme', title: current.title,
+      location: current.location, season: current.season, applyUrl: 'https://job-boards.greenhouse.io/acme/jobs/7654321',
+      compensation: current.compensation, state: 'open', admission: current.admission }];
+    await jobs.putInternship(current);
+    await store.syncVerificationSchedule('2026-08-30T00:00:00Z');
+    const first = await store.leaseDueVerifications('2026-08-30T00:00:00Z');
+    expect(first).toHaveLength(1);
+    await expect(store.leaseDueVerifications('2026-08-30T00:01:00Z')).resolves.toEqual([]);
+    const resumed = await store.leaseDueVerifications('2026-08-30T00:16:00Z');
+    expect(resumed).toHaveLength(1);
+    expect(resumed[0]!.occurrenceKey).toBe(first[0]!.occurrenceKey);
+  });
+
+  it('does not immediately re-lease a completed validThrough closure', async () => {
+    const { admission: store, jobs } = subject();
+    const current = job();
+    current.admission = admission(true);
+    current.admission.destination.nextCheckAt = '2026-09-08T12:00:00Z';
+    const reference = { sourceId: 'structured-acme', provenance: 'official-structured' as const, externalId: 'role-1',
+      document: 'role-1', sourceUrl: 'https://careers.acme.test/jobs', row: 1, company: 'Acme', title: current.title,
+      location: current.location, season: current.season, applyUrl: current.applyUrl,
+      compensation: current.compensation, state: 'open' as const, admission: current.admission };
+    current.sourceReferences = [reference];
+    await jobs.putInternship(current);
+    await store.syncVerificationSchedule('2026-09-08T12:00:00Z');
+    const [leased] = await store.leaseDueVerifications('2026-09-08T12:00:00Z');
+    const destination = classifyDestination({
+      listing: { ...reference, fetchedAt: '2026-09-08T12:00:00Z', providerIdentity: leased!.providerIdentity },
+      reachability: 'live', browserVisible: true, inspectedAt: '2026-09-08T12:00:00Z',
+      evidence: { url: reference.applyUrl, title: reference.title, postingIdPresent: true, jobPostingCount: 1,
+        validThrough: '2026-09-07T12:00:00Z', confidence: { score: 100, level: 'high', recommendation: 'alert-eligible', signals: [] } },
+    });
+    expect(destination).toMatchObject({ classification: 'gone', nextCheckAt: '2026-09-14T12:00:00.000Z' });
+    await store.completeScheduledVerification({ occurrenceKey: leased!.occurrenceKey, leaseToken: leased!.leaseToken,
+      completedAt: '2026-09-08T12:00:00Z', classification: destination.classification,
+      nextCheckAt: destination.nextCheckAt! });
+
+    await expect(store.leaseDueVerifications('2026-09-08T12:30:00Z')).resolves.toEqual([]);
+    await expect(store.leaseDueVerifications('2026-09-14T11:59:59Z')).resolves.toEqual([]);
+    await expect(store.leaseDueVerifications('2026-09-14T12:00:00Z')).resolves.toHaveLength(1);
+  });
+
+  it('releases a stale lease immediately when the occurrence destination generation changes', async () => {
+    const { admission: store, jobs } = subject();
+    const current = job();
+    const firstUrl = 'https://job-boards.greenhouse.io/acme/jobs/7654321';
+    const secondUrl = 'https://job-boards.greenhouse.io/acme/jobs/8765432';
+    current.admission = admission(true);
+    current.admission.destination = { ...current.admission.destination, candidateUrl: firstUrl,
+      provider: 'greenhouse', tenant: 'acme', expectedPostingId: '7654321', nextCheckAt: '2026-08-30T00:00:00Z' };
+    const reference = { sourceId: 'greenhouse-acme', provenance: 'official-ats' as const, externalId: 'role-1', document: 'role-1',
+      sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs', row: 1, company: 'Acme', title: current.title,
+      location: current.location, season: current.season, applyUrl: firstUrl,
+      compensation: current.compensation, state: 'open' as const, admission: current.admission };
+    current.sourceReferences = [reference];
+    await jobs.putInternship(current);
+    await store.syncVerificationSchedule('2026-08-30T00:00:00Z');
+    expect(await store.leaseDueVerifications('2026-08-30T00:00:00Z')).toHaveLength(1);
+
+    await jobs.putInternship({ ...current, applyUrl: secondUrl, normalizedUrl: secondUrl,
+      sourceReferences: [{ ...reference, applyUrl: secondUrl }] });
+    await store.syncVerificationSchedule('2026-08-30T00:01:00Z');
+    const [replacement] = await store.leaseDueVerifications('2026-08-30T00:01:00Z');
+    expect(replacement).toMatchObject({ candidateUrl: secondUrl,
+      providerIdentity: { provider: 'greenhouse', tenant: 'acme', postingId: '8765432' } });
+  });
+
+  it('atomically rejects an admission write after its exact occurrence generation drifts', async () => {
+    const { jobs, database } = subject();
+    const current = job();
+    const expectedReference = { sourceId: 'greenhouse-acme', provenance: 'official-ats' as const, externalId: '7654321',
+      document: '7654321', sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs', row: 1,
+      company: 'Acme', title: current.title, location: current.location, season: current.season,
+      applyUrl: 'https://job-boards.greenhouse.io/acme/jobs/7654321', compensation: current.compensation, state: 'open' as const };
+    const expected = { ...current, sourceReferences: [expectedReference] };
+    await jobs.putInternship(expected);
+    const changedReference = { ...expectedReference, title: 'Security Engineering Intern',
+      applyUrl: 'https://job-boards.greenhouse.io/acme/jobs/8765432' };
+    await jobs.putInternship({ ...expected, title: changedReference.title, applyUrl: changedReference.applyUrl,
+      normalizedUrl: changedReference.applyUrl, sourceReferences: [changedReference] });
+
+    const proposedAdmission = admission(true);
+    const persisted = await jobs.putAdmissionState({ ...expected, admission: proposedAdmission,
+      sourceReferences: [{ ...expectedReference, admission: proposedAdmission }] }, expectedReference, undefined, undefined,
+      newJobNotificationEvent(expectedReference.sourceId, expectedReference.externalId, expected, '2026-08-26T12:00:00Z'));
+    expect(persisted).toBe(false);
+    expect(database.prepare("SELECT count(*) AS count FROM catalog_items WHERE kind = 'notification-event'").get()).toEqual({ count: 0 });
+    expect(await jobs.getJob(current.jobId)).toMatchObject({ title: changedReference.title, applyUrl: changedReference.applyUrl,
+      sourceReferences: [{ title: changedReference.title, applyUrl: changedReference.applyUrl }] });
+  });
+
+  it('commits a delayed notification with an exact admission write and deduplicates retries', async () => {
+    const { jobs, database } = subject();
+    const current = job();
+    const reference = { sourceId: 'greenhouse-acme', provenance: 'official-ats' as const, externalId: '7654321',
+      document: '7654321', sourceUrl: current.applyUrl, row: 1, company: current.company,
+      title: current.title, location: current.location, season: current.season,
+      applyUrl: current.applyUrl, compensation: current.compensation, state: 'open' as const };
+    const expected = { ...current, sourceReferences: [reference] };
+    await jobs.putInternship(expected);
+    const proposedAdmission = admission(true);
+    const next = { ...expected, admission: proposedAdmission,
+      sourceReferences: [{ ...reference, admission: proposedAdmission }] };
+    const event = newJobNotificationEvent(reference.sourceId, reference.externalId, next, '2026-08-26T12:00:00Z');
+    expect(await jobs.putAdmissionState(next, reference, undefined, undefined, event)).toBe(true);
+    expect(await jobs.putAdmissionState(next, reference, undefined, undefined, event)).toBe(false);
+    expect(database.prepare("SELECT count(*) AS count FROM catalog_items WHERE kind = 'notification-event'").get()).toEqual({ count: 1 });
   });
 
   it('resolves tenant-specific review rules ahead of host-wide rules', async () => {
@@ -218,6 +483,7 @@ describe('D1 catalog admission operations', () => {
       openedAt: '2026-08-26T00:00:00Z', updatedAt: '2026-08-26T00:00:00Z' };
     await store.upsertIncident({ ...base, id: 'old', reasonCode: 'destination-unresolved' });
     await store.upsertIncident({ ...base, id: 'current', reasonCode: 'destination-grace' });
+    await store.upsertIncident({ ...base, id: 'quarantine', reasonCode: 'destination-gone', state: 'quarantined' });
     await store.resolveIncidents('job-1', 'greenhouse-acme', '2026-08-27T00:00:00Z', 'destination-grace');
     expect(await store.listActiveIncidents()).toMatchObject([{ id: 'current', reasonCode: 'destination-grace' }]);
     await store.resolveIncidents('job-1', 'greenhouse-acme', '2026-08-27T01:00:00Z');
@@ -261,6 +527,49 @@ describe('D1 catalog admission operations', () => {
         confidence: { score: 100, level: 'high', recommendation: 'alert-eligible', signals: ['browser-visible evidence'] } } });
     expect(await jobs.getJob(current.jobId)).toMatchObject({ admission: { catalogEligible: true, alertEligible: true, reasonCodes: [] } });
     expect(await operations.listActiveIncidents()).toEqual([]);
+  });
+
+  it('turns authoritative destination closure into a reversible canonical close without closing the occurrence', async () => {
+    const { admission: operations, jobs } = subject();
+    const good = admission(true);
+    const reference = { sourceId: 'structured-acme', provenance: 'official-structured' as const, externalId: 'role-1', document: 'role-1',
+      sourceUrl: 'https://careers.acme.test/jobs', row: 1, company: 'Acme', title: 'Software Engineering Intern', location: 'Remote',
+      season: 'summer-2027', applyUrl: 'https://careers.acme.test/role-1', compensation: { raw: '' }, state: 'open' as const, admission: good };
+    const current = { ...job(), open: true, admission: good, applicationUrlValidatedAt: '2026-08-29T00:00:00Z',
+      notification: { smsPending: true, digestPending: true }, sourceReferences: [reference] };
+    await jobs.putInternship(current);
+    await jobs.putSourceOccurrence({ sourceId: reference.sourceId, externalId: reference.externalId, jobId: current.jobId,
+      occurrence: reference, present: true, consecutiveOmissions: 0, changedSnapshotHash: 'snapshot', changedAt: '2026-08-29T00:00:00Z' });
+    const message: DestinationVerificationMessage = { version: 1, jobId: current.jobId, sourceId: reference.sourceId,
+      externalId: reference.externalId, providerIdentity: { provider: 'structured', sourceId: reference.sourceId,
+        sourceUrl: reference.sourceUrl, tenant: 'careers.acme.test', postingId: reference.externalId },
+      candidateUrl: reference.applyUrl, reason: 'daily-retry', queuedAt: '2026-08-30T00:00:00Z' };
+    await persistDestinationAdmission({ jobs, operations, message, job: current, reference, reachability: 'gone',
+      inspectedAt: '2026-08-30T00:00:00Z' });
+    const closed = (await jobs.getJob(current.jobId))!;
+    expect(closed).toMatchObject({ open: false, invalidApplicationUrl: reference.applyUrl,
+      notification: { smsPending: false, digestPending: false }, admission: { reasonCodes: ['destination-gone'] },
+      sourceReferences: [{ state: 'open' }] });
+    expect(closed).not.toHaveProperty('applicationUrlValidatedAt');
+
+    const alternateUrl = 'https://careers.acme.test/role-1-reopened';
+    const alternateReference = { ...closed.sourceReferences[0]!, applyUrl: alternateUrl };
+    const alternateJob = { ...closed, applyUrl: alternateUrl, normalizedUrl: alternateUrl,
+      sourceReferences: [alternateReference] };
+    await jobs.putInternship(alternateJob);
+    const [alternateOccurrence] = await jobs.getSourceOccurrences(reference.sourceId);
+    await jobs.putSourceOccurrence({ ...alternateOccurrence!, occurrence: {
+      ...alternateOccurrence!.occurrence, applyUrl: alternateUrl, admission: alternateReference.admission,
+    }, changedAt: '2026-08-30T00:30:00Z' });
+    const alternateMessage = { ...message, candidateUrl: alternateUrl };
+    await persistDestinationAdmission({ jobs, operations, message: alternateMessage, job: alternateJob, reference: alternateReference,
+      reachability: 'live', inspectedAt: '2026-08-30T01:00:00Z', browserVisible: true,
+      evidence: { url: alternateUrl, title: reference.title, postingIdPresent: true, jobPostingCount: 1,
+        confidence: { score: 100, level: 'high', recommendation: 'alert-eligible', signals: ['browser-visible evidence'] } } });
+    expect(await jobs.getJob(current.jobId)).toMatchObject({ open: true, applyUrl: alternateUrl,
+      applicationUrlValidatedAt: '2026-08-30T01:00:00Z',
+      admission: { catalogEligible: true, alertEligible: true } });
+    expect(await jobs.getJob(current.jobId)).not.toHaveProperty('invalidApplicationUrl');
   });
 
   it('maps browser response statuses before inspecting stale page content', () => {
@@ -354,7 +663,8 @@ describe('D1 catalog admission operations', () => {
     expect((await jobs.getJob(current.jobId))?.compensation).toEqual({ raw: '' });
     expect(database.prepare('SELECT count(*) AS count FROM role_metadata_evidence WHERE evidence LIKE ?')
       .get('%compensationRanges%')).toEqual({ count: 0 });
-    await persistDestinationAdmission({ jobs, operations, message, job: current, reference, reachability: 'live',
+    const beforeEnrichment = (await jobs.getJob(current.jobId))!;
+    await persistDestinationAdmission({ jobs, operations, message, job: beforeEnrichment, reference: beforeEnrichment.sourceReferences[0]!, reachability: 'live',
       inspectedAt: '2026-08-28T00:01:00Z', browserVisible: true, evidence: { ...pageEvidence,
         metadataArtifacts: [{ title: reference.title, identifier: '1234567', compensationText: 'USD $40-$50/hour' }] } });
     const enriched = (await jobs.getJob(current.jobId))!;
@@ -413,13 +723,15 @@ describe('D1 catalog admission operations', () => {
   });
 
   it('applies an exact staged repair silently and rolls back on a changed source row', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-26T12:00:00Z'));
     const { database, admission: store, jobs } = subject();
     await jobs.putInternship(job());
     const preview = await store.stageRepair([{ jobId: 'job-1', admission: admission(true), company: 'Acme, Inc.' }], '2026-08-26T12:00:00Z');
     const before = await jobs.getJob('job-1');
     const result = await store.applyRepair(preview.repairToken, preview.changed, '2026-08-26T12:05:00Z');
     const after = await jobs.getJob('job-1');
-    expect(result).toEqual({ changed: 1, occurrencesChanged: 0, projectionRefreshRequired: true });
+    expect(result).toEqual({ changed: 1, occurrencesChanged: 0, projectionRefreshRequired: true, verificationMismatches: 0 });
     expect(after).toMatchObject({ jobId: before?.jobId, company: 'Acme, Inc.', firstSeenAt: before?.firstSeenAt,
       catalogVisibleAt: before?.catalogVisibleAt, notification: before?.notification, admission: { catalogEligible: true } });
     expect((await jobs.listOpen()).jobs).toHaveLength(1);

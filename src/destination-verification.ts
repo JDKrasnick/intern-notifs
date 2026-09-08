@@ -4,6 +4,10 @@ import type { CanonicalEmployer, DestinationEvidence, DestinationReviewRule, Int
 import type { Reachability } from './core/application-verification.js';
 import { evidenceHash } from './catalog-admission.js';
 
+export const DESTINATION_EVIDENCE_TTL_MS = 7 * 86_400_000;
+export const DESTINATION_RECHECK_LEAD_MS = 24 * 60 * 60_000;
+const DESTINATION_MIN_RECHECK_INTERVAL_MS = 24 * 60 * 60_000;
+
 export interface DestinationVerificationRequest {
   jobId: string;
   sourceId: string;
@@ -11,6 +15,10 @@ export interface DestinationVerificationRequest {
   providerIdentity: ProviderIdentity;
   candidateUrl: string;
   reason: 'first-sight' | 'url-change' | 'content-change' | 'daily-retry' | 'weekly-sample' | 'historical-backfill';
+  occurrenceKey?: string;
+  leaseToken?: string;
+  idempotencyKey?: string;
+  generationId?: string;
   /** Optional additive fields keep already-queued v1 messages valid. */
   metadataExtractionVersion?: number;
   metadataArtifactHash?: string;
@@ -109,6 +117,19 @@ export function classifyDestination(input: {
   };
   const candidateUrl = input.listing.applyUrl;
   const finalUrl = input.evidence?.url;
+  const inspectedTime = Date.parse(input.inspectedAt);
+  const ttlDeadline = inspectedTime + DESTINATION_EVIDENCE_TTL_MS;
+  const validThroughTime = input.evidence?.validThrough ? Date.parse(input.evidence.validThrough) : Number.NaN;
+  const freshUntilTime = Number.isFinite(validThroughTime) ? Math.min(ttlDeadline, validThroughTime) : ttlDeadline;
+  const transientReachability = input.reachability === 'blocked' || input.reachability === 'unreachable';
+  const evidenceGone = input.evidence?.closureState === 'gone'
+    || (Number.isFinite(validThroughTime) && validThroughTime <= inspectedTime);
+  const nextCheckTime = transientReachability
+    ? inspectedTime + 86_400_000
+    : input.reachability === 'gone' || evidenceGone
+      ? inspectedTime + DESTINATION_EVIDENCE_TTL_MS - DESTINATION_RECHECK_LEAD_MS
+      : Math.max(inspectedTime + DESTINATION_MIN_RECHECK_INTERVAL_MS,
+        freshUntilTime - DESTINATION_RECHECK_LEAD_MS);
   const common = {
     candidateUrl,
     ...(finalUrl ? { finalUrl } : {}),
@@ -116,6 +137,13 @@ export function classifyDestination(input: {
     ...(identity.tenant ? { tenant: identity.tenant } : {}),
     ...(identity.postingId ? { expectedPostingId: identity.postingId } : {}),
     inspectedAt: input.inspectedAt,
+    closureState: input.reachability === 'gone' || evidenceGone ? 'gone' as const
+      : input.reachability === 'live' || input.reachability === 'implied' ? 'open' as const : 'unknown' as const,
+    ...(input.reachability === 'gone' ? { closureSignal: 'http-gone' as const }
+      : evidenceGone ? { closureSignal: input.evidence?.closureSignal ?? 'valid-through-expired' as const } : {}),
+    ...(input.evidence?.validThrough ? { validThrough: input.evidence.validThrough } : {}),
+    freshUntil: new Date(freshUntilTime).toISOString(),
+    nextCheckAt: new Date(nextCheckTime).toISOString(),
     ...(input.evidence ? { evidenceHash: evidenceHash({
       url: input.evidence.url,
       title: input.evidence.title,
@@ -134,6 +162,9 @@ export function classifyDestination(input: {
       selfReferentialFrame: input.evidence.selfReferentialFrame,
       renderedEvidenceHash: input.evidence.renderedEvidenceHash,
       identicalEvidenceForDifferentPosting: input.evidence.identicalEvidenceForDifferentPosting,
+      closureState: input.evidence.closureState,
+      closureSignal: input.evidence.closureSignal,
+      validThrough: input.evidence.validThrough,
     }) } : {}),
     ...(input.evidence?.postingIdPresent !== undefined ? { postingIdPresent: input.evidence.postingIdPresent } : {}),
     ...(input.evidence?.inspectionTruncated !== undefined ? { inspectionTruncated: input.evidence.inspectionTruncated } : {}),
@@ -152,7 +183,7 @@ export function classifyDestination(input: {
     ...(input.browserVisible !== undefined ? { browserVisible: input.browserVisible } : {}),
   } satisfies Omit<DestinationEvidence, 'classification'>;
 
-  if (input.reachability === 'gone') return { ...common, classification: 'gone' };
+  if (input.reachability === 'gone' || evidenceGone) return { ...common, classification: 'gone' };
   if (input.rule?.decision === 'aggregate-board') return { ...common, classification: 'aggregate-board' };
   const singleStructuredPosting = input.evidence?.inspectionTruncated !== true && input.evidence?.jobPostingCount === 1;
   const exactPostingEvidence = input.evidence?.postingIdPresent === true
@@ -179,6 +210,9 @@ export function classifyDestination(input: {
   if (input.reachability === 'blocked' && input.rule?.decision === 'blocked-accepted' && routeContainsPostingId(identity, candidateUrl)) {
     return { ...common, classification: looksLikeForm(finalUrl ?? candidateUrl, input.evidence) ? 'application-form' : 'posting-detail' };
   }
+  // A network/5xx failure never refreshes evidence, even when the URL shape is
+  // a standard provider route. Reviewed blocked routes remain separately valid.
+  if (input.reachability === 'unreachable') return { ...common, classification: 'unresolved' };
   const standard = (input.rule?.decision === 'standard-provider-route' && routeContainsPostingId(identity, candidateUrl))
     || (input.rule?.decision !== 'browser-required' && standardRouteMatches(identity, candidateUrl));
   if (standard) {
