@@ -1,0 +1,12 @@
+{
+  "jobs": [{
+    "id": "0c4dc4f4-01c9-4138-a666-e7234cda7e95",
+    "title": "Fab Software Engineering Intern - Winter",
+    "jobUrl": "https://jobs.ashbyhq.com/fab2/0c4dc4f4-01c9-4138-a666-e7234cda7e95",
+    "location": "Austin",
+    "secondaryLocations": [{ "location": "San Francisco Office" }],
+    "workplaceType": "OnSite",
+    "descriptionPlain": "We are seeking Software Engineering Interns to work on the Fab team for the winter term. The internship begins in January, with a preferred commitment of 4 to 8 months. Pursuing a BS in Computer Science, Computer Engineering, or demonstrated exceptional skill in software engineering. Software Interns are paid hourly, at a rate equivalent to an annualized range of $114,000–$131,000 depending on experience and education. Actual earnings vary with hours worked. Housing Stipend to help with first month expenses.",
+    "compensation": { "scrapeableCompensationSalarySummary": "USD 114000 - 131000 per year" }
+  }]
+}

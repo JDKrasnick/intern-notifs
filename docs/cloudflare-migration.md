@@ -2,8 +2,10 @@
 
 ## Status and invariants
 
-The Cloudflare replacement is the active development backend and the production
-EAS environment targets its Worker. AWS stays untouched until its suspended
+The Cloudflare replacement is the active backend. EAS development, preview, and
+production environments target its Worker (verified September 6, 2026). Existing
+native binaries need a new approved build to pick up changed build-time values.
+AWS stays untouched until its suspended
 account is reactivated and any useful development data is exported. Existing
 Cognito passwords cannot be migrated, so people who want account-backed data
 must create a fresh InternNotifs account; browsing and device alerts need none.

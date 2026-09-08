@@ -41,6 +41,22 @@ function event(userId: string) {
 }
 
 describe('D1 account deletion barrier', () => {
+  it('deletes an application only within its owner partition', async () => {
+    const database = new DatabaseSync(':memory:');
+    accountSchema(database);
+    const users = new D1UserStore(sqliteD1(database));
+    const application = (applicationId: string) => ({ applicationId, jobId: applicationId, status: 'saved' as const, createdAt: '2026-09-07T00:00:00.000Z', updatedAt: '2026-09-07T00:00:00.000Z' });
+    await users.putApplication('owner', application('first'));
+    await users.putApplication('owner', application('neighbor'));
+
+    await users.deleteApplication('other-user', 'first');
+    expect(await users.getApplication('owner', 'first')).toBeDefined();
+    await users.deleteApplication('owner', 'first');
+    expect(await users.getApplication('owner', 'first')).toBeUndefined();
+    expect(await users.getApplication('owner', 'neighbor')).toMatchObject({ applicationId: 'neighbor' });
+    database.close();
+  });
+
   it('does not let an expired upload clear the replacement lease', async () => {
     const database = new DatabaseSync(':memory:');
     accountSchema(database);

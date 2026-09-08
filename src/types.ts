@@ -129,6 +129,23 @@ export interface SourceCheckpoint {
   contentHash?: string;
   /** Version of the reviewed admission configuration applied to this snapshot. */
   admissionConfigurationVersion?: string;
+  /** Parser version applied after a successful full source reconciliation. */
+  metadataExtractionVersion?: number;
+  /** Source preprocessing revision, separate from API/page extraction. */
+  metadataProcessingRevision?: number;
+  /** Successfully processed current rows while a bounded parser refresh is incomplete. */
+  pendingMetadataProcessedRows?: Array<{
+    externalId: string;
+    sourceMaterialHash: string;
+    extractionVersion: number;
+    processingRevision: number;
+  }>;
+  /** Missing occurrences whose one lifecycle step was durably applied during this refresh. */
+  pendingMetadataOmissions?: Array<{
+    externalId: string;
+    extractionVersion: number;
+    processingRevision: number;
+  }>;
   lastSuccessAt?: string;
   successfulFetches: number;
   lastRowCount?: number;
@@ -305,6 +322,14 @@ export interface SourceReference {
   providerTimestamp?: ProviderTimestamp;
   /** Source-declared workplace arrangement; absent when the source does not declare one. */
   workMode?: 'remote' | 'hybrid' | 'onsite';
+  /** Compact normalized facts extracted from this occurrence's already-fetched artifacts. */
+  metadataEvidence?: RoleMetadataEvidence[];
+  metadataExtraction?: {
+    version: number;
+    artifactHash: string;
+    observedAt: string;
+    outcome: 'extracted' | 'no-explicit-metadata';
+  };
 }
 
 export type OccurrenceProvenance =
@@ -415,6 +440,8 @@ export interface CatalogAdmission {
   evidenceCodes?: CatalogAdmissionEvidence[];
   evaluatedAt: string;
   evidenceObservedAt: string;
+  /** Last successful verification of this exact role's official destination. Public during temporary unreadability. */
+  lastVerifiedAt?: string;
   graceDeadline?: string;
 }
 
@@ -465,6 +492,7 @@ export interface ProviderTimestamp {
 
 /** Ordered from most to least authoritative for provider-neutral enrichment. */
 export type EvidenceSource =
+  | 'official-api'
   | 'official-ats'
   | 'official-json-ld'
   | 'official-page'
@@ -662,6 +690,104 @@ export interface Compensation {
   maxHourlyUSD?: number;
   minAnnualUSD?: number;
   maxAnnualUSD?: number;
+  /** Distinct disclosed ranges; applicability is never collapsed into global extrema. */
+  ranges?: CompensationRange[];
+}
+
+export type CompensationPeriod = 'hourly' | 'annual' | 'daily' | 'weekly' | 'monthly' | 'unknown' | 'other';
+
+export interface CompensationRange {
+  minAmount: number;
+  maxAmount: number;
+  currency: string;
+  period: CompensationPeriod;
+  /** Publisher-supplied range label, not an inferred location or degree. */
+  applicabilityLabel?: string;
+  /** Explicit nonstandard pay interval, retained without annualization. */
+  periodLabel?: string;
+  applicableLocations?: string[];
+  applicableEducationLevels?: EducationLevel[];
+  /** Pay-only, whitespace-bounded excerpt; never a job-description excerpt. */
+  sourceText: string;
+  provenance: FieldProvenance[];
+}
+
+export type RoleMetadataField =
+  | 'compensation'
+  | 'housing'
+  | 'education'
+  | 'graduation-window'
+  | 'locations'
+  | 'work-mode'
+  | 'application-deadline'
+  | 'employer-published-at'
+  | 'employer-updated-at';
+
+/** Employer-disclosed housing support or employee expense, never base salary. */
+export interface HousingDetail {
+  kind: 'stipend' | 'employer-paid' | 'employee-cost' | 'available';
+  minAmount?: number;
+  maxAmount?: number;
+  currency?: string;
+  period?: CompensationPeriod;
+  periodLabel?: string;
+  conditional?: boolean;
+  sourceText: string;
+  provenance: FieldProvenance[];
+}
+
+/** Versioned, provider-neutral evidence extracted from one exact posting artifact. */
+export interface RoleMetadataEvidence {
+  schemaVersion: 1;
+  extractionVersion: number;
+  artifactHash: string;
+  sourceClass: EvidenceSource;
+  sourceId: string;
+  sourceUrl: string;
+  observedAt: string;
+  exactPosting: true;
+  compensationRanges?: CompensationRange[];
+  housing?: HousingDetail[];
+  education?: EducationAudience;
+  locations?: InternshipLocation[];
+  workMode?: ProvenancedValue<Exclude<WorkMode, 'unspecified'>>;
+  applicationDeadline?: ProvenancedValue<ApplicationDeadline>;
+  employerPublishedAt?: ProvenancedValue<string>;
+  employerUpdatedAt?: ProvenancedValue<string>;
+  /** Bounded field excerpts only. Full posting text is intentionally excluded. */
+  excerpts?: Partial<Record<RoleMetadataField, string>>;
+}
+
+export interface MetadataConflict {
+  field: RoleMetadataField;
+  applicabilityKey?: string;
+  evidenceHashes: string[];
+  values: string[];
+}
+
+/** Operations-approved omission, activated only by the guarded repair path. */
+export interface RoleMetadataOmission {
+  field: 'compensation';
+  action: 'omit';
+  reason: 'publisher-inconsistent';
+  evidenceFingerprint: string;
+  reviewToken: string;
+}
+
+/** Compact canonical result. Evidence history and conflicts live in operations tables. */
+export interface ReconciledRoleMetadata {
+  schemaVersion: 1;
+  extractionVersion: number;
+  evidenceHashes: string[];
+  compensationRanges?: CompensationRange[];
+  housing?: HousingDetail[];
+  education?: EducationAudience;
+  locations?: InternshipLocation[];
+  workMode?: ProvenancedValue<Exclude<WorkMode, 'unspecified'>>;
+  applicationDeadline?: ProvenancedValue<ApplicationDeadline>;
+  graduationWindow?: ProvenancedValue<GraduationDateWindow>;
+  employerPublishedAt?: ProvenancedValue<string>;
+  employerUpdatedAt?: ProvenancedValue<string>;
 }
 
 /** Source-declared constraints; absence never implies that a constraint does not exist. */
@@ -674,6 +800,12 @@ export interface SourceOccurrence extends SourceReference {
   externalId?: string;
   /** Admission rules applied to this row, so interrupted source migrations can resume safely. */
   admissionConfigurationVersion?: string;
+  /** Source-row parser work applied to this exact raw material. */
+  sourceMetadataProcessing?: {
+    extractionVersion: number;
+    processingRevision: number;
+    sourceMaterialHash: string;
+  };
   /** Reviewed provider facts retained for identity repair and audit. */
   providerEvidence?: ProviderPostingEvidence;
   /** Durable identity decision for this occurrence. Missing means legacy-unclassified. */
@@ -803,6 +935,14 @@ export interface SourcedPosting {
   classificationTags?: string[];
   declaredWorkMode?: string;
   compensationText?: string;
+  compensationBands?: Array<{
+    minAmount: number;
+    maxAmount: number;
+    currency: string;
+    period?: CompensationPeriod;
+    label?: string;
+    sourceText: string;
+  }>;
   declaredRequirements?: Partial<JobRequirements>;
 }
 
@@ -855,6 +995,9 @@ export interface Internship {
   title: string;
   location: string;
   locations?: string[];
+  housing?: HousingDetail[];
+  /** Trusted operations receipt; source parsers must never create this. */
+  metadataOmission?: RoleMetadataOmission;
   season: string;
   applyUrl: string;
   normalizedUrl: string;
@@ -872,12 +1015,16 @@ export interface Internship {
   invalidApplicationUrl?: string;
   fingerprint: string;
   compensation: Compensation;
+  /** Reconciled employer-disclosed metadata; full evidence history is stored separately. */
+  roleMetadata?: ReconciledRoleMetadata;
   /** Provider-neutral status. Missing legacy values are rendered as `unknown`. */
   workAuthorizationStatus?: WorkAuthorizationStatus;
   applicationDeadline?: ApplicationDeadline;
   graduationWindow?: GraduationDateWindow;
   programType?: InternshipProgramType;
   workMode?: WorkMode;
+  employerPublishedAt?: string;
+  employerUpdatedAt?: string;
   /** Employer co-attribution for accepted field-level evidence; history remains in proposal/audit tables. */
   employerMetadataAttribution?: Record<string, Array<{ organizationId: string; proposalId: string; evidenceAt: string }>>;
   requirements?: JobRequirements;

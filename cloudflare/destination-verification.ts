@@ -5,12 +5,15 @@ import { classifyDestination, matchingBrowserDestination } from '../src/destinat
 import type { DestinationVerificationRequest } from '../src/destination-verification.js';
 import type { ApplicationPageEvidence } from '../src/core/application-url.js';
 import { reachabilityFromFailure, type Reachability } from '../src/core/application-verification.js';
-import { combineRenderedFrameEvidence, type RenderedFrameSnapshot } from '../src/rendered-destination-evidence.js';
+import { combineRenderedFrameEvidence, exactPostingRecoveryUrl, renderedDescriptionReady, type RenderedFrameSnapshot } from '../src/rendered-destination-evidence.js';
 import { newJobNotificationEvent, shouldPromoteDelayedNotification } from '../src/ingestion/catalog-reconciler.js';
 import { activeTrustedCommunityPolicy, advanceTrustedCommunityQualification } from '../src/sources/trust-policy.js';
 import type { CatalogAdmissionReason, Internship, ProcessedListing, ProviderIdentity, SourceOccurrence } from '../src/types.js';
-import { D1CatalogAdmissionStore } from './catalog-admission-store.js';
+import { D1CatalogAdmissionStore, ROLE_METADATA_REVALIDATION_MS } from './catalog-admission-store.js';
 import { D1InternshipStore } from './d1-store.js';
+import { extractPostingMetadataEvidence, extractVerifiedPageMetadataEvidence, projectRoleMetadata, replaceVerifiedPageMetadataEvidence, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION, VERIFIED_PAGE_METADATA_SOURCES } from '../src/role-metadata.js';
+import { createMetadataAcquirer, metadataApiRoute, type MetadataAcquisition } from '../src/metadata-acquisition.js';
+import { metadataFieldOutcomes } from '../src/metadata-audit.js';
 import type { D1Database, MessageBatch, Queue } from './types.js';
 
 export interface DestinationVerificationMessage {
@@ -22,6 +25,9 @@ export interface DestinationVerificationMessage {
   candidateUrl: string;
   reason: 'first-sight' | 'url-change' | 'content-change' | 'daily-retry' | 'weekly-sample' | 'historical-backfill';
   queuedAt: string;
+  metadataExtractionVersion?: number;
+  metadataArtifactHash?: string;
+  metadataBackfillToken?: string;
 }
 
 export interface DestinationVerificationEnvironment {
@@ -50,6 +56,12 @@ function parseMessage(value: unknown): DestinationVerificationMessage {
   return message as DestinationVerificationMessage;
 }
 
+function metadataExtractionCurrent(reference: SourceOccurrence, message: DestinationVerificationMessage): boolean {
+  if (!message.metadataExtractionVersion) return true;
+  return reference.metadataExtraction?.version === message.metadataExtractionVersion
+    && (!message.metadataArtifactHash || reference.metadataExtraction.artifactHash === message.metadataArtifactHash);
+}
+
 export function reachabilityFromHttpStatus(status: number | undefined): Reachability {
   if (status === 404 || status === 410) return 'gone';
   if (status === 401 || status === 403 || status === 429) return 'blocked';
@@ -72,6 +84,8 @@ export async function persistDestinationAdmission(input: {
   reachability: Reachability;
   inspectedAt: string;
   evidence?: ApplicationPageEvidence;
+  apiAcquisition?: MetadataAcquisition;
+  durationMs?: number;
   browserVisible?: boolean;
   trustedCommunityCatalogEnabled?: boolean;
   identityUnconfirmedPublicationEnabled?: boolean;
@@ -119,12 +133,78 @@ export async function persistDestinationAdmission(input: {
       ? { trustedCommunity: { policy: trustedCommunityPolicy, qualification: trustedCommunityAlertQualification } }
       : {}),
   });
-  const updatedReference = {
-    ...reference,
-    admission,
+  const pageComplete = evidence && !evidence.inspectionTruncated && !evidence.failedFrameCount && !evidence.loadingShell
+    && !evidence.metadataArtifacts?.some((artifact) => artifact.inspectionTruncated);
+  const pageExtracted = evidence && ['posting-detail', 'application-form'].includes(destination.classification)
+    ? extractVerifiedPageMetadataEvidence({
+      expectedTitle: reference.title,
+      expectedPostingId: message.providerIdentity.postingId,
+      page: { title: evidence.title ?? reference.title,
+        text: evidence.contentSource === 'json-ld' ? undefined : evidence.contentExcerpt,
+        compensationSections: evidence.compensationSections },
+      jsonLdArtifacts: evidence.metadataArtifacts,
+      sourceId: message.sourceId,
+      sourceUrl: evidence.url,
+      observedAt: inspectedAt,
+      exactPosting: true,
+    }) : [];
+  // Partial snapshots cannot withdraw previously supported fields. Retain
+  // their diagnostic excerpts but wait for complete acquisition before replay.
+  const extracted = pageComplete ? pageExtracted : [];
+  const apiEvidence = input.apiAcquisition?.artifact ? extractPostingMetadataEvidence({
+    artifact: input.apiAcquisition.artifact, sourceClass: 'official-api', sourceId: message.sourceId,
+    sourceUrl: input.apiAcquisition.sourceUrl, observedAt: inspectedAt, exactPosting: true,
+  }) : [];
+  extracted.push(...apiEvidence);
+  const metadataEvidence = pageComplete
+    ? replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, extracted, message.sourceId)
+    : replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, [
+      ...(reference.metadataEvidence ?? []).filter((item) => VERIFIED_PAGE_METADATA_SOURCES.some((source) => source === item.sourceClass)),
+      ...extracted,
+    ], message.sourceId);
+  const enrichedReference = { ...reference, admission,
     ...(trustedCommunityAlertQualification ? { trustedCommunityAlertQualification } : {}),
+    metadataEvidence,
+    ...(pageComplete || apiEvidence.length ? { metadataExtraction: {
+      version: ROLE_METADATA_EXTRACTION_VERSION,
+      artifactHash: apiEvidence[0]?.artifactHash ?? evidence?.contentHash ?? evidence?.renderedEvidenceHash ?? createHash('sha256').update(JSON.stringify({ url: evidence?.url, title: evidence?.title, description: evidence?.description })).digest('hex'),
+      observedAt: inspectedAt,
+      outcome: extracted.some(roleMetadataEvidenceHasFields) ? 'extracted' as const : 'no-explicit-metadata' as const,
+    } } : {}),
   };
-  const sourceReferences = job.sourceReferences.map((item) => item === reference ? updatedReference : item);
+  const sourceReferences = job.sourceReferences.map((item) => item === reference ? enrichedReference : item);
+  const projected = projectRoleMetadata({ ...job, sourceReferences, admission: deriveCanonicalAdmission(sourceReferences, inspectedAt) });
+  const complete = Boolean(apiEvidence.length || (pageComplete && ['posting-detail', 'application-form'].includes(destination.classification)));
+  const retryAfter = new Date(Date.parse(inspectedAt) + (complete ? ROLE_METADATA_REVALIDATION_MS : 24 * 60 * 60_000)).toISOString();
+  await operations.recordMetadataAcquisition(job.jobId, message.sourceId, inspectedAt, {
+    provider: message.providerIdentity.provider, postingId: message.providerIdentity.postingId ?? message.externalId,
+    sourceUrl: input.apiAcquisition?.artifact ? input.apiAcquisition.sourceUrl : evidence?.url ?? message.candidateUrl,
+    method: input.apiAcquisition?.artifact ? input.apiAcquisition.method : 'browser',
+    apiOutcome: input.apiAcquisition?.outcome, apiStatus: input.apiAcquisition?.status,
+    durationMs: input.durationMs, apiRouteAttempts: input.apiAcquisition ? 1 : 0, browserEvidenceSnapshots: browserVisible ? 1 : 0,
+    artifactHash: apiEvidence[0]?.artifactHash ?? evidence?.contentHash ?? evidence?.renderedEvidenceHash,
+    extractionVersion: ROLE_METADATA_EXTRACTION_VERSION, observedAt: inspectedAt, complete,
+    inspectionTruncated: Boolean(evidence?.inspectionTruncated), failedFrames: evidence?.failedFrameCount ?? 0,
+    destination: destination.classification, retryAfter,
+    fields: metadataFieldOutcomes({ evidence: complete ? extracted : [], conflicts: projected.conflicts,
+      acquired: Boolean(apiEvidence.length || (evidence && ['posting-detail', 'application-form'].includes(destination.classification))), complete }),
+    excerpts: [...pageExtracted, ...apiEvidence].flatMap((item) => item.compensationRanges?.map((range) => range.sourceText) ?? []).slice(0, 8),
+  }, retryAfter);
+  if (complete && enrichedReference.metadataExtraction) await operations.recordRoleMetadataExtraction({
+    jobId: job.jobId, sourceId: message.sourceId, sourceUrl: input.apiAcquisition?.artifact ? input.apiAcquisition.sourceUrl : evidence!.url,
+    artifactHash: enrichedReference.metadataExtraction.artifactHash,
+    extractionVersion: enrichedReference.metadataExtraction.version,
+    outcome: enrichedReference.metadataExtraction.outcome,
+    observedAt: inspectedAt,
+    ...(message.metadataBackfillToken ? { backfillToken: message.metadataBackfillToken } : {}),
+  });
+  if (evidence || apiEvidence.length) await operations.recordRoleMetadataEvidence(job.jobId, extracted, projected.conflicts, inspectedAt, {
+    sourceId: message.sourceId,
+    sourceClasses: [...(pageComplete ? VERIFIED_PAGE_METADATA_SOURCES : []), ...(apiEvidence.length ? ['official-api' as const] : [])],
+  });
+  // Historical collection is deliberately staging-only. The guarded repair
+  // endpoint performs the public job write after exact token/count checks.
+  if (message.metadataBackfillToken) return { destination };
   const canonicalAdmission = deriveCanonicalAdmission(sourceReferences, inspectedAt);
   const becomingCatalogVisible = !job.catalogVisibleAt && job.admission?.catalogEligible === false && canonicalAdmission?.catalogEligible === true;
   // Only the trusted policy supplies durable baseline/qualification evidence.
@@ -139,7 +219,7 @@ export async function persistDestinationAdmission(input: {
       baselineSuppressed: trustedCommunityAlertQualification?.baselineSuppressed,
     }));
   const nextJob: Internship = {
-    ...job,
+    ...projected.job,
     sourceReferences,
     ...(canonicalAdmission ? { admission: canonicalAdmission } : {}),
     ...(becomingCatalogVisible ? { catalogVisibleAt: inspectedAt,
@@ -148,7 +228,7 @@ export async function persistDestinationAdmission(input: {
   };
   const nextOccurrence = occurrence ? {
     ...occurrence,
-    occurrence: { ...occurrence.occurrence, ...updatedReference },
+    occurrence: { ...occurrence.occurrence, ...enrichedReference },
     changedAt: inspectedAt,
   } : undefined;
   if (nextOccurrence && reference.postingIdentityDecision && reference.postingIdentityDecision.status !== 'quarantined') {
@@ -223,9 +303,10 @@ export async function processDestinationVerificationBatch(
       if (!job) { queued.ack(); continue; }
       const reference = job.sourceReferences.find((item) => item.sourceId === message.sourceId && item.externalId === message.externalId);
       const attemptKey = `${message.jobId}\0${message.sourceId}\0${message.candidateUrl}`;
-      if (!reference || matchingBrowserDestination(job, message, message.queuedAt)
+      if (!reference || (matchingBrowserDestination(job, message, message.queuedAt) && metadataExtractionCurrent(reference, message))
         || pendingAttemptKeys.has(attemptKey)
-        || await operations.hasVerificationAttemptSince(message.jobId, message.sourceId, message.candidateUrl, recentAttemptCutoff)) {
+        || (metadataExtractionCurrent(reference, message)
+          && await operations.hasVerificationAttemptSince(message.jobId, message.sourceId, message.candidateUrl, recentAttemptCutoff))) {
         queued.ack(); continue;
       }
       pendingAttemptKeys.add(attemptKey);
@@ -235,34 +316,67 @@ export async function processDestinationVerificationBatch(
     }
   }
   if (!pending.length) return;
+  const acquireMetadata = createMetadataAcquirer(fetch, {
+    canRequest: (host) => operations.metadataHostAvailable(host),
+    deferHost: (host, until) => operations.deferMetadataHost(host, until),
+  });
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
   try {
-    browser = await puppeteer.launch(env.DESTINATION_BROWSER);
     for (const { queued, message } of pending) {
       const attemptedAt = now().toISOString();
       try {
         const job = await jobs.getJob(message.jobId);
         if (!job) { queued.ack(); continue; }
         const reference = job.sourceReferences.find((item) => item.sourceId === message.sourceId && item.externalId === message.externalId);
-        if (!reference || matchingBrowserDestination(job, message, message.queuedAt)) { queued.ack(); continue; }
+        if (!reference || (matchingBrowserDestination(job, message, message.queuedAt) && metadataExtractionCurrent(reference, message))) { queued.ack(); continue; }
+        let apiAcquisition = await acquireMetadata(message.providerIdentity, message.candidateUrl);
+        // Historical collection cannot change admission, URL or notifications.
+        // An identity-checked full API artifact needs no browser for that task.
+        if (message.metadataBackfillToken && apiAcquisition?.artifact) {
+          await persistDestinationAdmission({ jobs, operations, message, job, reference,
+            reachability: 'live', inspectedAt: now().toISOString(), apiAcquisition, durationMs: now().getTime() - Date.parse(attemptedAt) });
+          queued.ack(); continue;
+        }
+        browser ??= await puppeteer.launch(env.DESTINATION_BROWSER);
         const page = await browser.newPage();
         let reachability: Reachability = 'live';
         let evidence: ApplicationPageEvidence | undefined;
         let collisionJobIds: string[] = [];
         let browserError: unknown;
         try {
-          const response = await page.goto(message.candidateUrl, { waitUntil: 'networkidle0', timeout: 20_000 });
+          let response = await page.goto(message.candidateUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 });
           reachability = reachabilityFromHttpStatus(response?.status());
           if (reachability === 'live') {
+            const readyFrames = new Set<ReturnType<typeof page.frames>[number]>();
+            // Analytics need not settle before the client-side description is ready.
+            const awaitDescription = async () => {
+              await Promise.all(page.frames().slice(0, 8).map(async (frame) => {
+                try {
+                  const ready = await frame.waitForFunction(renderedDescriptionReady, { timeout: 6_000, polling: 250 }, reference.title);
+                  readyFrames.add(frame); await ready.dispose();
+                } catch { /* A shell is reported explicitly below, never a negative disclosure. */ }
+              }));
+            };
+            await awaitDescription();
+            const recovery = exactPostingRecoveryUrl(page.url(), message.providerIdentity.postingId,
+              await page.evaluate(() => [...document.querySelectorAll<HTMLAnchorElement>('a[href]')].slice(0, 1000).map((link) => link.href)));
+            if (recovery) {
+              readyFrames.clear();
+              response = await page.goto(recovery, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+              reachability = reachabilityFromHttpStatus(response?.status());
+              if (reachability === 'live') await awaitDescription();
+            }
             const renderedFrames: RenderedFrameSnapshot[] = [];
-            let failedFrameCount = 0;
-            for (const frame of page.frames()) {
+            const frames = page.frames();
+            let failedFrameCount = Math.max(0, frames.length - 16);
+            for (const frame of frames.slice(0, 16)) {
               try {
                 const snapshot = await frame.evaluate(() => {
                   const visible = (element: Element) => element.getClientRects().length > 0;
                   const structuredJobText: string[] = [];
                   let jobPostingCount = 0;
-                  for (const node of document.querySelectorAll('script[type="application/ld+json"]')) {
+                  const structuredNodes = [...document.querySelectorAll('script[type="application/ld+json"]')];
+                  for (const node of structuredNodes.slice(0, 20)) {
                     const text = node.textContent ?? '';
                     const matches = text.match(/["']@type["']\s*:\s*["']JobPosting["']/gi) ?? [];
                     jobPostingCount += matches.length;
@@ -285,17 +399,29 @@ export async function processDestinationVerificationBatch(
                     } catch { return false; }
                   });
                   const description = document.querySelector('meta[name="description"],meta[property="og:description"]')?.getAttribute('content') ?? undefined;
-                  const main = (document.querySelector('main')?.innerText ?? document.body?.innerText ?? '').replace(/\s+/g, ' ').trim().slice(0, 12_000);
+                  const compensationRows = [...document.querySelectorAll<HTMLElement>('h2,h3')]
+                    .filter((heading) => visible(heading) && /^(?:compensation|salary|pay range)$/iu.test(heading.innerText.trim()))
+                    .flatMap((heading) => [...(heading.nextElementSibling?.matches('ul,ol') ? heading.nextElementSibling.children : [])])
+                    .filter(visible).map((row) => (row as HTMLElement).innerText.trim());
+                  const fullText = (document.querySelector('main')?.innerText ?? document.body?.innerText ?? '').split(/[\r\n]+/)
+                    .map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n');
+                  const main = fullText.slice(0, 40_000);
                   return {
                     url: location.href, title: document.title || undefined, description,
                     visibleText: main || undefined, structuredJobText: structuredJobText.join(' ').slice(0, 40_000) || undefined,
+                    structuredJobDocuments: structuredJobText,
+                    compensationRows: compensationRows.slice(0, 20).map((row) => row.slice(0, 1000)),
+                    inspectionTruncated: fullText.length > 40_000 || structuredNodes.length > 20 || structuredNodes.some((node) => (node.textContent?.length ?? 0) > 20_000)
+                      || compensationRows.length > 20 || compensationRows.some((row) => row.length > 1000),
+                    loadingShell: fullText.length < 500 || /^(?:loading[.…\s]*)$/i.test(fullText),
                     jobPostingCount, distinctJobLinkCount: distinctJobLinks.size,
                     applicationFormPresent: actionableApply || [...document.querySelectorAll<Element>(
                       'form[action*="apply" i],form[id*="apply" i],input[type="file"],input[name="resume" i],input[name="cv" i]',
                     )].some(visible),
                   };
                 });
-                renderedFrames.push({ ...snapshot, ...(frame.parentFrame() ? { parentUrl: frame.parentFrame()!.url() } : {}) });
+                renderedFrames.push({ ...snapshot, loadingShell: snapshot.loadingShell || !readyFrames.has(frame),
+                  ...(frame.parentFrame() ? { parentUrl: frame.parentFrame()!.url() } : {}) });
               } catch {
                 failedFrameCount += 1;
               }
@@ -315,8 +441,19 @@ export async function processDestinationVerificationBatch(
         } finally {
           await page.close();
         }
+        // An employer-hosted page may reveal its Greenhouse board only in a
+        // rendered embed. Historical collection gets one fixed-host API attempt
+        // using that observed URL; the route still requires the known posting
+        // ID and rejects conflicting tenants/duplicate identity parameters.
+        if (message.metadataBackfillToken && !apiAcquisition && reachability === 'live'
+          && evidence && !evidence.identicalEvidenceForDifferentPosting
+          && metadataApiRoute(message.providerIdentity, evidence.url)?.method === 'greenhouse-api') {
+          apiAcquisition = await acquireMetadata(message.providerIdentity, evidence.url);
+        }
         const inspectedAt = now().toISOString();
-        for (const collisionJobId of collisionJobIds) {
+        // Staged collection must not mutate another job's admission as a side
+        // effect of collision detection. Keep the collision in its own evidence.
+        for (const collisionJobId of message.metadataBackfillToken ? [] : collisionJobIds) {
           const collisionJob = await jobs.getJob(collisionJobId);
           const collisionReference = collisionJob?.sourceReferences.find((item) => item.externalId
             && item.admission?.destination.renderedEvidenceHash === evidence?.renderedEvidenceHash);
@@ -325,6 +462,7 @@ export async function processDestinationVerificationBatch(
           const collisionMessage: DestinationVerificationMessage = {
             version: 1, jobId: collisionJob.jobId, sourceId: collisionReference.sourceId,
             externalId: collisionReference.externalId, candidateUrl: prior.candidateUrl, reason: 'weekly-sample', queuedAt: attemptedAt,
+            metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
             providerIdentity: { provider: prior.provider, sourceId: collisionReference.sourceId, sourceUrl: collisionReference.sourceUrl,
               ...(prior.tenant ? { tenant: prior.tenant } : {}), postingId: prior.expectedPostingId },
           };
@@ -338,6 +476,8 @@ export async function processDestinationVerificationBatch(
           if (collisionResult.incident) opened.push(collisionResult.incident);
         }
         const result = await persistDestinationAdmission({ jobs, operations, message, job, reference, reachability, inspectedAt,
+          apiAcquisition,
+          durationMs: Date.parse(inspectedAt) - Date.parse(attemptedAt),
           trustedCommunityCatalogEnabled: env.TRUSTED_COMMUNITY_CATALOG_ENABLED === 'true',
           identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
           ...(evidence ? { evidence, browserVisible: true } : {}) });
@@ -411,6 +551,7 @@ export async function enqueueDueDestinationVerifications(
     await env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage({
       jobId: incident.jobId, sourceId: incident.sourceId, externalId: reference.externalId,
       providerIdentity, candidateUrl: destination.candidateUrl, reason: 'daily-retry',
+      metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
     }, now.toISOString()));
     queued += 1;
   }
@@ -422,6 +563,7 @@ export async function enqueueDueDestinationVerifications(
         providerIdentity: { provider: rule.provider, sourceId: candidate.sourceId, sourceUrl: candidate.sourceUrl,
           ...(rule.tenant ? { tenant: rule.tenant } : {}), ...(candidate.expectedPostingId ? { postingId: candidate.expectedPostingId } : {}) },
         candidateUrl: candidate.candidateUrl, reason: 'weekly-sample',
+        metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
       }, now.toISOString()));
       queued += 1;
     }
@@ -431,6 +573,21 @@ export async function enqueueDueDestinationVerifications(
     await env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage({
       jobId: candidate.jobId, sourceId: candidate.sourceId, externalId: candidate.externalId,
       providerIdentity: candidate.providerIdentity, candidateUrl: candidate.candidateUrl, reason: 'historical-backfill',
+      metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+    }, now.toISOString()));
+    queued += 1;
+  }
+  const metadataObservedBefore = new Date(now.getTime() - ROLE_METADATA_REVALIDATION_MS).toISOString();
+  for (const candidate of await operations.metadataVerificationCandidates(100, {
+    observedBefore: metadataObservedBefore,
+    includeUnobserved: true,
+    reserveAt: now.toISOString(),
+  })) {
+    await env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage({
+      jobId: candidate.jobId, sourceId: candidate.sourceId, externalId: candidate.externalId,
+      providerIdentity: candidate.providerIdentity, candidateUrl: candidate.candidateUrl, reason: 'content-change',
+      metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+      ...(candidate.metadataArtifactHash ? { metadataArtifactHash: candidate.metadataArtifactHash } : {}),
     }, now.toISOString()));
     queued += 1;
   }

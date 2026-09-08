@@ -74,6 +74,24 @@ function destinationReason(destination: DestinationEvidence): CatalogAdmissionRe
   return undefined;
 }
 
+function exactRoleDestination(destination: DestinationEvidence): boolean {
+  return destination.classification === 'posting-detail' || destination.classification === 'application-form';
+}
+
+/**
+ * Legacy admissions did not record a verification timestamp. Their last
+ * successful exact destination inspection is safe to use once, but never use
+ * an inspection from an unresolved/grace admission: that would let retries
+ * extend the grace period.
+ */
+function lastSuccessfulVerification(previous: CatalogAdmission | undefined): string | undefined {
+  if (!previous) return undefined;
+  if (previous.lastVerifiedAt && Number.isFinite(Date.parse(previous.lastVerifiedAt))) return previous.lastVerifiedAt;
+  if (previous.catalogEligible && exactRoleDestination(previous.destination)
+    && Number.isFinite(Date.parse(previous.destination.inspectedAt))) return previous.destination.inspectedAt;
+  return undefined;
+}
+
 export function evaluateCatalogAdmission(input: {
   listing: ProcessedListing;
   destination: DestinationEvidence;
@@ -100,11 +118,13 @@ export function evaluateCatalogAdmission(input: {
   const destinationFailure = destinationReason(destination);
   if (destinationFailure) reasons.push(destinationFailure);
 
-  const previouslyGood = !trustedCommunity && previous?.catalogEligible
-    && ['posting-detail', 'application-form'].includes(previous.destination.classification);
+  const verifiedAt = exactRoleDestination(destination) && postingAttributed
+    ? destination.inspectedAt
+    : lastSuccessfulVerification(previous);
+  const previouslyGood = !trustedCommunity && Boolean(verifiedAt);
   const newlyInconclusive = destination.classification === 'unresolved' || destination.classification === 'blocked-uninspectable';
-  const graceDeadline = previouslyGood && newlyInconclusive
-    ? previous.graceDeadline ?? new Date(Date.parse(evaluatedAt) + 7 * 86_400_000).toISOString()
+  const graceDeadline = previouslyGood && newlyInconclusive && verifiedAt
+    ? new Date(Date.parse(verifiedAt) + 7 * 86_400_000).toISOString()
     : undefined;
   const inGrace = Boolean(graceDeadline && Date.parse(evaluatedAt) < Date.parse(graceDeadline));
   if (inGrace) {
@@ -131,7 +151,7 @@ export function evaluateCatalogAdmission(input: {
     destination: inGrace && previous ? {
       ...destination,
       finalUrl: previous.destination.finalUrl ?? previous.destination.candidateUrl,
-      lastKnownGoodAt: previous.destination.inspectedAt,
+      ...(verifiedAt ? { lastKnownGoodAt: verifiedAt } : {}),
     } : destination,
     metadata,
     catalogEligible,
@@ -140,6 +160,7 @@ export function evaluateCatalogAdmission(input: {
     ...(trustedCommunity ? { evidenceCodes: ['trusted-community-source' as const] } : {}),
     evaluatedAt,
     evidenceObservedAt: destination.inspectedAt,
+    ...(verifiedAt ? { lastVerifiedAt: verifiedAt } : {}),
     ...(graceDeadline ? { graceDeadline } : {}),
   };
 }

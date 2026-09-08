@@ -57,7 +57,9 @@ Reviewed standard Greenhouse, Lever, and Ashby routes may be admitted when the
 tenant and posting ID match even if an automated fetch is blocked. Custom routes
 need visible single-role browser evidence; aggregate boards and confirmed-gone
 pages quarantine immediately. A previously good custom route gets a seven-day
-catalog grace period when it becomes inconclusive, but alerts pause immediately.
+catalog grace period when it becomes inconclusive, measured from its last
+successful exact-role verification (not a failed retry); that verification time
+is public while the role remains browsable, and alerts pause immediately.
 Browser Rendering work runs through the destination-verification queue and DLQ,
 retains bounded evidence and attempts in D1, retries incidents daily, and samples
 reviewed host rules weekly.

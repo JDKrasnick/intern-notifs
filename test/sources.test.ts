@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Poller } from '../src/poll.js';
 import { parseInternshipMarkdown } from '../src/core/markdown.js';
 import { GitHubMarkdownAdapter, defaultSources } from '../src/sources/github.js';
@@ -7,6 +7,45 @@ import { parseQuantInternshipMarkdown } from '../src/sources/quant.js';
 import { MemoryInternshipStore } from '../src/store.js';
 
 describe('GitHub source adapters', () => {
+  afterEach(() => vi.useRealTimers());
+  it('bounds a fetch that never returns headers or honors cancellation', async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | null | undefined;
+    const adapter = new GitHubMarkdownAdapter({
+      id: 'fixture', owner: 'owner', repo: 'repo', documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }],
+      fetchImpl: (_url, init) => { signal = init?.signal; return new Promise(() => undefined); },
+    });
+    const failed = expect(adapter.fetch()).rejects.toMatchObject({ category: 'transport', retryable: true, message: 'fixture: README.md fetch timed out' });
+    await vi.advanceTimersByTimeAsync(15_000);
+    await failed;
+    expect(signal?.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it('uses one deadline for delayed headers and a stalled body without parsing a partial snapshot', async () => {
+    vi.useFakeTimers();
+    const parser = vi.fn(() => []);
+    const adapter = new GitHubMarkdownAdapter({
+      id: 'fixture', owner: 'owner', repo: 'repo', documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }], parser,
+      fetchImpl: async () => {
+        await new Promise(resolve => setTimeout(resolve, 10_000));
+        return new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('| partial')); } }));
+      },
+    });
+    const failed = expect(adapter.fetch()).rejects.toMatchObject({ category: 'transport', retryable: true });
+    await vi.advanceTimersByTimeAsync(15_000);
+    await failed;
+    expect(parser).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it('releases HTTP error bodies without waiting for a stalled cancellation', async () => {
+    const cancel = vi.fn(() => new Promise<void>(() => undefined));
+    const adapter = new GitHubMarkdownAdapter({
+      id: 'fixture', owner: 'owner', repo: 'repo', documents: [{ path: 'README.md', branch: 'main', season: 'summer-2027' }],
+      fetchImpl: async () => new Response(new ReadableStream({ cancel }), { status: 503 }),
+    });
+    await expect(adapter.fetch()).rejects.toMatchObject({ category: 'http', status: 503, retryable: true });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
   it('ships each requested feed and document', () => {
     expect(defaultSources.map((source) => source.id)).toEqual(['vanshb03-summer-2027', 'simplify-summer-2026', 'zapply-2027', 'speedyapply-2027-swe', 'speedyapply-2027-ai', 'northwestern-fintech-2027-quant', 'canadian-tech-2027']);
   });

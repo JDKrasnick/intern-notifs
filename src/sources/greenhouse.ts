@@ -3,6 +3,7 @@ import { isTechnicalJob } from '../core/filters.js';
 import { parseCompensation } from '../core/normalize.js';
 import { platformFetch } from '../core/platform-fetch.js';
 import { earlyCareerRequirements, hasLifecycleTitleSignal, htmlToText, inferSeason, inferWorkMode } from '../core/early-career.js';
+import { extractGreenhouseCompensationBands } from '../metadata-acquisition.js';
 import { greenhouseApplicationUrlRejection } from './quality.js';
 import { GREENHOUSE_BOARD_API_HOST, assertBoardToken, boardIdentityUrl, validateBoardToken, type ReviewedGreenhouseSource } from './greenhouse-config.js';
 import { SourceFetchError } from './source-error.js';
@@ -261,6 +262,7 @@ export function mapGreenhouseSourcedPosting(
   const title = htmlToText(job.title);
   if (!externalId || !title || !job.absolute_url) return undefined;
   const description = job.content ?? '';
+  const compensationBands = extractGreenhouseCompensationBands(description);
   return {
     sourceId: source.id,
     provenance: 'official-ats',
@@ -273,6 +275,7 @@ export function mapGreenhouseSourcedPosting(
     providerIdentity: { provider: 'greenhouse', tenant: source.boardToken },
     title,
     content: [{ kind: 'description', format: 'html', value: description }],
+    ...(compensationBands.length ? { compensationBands } : {}),
     locations: [htmlToText(job.location?.name ?? undefined)].filter(Boolean),
     applyUrl: job.absolute_url,
     providerEvidence: {
