@@ -350,6 +350,31 @@ function useMotionAllowed() {
   return motionAllowed;
 }
 
+function useSheetEntranceOffset(visible: boolean) {
+  const motionAllowed = useContext(MotionAllowedContext);
+  const offset = useRef(new Animated.Value(32)).current;
+  useEffect(() => {
+    if (!visible) {
+      offset.setValue(32);
+      return;
+    }
+    if (!motionAllowed) {
+      offset.setValue(0);
+      return;
+    }
+    offset.setValue(32);
+    const animation = Animated.timing(offset, {
+      toValue: 0,
+      duration: 280,
+      easing: Easing.bezier(0.16, 1, 0.3, 1),
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [motionAllowed, offset, visible]);
+  return offset;
+}
+
 async function openOfficialApplication(url: string) {
   if (!/^https:\/\//i.test(url)) {
     Alert.alert(
@@ -906,11 +931,13 @@ function CatalogGroupSheet({
   onRetry: () => void;
   onOpenRole: (job: Job) => void;
 }) {
+  const visible = Boolean(groupId);
+  const sheetOffset = useSheetEntranceOffset(visible);
   return (
-    <Modal visible={Boolean(groupId)} transparent animationType="none" onRequestClose={onDismiss}>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onDismiss}>
       <View style={styles.sheetOverlay}>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close role group" style={styles.sheetDismissArea} onPress={onDismiss} />
-        <View style={styles.catalogGroupSheet}>
+        <Animated.View style={[styles.catalogGroupSheet, { transform: [{ translateY: sheetOffset }] }]}>
           <View style={styles.sheetHandle} />
           {loading ? (
             <CatalogGroupLoadingSkeleton />
@@ -958,7 +985,7 @@ function CatalogGroupSheet({
               />
             </>
           ) : null}
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -1087,38 +1114,14 @@ function JobDetailSheet({
   onHideLocally?: (job: Job) => void;
   onUnsave?: (job: Job) => void;
 }) {
-  const motionAllowed = useContext(MotionAllowedContext);
-  const { height: windowHeight } = useWindowDimensions();
-  const sheetOffset = useRef(new Animated.Value(windowHeight)).current;
   const displayedJob = useRef<Job | null>(null);
   const pendingAction = useRef<{ job: Job; kind: "apply" | "listing" } | null>(null);
   const [handoffPending, setHandoffPending] = useState(false);
   const presentation = jobDetailPresentation(Boolean(job), routeState);
   const visible = presentation.visible;
+  const sheetOffset = useSheetEntranceOffset(visible);
 
   if (job) displayedJob.current = job;
-
-  useEffect(() => {
-    if (!visible) {
-      sheetOffset.setValue(windowHeight);
-      return;
-    }
-
-    sheetOffset.setValue(windowHeight);
-    if (!motionAllowed) {
-      sheetOffset.setValue(0);
-      return;
-    }
-
-    const animation = Animated.timing(sheetOffset, {
-      toValue: 0,
-      duration: 220,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    });
-    animation.start();
-    return () => animation.stop();
-  }, [motionAllowed, sheetOffset, visible, windowHeight]);
 
   const role = job ?? displayedJob.current;
   const roleDisplay = role ? presentCatalogRole(role) : undefined;

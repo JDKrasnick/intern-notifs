@@ -37,6 +37,16 @@ describe('mobile job routes', () => {
     expect(app).not.toContain('<Text style={styles.catalogPaginationText}>Loading roles…</Text>');
   });
 
+  it('uses one restrained entrance motion for single and grouped role sheets', () => {
+    const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+
+    expect(app.match(/useSheetEntranceOffset\(/g)).toHaveLength(3);
+    expect(app).toContain('new Animated.Value(32)');
+    expect(app).toContain('duration: 280');
+    expect(app).toContain('easing: Easing.bezier(0.16, 1, 0.3, 1)');
+    expect(app).not.toContain('new Animated.Value(windowHeight)');
+  });
+
   it('parses compatible notification payloads and encoded app URLs', () => {
     expect(destinationFromNotification({ jobId: 'legacy/job' })).toEqual({ kind: 'job', jobId: 'legacy/job', reasons: [], exclusionsApplied: false });
     expect(destinationFromNotification({ applicationId: 'application-1', destination: 'saved' })).toEqual({ kind: 'saved' });

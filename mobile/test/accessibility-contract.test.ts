@@ -13,7 +13,7 @@ describe('cross-platform accessibility state contract', () => {
   it('shows the grouped-role backdrop without sliding the whole screen', () => {
     const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
     expect(app).toMatch(
-      /<Modal visible=\{Boolean\(groupId\)\} transparent animationType="none" onRequestClose=\{onDismiss\}>/,
+      /<Modal visible=\{visible\} transparent animationType="none" onRequestClose=\{onDismiss\}>/,
     );
   });
 
