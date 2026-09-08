@@ -80,6 +80,10 @@ describe('shadow extraction contract', () => {
     expect(validateShadowExtraction(noQuote, input).failures).toContain('compensation: supporting passage absent from artifact');
     const wrongUnit = output(); (wrongUnit.fields.compensation.value as Array<Record<string, unknown>>)[0]!.currency = 'US';
     expect(validateShadowExtraction(wrongUnit, input).failures).toContain('compensation: numeric or unit inconsistency');
+    const unsupportedCurrency = output(); (unsupportedCurrency.fields.compensation.value as Array<Record<string, unknown>>)[0]!.currency = 'EUR';
+    expect(validateShadowExtraction(unsupportedCurrency, input).failures).toContain('compensation: numeric or unit inconsistency');
+    const unsupportedPeriod = output(); (unsupportedPeriod.fields.compensation.value as Array<Record<string, unknown>>)[0]!.period = 'year';
+    expect(validateShadowExtraction(unsupportedPeriod, input).failures).toContain('compensation: numeric or unit inconsistency');
   });
 
   it('keeps unknown classifications and incomplete/conflicting fields distinct from silence', () => {
@@ -122,5 +126,53 @@ describe('shadow extraction queue and cost ledger', () => {
       .bind(key, key, SHADOW_EXTRACTION_MODEL_ID, now.toISOString(), now.toISOString()).run();
     const env = { SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS: '100', SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS: '5' };
     expect(await Promise.all([reserveShadowCost(DB, now, 'a'.repeat(64), 5, env), reserveShadowCost(DB, now, 'b'.repeat(64), 5, env)])).toEqual([true, false]);
+  });
+
+  it('enforces the combined monthly cap and counts actual overshoot against later reservations', async () => {
+    const DB = schema(); const now = new Date('2026-09-08T00:00:00.000Z');
+    for (const key of ['c'.repeat(64), 'd'.repeat(64)]) await DB.prepare(`INSERT INTO shadow_extraction_runs (run_key, job_id, source_id, external_id, source_url, posting_identity, content_hash, model_id, prompt_version, schema_version, preprocessing_version, state, attempts, lease_until, input_key, created_at, updated_at)
+      VALUES (?, 'job', 'source', 'external', 'https://example.test', '{}', ?, ?, 'p', 's', 'n', 'queued', 0, '', 'shadow-input/x.json', ?, ?)`)
+      .bind(key, key, SHADOW_EXTRACTION_MODEL_ID, now.toISOString(), now.toISOString()).run();
+    const env = { SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS: '1995', SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS: '100' };
+    expect(await reserveShadowCost(DB, now, 'c'.repeat(64), 5, env)).toBe(true);
+    await DB.prepare(`UPDATE shadow_extraction_cost_ledger SET actual_cents = 7, state = 'reconciled'
+      WHERE period = '2026-09' AND run_key = ?`).bind('c'.repeat(64)).run();
+    expect(await reserveShadowCost(DB, now, 'd'.repeat(64), 1, env)).toBe(false);
+  });
+
+  it('reuses a reservation for one transient retry and records deterministic baseline differences', async () => {
+    const DB = schema(); const artifacts = new MemoryR2(); const messages: unknown[] = [];
+    const queue: Queue = { async send(body) { messages.push(body); }, async sendBatch() {} };
+    const message = await enqueueShadowExtraction({ DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts }, {
+      jobId: 'job-retry', sourceId: identity.sourceId, externalId: '123', sourceUrl: identity.sourceUrl, providerIdentity: identity,
+      title: 'Software Engineering Intern', description, observedAt: '2026-09-08T00:00:00.000Z',
+      baseline: { compensation: 'incomplete', locations: 'present', workMode: 'not-stated' },
+    });
+    let calls = 0; let retried = false; let acked = false;
+    const infer = async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('temporary model failure');
+      return { response: output(), inputTokens: 100, outputTokens: 50, actualCostCents: 6 };
+    };
+    await processShadowExtractionBatch({ queue: 'intern-notifs-shadow-extraction', messages: [{
+      id: 'm-retry-1', body: message, attempts: 1, ack() { acked = true; }, retry(options) { retried = options?.delaySeconds === 300; },
+    }] }, { DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts,
+      SHADOW_EXTRACTION_ENABLED: 'true', SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS: '100', SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS: '100' }, undefined, infer);
+    expect(retried).toBe(true); expect(acked).toBe(false);
+    await processShadowExtractionBatch({ queue: 'intern-notifs-shadow-extraction', messages: [{
+      id: 'm-retry-2', body: message, attempts: 2, ack() { acked = true; }, retry() {},
+    }] }, { DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts,
+      SHADOW_EXTRACTION_ENABLED: 'true', SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS: '100', SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS: '100' }, undefined, infer);
+    expect(calls).toBe(2); expect(acked).toBe(true);
+    expect(await DB.prepare('SELECT state, attempts FROM shadow_extraction_runs WHERE run_key = ?').bind(message!.runKey).first())
+      .toEqual({ state: 'completed', attempts: 2 });
+    expect(await DB.prepare('SELECT reserved_cents, actual_cents, state FROM shadow_extraction_cost_ledger WHERE run_key = ?').bind(message!.runKey).first())
+      .toEqual({ reserved_cents: 5, actual_cents: 6, state: 'reconciled' });
+    expect(await DB.prepare('SELECT field, baseline_state, shadow_state, differs FROM shadow_extraction_baseline_differences ORDER BY field').all())
+      .toEqual({ results: [
+        { field: 'compensation', baseline_state: 'incomplete', shadow_state: 'present', differs: 1 },
+        { field: 'locations', baseline_state: 'present', shadow_state: 'present', differs: 0 },
+        { field: 'workMode', baseline_state: 'not-stated', shadow_state: 'not-stated', differs: 0 },
+      ] });
   });
 });

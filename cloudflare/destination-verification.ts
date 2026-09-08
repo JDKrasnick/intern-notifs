@@ -14,9 +14,9 @@ import { D1CatalogAdmissionStore, destinationVerificationMatchesReference, ROLE_
 import { D1InternshipStore } from './d1-store.js';
 import { extractPostingMetadataEvidence, extractVerifiedPageMetadataEvidence, projectRoleMetadata, replaceVerifiedPageMetadataEvidence, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION, VERIFIED_PAGE_METADATA_SOURCES } from '../src/role-metadata.js';
 import { createMetadataAcquirer, metadataApiRoute, type MetadataAcquisition } from '../src/metadata-acquisition.js';
-import { metadataFieldOutcomes } from '../src/metadata-audit.js';
+import { metadataFieldOutcomes, type MetadataAuditOutcome } from '../src/metadata-audit.js';
 import type { D1Database, MessageBatch, Queue, R2Bucket } from './types.js';
-import { enqueueShadowExtraction } from './shadow-extraction.js';
+import { enqueueShadowExtraction, type ShadowBaseline } from './shadow-extraction.js';
 
 export interface DestinationVerificationMessage {
   version: 1;
@@ -51,6 +51,24 @@ export interface DestinationVerificationEnvironment {
 
 const DESTINATION_RETRY_DELAY_SECONDS = 86_400;
 const DESTINATION_RETRY_LEASE_MARGIN_MS = 60 * 60_000;
+
+function shadowBaselineStatus(outcome: MetadataAuditOutcome): ShadowBaseline[keyof ShadowBaseline] {
+  if (outcome === 'extracted') return 'present';
+  if (outcome === 'no-disclosure-found') return 'not-stated';
+  if (outcome === 'ambiguous' || outcome === 'conflicting') return 'conflicting';
+  return 'incomplete';
+}
+
+function shadowBaseline(fields: ReturnType<typeof metadataFieldOutcomes>): ShadowBaseline {
+  return {
+    compensation: shadowBaselineStatus(fields.compensation),
+    housing: shadowBaselineStatus(fields.housing),
+    education: shadowBaselineStatus(fields.education),
+    locations: shadowBaselineStatus(fields.locations),
+    workMode: shadowBaselineStatus(fields['work-mode']),
+    timing: shadowBaselineStatus(fields['application-deadline']),
+  };
+}
 
 export function destinationVerificationMessage(request: DestinationVerificationRequest, queuedAt = new Date().toISOString()): DestinationVerificationMessage {
   return { version: 1, ...request, queuedAt };
@@ -135,6 +153,7 @@ export async function persistDestinationAdmission(input: {
   identityUnconfirmedPublicationEnabled?: boolean;
 }): Promise<{
   destination: ReturnType<typeof classifyDestination>;
+  shadowBaseline: ShadowBaseline;
   obsolete?: true;
   incident?: { sourceId: string; host: string; reason: string; incidentId: string; messageType: 'incident-opened' | 'quarantine' };
 }> {
@@ -205,6 +224,9 @@ export async function persistDestinationAdmission(input: {
   const projected = projectRoleMetadata({ ...job, sourceReferences, admission: deriveCanonicalAdmission(sourceReferences, inspectedAt) });
   const complete = Boolean(apiEvidence.length || (pageComplete && ['posting-detail', 'application-form'].includes(destination.classification)));
   const retryAfter = new Date(Date.parse(inspectedAt) + (complete ? ROLE_METADATA_REVALIDATION_MS : 24 * 60 * 60_000)).toISOString();
+  const baselineFields = metadataFieldOutcomes({ evidence: complete ? extracted : [], conflicts: projected.conflicts,
+    acquired: Boolean(apiEvidence.length || (evidence && ['posting-detail', 'application-form'].includes(destination.classification))), complete });
+  const baseline = shadowBaseline(baselineFields);
   await operations.recordMetadataAcquisition(job.jobId, message.sourceId, inspectedAt, {
     provider: message.providerIdentity.provider, postingId: message.providerIdentity.postingId ?? message.externalId,
     sourceUrl: input.apiAcquisition?.artifact ? input.apiAcquisition.sourceUrl : evidence?.url ?? message.candidateUrl,
@@ -215,8 +237,7 @@ export async function persistDestinationAdmission(input: {
     extractionVersion: ROLE_METADATA_EXTRACTION_VERSION, observedAt: inspectedAt, complete,
     inspectionTruncated: Boolean(evidence?.inspectionTruncated), failedFrames: evidence?.failedFrameCount ?? 0,
     destination: destination.classification, retryAfter,
-    fields: metadataFieldOutcomes({ evidence: complete ? extracted : [], conflicts: projected.conflicts,
-      acquired: Boolean(apiEvidence.length || (evidence && ['posting-detail', 'application-form'].includes(destination.classification))), complete }),
+    fields: baselineFields,
     excerpts: [...pageExtracted, ...apiEvidence].flatMap((item) => item.compensationRanges?.map((range) => range.sourceText) ?? []).slice(0, 8),
   }, retryAfter);
   if (complete && enrichedReference.metadataExtraction) await operations.recordRoleMetadataExtraction({
@@ -233,7 +254,7 @@ export async function persistDestinationAdmission(input: {
   });
   // Historical collection is deliberately staging-only. The guarded repair
   // endpoint performs the public job write after exact token/count checks.
-  if (message.metadataBackfillToken) return { destination };
+  if (message.metadataBackfillToken) return { destination, shadowBaseline: baseline };
   const canonicalAdmission = deriveCanonicalAdmission(sourceReferences, inspectedAt);
   const authoritativeClosure = destination.classification === 'gone';
   const verifiedOpen = ['posting-detail', 'application-form'].includes(destination.classification)
@@ -274,17 +295,17 @@ export async function persistDestinationAdmission(input: {
   // generation guard and any delayed notification in the same transaction.
   const persisted = await jobs.putAdmissionState(nextJob, reference, nextOccurrence, occurrence,
     delayedPromotion ? newJobNotificationEvent(message.sourceId, message.externalId, nextJob, inspectedAt) : undefined);
-  if (!persisted) return { destination, obsolete: true };
+  if (!persisted) return { destination, shadowBaseline: baseline, obsolete: true };
 
   const reason = admission.reasonCodes[0];
   await operations.resolveIncidents(message.jobId, message.sourceId, inspectedAt, reason);
-  if (!reason) return { destination };
+  if (!reason) return { destination, shadowBaseline: baseline };
   const id = incidentId(message, reason);
   const state = incidentState(reason);
   const host = new URL(message.candidateUrl).hostname;
   await operations.upsertIncident({ id, jobId: message.jobId, sourceId: message.sourceId, host, reasonCode: reason,
     state, openedAt: inspectedAt, updatedAt: inspectedAt, ...(admission.graceDeadline ? { graceDeadline: admission.graceDeadline } : {}) });
-  return { destination, incident: { sourceId: message.sourceId, host, reason, incidentId: id,
+  return { destination, shadowBaseline: baseline, incident: { sourceId: message.sourceId, host, reason, incidentId: id,
     messageType: state === 'open' ? 'incident-opened' : 'quarantine' } };
 }
 
@@ -644,7 +665,8 @@ export async function processDestinationVerificationBatch(
           try {
             await enqueueShadowExtraction({ DB: env.DB, SHADOW_EXTRACTION_QUEUE: env.SHADOW_EXTRACTION_QUEUE, SHADOW_EXTRACTION_ARTIFACTS: env.SHADOW_EXTRACTION_ARTIFACTS }, { jobId: currentJob.jobId, sourceId: message.sourceId, externalId: message.externalId,
               sourceUrl: shadowArtifact.sourceUrl, providerIdentity: message.providerIdentity, title: shadowArtifact.title,
-              description: shadowArtifact.description, observedAt: inspectedAt, incomplete: shadowArtifact.incomplete });
+              description: shadowArtifact.description, observedAt: inspectedAt, incomplete: shadowArtifact.incomplete,
+              ...('shadowBaseline' in result ? { baseline: result.shadowBaseline } : {}) });
           } catch (error) {
             console.error(JSON.stringify({ event: 'shadow_extraction_enqueue_failed', jobId: currentJob.jobId, sourceId: message.sourceId,
               error: error instanceof Error ? error.message : String(error) }));

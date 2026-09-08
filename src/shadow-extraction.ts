@@ -102,6 +102,34 @@ function evidencePresent(evidence: readonly string[], source: string): boolean {
   return evidence.every((passage) => passage.length <= 2_000 && source.includes(passage));
 }
 
+function compensationNumberPresent(passage: string, value: number): boolean {
+  const escaped = String(value).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return new RegExp(`(^|[^0-9.])${escaped}(?![0-9.])`, 'u').test(passage.replace(/,/gu, ''));
+}
+
+function compensationCurrencyPresent(passage: string, currency: string): boolean {
+  const aliases: Record<string, RegExp> = {
+    USD: /(?:\bUSD\b|US\$|\$|\bUS dollars?\b)/iu,
+    CAD: /(?:\bCAD\b|CA\$|C\$|\bCanadian dollars?\b)/iu,
+    EUR: /(?:\bEUR\b|€|\beuros?\b)/iu,
+    GBP: /(?:\bGBP\b|£|\b(?:British )?pounds?\b)/iu,
+  };
+  return (aliases[currency] ?? new RegExp(`\\b${currency}\\b`, 'u')).test(passage);
+}
+
+function compensationPeriodPresent(passage: string, period: string): boolean {
+  if (period === 'unknown') return true;
+  const aliases: Record<string, RegExp> = {
+    hour: /\b(?:per\s+hour|hourly|an?\s+hour|hrs?\.?)(?:\b|$)/iu,
+    day: /\b(?:per\s+day|daily|an?\s+day)(?:\b|$)/iu,
+    week: /\b(?:per\s+week|weekly|a\s+week)(?:\b|$)/iu,
+    month: /\b(?:per\s+month|monthly|a\s+month)(?:\b|$)/iu,
+    year: /\b(?:per\s+year|yearly|annual(?:ly)?|a\s+year)(?:\b|$)/iu,
+    'one-time': /\b(?:one[- ]time|signing\s+bonus|stipend)(?:\b|$)/iu,
+  };
+  return aliases[period]?.test(passage) ?? false;
+}
+
 function numericUnitsConsistent(field: string, value: unknown, evidence: readonly string[]): boolean {
   if (field !== 'compensation' || value === null) return true;
   if (!Array.isArray(value)) return false;
@@ -109,7 +137,10 @@ function numericUnitsConsistent(field: string, value: unknown, evidence: readonl
     && typeof band.min === 'number' && typeof band.max === 'number' && Number.isFinite(band.min) && Number.isFinite(band.max)
     && band.min > 0 && band.max >= band.min && typeof band.currency === 'string' && /^[A-Z]{3}$/u.test(band.currency)
     && typeof band.period === 'string' && ['hour', 'day', 'week', 'month', 'year', 'one-time', 'unknown'].includes(band.period)
-    && evidence.some((passage) => passage.includes(String(band.min)) || passage.includes(String(band.max))));
+    && evidence.some((passage) => compensationNumberPresent(passage, band.min as number)
+      && compensationNumberPresent(passage, band.max as number)
+      && compensationCurrencyPresent(passage, band.currency as string)
+      && compensationPeriodPresent(passage, band.period as string)));
 }
 
 export function validateShadowExtraction(value: unknown, input: NormalizedPostingInput): ShadowValidationResult {

@@ -166,7 +166,8 @@ resource "cloudflare_queue_consumer" "ingestion" {
     # because per-account leases serialize sync work.
     max_concurrency  = each.key == "greenhouse" ? 2 : 1
     max_retries      = each.key == "gmail" ? 5 : 2
-    max_wait_time_ms = each.key == "destination-verification" ? 60000 : 5000
+    max_wait_time_ms = contains(["destination-verification", "shadow-extraction"], each.key) ? 60000 : 5000
+    retry_delay      = each.key == "shadow-extraction" ? 300 : null
   }
 }
 

@@ -9,6 +9,7 @@ import {
   shadowExtractionPrompt,
   validateShadowExtraction,
   type NormalizedPostingInput,
+  type ShadowStatus,
 } from '../src/shadow-extraction.js';
 import type { ProviderIdentity } from '../src/types.js';
 import type { D1Database, MessageBatch, Queue, R2Bucket } from './types.js';
@@ -32,6 +33,8 @@ export interface ShadowInferenceResult {
   outputTokens: number;
   actualCostCents: number;
 }
+
+export type ShadowBaseline = Partial<Record<'compensation' | 'locations' | 'workMode' | 'housing' | 'timing' | 'education' | 'eligibility', ShadowStatus>>;
 
 export interface ShadowExtractionEnvironment {
   DB: D1Database;
@@ -96,12 +99,13 @@ export async function enqueueShadowExtraction(env: Pick<ShadowExtractionEnvironm
   description: string;
   observedAt: string;
   incomplete?: boolean;
+  baseline?: ShadowBaseline;
 }): Promise<ShadowExtractionMessage | undefined> {
   const normalized = normalizeExactPostingDescription(input.title, input.description, input.incomplete);
   if (!normalized.title || !normalized.description) return undefined;
   const runKey = shadowExtractionCacheKey(normalized);
   const inputKey = r2Key(normalized.contentHash);
-  const stored = JSON.stringify({ version: 1, normalized, identity: {
+  const stored = JSON.stringify({ version: 1, normalized, baseline: input.baseline ?? {}, identity: {
     jobId: input.jobId, sourceId: input.sourceId, externalId: input.externalId, sourceUrl: input.sourceUrl,
     providerIdentity: input.providerIdentity, observedAt: input.observedAt,
   }, retention: { expiresAt: new Date(Date.parse(input.observedAt) + retentionDays * 86_400_000).toISOString() } });
@@ -123,15 +127,24 @@ export async function enqueueShadowExtraction(env: Pick<ShadowExtractionEnvironm
 export async function reserveShadowCost(db: D1Database, now: Date, runKey: string, reserveCents: number, env: Pick<ShadowExtractionEnvironment, 'SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS' | 'SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS'>): Promise<boolean> {
   const forecast = parseCents(env.SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS);
   const headroom = parseCents(env.SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS);
-  if (forecast === undefined || headroom === undefined || reserveCents <= 0 || forecast + reserveCents > 2_000 || reserveCents > headroom) return false;
+  if (forecast === undefined || headroom === undefined || reserveCents <= 0) return false;
   const period = month(now);
+  const prior = await db.prepare(`SELECT state, reserved_cents FROM shadow_extraction_cost_ledger
+    WHERE period = ? AND run_key = ?`).bind(period, runKey).first<{ state: string; reserved_cents: number }>();
+  if (prior?.state === 'reserved' && prior.reserved_cents >= reserveCents) return true;
+  const allowance = Math.min(headroom, Math.max(0, 2_000 - forecast));
+  if (reserveCents > allowance) return false;
   const result = await db.prepare(`INSERT INTO shadow_extraction_cost_ledger (period, run_key, reserved_cents, actual_cents, state, created_at, updated_at)
     SELECT ?, ?, ?, 0, 'reserved', ?, ?
     WHERE NOT EXISTS (SELECT 1 FROM shadow_extraction_cost_ledger WHERE period = ? AND run_key = ?)
-      AND COALESCE((SELECT SUM(reserved_cents) FROM shadow_extraction_cost_ledger WHERE period = ? AND state IN ('reserved', 'reconciled')), 0) + ? <= ?`).bind(
-    period, runKey, reserveCents, now.toISOString(), now.toISOString(), period, runKey, period, reserveCents, headroom,
+      AND COALESCE((SELECT SUM(CASE WHEN actual_cents > reserved_cents THEN actual_cents ELSE reserved_cents END)
+        FROM shadow_extraction_cost_ledger WHERE period = ? AND state IN ('reserved', 'reconciled')), 0) + ? <= ?`).bind(
+    period, runKey, reserveCents, now.toISOString(), now.toISOString(), period, runKey, period, reserveCents, allowance,
   ).run();
-  return result.meta.changes === 1;
+  if (result.meta.changes === 1) return true;
+  const existing = await db.prepare(`SELECT state, reserved_cents FROM shadow_extraction_cost_ledger
+    WHERE period = ? AND run_key = ?`).bind(period, runKey).first<{ state: string; reserved_cents: number }>();
+  return existing?.state === 'reserved' && existing.reserved_cents >= reserveCents;
 }
 
 async function claimRun(db: D1Database, message: ShadowExtractionMessage, now: Date): Promise<boolean> {
@@ -191,7 +204,7 @@ export async function processShadowExtractionBatch(batch: MessageBatch<unknown>,
       if (!await currentRevision(env.DB, message)) {
         await finishRun(env.DB, message, 'obsolete', now(), { error: 'a newer posting revision is current' }); queued.ack(); continue;
       }
-      const parsed = JSON.parse(await r2Text(env.SHADOW_EXTRACTION_ARTIFACTS, message.inputKey)) as { normalized?: NormalizedPostingInput };
+      const parsed = JSON.parse(await r2Text(env.SHADOW_EXTRACTION_ARTIFACTS, message.inputKey)) as { normalized?: NormalizedPostingInput; baseline?: ShadowBaseline };
       const normalized = parsed.normalized;
       if (!normalized || normalized.contentHash !== message.contentHash || shadowExtractionCacheKey(normalized) !== message.runKey) {
         await finishRun(env.DB, message, 'invalid-output', now(), { error: 'input identity or version mismatch' }); queued.ack(); continue;
@@ -204,6 +217,11 @@ export async function processShadowExtractionBatch(batch: MessageBatch<unknown>,
         await finishRun(env.DB, message, 'disabled', now(), { error: 'cost headroom unavailable' }); queued.ack(); continue;
       }
       const response = await infer(normalized, shadowExtractionPrompt(normalized));
+      if (!Number.isSafeInteger(response.inputTokens) || response.inputTokens < 0
+        || !Number.isSafeInteger(response.outputTokens) || response.outputTokens < 0
+        || !Number.isSafeInteger(response.actualCostCents) || response.actualCostCents < 0) {
+        throw new Error('model usage is invalid');
+      }
       if (!await currentRevision(env.DB, message)) {
         await finishRun(env.DB, message, 'obsolete', now(), { error: 'a newer posting revision arrived during inference' }); queued.ack(); continue;
       }
@@ -216,12 +234,21 @@ export async function processShadowExtractionBatch(batch: MessageBatch<unknown>,
       await env.DB.batch(validation.fieldOutcomes.map((outcome) => env.DB.prepare(`INSERT INTO shadow_extraction_field_outcomes (run_key, field, status, accepted, failure)
         VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_key, field) DO UPDATE SET status = excluded.status, accepted = excluded.accepted, failure = excluded.failure`)
         .bind(message.runKey, outcome.field, outcome.status, outcome.accepted ? 1 : 0, outcome.failure ?? null)));
+      const baselineDifferences = validation.fieldOutcomes.flatMap((outcome) => {
+        const baselineState = parsed.baseline?.[outcome.field as keyof ShadowBaseline];
+        return baselineState ? [env.DB.prepare(`INSERT INTO shadow_extraction_baseline_differences
+          (run_key, field, baseline_state, shadow_state, differs, recorded_at) VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(run_key, field) DO UPDATE SET baseline_state = excluded.baseline_state,
+            shadow_state = excluded.shadow_state, differs = excluded.differs, recorded_at = excluded.recorded_at`)
+          .bind(message.runKey, outcome.field, baselineState, outcome.status, baselineState === outcome.status ? 0 : 1, now().toISOString())] : [];
+      });
+      if (baselineDifferences.length) await env.DB.batch(baselineDifferences);
       await env.DB.prepare(`UPDATE shadow_extraction_cost_ledger SET actual_cents = ?, state = 'reconciled', updated_at = ? WHERE period = ? AND run_key = ?`)
         .bind(response.actualCostCents, now().toISOString(), month(startedAt), message.runKey).run();
       queued.ack();
     } catch (error) {
       await finishRun(env.DB, message, 'transient-failure', now(), { error: error instanceof Error ? error.message.slice(0, 500) : 'unknown failure' });
-      if ((queued.attempts ?? 0) >= 1) queued.ack(); else queued.retry({ delaySeconds: 300 });
+      if ((queued.attempts ?? 1) >= 2) queued.ack(); else queued.retry({ delaySeconds: 300 });
     }
   }
 }

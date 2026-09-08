@@ -91,6 +91,7 @@ export interface Environment extends AuthEnvironment {
   GITHUB_QUEUE_ID: string;
   GMAIL_QUEUE_ID: string;
   DESTINATION_VERIFICATION_QUEUE_ID: string;
+  SHADOW_EXTRACTION_QUEUE_ID: string;
   ADMISSION_QUEUE_AGE_ALERT_HOURS?: string;
   ADMISSION_STALE_ALERT_THRESHOLD?: string;
   GMAIL_ENABLED?: string;
@@ -445,6 +446,7 @@ export function billingShutdownQueueIds(env: Environment): string[] {
     ...catalogProviderDefinitions.map((provider) => env[provider.runtime.cloudflareQueueIdBinding]),
     env.GMAIL_QUEUE_ID,
     env.DESTINATION_VERIFICATION_QUEUE_ID,
+    env.SHADOW_EXTRACTION_QUEUE_ID,
   ];
 }
 
@@ -453,6 +455,7 @@ async function billingShutdown(request: Request, env: Environment): Promise<Resp
     return Response.json({ message: 'Not found' }, { status: 404 });
   }
 
+  const queueIds = billingShutdownQueueIds(env);
   const queueIds = billingShutdownQueueIds(env);
   const scriptPath = `/workers/scripts/${encodeURIComponent(env.WORKER_NAME)}`;
   if (new URL(request.url).searchParams.get('dry-run') === 'true') {

@@ -36,13 +36,15 @@ until the frozen pilot identifies an eligible model and field set.
 When a later approved rollout enables execution, it must provide both
 `SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS` (the forecast for all existing
 Cloudflare usage) and `SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS`. The consumer
-fails closed unless a conservative reservation fits the combined $20/month cap,
-and reconciles actual usage after the request. It retries one transient delivery
+fails closed unless cumulative reservations and reconciled actual usage fit both
+the shadow headroom and the combined $20/month cap. A single request can finish
+slightly above its conservative reservation, but that actual usage reduces later
+capacity. It retries one transient delivery
 with a five-minute delay; malformed output is a visible `invalid-output` state,
 not a repair loop.
 
 Use the authenticated, read-only endpoint below for aggregate run states,
-latency, cost totals, and version distribution:
+latency, cost totals, version distribution, and deterministic-baseline differences:
 
 ```text
 GET /internal/operations/shadow-extraction
