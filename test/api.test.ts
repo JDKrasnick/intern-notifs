@@ -11,6 +11,20 @@ const hasUndefined = (value: unknown): boolean =>
   (value !== null && typeof value === 'object' && Object.values(value).some(hasUndefined));
 
 describe('public API ownership boundary', () => {
+  it('returns the last exact-role verification timestamp during temporary unreadability', async () => {
+    const jobs = new MemoryInternshipStore();
+    await jobs.putInternship({ ...job, admission: {
+      canonicalEmployer: { id: 'acme', displayName: 'Acme' }, employerResolution: 'resolved', postingAttribution: 'attributed',
+      destination: { classification: 'unresolved', candidateUrl: job.applyUrl, provider: 'structured', inspectedAt: '2026-08-26T00:00:00Z', lastKnownGoodAt: '2026-08-20T00:00:00Z' },
+      metadata: { complete: true, title: 'complete', location: 'complete' }, catalogEligible: true, alertEligible: false,
+      reasonCodes: ['destination-grace'], evaluatedAt: '2026-08-26T00:00:00Z', evidenceObservedAt: '2026-08-26T00:00:00Z',
+      lastVerifiedAt: '2026-08-20T00:00:00Z', graceDeadline: '2026-08-27T00:00:00Z',
+    } });
+    const handler = createApiHandler({ jobs, users: new MemoryUserStore() });
+    expect(JSON.parse((await handler(event(undefined, 'GET', '/jobs/job-1'))).body))
+      .toMatchObject({ admission: { lastVerifiedAt: '2026-08-20T00:00:00Z', alertEligible: false } });
+  });
+
   it('keeps identity-unconfirmed roles in shadow until the rollout flag is enabled', async () => {
     const jobs = new MemoryInternshipStore();
     const users = new MemoryUserStore();

@@ -440,6 +440,8 @@ export interface CatalogAdmission {
   evidenceCodes?: CatalogAdmissionEvidence[];
   evaluatedAt: string;
   evidenceObservedAt: string;
+  /** Last successful verification of this exact role's official destination. Public during temporary unreadability. */
+  lastVerifiedAt?: string;
   graceDeadline?: string;
 }
 
