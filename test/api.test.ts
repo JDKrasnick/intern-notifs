@@ -120,8 +120,10 @@ describe('public API ownership boundary', () => {
     expect((await handler(event('owner', 'DELETE', '/me/applications/missing'))).statusCode).toBe(404);
     expect((await handler(event('owner', 'DELETE', `/me/applications/${firstId}`))).statusCode).toBe(204);
     expect((await handler(event('owner', 'DELETE', `/me/applications/${firstId}`))).statusCode).toBe(404);
+    expect((await handler(event('owner', 'PATCH', `/me/applications/${secondId}`, { status: 'applied' }))).statusCode).toBe(200);
+    expect((await handler(event('owner', 'DELETE', `/me/applications/${secondId}`))).statusCode).toBe(409);
     expect(JSON.parse((await handler(event('owner', 'GET', '/me/applications'))).body).applications)
-      .toMatchObject([{ applicationId: secondId, jobId: secondJob.jobId }]);
+      .toMatchObject([{ applicationId: secondId, jobId: secondJob.jobId, status: 'applied' }]);
   });
   it('persists per-user alert templates without resetting existing alert preferences', async () => {
     const jobs = new MemoryInternshipStore(); const users = new MemoryUserStore(); const handler = createApiHandler({ jobs, users });

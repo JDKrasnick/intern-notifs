@@ -457,6 +457,7 @@ function JobCard({
   const hideTranslateY = useRef(new Animated.Value(0)).current;
   const [isHiding, setIsHiding] = useState(false);
   const canSaveForWeb = Boolean(onSaveForWeb) && !applicationStatus && !isSavingForWeb;
+  const isSavedForWeb = applicationStatus === "saved";
   const canHideLocally = Boolean(onHideLocally);
   const postingTiming = postingTimingPresentation(job.sourceReferences, job.firstSeenAt);
   const recencyBadge = postingRecencyBadge(isNew, postingTiming);
@@ -587,11 +588,13 @@ function JobCard({
             accessibilityActions={
               [
                 ...(canSaveForWeb ? [{ name: "save", label: "Save for web" }] : []),
+                ...(isSavedForWeb && onUnsave ? [{ name: "unsave", label: "Unsave" }] : []),
                 ...(canHideLocally ? [{ name: "hide", label: "Hide on this device" }] : []),
               ]
             }
             onAccessibilityAction={(event) => {
               if (event.nativeEvent.actionName === "save") handleSave();
+              if (event.nativeEvent.actionName === "unsave") handleUnsave();
               if (event.nativeEvent.actionName === "hide") handleHide();
             }}
             style={[styles.card, styles.swipeCardSurface]}
@@ -639,7 +642,7 @@ function JobCard({
                     <Text style={styles.webSaveButtonText}>Saving…</Text>
                   </View>
                 ) : null}
-                {!isSavingForWeb && applicationStatus ? (
+                {!isSavingForWeb && isSavedForWeb && onUnsave ? (
                   <TouchableOpacity accessibilityRole="button" accessibilityLabel="Unsave" onPress={handleUnsave} style={styles.webUnsaveButtonCompact}>
                     <Ionicons name="bookmark" size={14} color={colors.signal} />
                     <Text style={styles.webUnsaveButtonText}>Saved</Text>
@@ -720,7 +723,7 @@ function CatalogGroupCard({
   const hideTranslateY = useRef(new Animated.Value(0)).current;
   const [isHiding, setIsHiding] = useState(false);
   const translateX = useRef(new Animated.Value(0)).current;
-  const isSaved = Boolean(applicationStatus);
+  const isSaved = applicationStatus === "saved";
   const canSaveForWeb = Boolean(onSaveForWeb) && !isSaved && !isSavingForWeb;
   const canHideLocally = Boolean(onHideLocally);
   const handleHide = () => {
@@ -853,7 +856,7 @@ function CatalogGroupCard({
                     <Text style={styles.webSaveButtonText}>Saving…</Text>
                   </View>
                 ) : null}
-                {!isSavingForWeb && isSaved ? (
+                {!isSavingForWeb && isSaved && onUnsave ? (
                   <TouchableOpacity accessibilityRole="button" accessibilityLabel="Unsave" onPress={() => { if (!onUnsave) return; onUnsave(); }} style={styles.webUnsaveButtonCompact}>
                     <Ionicons name="bookmark" size={14} color={colors.signal} />
                     <Text style={styles.webUnsaveButtonText}>Saved</Text>
@@ -965,6 +968,7 @@ function NewRoleCard({
   onSaveForWeb,
   isSavingForWeb,
   onHideLocally,
+  onUnsave,
 }: {
   job: Job;
   onOpen: () => void;
@@ -973,6 +977,7 @@ function NewRoleCard({
   onSaveForWeb?: () => void;
   isSavingForWeb?: boolean;
   onHideLocally?: () => void;
+  onUnsave?: () => void;
 }) {
   const opacity = useRef(new Animated.Value(1)).current;
   const lift = useRef(new Animated.Value(0)).current;
@@ -1014,6 +1019,7 @@ function NewRoleCard({
         onSaveForWeb={onSaveForWeb}
         isSavingForWeb={isSavingForWeb}
         onHideLocally={onHideLocally}
+        onUnsave={onUnsave}
       />
       <Animated.View pointerEvents="none" style={[styles.newRoleGlow, { opacity: glow }]} />
     </Animated.View>
@@ -1102,7 +1108,7 @@ function JobDetailSheet({
     : undefined;
   const closedListingUrl = role && !role.open ? validatedOfficialUrl(role) : undefined;
   const canSave = Boolean(role && onSaveForWeb && !applicationStatus && !isSavingForWeb);
-  const isSaved = Boolean(applicationStatus);
+  const isSaved = applicationStatus === "saved";
   return (
     <Modal
       animationType="none"
@@ -1957,6 +1963,7 @@ function LaunchInbox({
   savingJobIds,
   hiddenJobIds,
   onHideLocally,
+  onUnsave,
   hiddenFeedbackJob,
   onUndoHide,
   onOpenGroup,
@@ -1969,6 +1976,7 @@ function LaunchInbox({
   savingJobIds: Set<string>;
   hiddenJobIds: Set<string>;
   onHideLocally: (job: Job) => void;
+  onUnsave: (job: Job) => void;
   hiddenFeedbackJob?: Job;
   onUndoHide: () => void;
   onOpenGroup: (group: CatalogGroupRow, details?: CatalogGroupDetails) => void;
@@ -2007,6 +2015,7 @@ function LaunchInbox({
               onSaveForWeb={() => onSaveForWeb(role)}
               isSavingForWeb={savingJobIds.has(role.jobId)}
               onHideLocally={() => onHideLocally(role)}
+              onUnsave={() => onUnsave(role)}
             />
           );
         }
@@ -2015,6 +2024,11 @@ function LaunchInbox({
             group={item}
             onOpenGroup={() => onOpenGroup(item, inbox.groups?.[index])}
             onOpenRole={onOpen}
+            onSaveForWeb={item.featuredRole ? () => onSaveForWeb(catalogRoleJob(item.featuredRole)) : undefined}
+            isSavingForWeb={item.featuredRole ? savingJobIds.has(item.featuredRole.jobId) : false}
+            onHideLocally={item.featuredRole ? () => onHideLocally(catalogRoleJob(item.featuredRole)) : undefined}
+            applicationStatus={item.featuredRole ? applicationStatuses.get(item.featuredRole.jobId) : undefined}
+            onUnsave={item.featuredRole ? () => onUnsave(catalogRoleJob(item.featuredRole)) : undefined}
           />
         );
       }}
@@ -2070,6 +2084,7 @@ function LaunchInbox({
             onSaveForWeb={() => onSaveForWeb(item)}
             isSavingForWeb={savingJobIds.has(item.jobId)}
             onHideLocally={() => onHideLocally(item)}
+            onUnsave={() => onUnsave(item)}
           />
         )}
       ListEmptyComponent={
@@ -3172,7 +3187,7 @@ function AppContent() {
   };
   const unsaveForWeb = (job: Job) => {
     const app = applications.find((a) => a.jobId === job.jobId);
-    if (!app) return;
+    if (!app || app.status !== "saved") return;
     if (savingJobIds.has(job.jobId)) return;
     setSavingJobIds((current) => new Set(current).add(job.jobId));
     void (async () => {
@@ -3208,6 +3223,7 @@ function AppContent() {
                 savingJobIds={savingJobIds}
                 hiddenJobIds={hiddenJobIds}
                 onHideLocally={hideLocally}
+                onUnsave={unsaveForWeb}
                 hiddenFeedbackJob={hiddenFeedbackJob}
                 onUndoHide={undoHideLocally}
               />
