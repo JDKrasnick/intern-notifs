@@ -5779,7 +5779,7 @@ const styles = StyleSheet.create({
     top: 0,
     width: 112,
   },
-  swipeSaveActionText: { color: colors.onDark, fontSize: 14, fontWeight: "800" },
+  swipeSaveActionText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" },
   swipeHideAction: {
     alignItems: "center",
     backgroundColor: colors.body,
