@@ -107,7 +107,8 @@ export async function enqueueShadowExtraction(env: Pick<ShadowExtractionEnvironm
   const normalized = normalizeExactPostingDescription(input.title, input.description, input.incomplete);
   if (!normalized.title || !normalized.description) return undefined;
   const cacheKey = shadowExtractionCacheKey(normalized);
-  const runKey = shadowReportFingerprint({ jobId: input.jobId, sourceId: input.sourceId, externalId: input.externalId, contentHash: normalized.contentHash });
+  const runKey = shadowReportFingerprint({ jobId: input.jobId, sourceId: input.sourceId, externalId: input.externalId,
+    contentHash: normalized.contentHash, cacheKey });
   // The normalized text is content-addressed by cacheKey, while this artifact
   // also holds posting-specific baseline state and therefore must not be shared.
   const inputKey = r2Key(runKey);
@@ -130,27 +131,34 @@ export async function enqueueShadowExtraction(env: Pick<ShadowExtractionEnvironm
 
 /** Atomic reservation checks the already-forecast app spend and the monthly
  * shadow envelope before an inference call. A missing value fails closed. */
-export async function reserveShadowCost(db: D1Database, now: Date, runKey: string, reserveCents: number, env: Pick<ShadowExtractionEnvironment, 'SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS' | 'SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS'>): Promise<boolean> {
+export async function reserveShadowCost(db: D1Database, now: Date, runKey: string, leaseToken: string, reserveCents: number, env: Pick<ShadowExtractionEnvironment, 'SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS' | 'SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS'>): Promise<boolean> {
   const forecast = parseCents(env.SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS);
   const headroom = parseCents(env.SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS);
   if (forecast === undefined || headroom === undefined || reserveCents <= 0) return false;
   const period = month(now);
   const prior = await db.prepare(`SELECT state, reserved_cents FROM shadow_extraction_cost_ledger
-    WHERE period = ? AND run_key = ?`).bind(period, runKey).first<{ state: string; reserved_cents: number }>();
+    WHERE period = ? AND lease_token = ?`).bind(period, leaseToken).first<{ state: string; reserved_cents: number }>();
   if (prior?.state === 'reserved' && prior.reserved_cents >= reserveCents) return true;
   const allowance = Math.min(headroom, Math.max(0, 2_000 - forecast));
   if (reserveCents > allowance) return false;
-  const result = await db.prepare(`INSERT INTO shadow_extraction_cost_ledger (period, run_key, reserved_cents, actual_cents, state, created_at, updated_at)
-    SELECT ?, ?, ?, 0, 'reserved', ?, ?
-    WHERE NOT EXISTS (SELECT 1 FROM shadow_extraction_cost_ledger WHERE period = ? AND run_key = ?)
-      AND COALESCE((SELECT SUM(CASE WHEN actual_cents > reserved_cents THEN actual_cents ELSE reserved_cents END)
-        FROM shadow_extraction_cost_ledger WHERE period = ? AND state IN ('reserved', 'reconciled')), 0) + ? <= ?`).bind(
-    period, runKey, reserveCents, now.toISOString(), now.toISOString(), period, runKey, period, reserveCents, allowance,
+  const result = await db.prepare(`INSERT INTO shadow_extraction_cost_ledger (period, lease_token, run_key, reserved_cents, actual_cents, state, created_at, updated_at)
+    SELECT ?, ?, ?, ?, 0, 'reserved', ?, ?
+    WHERE NOT EXISTS (SELECT 1 FROM shadow_extraction_cost_ledger WHERE period = ? AND lease_token = ?)
+      AND COALESCE((SELECT SUM(CASE WHEN state = 'reserved' AND reserved_cents > actual_cents THEN reserved_cents
+        WHEN state IN ('reserved', 'reconciled') THEN actual_cents ELSE 0 END)
+        FROM shadow_extraction_cost_ledger WHERE period = ?), 0) + ? <= ?`).bind(
+    period, leaseToken, runKey, reserveCents, now.toISOString(), now.toISOString(), period, leaseToken, period, reserveCents, allowance,
   ).run();
   if (result.meta.changes === 1) return true;
   const existing = await db.prepare(`SELECT state, reserved_cents FROM shadow_extraction_cost_ledger
-    WHERE period = ? AND run_key = ?`).bind(period, runKey).first<{ state: string; reserved_cents: number }>();
+    WHERE period = ? AND lease_token = ?`).bind(period, leaseToken).first<{ state: string; reserved_cents: number }>();
   return existing?.state === 'reserved' && existing.reserved_cents >= reserveCents;
+}
+
+async function releaseShadowCost(db: D1Database, now: Date, runKey: string, leaseToken: string): Promise<void> {
+  await db.prepare(`UPDATE shadow_extraction_cost_ledger SET state = 'released', updated_at = ?
+    WHERE lease_token = ? AND run_key = ? AND state = 'reserved'`)
+    .bind(now.toISOString(), leaseToken, runKey).run();
 }
 
 async function claimRun(db: D1Database, message: ShadowExtractionMessage, now: Date): Promise<string | undefined> {
@@ -190,12 +198,15 @@ async function finishRun(db: D1Database, message: ShadowExtractionMessage, lease
 }
 
 async function reconcileUsage(db: D1Database, message: ShadowExtractionMessage, leaseToken: string, startedAt: Date, response: ShadowInferenceResult, now: Date): Promise<void> {
-  const inserted = await db.prepare(`INSERT INTO shadow_extraction_usage (lease_token, run_key, input_tokens, output_tokens, actual_cost_cents, recorded_at)
-    SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM shadow_extraction_claims WHERE lease_token = ? AND run_key = ?)`)
-    .bind(leaseToken, message.runKey, response.inputTokens, response.outputTokens, response.actualCostCents, now.toISOString(), leaseToken, message.runKey).run();
-  if (inserted.meta.changes === 1) await db.prepare(`UPDATE shadow_extraction_cost_ledger
-    SET actual_cents = actual_cents + ?, state = 'reconciled', updated_at = ? WHERE period = ? AND run_key = ?`)
-    .bind(response.actualCostCents, now.toISOString(), month(startedAt), message.runKey).run();
+  await db.batch([
+    db.prepare(`INSERT OR IGNORE INTO shadow_extraction_usage (lease_token, run_key, input_tokens, output_tokens, actual_cost_cents, recorded_at)
+      SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM shadow_extraction_claims WHERE lease_token = ? AND run_key = ?)`)
+      .bind(leaseToken, message.runKey, response.inputTokens, response.outputTokens, response.actualCostCents, now.toISOString(), leaseToken, message.runKey),
+    db.prepare(`UPDATE shadow_extraction_cost_ledger SET actual_cents = ?, state = 'reconciled', updated_at = ?
+      WHERE period = ? AND lease_token = ? AND run_key = ?
+        AND EXISTS (SELECT 1 FROM shadow_extraction_usage WHERE lease_token = ? AND run_key = ?)`)
+      .bind(response.actualCostCents, now.toISOString(), month(startedAt), leaseToken, message.runKey, leaseToken, message.runKey),
+  ]);
 }
 
 function runAnalysisStatements(db: D1Database, runKey: string, leaseToken: string, validation: ShadowValidationResult, baseline: ShadowBaseline | undefined, recordedAt: Date): D1PreparedStatement[] {
@@ -225,7 +236,9 @@ async function finishRunWithAnalysis(db: D1Database, message: ShadowExtractionMe
 export async function shadowExtractionSummary(db: D1Database): Promise<Record<string, unknown>> {
   const [runs, costs, versions, coverage, failures, baselineDifferences, usage] = await Promise.all([
     db.prepare('SELECT state, COUNT(*) AS count, AVG(CASE WHEN completed_at IS NOT NULL THEN (julianday(completed_at) - julianday(created_at)) * 86400000 END) AS latency_ms FROM shadow_extraction_runs GROUP BY state').all(),
-    db.prepare('SELECT period, SUM(reserved_cents) AS reserved_cents, SUM(actual_cents) AS actual_cents, COUNT(*) AS runs FROM shadow_extraction_cost_ledger GROUP BY period ORDER BY period DESC LIMIT 2').all(),
+    db.prepare(`SELECT period, SUM(CASE WHEN state = 'reserved' THEN reserved_cents ELSE 0 END) AS reserved_cents,
+      SUM(actual_cents) AS actual_cents, COUNT(*) AS attempts FROM shadow_extraction_cost_ledger
+      GROUP BY period ORDER BY period DESC LIMIT 2`).all(),
     db.prepare('SELECT model_id, prompt_version, schema_version, preprocessing_version, COUNT(*) AS count FROM shadow_extraction_runs GROUP BY model_id, prompt_version, schema_version, preprocessing_version').all(),
     db.prepare(`SELECT field, status, SUM(accepted) AS accepted, COUNT(*) AS total
       FROM shadow_extraction_field_outcomes GROUP BY field, status ORDER BY field, status`).all(),
@@ -283,7 +296,7 @@ export async function processShadowExtractionBatch(batch: MessageBatch<unknown>,
           .bind(message.cacheKey, cached.response_key).run();
       }
       // Conservative upper bound: 5 cents/request. Actual model cost is reconciled below.
-      if (!await reserveShadowCost(env.DB, startedAt, message.runKey, 5, env)) {
+      if (!await reserveShadowCost(env.DB, startedAt, message.runKey, leaseToken, 5, env)) {
         await finishRun(env.DB, message, leaseToken, 'disabled', now(), { error: 'cost headroom unavailable' }); queued.ack(); continue;
       }
       const response = await infer(normalized, shadowExtractionPrompt(normalized));
@@ -311,12 +324,16 @@ export async function processShadowExtractionBatch(batch: MessageBatch<unknown>,
     } catch (error) {
       // A claim can be reclaimed while a model call is in flight. Its terminal
       // write is fenced, so a late failure cannot replace the newer result.
-      if (leaseToken) await finishRun(env.DB, message, leaseToken, 'transient-failure', now(), { error: error instanceof Error ? error.message.slice(0, 500) : 'unknown failure' });
+      if (leaseToken) {
+        const failedAt = now();
+        await releaseShadowCost(env.DB, failedAt, message.runKey, leaseToken);
+        await finishRun(env.DB, message, leaseToken, 'transient-failure', failedAt, { error: error instanceof Error ? error.message.slice(0, 500) : 'unknown failure' });
+      }
       if ((queued.attempts ?? 1) >= 2) queued.ack(); else queued.retry({ delaySeconds: 300 });
     }
   }
 }
 
-export function shadowReportFingerprint(message: Pick<ShadowExtractionMessage, 'jobId' | 'sourceId' | 'externalId' | 'contentHash'>): string {
-  return createHash('sha256').update(`${message.jobId}\0${message.sourceId}\0${message.externalId}\0${message.contentHash}`).digest('hex');
+export function shadowReportFingerprint(message: Pick<ShadowExtractionMessage, 'jobId' | 'sourceId' | 'externalId' | 'contentHash' | 'cacheKey'>): string {
+  return createHash('sha256').update(`${message.jobId}\0${message.sourceId}\0${message.externalId}\0${message.contentHash}\0${message.cacheKey}`).digest('hex');
 }

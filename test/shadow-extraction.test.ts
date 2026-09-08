@@ -8,7 +8,7 @@ import {
   shadowExtractionPrompt,
   validateShadowExtraction,
 } from '../src/shadow-extraction.js';
-import { enqueueShadowExtraction, processShadowExtractionBatch, reserveShadowCost } from '../cloudflare/shadow-extraction.js';
+import { enqueueShadowExtraction, processShadowExtractionBatch, reserveShadowCost, shadowReportFingerprint } from '../cloudflare/shadow-extraction.js';
 import type { D1Database, D1PreparedStatement, Queue, R2Bucket } from '../cloudflare/types.js';
 
 function d1(database: DatabaseSync): D1Database {
@@ -45,6 +45,7 @@ function schema(): D1Database {
   database.exec(readFileSync(new URL('../cloudflare/migrations/0020_shadow_extraction.sql', import.meta.url), 'utf8'));
   database.exec(readFileSync(new URL('../cloudflare/migrations/0021_shadow_extraction_fencing.sql', import.meta.url), 'utf8'));
   database.exec(readFileSync(new URL('../cloudflare/migrations/0022_shadow_extraction_cache_expiry.sql', import.meta.url), 'utf8'));
+  database.exec(readFileSync(new URL('../cloudflare/migrations/0023_shadow_extraction_attempt_costs.sql', import.meta.url), 'utf8'));
   return d1(database);
 }
 
@@ -105,6 +106,26 @@ describe('shadow extraction queue and cost ledger', () => {
   const identity = { provider: 'greenhouse' as const, sourceId: 'greenhouse-acme', tenant: 'acme', postingId: '123', sourceUrl: 'https://jobs.example/123' };
   const description = 'Software Engineering Intern\nAustin\n$50 - $60 per hour';
 
+  it('migrates pre-attempt cost rows onto the current run lease', () => {
+    const database = new DatabaseSync(':memory:');
+    for (const migration of ['0020_shadow_extraction.sql', '0021_shadow_extraction_fencing.sql', '0022_shadow_extraction_cache_expiry.sql']) {
+      database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
+    }
+    const runKey = '9'.repeat(64);
+    database.prepare(`INSERT INTO shadow_extraction_runs (run_key, job_id, source_id, external_id, source_url, posting_identity,
+      content_hash, model_id, prompt_version, schema_version, preprocessing_version, state, attempts, lease_until, lease_token,
+      cache_key, input_key, created_at, updated_at) VALUES (?, 'job', 'source', 'external', 'https://example.test', '{}', ?,
+      'model', 'prompt', 'schema', 'preprocessing', 'running', 1, '2026-09-08T00:05:00.000Z', 'active-lease', ?,
+      'shadow-input/x.json', '2026-09-08T00:00:00.000Z', '2026-09-08T00:00:00.000Z')`)
+      .run(runKey, runKey, '8'.repeat(64));
+    database.prepare(`INSERT INTO shadow_extraction_cost_ledger
+      (period, run_key, reserved_cents, actual_cents, state, created_at, updated_at)
+      VALUES ('2026-09', ?, 5, 2, 'reconciled', '2026-09-08T00:00:00.000Z', '2026-09-08T00:01:00.000Z')`).run(runKey);
+    database.exec(readFileSync(new URL('../cloudflare/migrations/0023_shadow_extraction_attempt_costs.sql', import.meta.url), 'utf8'));
+    expect(database.prepare('SELECT lease_token, run_key, reserved_cents, actual_cents, state FROM shadow_extraction_cost_ledger').get())
+      .toEqual({ lease_token: 'active-lease', run_key: runKey, reserved_cents: 5, actual_cents: 2, state: 'reconciled' });
+  });
+
   it('suppresses duplicate deliveries and records a disabled run without a model call', async () => {
     const DB = schema(); const artifacts = new MemoryR2(); const messages: unknown[] = [];
     const queue: Queue = { async send(body) { messages.push(body); }, async sendBatch() {} };
@@ -127,7 +148,7 @@ describe('shadow extraction queue and cost ledger', () => {
       VALUES (?, 'job', 'source', 'external', 'https://example.test', '{}', ?, ?, 'p', 's', 'n', 'queued', 0, '', 'shadow-input/x.json', ?, ?)`)
       .bind(key, key, SHADOW_EXTRACTION_MODEL_ID, now.toISOString(), now.toISOString()).run();
     const env = { SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS: '100', SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS: '5' };
-    expect(await Promise.all([reserveShadowCost(DB, now, 'a'.repeat(64), 5, env), reserveShadowCost(DB, now, 'b'.repeat(64), 5, env)])).toEqual([true, false]);
+    expect(await Promise.all([reserveShadowCost(DB, now, 'a'.repeat(64), 'lease-a', 5, env), reserveShadowCost(DB, now, 'b'.repeat(64), 'lease-b', 5, env)])).toEqual([true, false]);
   });
 
   it('enforces the combined monthly cap and counts actual overshoot against later reservations', async () => {
@@ -136,10 +157,10 @@ describe('shadow extraction queue and cost ledger', () => {
       VALUES (?, 'job', 'source', 'external', 'https://example.test', '{}', ?, ?, 'p', 's', 'n', 'queued', 0, '', 'shadow-input/x.json', ?, ?)`)
       .bind(key, key, SHADOW_EXTRACTION_MODEL_ID, now.toISOString(), now.toISOString()).run();
     const env = { SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS: '1995', SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS: '100' };
-    expect(await reserveShadowCost(DB, now, 'c'.repeat(64), 5, env)).toBe(true);
+    expect(await reserveShadowCost(DB, now, 'c'.repeat(64), 'lease-c', 5, env)).toBe(true);
     await DB.prepare(`UPDATE shadow_extraction_cost_ledger SET actual_cents = 7, state = 'reconciled'
       WHERE period = '2026-09' AND run_key = ?`).bind('c'.repeat(64)).run();
-    expect(await reserveShadowCost(DB, now, 'd'.repeat(64), 1, env)).toBe(false);
+    expect(await reserveShadowCost(DB, now, 'd'.repeat(64), 'lease-d', 1, env)).toBe(false);
   });
 
   it('reuses a reservation for one transient retry and records deterministic baseline differences', async () => {
@@ -168,8 +189,11 @@ describe('shadow extraction queue and cost ledger', () => {
     expect(calls).toBe(2); expect(acked).toBe(true);
     expect(await DB.prepare('SELECT state, attempts FROM shadow_extraction_runs WHERE run_key = ?').bind(message!.runKey).first())
       .toEqual({ state: 'completed', attempts: 2 });
-    expect(await DB.prepare('SELECT reserved_cents, actual_cents, state FROM shadow_extraction_cost_ledger WHERE run_key = ?').bind(message!.runKey).first())
-      .toEqual({ reserved_cents: 5, actual_cents: 6, state: 'reconciled' });
+    expect(await DB.prepare('SELECT state, reserved_cents, actual_cents FROM shadow_extraction_cost_ledger WHERE run_key = ? ORDER BY rowid').bind(message!.runKey).all())
+      .toEqual({ results: [
+        { state: 'released', reserved_cents: 5, actual_cents: 0 },
+        { state: 'reconciled', reserved_cents: 5, actual_cents: 6 },
+      ] });
     expect(await DB.prepare('SELECT field, baseline_state, shadow_state, differs FROM shadow_extraction_baseline_differences ORDER BY field').all())
       .toEqual({ results: [
         { field: 'compensation', baseline_state: 'incomplete', shadow_state: 'present', differs: 1 },
@@ -266,5 +290,59 @@ describe('shadow extraction queue and cost ledger', () => {
     expect(calls).toBe(1);
     expect(completed?.state).toBe('completed');
     expect(artifacts.values.has(completed!.response_key)).toBe(true);
+  });
+
+  it('starts a new per-posting run when an extraction version changes', async () => {
+    const DB = schema(); const artifacts = new MemoryR2(); const queue: Queue = { async send() {}, async sendBatch() {} };
+    const message = await enqueueShadowExtraction({ DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts }, {
+      jobId: 'versioned', sourceId: identity.sourceId, externalId: 'versioned', sourceUrl: identity.sourceUrl, providerIdentity: identity,
+      title: 'Software Engineering Intern', description, observedAt: '2026-09-08T00:00:00.000Z',
+    });
+    const priorCacheKey = 'f'.repeat(64);
+    const priorRunKey = shadowReportFingerprint({ ...message!, cacheKey: priorCacheKey });
+    expect(priorRunKey).not.toBe(message!.runKey);
+    await DB.prepare(`INSERT INTO shadow_extraction_runs (run_key, job_id, source_id, external_id, source_url, posting_identity,
+      content_hash, model_id, prompt_version, schema_version, preprocessing_version, state, attempts, lease_until, cache_key,
+      input_key, created_at, completed_at, updated_at) VALUES (?, ?, ?, ?, ?, '{}', ?, 'prior-model', 'p0', 's0', 'n0',
+      'disabled', 1, '', ?, ?, ?, ?, ?)`)
+      .bind(priorRunKey, message!.jobId, message!.sourceId, message!.externalId, message!.sourceUrl, message!.contentHash,
+        priorCacheKey, message!.inputKey, message!.queuedAt, message!.queuedAt, message!.queuedAt).run();
+    let calls = 0;
+    await processShadowExtractionBatch({ queue: 'intern-notifs-shadow-extraction', messages: [{ id: 'current', body: message, ack() {}, retry() {} }] }, {
+      DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts, SHADOW_EXTRACTION_ENABLED: 'true',
+      SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS: '100', SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS: '100',
+    }, undefined, async () => { calls += 1; return { response: output(), inputTokens: 10, outputTokens: 5, actualCostCents: 2 }; });
+    expect(calls).toBe(1);
+    expect(await DB.prepare('SELECT state FROM shadow_extraction_runs WHERE run_key = ?').bind(message!.runKey).first())
+      .toEqual({ state: 'completed' });
+  });
+
+  it('reserves a fresh attempt and completes after response persistence transiently fails', async () => {
+    const DB = schema(); const artifacts = new MemoryR2(); const queue: Queue = { async send() {}, async sendBatch() {} };
+    const message = await enqueueShadowExtraction({ DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts }, {
+      jobId: 'retry-paid', sourceId: identity.sourceId, externalId: 'retry-paid', sourceUrl: identity.sourceUrl, providerIdentity: identity,
+      title: 'Software Engineering Intern', description, observedAt: '2026-09-08T00:00:00.000Z',
+    });
+    const originalPut = artifacts.put.bind(artifacts); let failResponse = true;
+    artifacts.put = async (key, value) => {
+      if (key.startsWith('shadow-response/') && failResponse) { failResponse = false; throw new Error('temporary R2 failure'); }
+      return originalPut(key, value);
+    };
+    const env = { DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts,
+      SHADOW_EXTRACTION_ENABLED: 'true', SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS: '100', SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS: '100' };
+    let calls = 0; let retried = false;
+    const infer = async () => { calls += 1; return { response: output(), inputTokens: 10, outputTokens: 5, actualCostCents: 2 }; };
+    await processShadowExtractionBatch({ queue: 'intern-notifs-shadow-extraction', messages: [{
+      id: 'first', body: message, attempts: 1, ack() {}, retry(options) { retried = options?.delaySeconds === 300; },
+    }] }, env, undefined, infer);
+    await processShadowExtractionBatch({ queue: 'intern-notifs-shadow-extraction', messages: [{
+      id: 'retry', body: message, attempts: 2, ack() {}, retry() {},
+    }] }, env, undefined, infer);
+    expect(retried).toBe(true);
+    expect(calls).toBe(2);
+    expect(await DB.prepare('SELECT state FROM shadow_extraction_runs WHERE run_key = ?').bind(message!.runKey).first())
+      .toEqual({ state: 'completed' });
+    expect(await DB.prepare('SELECT COUNT(*) AS attempts, SUM(actual_cents) AS actual FROM shadow_extraction_cost_ledger WHERE run_key = ?')
+      .bind(message!.runKey).first()).toEqual({ attempts: 2, actual: 4 });
   });
 });

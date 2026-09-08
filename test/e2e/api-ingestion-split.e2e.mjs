@@ -187,7 +187,7 @@ test('processes a compiled shadow queue event through R2 and exposes its disable
   const cacheKey = sha256([normalized.contentHash, 'unapproved-pilot-model', 'shadow-extraction-prompt-v1',
     'shadow-extraction-schema-v1', 'exact-posting-markdown-v1'].join('\0'));
   const identity = { provider: 'greenhouse', sourceId: 'greenhouse-review', tenant: 'review', postingId: '175', sourceUrl: 'https://example.test/175' };
-  const runKey = sha256(['review-job', 'greenhouse-review', '175', normalized.contentHash].join('\0'));
+  const runKey = sha256(['review-job', 'greenhouse-review', '175', normalized.contentHash, cacheKey].join('\0'));
   const inputKey = `shadow-input/${runKey}.json`;
   const observedAt = new Date().toISOString();
   await database.prepare(`INSERT INTO shadow_extraction_posting_revisions (job_id, source_id, external_id, content_hash, observed_at)
