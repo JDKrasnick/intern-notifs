@@ -4375,6 +4375,7 @@ function Applications({
   const savedOnly = applications.filter((entry) => entry.status === "saved" && !queuedIds.has(entry.applicationId));
   const ordered = [...queue, ...savedOnly, ...applications.filter((entry) => entry.status !== "saved" && !queuedIds.has(entry.applicationId))];
   return (
+    <View style={styles.queueScreen}>
     <FlatList
       style={styles.list}
       data={ordered}
@@ -4386,19 +4387,7 @@ function Applications({
           title="Roles to apply to"
           description="Mark roles as you browse, then work the queue top to bottom."
         />
-        <View style={styles.queueSummary}>
-          <Text style={styles.queueCount}>{queue.length} {queue.length === 1 ? "role" : "roles"} in queue</Text>
-          <ActionButton
-            label={nextQueuedJob ? `Apply next: ${nextQueuedJob.title} at ${nextQueuedJob.company}` : "Apply next"}
-            disabled={!nextQueuedJob}
-            onPress={applyNext}
-          />
-          {queue.length > 1 ? (
-            <View style={styles.queueSkipGap}>
-              <ActionButton label="Skip" variant="secondary" compact onPress={skipQueued} />
-            </View>
-          ) : null}
-        </View>
+        <Text style={styles.queueCount}>{queue.length} {queue.length === 1 ? "role" : "roles"} in queue</Text>
         {detections.length ? (
           <View style={styles.gmailReviewSection}>
             <Text style={styles.sectionTitle}>Possibly applied</Text>
@@ -4580,6 +4569,21 @@ function Applications({
         />
       }
     />
+      {queue.length ? (
+        <View style={styles.queueActionBar}>
+          <View style={styles.queueActionPrimary}>
+            <ActionButton
+              label="Apply next"
+              disabled={!nextQueuedJob}
+              onPress={applyNext}
+            />
+          </View>
+          {queue.length > 1 ? (
+            <ActionButton label="Skip" variant="secondary" onPress={skipQueued} />
+          ) : null}
+        </View>
+      ) : null}
+    </View>
   );
 }
 function commaList(value: string) {
@@ -6767,9 +6771,10 @@ const styles = StyleSheet.create({
   hiddenRoleCopy: { flex: 1 },
   hiddenRoleTitle: { color: colors.ink, fontSize: 15, fontWeight: "700", lineHeight: 20, marginTop: 2 },
   applicationActionGap: { marginTop: 14 },
-  queueSummary: { marginBottom: 4, marginTop: 16 },
+  queueScreen: { flex: 1 },
+  queueActionBar: { alignItems: "center", backgroundColor: colors.surface, borderTopColor: colors.separator, borderTopWidth: 1, flexDirection: "row", gap: 8, paddingHorizontal: 16, paddingVertical: 12 },
+  queueActionPrimary: { flex: 1 },
   queueCount: { color: colors.ink, fontSize: 17, fontWeight: "700", marginBottom: 12 },
-  queueSkipGap: { marginTop: 10 },
   queuePill: { alignItems: "center", alignSelf: "flex-end", backgroundColor: colors.ink, borderRadius: 16, flexDirection: "row", gap: 6, marginTop: 10, paddingHorizontal: 12, paddingVertical: 8 },
   queuePillText: { color: colors.onDark, fontSize: 13, fontWeight: "700" },
   queueSheet: { backgroundColor: colors.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: 560, padding: 20 },
