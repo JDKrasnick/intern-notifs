@@ -20,6 +20,7 @@
     "audit:browser-companion": "tsx scripts/audit-browser-companion.ts",
     "source:quality": "tsx scripts/source-quality.ts",
     "source:trusted-community:dry-run": "tsx scripts/trusted-community-dry-run.ts",
+    "probes:trusted-catalog": "tsx scripts/trusted-catalog-probes.ts",
     "coverage:companies": "tsx scripts/company-coverage.ts",
     "greenhouse:manifest": "tsx scripts/greenhouse-manifest.ts",
     "discover:lever": "tsx scripts/discover-lever.ts",

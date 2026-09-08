@@ -90,6 +90,10 @@ The export includes Cloudflare Pages security headers plus the public policy pag
 
 `https://internnotifs.app` is the canonical public web address. It is registered, delegated to Cloudflare, and attached to the `internnotifs` Pages project through a proxied apex CNAME to `internnotifs.pages.dev`; the Pages custom-domain validation, verification, and HTTPS certificate must remain active. The customer catalog owns `/`, while the employer workspace is isolated to `/employer/*`. The similarly spelled `internotifs.app` is not the project domain. The web bundle calls the API Worker at `https://intern-notifs.jdkrasnick.workers.dev`; set `EXPO_PUBLIC_API_URL` explicitly on the build command only when deploying against another approved API origin. Local `.env` files cannot silently replace the production default.
 
+### Trusted-catalog regression probes
+
+`npm run probes:trusted-catalog` performs a read-only recheck of the three documented exact-role regressions. It fetches their official ATS API records and the corresponding public `GET /jobs/{id}` records, then prints field-level discrepancies. It writes no files or data and uses no credentials. Requests are limited to the fixed three probes, run concurrently, and time out after 10 seconds (override with `-- --timeout-ms 10000`, maximum 30 seconds). A 401/403 is reported as `blocked`; other HTTP, transport, timeout, and invalid-JSON failures are `unavailable`, never a closure or a passing check. Use `-- --api-url <approved API origin>` only for a non-production comparison.
+
 Keep `EMPLOYER_PORTAL_ENABLED=false` while deploying the persistence layer. Apply D1 migrations before the Worker so employer routes can never observe a partial schema:
 
 ```bash
