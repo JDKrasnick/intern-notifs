@@ -384,6 +384,15 @@ export interface DestinationEvidence {
   tenant?: string;
   expectedPostingId?: string;
   inspectedAt: string;
+  /** Structured conclusion from the destination artifact, evaluated before generic live-page evidence. */
+  closureState?: 'open' | 'gone' | 'unknown';
+  closureSignal?: 'http-gone' | 'explicit-language' | 'valid-through-expired';
+  /** Publisher-declared JobPosting.validThrough, normalized to UTC when usable. */
+  validThrough?: string;
+  /** Admission evidence is never trusted for more than seven days. */
+  freshUntil?: string;
+  /** Scheduler target, intentionally before freshUntil so a transient retry does not immediately pause alerts. */
+  nextCheckAt?: string;
   inspectionTruncated?: boolean;
   inspectedBytes?: number;
   evidenceHash?: string;
@@ -418,6 +427,7 @@ export type CatalogAdmissionReason =
   | 'destination-gone'
   | 'destination-unresolved'
   | 'destination-grace'
+  | 'destination-stale'
   | 'metadata-title-missing'
   | 'metadata-title-truncated'
   | 'metadata-title-malformed'
@@ -825,6 +835,8 @@ export interface SourceOccurrence extends SourceReference {
   state: 'open' | 'closed';
   /** Record-level evidence; missing values identify legacy rows awaiting backfill. */
   admission?: CatalogAdmission;
+  employerLabelOrigin?: 'explicit' | 'inherited';
+  employerInheritance?: 'same-tenant' | 'unresolved' | 'conflict';
   /** Exact time this source was first linked to this catalog job, when known. */
   firstAttachedAt?: string;
   /** Legacy references predate attribution tracking and must not imply precision. */
@@ -909,6 +921,8 @@ export interface SourcedPosting {
     id?: string;
     name: string;
     authority: 'reviewed-registry' | 'source-row';
+    labelOrigin?: 'explicit' | 'inherited';
+    inheritance?: 'same-tenant' | 'unresolved' | 'conflict';
   };
   providerIdentity?: Omit<ProviderIdentity, 'sourceId' | 'sourceUrl' | 'postingId'>;
   title: string;

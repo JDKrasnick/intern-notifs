@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveCanonicalAdmission, evaluateCatalogAdmission, metadataCompleteness } from '../src/catalog-admission.js';
+import { alertEligible, catalogEligible, deriveCanonicalAdmission, evaluateCatalogAdmission, metadataCompleteness } from '../src/catalog-admission.js';
 import { classifyDestination, requiresBrowserVerification } from '../src/destination-verification.js';
 import { inspectApplicationPage, type ApplicationPageEvidence } from '../src/core/application-url.js';
 import { reachabilityFromFailure } from '../src/core/application-verification.js';
@@ -205,6 +205,91 @@ describe('record-level catalog admission', () => {
       catalogEligible: false, alertEligible: false, reasonCodes: ['destination-gone'],
       lastVerifiedAt: '2026-08-20T12:00:00Z',
     });
+
+  });
+
+  it('fails closed from wall-clock freshness even when a scheduled verifier is unavailable', () => {
+    const role = listing();
+    const destination = classifyDestination({ listing: role, reachability: 'live', evidence: page({ postingIdPresent: true }),
+      inspectedAt: '2026-08-20T12:00:00Z' });
+    const admission = evaluateCatalogAdmission({ listing: role, destination, postingAttributed: true,
+      evaluatedAt: '2026-08-20T12:00:00Z' });
+    expect(alertEligible({ admission }, new Date('2026-08-27T11:59:59Z'))).toBe(true);
+    expect(alertEligible({ admission }, new Date('2026-08-27T12:00:00Z'))).toBe(false);
+    expect(catalogEligible({ admission }, new Date('2026-08-27T11:59:59Z'))).toBe(true);
+    expect(catalogEligible({ admission }, new Date('2026-08-27T12:00:00Z'))).toBe(false);
+  });
+
+  it('bounds admissions written before freshUntil was persisted', () => {
+    const role = listing();
+    const destination = classifyDestination({ listing: role, reachability: 'live', evidence: page({ postingIdPresent: true }),
+      inspectedAt: '2026-08-20T12:00:00Z' });
+    const admission = evaluateCatalogAdmission({ listing: role, destination, postingAttributed: true,
+      evaluatedAt: '2026-08-20T12:00:00Z' });
+    delete admission.destination.freshUntil;
+
+    expect(alertEligible({ admission }, new Date('2026-08-27T11:59:59Z'))).toBe(true);
+    expect(alertEligible({ admission }, new Date('2026-08-27T12:00:00Z'))).toBe(false);
+    expect(catalogEligible({ admission }, new Date('2026-08-27T11:59:59Z'))).toBe(true);
+    expect(catalogEligible({ admission }, new Date('2026-08-27T12:00:00Z'))).toBe(false);
+
+    admission.destination.freshUntil = 'not-a-date';
+    expect(alertEligible({ admission }, new Date('2026-08-27T12:00:00Z'))).toBe(false);
+    expect(catalogEligible({ admission }, new Date('2026-09-03T12:00:00Z'))).toBe(false);
+  });
+
+  it('fails closed when an admitted record has no trustworthy evidence timestamp', () => {
+    const role = listing();
+    const destination = classifyDestination({ listing: role, reachability: 'live', evidence: page({ postingIdPresent: true }),
+      inspectedAt: '2026-08-20T12:00:00Z' });
+    const admission = evaluateCatalogAdmission({ listing: role, destination, postingAttributed: true,
+      evaluatedAt: '2026-08-20T12:00:00Z' });
+    admission.destination.freshUntil = 'not-a-date';
+    admission.destination.inspectedAt = 'not-a-date';
+    admission.evidenceObservedAt = 'not-a-date';
+    admission.lastVerifiedAt = 'not-a-date';
+
+    expect(alertEligible({ admission }, new Date('1970-01-01T00:00:00Z'))).toBe(false);
+    expect(catalogEligible({ admission }, new Date('1970-01-01T00:00:00Z'))).toBe(false);
+  });
+
+  it('treats validThrough as conclusive closure without catalog grace', () => {
+    const role = listing();
+    const destination = classifyDestination({ listing: role, reachability: 'live', browserVisible: true,
+      evidence: page({ postingIdPresent: true, validThrough: '2026-09-01T12:00:00Z' }),
+      inspectedAt: '2026-08-26T12:00:00Z' });
+    const admission = evaluateCatalogAdmission({ listing: role, destination, postingAttributed: true,
+      evaluatedAt: '2026-08-26T12:00:00Z' });
+    expect(catalogEligible({ admission }, new Date('2026-09-01T11:59:59Z'))).toBe(true);
+    expect(catalogEligible({ admission }, new Date('2026-09-01T12:00:00Z'))).toBe(false);
+    const transient = classifyDestination({ listing: role, reachability: 'unreachable', inspectedAt: '2026-08-31T12:00:00Z' });
+    const retained = evaluateCatalogAdmission({ listing: role, destination: transient, postingAttributed: true,
+      evaluatedAt: '2026-08-31T12:00:00Z', previous: admission });
+    expect(retained.destination.validThrough).toBe('2026-09-01T12:00:00Z');
+    expect(catalogEligible({ admission: retained }, new Date('2026-09-01T12:00:00Z'))).toBe(false);
+  });
+
+  it('classifies explicit closure and expired validThrough before role-specific 200 evidence', () => {
+    const role = listing({ applyUrl: 'https://careers.acme.test/roles/1234567' });
+    for (const evidence of [
+      page({ postingIdPresent: true, closureState: 'gone', closureSignal: 'explicit-language' }),
+      page({ postingIdPresent: true, validThrough: '2026-08-25T00:00:00Z' }),
+    ]) {
+      const destination = classifyDestination({ listing: role, reachability: 'live', evidence,
+        inspectedAt: '2026-08-26T12:00:00Z', browserVisible: true });
+      expect(destination.classification).toBe('gone');
+      expect(evaluateCatalogAdmission({ listing: role, destination, postingAttributed: true,
+        evaluatedAt: '2026-08-26T12:00:00Z' })).toMatchObject({ catalogEligible: false, alertEligible: false,
+        reasonCodes: ['destination-gone'] });
+    }
+    const future = classifyDestination({ listing: role, reachability: 'live', browserVisible: true,
+      evidence: page({ postingIdPresent: true, validThrough: '2026-09-01T12:00:00Z' }), inspectedAt: '2026-08-26T12:00:00Z' });
+    expect(future).toMatchObject({ classification: 'posting-detail', closureState: 'open',
+      validThrough: '2026-09-01T12:00:00Z', freshUntil: '2026-09-01T12:00:00.000Z', nextCheckAt: '2026-08-31T12:00:00.000Z' });
+    const nearDeadline = classifyDestination({ listing: role, reachability: 'live', browserVisible: true,
+      evidence: page({ postingIdPresent: true, validThrough: '2026-08-26T18:00:00Z' }), inspectedAt: '2026-08-26T12:00:00Z' });
+    expect(nearDeadline).toMatchObject({ classification: 'posting-detail',
+      freshUntil: '2026-08-26T18:00:00.000Z', nextCheckAt: '2026-08-27T12:00:00.000Z' });
   });
 
   it('lets valid official evidence repair a community row and blocks reviewed employer conflicts', () => {

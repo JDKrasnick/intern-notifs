@@ -312,7 +312,7 @@ describe('staged browser-to-API collection', () => {
     const inspectedAt = '2026-09-06T19:00:00.000Z';
     await processDestinationVerificationBatch({ queue: 'test', messages: [{ id: 'message-1', body: {
       version: 1, jobId: original.jobId, sourceId: 'community-acme', externalId: 'row-1', candidateUrl,
-      providerIdentity: { provider: 'greenhouse', postingId: '8044334', sourceId: 'community-acme', sourceUrl: candidateUrl },
+      providerIdentity: { provider: 'greenhouse', postingId: '8044334', sourceId: 'community-acme', sourceUrl: original.sourceReferences[0]!.sourceUrl },
       reason: 'historical-backfill', queuedAt: inspectedAt, metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
       metadataBackfillToken: 'staged-embed',
     }, ack, retry }] }, {

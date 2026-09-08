@@ -1,4 +1,5 @@
 import { parseCompensation } from './normalize.js';
+import { providerPostingReference, type ProviderPostingReference } from '../identity/posting.js';
 import type { RawListing } from '../types.js';
 
 interface Table { headers: string[]; rows: Array<{ cells: string[]; row: number }>; }
@@ -90,7 +91,7 @@ export interface MarkdownParseOptions { sourceId: string; document: string; sour
 
 /** Parses GFM and simple HTML tables; HTML is otherwise treated as inert text. */
 export function parseInternshipMarkdown(markdown: string, options: MarkdownParseOptions): RawListing[] {
-  const parsed: RawListing[] = []; let inheritedCompany = '';
+  const parsed: RawListing[] = []; let inheritedCompany = ''; let inheritedDestination: ProviderPostingReference | undefined;
   for (const table of tables(markdown)) {
     const companyAt = indexOf(table.headers, [/company|employer/]);
     const titleAt = indexOf(table.headers, [/role|position|title/]);
@@ -109,17 +110,33 @@ export function parseInternshipMarkdown(markdown: string, options: MarkdownParse
         requiresUsCitizenship: rawRow.includes('🇺🇸') || /\b(?:requires?|must be)\s+(?:a\s+)?(?:u\.?s\.?|united states)\s+citizen(?:ship)?\b/i.test(rawRow),
         advancedDegreeRequired: rawRow.includes('🎓') || /\b(?:advanced degree|master'?s|ph\.?d\.?|mba)\b/i.test(rawRow)
       };
-      let company = values[companyAt] ?? '';
-      if (/^↳|^\u21b3/.test(company)) company = inheritedCompany;
-      else if (company) inheritedCompany = company;
       // The role cell sometimes carries the application link, but the row as a
       // whole must never be searched: a company cell linking to an aggregator
       // profile or an employer homepage is not an application URL.
       const title = values[titleAt] ?? ''; const applyUrl = links(row.cells[applyAt] ?? '')[0] ?? links(row.cells[titleAt] ?? '')[0];
+      let company = values[companyAt] ?? '';
+      const inherited = /^↳|^\u21b3/.test(company);
+      let employerInheritance: RawListing['employerInheritance'];
+      let currentDestination: ProviderPostingReference | undefined;
+      try { if (applyUrl) currentDestination = providerPostingReference(applyUrl); } catch { /* Review handles malformed provider identity. */ }
+      if (inherited) {
+        company = inheritedCompany;
+        employerInheritance = !inheritedDestination?.tenant || !currentDestination?.tenant
+          || inheritedDestination.provider === 'unknown' || currentDestination.provider === 'unknown'
+          ? 'unresolved'
+          : inheritedDestination.provider === currentDestination.provider
+            && inheritedDestination.tenant.toLowerCase() === currentDestination.tenant.toLowerCase()
+            ? 'same-tenant' : 'conflict';
+      } else if (company) {
+        inheritedCompany = company;
+        inheritedDestination = currentDestination;
+      }
       if (!company || !title || !applyUrl) continue;
       parsed.push({
         sourceId: options.sourceId, document: options.document, sourceUrl: options.sourceUrl, row: row.row,
         company, title, location: locationAt >= 0 ? values[locationAt] || 'Unspecified' : 'Unspecified', season: options.season, applyUrl,
+        employerLabelOrigin: inherited ? 'inherited' : 'explicit',
+        ...(employerInheritance ? { employerInheritance } : {}),
         compensation: parseCompensation(compensationAt >= 0 ? values[compensationAt] ?? '' : ''), requirements, state: closed ? 'closed' : 'open',
         postedAt: dateAt >= 0 ? values[dateAt] || undefined : undefined, fetchedAt: options.fetchedAt ?? new Date().toISOString()
       });

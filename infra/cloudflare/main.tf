@@ -32,6 +32,8 @@ locals {
       { name = "GMAIL_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["gmail"].queue_id },
       { name = "DESTINATION_VERIFICATION_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["destination-verification"].queue_id },
       { name = "DEPLOYMENT_ROLE", type = "plain_text", text = "ingestion" },
+      { name = "ADMISSION_QUEUE_AGE_ALERT_HOURS", type = "plain_text", text = tostring(var.admission_queue_age_alert_hours) },
+      { name = "ADMISSION_STALE_ALERT_THRESHOLD", type = "plain_text", text = tostring(var.admission_stale_alert_threshold) },
     ],
     [for provider in local.catalog_providers : { name = "${upper(provider)}_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work[provider].queue_id }],
     var.auth_from_email == null ? [] : [{ name = "AUTH_FROM_EMAIL", type = "plain_text", text = var.auth_from_email }],
@@ -61,7 +63,10 @@ resource "cloudflare_queue" "work" {
   for_each   = local.asynchronous_queues
   account_id = var.cloudflare_account_id
   queue_name = "${var.worker_name}-${each.key}"
-  settings   = { message_retention_period = 86400, delivery_paused = false }
+  settings = {
+    message_retention_period = each.key == "destination-verification" ? 604800 : 86400
+    delivery_paused          = false
+  }
 }
 
 resource "cloudflare_queue" "dead_letter" {
@@ -143,8 +148,10 @@ resource "cloudflare_queue_consumer" "ingestion" {
   script_name       = cloudflare_workers_script.ingestion.script_name
   dead_letter_queue = cloudflare_queue.dead_letter[each.key].queue_name
   settings = {
-    batch_size       = each.key == "destination-verification" ? 5 : 1
-    max_concurrency  = contains(["greenhouse", "github"], each.key) ? 2 : 1
+    batch_size = each.key == "destination-verification" ? 5 : 1
+    # The high-volume ingestion fleets get two consumers. Gmail stays at one
+    # because per-account leases serialize sync work.
+    max_concurrency  = each.key == "greenhouse" ? 2 : 1
     max_retries      = each.key == "gmail" ? 5 : 2
     max_wait_time_ms = each.key == "destination-verification" ? 60000 : 5000
   }

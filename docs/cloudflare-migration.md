@@ -155,23 +155,27 @@ warning rather than waiting for the billing cycle to close.
 
 The $5 alert also targets a generic webhook at
 `/internal/billing-shutdown`. Cloudflare authenticates it with the
-`cf-webhook-auth` header. When invoked, the Worker latches
-`billing_shutdown=stopped` in D1, removes every application queue consumer,
-clears the Worker schedules, and disables its workers.dev subdomain. The D1
-latch makes scheduled, queued, and HTTP work fail closed even if a management
-API call is delayed. Test webhook payloads are ignored; shutdown requires the
-signed `billing_budget_alert` payload for the named $5 policy and account.
+`cf-webhook-auth` header. The API Worker forwards the authenticated webhook to
+the ingestion Worker, which latches `billing_shutdown=stopped` in D1, removes
+all six ingestion queue consumers, clears the ingestion Worker schedules, and
+keeps its workers.dev subdomain disabled. The public API Worker remains routed
+but returns the latched 503 response. The D1 latch makes scheduled, queued, and
+HTTP work fail closed even if a management API call is delayed. Test webhook
+payloads are ignored; shutdown requires the signed `billing_budget_alert`
+payload for the named $5 policy and account.
 
 To recover after reviewing the bill, reapply `infra/cloudflare` to restore the
-subdomain and consumers. The provider does not currently detect an externally
-emptied cron list, so restore the schedules explicitly, then clear the latch:
+ingestion consumers. The provider does not currently detect an externally
+emptied cron list, so restore only the ingestion schedules explicitly. Confirm
+that all six queues and all nine schedules have exactly one owner and that the
+API Worker owns none of them before clearing the latch:
 
 ```sh
-npx wrangler triggers deploy --name intern-notifs \
-  --config .context/wrangler.remote.json
+npx wrangler triggers deploy --name intern-notifs-ingestion \
+  --config wrangler.ingestion.jsonc
 
 npx wrangler d1 execute intern-notifs-db --remote \
-  --config .context/wrangler.remote.json \
+  --config wrangler.api.jsonc \
   --command "DELETE FROM system_state WHERE key = 'billing_shutdown'"
 ```
 

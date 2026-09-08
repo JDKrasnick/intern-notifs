@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApiHandler } from '../src/api.js';
 import { MemoryInternshipStore, MemoryReleaseStore, MemoryUserStore } from '../src/store.js';
 import type { Internship } from '../src/types.js';
@@ -11,7 +11,10 @@ const hasUndefined = (value: unknown): boolean =>
   (value !== null && typeof value === 'object' && Object.values(value).some(hasUndefined));
 
 describe('public API ownership boundary', () => {
+  afterEach(() => vi.useRealTimers());
   it('returns the last exact-role verification timestamp during temporary unreadability', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-26T00:00:00Z'));
     const jobs = new MemoryInternshipStore();
     await jobs.putInternship({ ...job, admission: {
       canonicalEmployer: { id: 'acme', displayName: 'Acme' }, employerResolution: 'resolved', postingAttribution: 'attributed',
@@ -20,7 +23,7 @@ describe('public API ownership boundary', () => {
       reasonCodes: ['destination-grace'], evaluatedAt: '2026-08-26T00:00:00Z', evidenceObservedAt: '2026-08-26T00:00:00Z',
       lastVerifiedAt: '2026-08-20T00:00:00Z', graceDeadline: '2026-08-27T00:00:00Z',
     } });
-    const handler = createApiHandler({ jobs, users: new MemoryUserStore() });
+    const handler = createApiHandler({ jobs, users: new MemoryUserStore(), now: () => '2026-08-26T00:00:00Z' });
     expect(JSON.parse((await handler(event(undefined, 'GET', '/jobs/job-1'))).body))
       .toMatchObject({ admission: { lastVerifiedAt: '2026-08-20T00:00:00Z', alertEligible: false } });
   });
@@ -120,8 +123,10 @@ describe('public API ownership boundary', () => {
     expect((await handler(event('owner', 'DELETE', '/me/applications/missing'))).statusCode).toBe(404);
     expect((await handler(event('owner', 'DELETE', `/me/applications/${firstId}`))).statusCode).toBe(204);
     expect((await handler(event('owner', 'DELETE', `/me/applications/${firstId}`))).statusCode).toBe(404);
+    expect((await handler(event('owner', 'PATCH', `/me/applications/${secondId}`, { status: 'applied' }))).statusCode).toBe(200);
+    expect((await handler(event('owner', 'DELETE', `/me/applications/${secondId}`))).statusCode).toBe(409);
     expect(JSON.parse((await handler(event('owner', 'GET', '/me/applications'))).body).applications)
-      .toMatchObject([{ applicationId: secondId, jobId: secondJob.jobId }]);
+      .toMatchObject([{ applicationId: secondId, jobId: secondJob.jobId, status: 'applied' }]);
   });
   it('persists per-user alert templates without resetting existing alert preferences', async () => {
     const jobs = new MemoryInternshipStore(); const users = new MemoryUserStore(); const handler = createApiHandler({ jobs, users });

@@ -15,10 +15,16 @@ describe('API and ingestion Worker boundary', () => {
       INGESTION: { async fetch(request: Request) { forwarded = request; return Response.json({ queued: 0 }); } },
     } as ApiEnvironment;
 
-    const response = await apiWorker.fetch(new Request('https://api.example.test/internal/backfill', { method: 'POST' }), env);
+    const response = await apiWorker.fetch(new Request('https://api.example.test/internal/backfill', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Operations-Key': 'operations-test-secret' },
+      body: JSON.stringify({ provider: 'github' }),
+    }), env);
 
     expect(response.status).toBe(200);
     expect(forwarded?.headers.get('X-InternNotifs-Service-Key')).toBe('internal-test-secret');
+    expect(forwarded?.headers.get('X-Operations-Key')).toBe('operations-test-secret');
+    expect(await forwarded?.json()).toEqual({ provider: 'github' });
     expect(isIngestionOperationPath('/internal/backfill')).toBe(true);
     expect(isIngestionOperationPath('/internal/role-metadata/backfill')).toBe(true);
     expect(isIngestionOperationPath('/jobs')).toBe(false);

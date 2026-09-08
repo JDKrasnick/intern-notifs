@@ -12,9 +12,32 @@ function quotedValuesBetween(source: string, start: string, end: string): string
   return [...source.slice(valuesStart, endAt).matchAll(/"([^"]+)"/gu)].map((match) => match[1]!);
 }
 
+type WorkerConfig = {
+  browser?: { binding: string };
+  queues?: {
+    producers?: Array<{ binding: string; queue: string }>;
+    consumers?: Array<{
+      queue: string;
+      max_batch_size: number;
+      max_batch_timeout?: number;
+      max_retries: number;
+      max_concurrency?: number;
+      dead_letter_queue: string;
+    }>;
+  };
+  services?: Array<{ binding: string; service: string }>;
+  triggers?: { crons: string[] };
+  vars: Record<string, string>;
+  workers_dev?: boolean;
+  preview_urls?: boolean;
+};
+
 describe('Cloudflare deployment configuration', () => {
+  const api = JSON.parse(read('wrangler.api.jsonc')) as WorkerConfig;
+  const ingestion = JSON.parse(read('wrangler.ingestion.jsonc')) as WorkerConfig;
+
   it('keeps Wrangler and OpenTofu cron schedules synchronized', () => {
-    const wranglerCrons = quotedValuesBetween(read('wrangler.ingestion.jsonc'), '"crons": [', ']');
+    const wranglerCrons = ingestion.triggers?.crons ?? [];
     const terraform = read('infra/cloudflare/main.tf');
     const cronResource = terraform.slice(terraform.indexOf('resource "cloudflare_workers_cron_trigger" "ingestion"'));
     const terraformCrons = quotedValuesBetween(cronResource, 'schedules = [', ']');
@@ -24,27 +47,26 @@ describe('Cloudflare deployment configuration', () => {
   });
 
   it('assigns every cron and queue consumer to ingestion only', () => {
-    const api = JSON.parse(read('wrangler.api.jsonc')) as { queues?: { producers?: Array<{ binding: string }>; consumers?: unknown[] }; triggers?: unknown };
-    const ingestion = JSON.parse(read('wrangler.ingestion.jsonc')) as { queues: { producers: Array<{ binding: string }>; consumers: Array<{
-      queue: string; max_batch_size: number; max_batch_timeout?: number; max_concurrency?: number; max_retries: number; dead_letter_queue: string;
-    }> }; triggers: { crons: string[] }; workers_dev: boolean; preview_urls: boolean };
-
     expect(api.queues?.consumers ?? []).toEqual([]);
     expect(api.triggers).toBeUndefined();
     expect(api.queues?.producers?.map(({ binding }) => binding)).toEqual(['GMAIL_QUEUE']);
-    expect(ingestion.queues.consumers.map(({ queue }) => queue)).toEqual([
+    expect(ingestion.queues?.consumers?.map(({ queue }) => queue)).toEqual([
       'intern-notifs-greenhouse', 'intern-notifs-lever', 'intern-notifs-ashby', 'intern-notifs-github', 'intern-notifs-gmail', 'intern-notifs-destination-verification',
     ]);
-    expect(ingestion.triggers.crons).toHaveLength(9);
+    expect(ingestion.triggers?.crons).toHaveLength(9);
     expect(ingestion.workers_dev).toBe(false);
     expect(ingestion.preview_urls).toBe(false);
   });
 
-  it('keeps destination-verification consumer limits synchronized across Wrangler and OpenTofu', () => {
-    const ingestion = JSON.parse(read('wrangler.ingestion.jsonc')) as { queues: { consumers: Array<{
-      queue: string; max_batch_size: number; max_batch_timeout?: number; max_concurrency?: number; max_retries: number; dead_letter_queue: string;
-    }> }; vars: { DESTINATION_VERIFICATION_QUEUE_ID: string } };
-    const consumer = ingestion.queues.consumers.find(({ queue }) => queue === 'intern-notifs-destination-verification');
+  it('keeps destination verification bindings and delivery settings synchronized', () => {
+    const terraform = read('infra/cloudflare/main.tf');
+    const producerBindings = new Map(ingestion.queues?.producers?.map((binding) => [binding.binding, binding.queue]));
+    const consumer = ingestion.queues?.consumers?.find(({ queue }) => queue === 'intern-notifs-destination-verification');
+
+    expect(producerBindings.get('DESTINATION_VERIFICATION_QUEUE')).toBe('intern-notifs-destination-verification');
+    expect(producerBindings.get('DESTINATION_VERIFICATION_DLQ')).toBe('intern-notifs-destination-verification-dlq');
+    expect(ingestion.browser?.binding).toBe('DESTINATION_BROWSER');
+    expect(ingestion.vars.DESTINATION_VERIFICATION_QUEUE_ID).toBe('9b48a594d06a441e8b8ed45de0c430af');
     expect(consumer).toEqual({
       queue: 'intern-notifs-destination-verification',
       max_batch_size: 5,
@@ -54,19 +76,34 @@ describe('Cloudflare deployment configuration', () => {
       dead_letter_queue: 'intern-notifs-destination-verification-dlq',
     });
 
+    expect(terraform).toContain('message_retention_period = each.key == "destination-verification" ? 604800 : 86400');
+    expect(terraform).toContain('name = "${upper(replace(queue, "-", "_"))}_QUEUE"');
+    expect(terraform).toContain('name = "${upper(replace(queue, "-", "_"))}_DLQ"');
+    expect(terraform).toContain('{ name = "DESTINATION_BROWSER", type = "browser" }');
+    expect(terraform).toContain('{ name = "DESTINATION_VERIFICATION_QUEUE_ID", type = "plain_text"');
+    expect(terraform).toContain('batch_size = each.key == "destination-verification" ? 5 : 1');
+    expect(terraform).toContain('max_wait_time_ms = each.key == "destination-verification" ? 60000 : 5000');
+  });
+
+  it('keeps admission alert thresholds synchronized across Wrangler and OpenTofu', () => {
     const terraform = read('infra/cloudflare/main.tf');
-    const start = terraform.indexOf('resource "cloudflare_queue_consumer" "ingestion"');
-    const end = terraform.indexOf('resource "cloudflare_workers_cron_trigger" "ingestion"', start);
-    const queueConsumer = terraform.slice(start, end);
-    expect(queueConsumer).toContain('batch_size       = each.key == "destination-verification" ? 5 : 1');
-    expect(queueConsumer).toContain('max_concurrency  = contains(["greenhouse", "github"], each.key) ? 2 : 1');
-    expect(queueConsumer).toContain('max_wait_time_ms = each.key == "destination-verification" ? 60000 : 5000');
-    expect(ingestion.vars.DESTINATION_VERIFICATION_QUEUE_ID).toBe('9b48a594d06a441e8b8ed45de0c430af');
-    expect(terraform).toContain('{ name = "DESTINATION_VERIFICATION_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["destination-verification"].queue_id }');
+
+    expect(ingestion.vars.ADMISSION_QUEUE_AGE_ALERT_HOURS).toBe('120');
+    expect(ingestion.vars.ADMISSION_STALE_ALERT_THRESHOLD).toBe('1');
+    expect(terraform).toContain('{ name = "ADMISSION_QUEUE_AGE_ALERT_HOURS", type = "plain_text", text = tostring(var.admission_queue_age_alert_hours) }');
+    expect(terraform).toContain('{ name = "ADMISSION_STALE_ALERT_THRESHOLD", type = "plain_text", text = tostring(var.admission_stale_alert_threshold) }');
+  });
+
+  it('keeps GitHub ingestion serialized in Wrangler and OpenTofu', () => {
+    const terraform = read('infra/cloudflare/main.tf');
+    const consumer = ingestion.queues?.consumers?.find(({ queue }) => queue === 'intern-notifs-github');
+
+    expect(consumer?.max_concurrency).toBe(1);
+    expect(terraform).toContain('max_concurrency  = each.key == "greenhouse" ? 2 : 1');
+    expect(terraform).not.toContain('contains(["greenhouse", "github"], each.key) ? 2 : 1');
   });
 
   it('keeps behavior-critical API variables synchronized across Wrangler and OpenTofu', () => {
-    const api = JSON.parse(read('wrangler.api.jsonc')) as { vars: { EMPLOYER_PORTAL_ENABLED: string } };
     const terraform = read('infra/cloudflare/main.tf');
 
     expect(api.vars.EMPLOYER_PORTAL_ENABLED).toBe('true');
@@ -82,9 +119,17 @@ describe('Cloudflare deployment configuration', () => {
     expect(terraform).toContain('to   = cloudflare_workers_cron_trigger.ingestion');
   });
 
+  it('restores billing-shutdown schedules only on ingestion', () => {
+    const runbook = read('docs/cloudflare-migration.md');
+
+    expect(runbook).toContain('wrangler triggers deploy --name intern-notifs-ingestion');
+    expect(runbook).toContain('--config wrangler.ingestion.jsonc');
+    expect(runbook).not.toContain('--config .context/wrangler.remote.json');
+    expect(runbook).not.toContain('wrangler triggers deploy --name intern-notifs \\');
+  });
+
   it('requires explicit Worker configuration rather than retaining a shared default', () => {
     expect(existsSync(new URL('../wrangler.jsonc', import.meta.url))).toBe(false);
-    const api = JSON.parse(read('wrangler.api.jsonc')) as { services: Array<{ binding: string; service: string }> };
     expect(api.services).toEqual([{ binding: 'INGESTION', service: 'intern-notifs-ingestion' }]);
   });
 });

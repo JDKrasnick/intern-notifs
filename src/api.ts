@@ -8,9 +8,10 @@ import { EmployerIntegrationRegistry } from './providers.js';
 import { assistanceAvailability } from './application-assistance.js';
 import { createApplicationSession, transitionApplicationSession, type ApplicationFieldDraft, type ApplicationSession, type ApplicationSessionEvent } from './application-automation.js';
 import { companyCoverage } from '../coverage/summary.js';
-import { catalogGroupDetails, filterCatalogGroupDetails, filterCatalogGroups, groupCatalogJobs, type CatalogGroupFilter } from './catalog-groups.js';
+import { catalogGroupDetails, filterCatalogGroupDetails, filterCatalogGroups, groupCatalogJobs,
+  type CatalogGroupDetails, type CatalogGroupFilter } from './catalog-groups.js';
 import { occurrenceProvenance } from './sources/provenance.js';
-import { catalogEligible } from './catalog-admission.js';
+import { catalogEligible, deriveCanonicalAdmission } from './catalog-admission.js';
 
 type ApiEvent = { requestContext?: { authorizer?: { jwt?: { claims?: Record<string, string> } }; http?: { method?: string }; requestId?: string }; rawPath?: string; routeKey?: string; pathParameters?: Record<string, string>; queryStringParameters?: Record<string, string>; headers?: Record<string, string | undefined>; body?: string | null };
 type ApiResponse = { statusCode: number; headers: Record<string, string>; body: string };
@@ -83,9 +84,17 @@ async function jobsPage(
   return { jobs, ...(next ? { cursor: next } : {}) };
 }
 
+function eligibleProjectedGroup(details: CatalogGroupDetails, at = new Date()): CatalogGroupDetails | undefined {
+  const roles = details.roles.filter((role) => catalogEligible({
+    admission: deriveCanonicalAdmission(role.sourceReferences, at.toISOString()),
+  }, at));
+  if (!roles.length) return undefined;
+  if (roles.length === details.roles.length) return details;
+  return filterCatalogGroupDetails([{ ...details, roles }], {})[0];
+}
+
 async function projectedCatalogPage(store: InternshipStore, cursor: string | undefined, limit: number, filter: CatalogGroupFilter) {
   const isDefaultBrowse = filter.status === 'open' && Object.keys(filter).length === 1;
-  if (!isDefaultBrowse && store.listCatalogProjectionFiltered) return store.listCatalogProjectionFiltered(cursor, limit, filter);
   if (!store.listCatalogProjection) return undefined;
   const scanLimit = isDefaultBrowse ? limit : Math.max(limit, 100);
   const groups = [];
@@ -95,7 +104,8 @@ async function projectedCatalogPage(store: InternshipStore, cursor: string | und
     const page = await store.listCatalogProjection(next, scanLimit);
     if (!page) return undefined;
     for (let index = 0; index < page.groups.length; index += 1) {
-      const [match] = filterCatalogGroupDetails([page.groups[index]!], filter);
+      const eligible = eligibleProjectedGroup(page.groups[index]!);
+      const [match] = eligible ? filterCatalogGroupDetails([eligible], filter) : [];
       if (!match) continue;
       groups.push(match);
       if (groups.length === limit) {
@@ -411,10 +421,11 @@ export function createApiHandler(dependencies: ApiDependencies) {
         const groupId = decodeURIComponent(catalogGroupMatch[1]!);
         const projected = await dependencies.jobs.getCatalogProjectionGroup?.(groupId);
         if (projected) {
-          const filtered = filterCatalogGroupDetails([projected], {
+          const eligible = eligibleProjectedGroup(projected);
+          const filtered = eligible ? filterCatalogGroupDetails([eligible], {
             ...catalogFilter(event.queryStringParameters),
             ...(!identityUnconfirmedPublicationEnabled ? { postingIdentityConfirmedOnly: true } : {}),
-          })[0];
+          })[0] : undefined;
           return filtered ? reply(200, filtered) : reply(404, { message: 'Catalog group not found' });
         }
         const group = groupCatalogJobs(await completeCatalog(dependencies.jobs, identityUnconfirmedPublicationEnabled), { includeClosed: true }).find((candidate) => candidate.row.groupId === groupId);
@@ -570,7 +581,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
       }
       const appMatch = path.match(/^\/me\/applications\/([^/]+)$/);
       if (method === 'PATCH' && appMatch) { const current = await dependencies.users.getApplication(userId, decodeURIComponent(appMatch[1])); if (!current) return reply(404, { message: 'Application not found' }); const body = parseBody(event); if (body.status !== undefined && !statuses.includes(body.status as ApplicationStatus)) return reply(400, { message: `status must be one of ${statuses.join(', ')}` }); const timestamp = now(); const updated: ApplicationRecord = { ...current, ...(body.status ? { status: body.status as ApplicationStatus } : {}), ...(!current.appliedAt && body.status === 'applied' ? { appliedAt: timestamp } : {}), ...(typeof body.notes === 'string' ? { notes: body.notes.slice(0, 5000) } : {}), updatedAt: timestamp }; await dependencies.users.putApplication(userId, updated); return reply(200, updated); }
-      if (method === 'DELETE' && appMatch) { const current = await dependencies.users.getApplication(userId, decodeURIComponent(appMatch[1]!)); if (!current) return reply(404, { message: 'Application not found' }); await dependencies.users.deleteApplication(userId, current.applicationId); return reply(204, {}); }
+      if (method === 'DELETE' && appMatch) { const current = await dependencies.users.getApplication(userId, decodeURIComponent(appMatch[1]!)); if (!current) return reply(404, { message: 'Application not found' }); if (current.status !== 'saved') return reply(409, { message: 'Only saved roles can be unsaved' }); await dependencies.users.deleteApplication(userId, current.applicationId); return reply(204, {}); }
       const applicationSessionMatch = path.match(/^\/me\/applications\/([^/]+)\/assistance-sessions$/);
       if (method === 'POST' && applicationSessionMatch) {
         const application = await dependencies.users.getApplication(userId, decodeURIComponent(applicationSessionMatch[1]));
