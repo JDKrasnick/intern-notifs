@@ -10,6 +10,13 @@ const require = createRequire(import.meta.url);
 const { Text, TouchableOpacity } = require('react-native-web') as typeof import('react-native');
 
 describe('cross-platform accessibility state contract', () => {
+  it('shows the grouped-role backdrop without sliding the whole screen', () => {
+    const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+    expect(app).toMatch(
+      /<Modal visible=\{Boolean\(groupId\)\} transparent animationType="none" onRequestClose=\{onDismiss\}>/,
+    );
+  });
+
   it('only saves a role after an explicit save interaction', () => {
     const source = ts.createSourceFile('App.tsx', readFileSync(new URL('../App.tsx', import.meta.url), 'utf8'),
       ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);

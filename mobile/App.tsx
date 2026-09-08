@@ -907,7 +907,7 @@ function CatalogGroupSheet({
   onOpenRole: (jobId: string) => void;
 }) {
   return (
-    <Modal visible={Boolean(groupId)} transparent animationType="slide" onRequestClose={onDismiss}>
+    <Modal visible={Boolean(groupId)} transparent animationType="none" onRequestClose={onDismiss}>
       <View style={styles.sheetOverlay}>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close role group" style={styles.sheetDismissArea} onPress={onDismiss} />
         <View style={styles.catalogGroupSheet}>
