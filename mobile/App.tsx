@@ -32,8 +32,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { ApiError, api, authenticatedRead, responseCache, sessionStorage } from "./src/api";
 import { appendGroupedCatalogPage, catalogCardKind, type GroupedCatalogPage } from "./src/catalog";
 import { boundedCatalogText, compactLocations, presentCatalogRole, seasonLabel } from "./src/catalog-quality";
-import { catalogGroupAvailabilityLabel, groupedCatalogParameters } from "./src/catalog-filters";
-import { disciplineStyleFor } from "../shared/discipline-display";
+import { catalogGroupAvailabilityLabel, countActiveCatalogFilters, educationFilterOptions, emptyCatalogFilters, groupedCatalogParameters, seasonFilterOptions, workModeFilterOptions, type CatalogFilterValues, type ChipOption } from "./src/catalog-filters";
+import { allDisciplineStyles, disciplineStyleFor } from "../shared/discipline-display";
 import { createLatestRequestGuard } from "./src/latest-request";
 import { uploadDocumentContent } from "./src/document-upload";
 import { installationApi } from "./src/installation";
@@ -364,13 +364,7 @@ async function openOfficialApplication(url: string) {
   }
 }
 
-function JobSource({
-  source,
-  identityUnconfirmed = false,
-}: {
-  source: ReturnType<typeof sourcePresentation>;
-  identityUnconfirmed?: boolean;
-}) {
+function JobSource({ source, showIdentityUnconfirmed = false }: { source: ReturnType<typeof sourcePresentation>; showIdentityUnconfirmed?: boolean }) {
   const icon = source.primary === "Employer submitted"
     ? "business-outline"
     : source.primary.startsWith("Official")
@@ -383,11 +377,11 @@ function JobSource({
       <Ionicons name={icon} size={14} color={colors.muted} />
       <Text style={styles.jobSourceText}>{source.primary}</Text>
       {source.corroboration ? <Text style={styles.jobSourceCorroboration}>{source.corroboration}</Text> : null}
-      {identityUnconfirmed ? (
+      {showIdentityUnconfirmed ? (
         <>
-          <Text style={styles.jobTrustSeparator}>·</Text>
+          <Text style={styles.jobSourceText}>·</Text>
           <Ionicons name="shield-outline" size={14} color={colors.muted} />
-          <Text style={styles.identityTrustText}>Identity unconfirmed</Text>
+          <Text style={styles.jobSourceText} accessibilityLabel="Identity unconfirmed">Identity unconfirmed</Text>
         </>
       ) : null}
     </View>
@@ -439,6 +433,7 @@ function JobCard({
   onSaveForWeb,
   isSavingForWeb = false,
   onHideLocally,
+  onUnsave,
 }: {
   job: Job;
   onOpen: () => void;
@@ -448,6 +443,7 @@ function JobCard({
   onSaveForWeb?: () => void;
   isSavingForWeb?: boolean;
   onHideLocally?: () => void;
+  onUnsave?: () => void;
 }) {
   const display = presentCatalogRole(job);
   const motionAllowed = useContext(MotionAllowedContext);
@@ -477,6 +473,10 @@ function JobCard({
   const handleSave = () => {
     if (isHiding || !onSaveForWeb) return;
     onSaveForWeb();
+  };
+  const handleUnsave = () => {
+    if (isHiding || !onUnsave) return;
+    onUnsave();
   };
   const resetPosition = () => {
     if (!motionAllowed) {
@@ -618,37 +618,35 @@ function JobCard({
               ) : null}
             </View>
             <Text style={styles.title} numberOfLines={2}>{display.title}</Text>
-            <Text style={styles.muted} numberOfLines={2}>
+            <Text style={styles.muted} numberOfLines={3}>
               {display.location} · {display.season}
+              {display.compensation ? <Text style={styles.payInline}> · {display.compensation}</Text> : null}
             </Text>
-            <JobSource source={source} identityUnconfirmed={job.postingIdentityStatus === "unconfirmed"} />
+            <JobSource source={source} showIdentityUnconfirmed={job.postingIdentityStatus === "unconfirmed"} />
             <Text style={styles.postingTiming}>{postingTiming.summary}</Text>
             {!job.open ? <Text style={styles.closedStatus}>Closed</Text> : null}
-            {display.compensation ? (
-              <View style={styles.jobCardMidPills}>
-                <Text style={styles.pay} numberOfLines={2}>{display.compensation}</Text>
-              </View>
-            ) : null}
-            {applicationStatus ? (
-              <View style={styles.jobApplicationStatus}>
-                <Text style={styles.jobApplicationStatusText}>{applicationStatus.toUpperCase()}</Text>
-              </View>
-            ) : null}
             <View style={styles.jobCardFooterLeft}>
               <View style={styles.jobCardActionCompact}>
                 <Text style={styles.jobCardActionText}>View role</Text>
                 <Text style={styles.jobCardActionArrow}>›</Text>
               </View>
               <View style={styles.jobCardBottomActions}>
-                {canSaveForWeb ? (
-                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Save for web" onPress={handleSave} style={styles.webSaveButtonCompact}>
-                    <Ionicons name="bookmark" size={14} color="#FFFFFF" />
-                    <Text style={styles.webSaveButtonText}>Save</Text>
-                  </TouchableOpacity>
-                ) : isSavingForWeb ? (
+                {isSavingForWeb ? (
                   <View style={styles.webSaveButtonCompact}>
                     <Text style={styles.webSaveButtonText}>Saving…</Text>
                   </View>
+                ) : null}
+                {!isSavingForWeb && applicationStatus ? (
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Unsave" onPress={handleUnsave} style={styles.webUnsaveButtonCompact}>
+                    <Ionicons name="bookmark" size={14} color={colors.signal} />
+                    <Text style={styles.webUnsaveButtonText}>Saved</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {!isSavingForWeb && !applicationStatus && canSaveForWeb ? (
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Save for web" onPress={handleSave} style={styles.webSaveButtonCompact}>
+                    <Ionicons name="bookmark" size={14} color={colors.ink} />
+                    <Text style={styles.webSaveButtonText}>Save</Text>
+                  </TouchableOpacity>
                 ) : null}
                 {canHideLocally ? (
                   <TouchableOpacity accessibilityRole="button" accessibilityLabel="Hide on this device" onPress={handleHide} style={styles.webHideButtonCompact}>
@@ -699,6 +697,8 @@ function CatalogGroupCard({
   onSaveForWeb,
   isSavingForWeb = false,
   onHideLocally,
+  applicationStatus,
+  onUnsave,
 }: {
   group: CatalogGroupRow;
   onOpenGroup: () => void;
@@ -707,6 +707,8 @@ function CatalogGroupCard({
   onSaveForWeb?: () => void;
   isSavingForWeb?: boolean;
   onHideLocally?: () => void;
+  applicationStatus?: string;
+  onUnsave?: () => void;
 }) {
   const motionAllowed = useContext(MotionAllowedContext);
   const hideFade = useRef(new Animated.Value(1)).current;
@@ -714,7 +716,8 @@ function CatalogGroupCard({
   const hideTranslateY = useRef(new Animated.Value(0)).current;
   const [isHiding, setIsHiding] = useState(false);
   const translateX = useRef(new Animated.Value(0)).current;
-  const canSaveForWeb = Boolean(onSaveForWeb) && !isSavingForWeb;
+  const isSaved = Boolean(applicationStatus);
+  const canSaveForWeb = Boolean(onSaveForWeb) && !isSaved && !isSavingForWeb;
   const canHideLocally = Boolean(onHideLocally);
   const handleHide = () => {
     if (isHiding || !onHideLocally) return;
@@ -763,7 +766,7 @@ function CatalogGroupCard({
   const hideActionProgress = translateX.interpolate({ inputRange: [0, 36, 108], outputRange: [0, 0.32, 1], extrapolate: "clamp" });
   if (catalogCardKind(group) === "role") {
     const job = catalogRoleJob(group.featuredRole);
-    return <JobCard job={job} onOpen={() => onOpenRole(job)} onSaveForWeb={onSaveForWeb} isSavingForWeb={isSavingForWeb} onHideLocally={onHideLocally} />;
+    return <JobCard job={job} onOpen={() => onOpenRole(job)} onSaveForWeb={onSaveForWeb} isSavingForWeb={isSavingForWeb} onHideLocally={onHideLocally} applicationStatus={applicationStatus} onUnsave={onUnsave} />;
   }
   const label = catalogGroupAvailabilityLabel(group, status);
   const education = group.education
@@ -823,18 +826,12 @@ function CatalogGroupCard({
             <Text style={styles.catalogGroupTitle} numberOfLines={group.roleCount === 1 ? 2 : 3}>
               {groupTitles.join(" · ")}
             </Text>
-            <Text style={styles.catalogGroupMeta} numberOfLines={2}>
+            <Text style={styles.catalogGroupMeta} numberOfLines={3}>
               {[groupLocation, group.seasons.map(seasonLabel).join(" · ")].filter(Boolean).join("  •  ")}
+              {compensation.length ? <Text style={styles.payInline}> · {compensation.slice(0, 2).join(" · ")}{compensation.length > 2 ? ` + ${compensation.length - 2} more` : ""}</Text> : null}
             </Text>
             {featuredRole ? <JobSource source={source} /> : null}
             {postingTiming ? <Text style={styles.postingTiming}>{postingTiming.summary}</Text> : null}
-            {compensation.length ? (
-              <View style={styles.jobCardMidPills}>
-                <Text style={styles.catalogGroupRolePay} numberOfLines={2}>
-                  {compensation.slice(0, 2).join(" · ")}{compensation.length > 2 ? ` + ${compensation.length - 2} more` : ""}
-                </Text>
-              </View>
-            ) : null}
             {education ? <Text style={styles.catalogGroupEducation} numberOfLines={2}>{education}</Text> : null}
             {group.unconfirmedRoleCount ? (
               <Text style={styles.catalogGroupIdentity} accessibilityLabel={`${group.unconfirmedRoleCount} ${group.unconfirmedRoleCount === 1 ? "role" : "roles"}: identity unconfirmed`}>
@@ -847,9 +844,20 @@ function CatalogGroupCard({
                 <Ionicons name="chevron-forward" size={17} color={colors.signal} />
               </View>
               <View style={styles.jobCardBottomActions}>
+                {isSavingForWeb ? (
+                  <View style={styles.webSaveButtonCompact}>
+                    <Text style={styles.webSaveButtonText}>Saving…</Text>
+                  </View>
+                ) : null}
+                {!isSavingForWeb && isSaved ? (
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Unsave" onPress={() => { if (!onUnsave) return; onUnsave(); }} style={styles.webUnsaveButtonCompact}>
+                    <Ionicons name="bookmark" size={14} color={colors.signal} />
+                    <Text style={styles.webUnsaveButtonText}>Saved</Text>
+                  </TouchableOpacity>
+                ) : null}
                 {canSaveForWeb ? (
                   <TouchableOpacity accessibilityRole="button" accessibilityLabel="Save for web" onPress={handleSave} style={styles.webSaveButtonCompact}>
-                    <Ionicons name="bookmark" size={14} color="#FFFFFF" />
+                    <Ionicons name="bookmark" size={14} color={colors.ink} />
                     <Text style={styles.webSaveButtonText}>Save</Text>
                   </TouchableOpacity>
                 ) : null}
@@ -1196,7 +1204,7 @@ function JobDetailSheet({
                     }}
                     style={styles.sheetSaveBar}
                   >
-                    <Ionicons name="bookmark" size={18} color="#FFFFFF" />
+                    <Ionicons name="bookmark" size={18} color={colors.ink} />
                     <Text style={styles.sheetSaveBarText}>Save</Text>
                   </TouchableOpacity>
                 ) : isSaved && onUnsave && role ? (
@@ -1206,7 +1214,7 @@ function JobDetailSheet({
                     onPress={() => { onUnsave(role); onDismiss(); }}
                     style={styles.sheetSavedBar}
                   >
-                    <Ionicons name="bookmark" size={18} color="#92400E" />
+                    <Ionicons name="bookmark" size={18} color={colors.signal} />
                     <Text style={styles.sheetSavedBarText}>Saved</Text>
                   </TouchableOpacity>
                 ) : isSavingForWeb ? (
@@ -1235,7 +1243,7 @@ function JobDetailSheet({
                   : greenhouseQuickApply
                   ? "If this employer enables Quick Apply, MyGreenhouse can fill the details you have saved there. Review every answer before submitting."
                   : signedIn
-                  ? "Apply now opens the employer form. Use Save if you want to track it."
+                  ? "Apply now opens the employer form. Viewed roles save to your list automatically."
                   : "You’ll complete the employer’s application in your browser."}
               </Text>
             </ScrollView>
@@ -1417,92 +1425,143 @@ function RequirementFilter({
   );
 }
 
-function RoleFilters({
-  expanded,
-  onToggle,
-  employerFilter,
-  onEmployerFilterChange,
-  jobStatus,
-  onJobStatusChange,
-  sourceFilter,
-  onSourceFilterChange,
-  hideUsCitizenshipRequired,
-  hideAdvancedDegreeRequired,
-  onHideUsCitizenshipRequiredChange,
-  onHideAdvancedDegreeRequiredChange,
+const disciplineChipOptions: ChipOption[] = (() => {
+  const order = ['software', 'ai-ml', 'data', 'infrastructure-cloud', 'security', 'quant', 'product', 'technical-design'] as const;
+  const byTag = new Map(allDisciplineStyles().map(({ tag, style }) => [tag, style] as const));
+  return order.filter((tag) => byTag.has(tag)).map((tag) => ({ value: byTag.get(tag)!.filterValue, label: byTag.get(tag)!.label }));
+})();
+
+function toggleChipValue(selected: string[], value: string): string[] {
+  return selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value];
+}
+
+function MultiChipFilter({
+  label,
+  options,
+  selected,
+  onChange,
 }: {
-  expanded: boolean;
-  onToggle: () => void;
-  employerFilter: EmployerCategory | "all";
-  onEmployerFilterChange: (value: EmployerCategory | "all") => void;
-  jobStatus: "open" | "closed";
-  onJobStatusChange: (value: "open" | "closed") => void;
-  sourceFilter: CatalogSource;
-  onSourceFilterChange: (value: CatalogSource) => void;
-  hideUsCitizenshipRequired: boolean;
-  hideAdvancedDegreeRequired: boolean;
-  onHideUsCitizenshipRequiredChange: (value: boolean) => void;
-  onHideAdvancedDegreeRequiredChange: (value: boolean) => void;
+  label: string;
+  options: ChipOption[];
+  selected: string[];
+  onChange: (next: string[]) => void;
 }) {
-  const activeFilterCount = [
-    employerFilter !== "all",
-    jobStatus !== "open",
-    sourceFilter !== "all",
-    hideUsCitizenshipRequired,
-    hideAdvancedDegreeRequired,
-  ].filter(Boolean).length;
-  const clearFilters = () => {
-    onEmployerFilterChange("all");
-    onJobStatusChange("open");
-    onSourceFilterChange("all");
-    onHideUsCitizenshipRequiredChange(false);
-    onHideAdvancedDegreeRequiredChange(false);
-  };
+  return (
+    <View style={styles.companyFilter} accessibilityLabel={label}>
+      {options.map((option) => {
+        const active = selected.includes(option.value);
+        return (
+          <TouchableOpacity
+            key={option.value}
+            accessibilityRole="checkbox"
+            accessibilityLabel={`Filter ${option.label}`}
+            aria-checked={active}
+            style={[styles.chip, active && styles.chipOn]}
+            onPress={() => onChange(toggleChipValue(selected, option.value))}
+          >
+            <Text style={[styles.chipLabel, active && styles.chipLabelOn]}>{option.label}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+function FilterBar({
+  activeCount,
+  onOpen,
+}: {
+  activeCount: number;
+  onOpen: () => void;
+}) {
   return (
     <View style={styles.filterRegion}>
       <View style={styles.filterBar}>
         <TouchableOpacity
           accessibilityRole="button"
-          aria-expanded={expanded}
-          onPress={onToggle}
+          onPress={onOpen}
           style={styles.filterToggle}
         >
           <Text style={styles.filterToggleText}>
-            {expanded ? "Hide filters" : activeFilterCount ? `Filters · ${activeFilterCount}` : "Filter roles"}
+            {activeCount ? `Filters · ${activeCount}` : "Filter roles"}
           </Text>
-          <Text style={styles.filterToggleGlyph}>{expanded ? "−" : "+"}</Text>
+          <Text style={styles.filterToggleGlyph}>+</Text>
         </TouchableOpacity>
-        {activeFilterCount ? (
-          <TouchableOpacity accessibilityRole="button" onPress={clearFilters} style={styles.clearFilters}>
-            <Text style={styles.clearFiltersText}>Clear</Text>
-          </TouchableOpacity>
-        ) : null}
       </View>
-      {expanded ? (
-        <View style={styles.filterPanel}>
-          <Text style={styles.filterLabel}>Company type</Text>
-          <EmployerCategoryFilter selected={employerFilter} onChange={onEmployerFilterChange} />
-          <Text style={styles.filterLabel}>Availability</Text>
-          <JobStatusFilter status={jobStatus} onChange={onJobStatusChange} />
-          <Text style={styles.filterLabel}>Source</Text>
-          <View style={styles.companyFilter} accessibilityRole="radiogroup" accessibilityLabel="Source">
-            {([['all', 'All'], ['direct', 'Direct'], ['community', 'Community'], ['corroborated', 'Direct + community']] as const).map(([value, label]) => (
-              <TouchableOpacity key={value} accessibilityRole="radio" aria-checked={sourceFilter === value} style={[styles.chip, sourceFilter === value && styles.chipOn]} onPress={() => onSourceFilterChange(value)}>
-                <Text style={[styles.chipLabel, sourceFilter === value && styles.chipLabelOn]}>{label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <Text style={styles.filterLabel}>Requirements</Text>
-          <RequirementFilter
-            hideUsCitizenshipRequired={hideUsCitizenshipRequired}
-            hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
-            onHideUsCitizenshipRequiredChange={onHideUsCitizenshipRequiredChange}
-            onHideAdvancedDegreeRequiredChange={onHideAdvancedDegreeRequiredChange}
-          />
-        </View>
-      ) : null}
-      <CompanyCoverageDisclosure />
     </View>
+  );
+}
+
+function FilterSheet({
+  visible,
+  filters,
+  onFiltersChange,
+  onClose,
+}: {
+  visible: boolean;
+  filters: CatalogFilterValues;
+  onFiltersChange: (next: CatalogFilterValues) => void;
+  onClose: () => void;
+}) {
+  const set = (patch: Partial<CatalogFilterValues>) => onFiltersChange({ ...filters, ...patch });
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.filterSheetOverlay}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close filters" style={styles.sheetDismissArea} onPress={onClose} />
+        <View style={styles.filterSheet}>
+          <Text style={styles.sheetTitle}>Filter roles</Text>
+          <ScrollView style={styles.filterSheetScroll} contentContainerStyle={styles.filterSheetContent}>
+            <Text style={styles.filterLabel}>Role focus</Text>
+            <MultiChipFilter label="Role focus" options={disciplineChipOptions} selected={filters.disciplines} onChange={(disciplines) => set({ disciplines })} />
+            <Text style={styles.filterLabel}>Season</Text>
+            <MultiChipFilter label="Season" options={seasonFilterOptions} selected={filters.seasons} onChange={(seasons) => set({ seasons })} />
+            <Text style={styles.filterLabel}>Work mode</Text>
+            <MultiChipFilter label="Work mode" options={workModeFilterOptions} selected={filters.workModes} onChange={(workModes) => set({ workModes })} />
+            <Text style={styles.filterLabel}>Education</Text>
+            <MultiChipFilter label="Education" options={educationFilterOptions} selected={filters.educationLevels} onChange={(educationLevels) => set({ educationLevels })} />
+            <Text style={styles.filterLabel}>Pay</Text>
+            <View style={styles.companyFilter}>
+              <TouchableOpacity
+                accessibilityRole="checkbox"
+                accessibilityLabel="Only roles with pay listed"
+                aria-checked={filters.hasCompensation}
+                style={[styles.chip, filters.hasCompensation && styles.chipOn]}
+                onPress={() => set({ hasCompensation: !filters.hasCompensation })}
+              >
+                <Text style={[styles.chipLabel, filters.hasCompensation && styles.chipLabelOn]}>Pay listed</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.filterLabel}>Company type</Text>
+            <EmployerCategoryFilter selected={filters.employerFilter} onChange={(employerFilter) => set({ employerFilter })} />
+            <Text style={styles.filterLabel}>Availability</Text>
+            <JobStatusFilter status={filters.jobStatus} onChange={(jobStatus) => set({ jobStatus })} />
+            <Text style={styles.filterLabel}>Source</Text>
+            <View style={styles.companyFilter} accessibilityRole="radiogroup" accessibilityLabel="Source">
+              {([['all', 'All'], ['direct', 'Direct'], ['community', 'Community'], ['corroborated', 'Direct + community']] as const).map(([value, label]) => (
+                <TouchableOpacity key={value} accessibilityRole="radio" aria-checked={filters.sourceFilter === value} style={[styles.chip, filters.sourceFilter === value && styles.chipOn]} onPress={() => set({ sourceFilter: value })}>
+                  <Text style={[styles.chipLabel, filters.sourceFilter === value && styles.chipLabelOn]}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={styles.filterLabel}>Requirements</Text>
+            <RequirementFilter
+              hideUsCitizenshipRequired={filters.hideUsCitizenshipRequired}
+              hideAdvancedDegreeRequired={filters.hideAdvancedDegreeRequired}
+              onHideUsCitizenshipRequiredChange={(hideUsCitizenshipRequired) => set({ hideUsCitizenshipRequired })}
+              onHideAdvancedDegreeRequiredChange={(hideAdvancedDegreeRequired) => set({ hideAdvancedDegreeRequired })}
+            />
+          </ScrollView>
+          <View style={styles.filterSheetActions}>
+            <View style={styles.filterSheetApply}>
+              <ActionButton label="Show roles" onPress={onClose} />
+            </View>
+            <TouchableOpacity accessibilityRole="button" onPress={() => onFiltersChange(emptyCatalogFilters)} style={styles.filterSheetClear}>
+              <Text style={styles.clearFiltersText}>Clear</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -2090,18 +2149,8 @@ function GroupedCatalogFeed({
   groups,
   query,
   onQueryChange,
-  source,
-  onSourceChange,
-  employerFilter,
-  onEmployerFilterChange,
-  jobStatus,
-  onJobStatusChange,
-  filtersExpanded,
-  onFiltersExpandedChange,
-  hideUsCitizenshipRequired,
-  onHideUsCitizenshipRequiredChange,
-  hideAdvancedDegreeRequired,
-  onHideAdvancedDegreeRequiredChange,
+  filters,
+  onFiltersChange,
   loading,
   error,
   loadingMore,
@@ -2112,22 +2161,17 @@ function GroupedCatalogFeed({
   onRetry,
   onOpenGroup,
   onOpenRole,
+  onSaveForWeb,
+  onHideLocally,
+  onUnsave,
+  savingJobIds,
+  applicationStatuses,
 }: {
   groups: CatalogGroupRow[];
   query: string;
   onQueryChange: (value: string) => void;
-  source: CatalogSource;
-  onSourceChange: (value: CatalogSource) => void;
-  employerFilter: EmployerCategory | "all";
-  onEmployerFilterChange: (value: EmployerCategory | "all") => void;
-  jobStatus: "open" | "closed";
-  onJobStatusChange: (value: "open" | "closed") => void;
-  filtersExpanded: boolean;
-  onFiltersExpandedChange: (value: boolean) => void;
-  hideUsCitizenshipRequired: boolean;
-  onHideUsCitizenshipRequiredChange: (value: boolean) => void;
-  hideAdvancedDegreeRequired: boolean;
-  onHideAdvancedDegreeRequiredChange: (value: boolean) => void;
+  filters: CatalogFilterValues;
+  onFiltersChange: (next: CatalogFilterValues) => void;
   loading: boolean;
   error?: string;
   loadingMore: boolean;
@@ -2138,7 +2182,13 @@ function GroupedCatalogFeed({
   onRetry: () => void;
   onOpenGroup: (group: CatalogGroupRow) => void;
   onOpenRole: (job: Job) => void;
+  onSaveForWeb?: (job: Job) => void | Promise<boolean>;
+  onHideLocally?: (job: Job) => void;
+  onUnsave?: (job: Job) => void;
+  savingJobIds?: Set<string>;
+  applicationStatuses?: Map<string, string>;
 }) {
+  const [sheetVisible, setSheetVisible] = useState(false);
   return (
     <>
       <View style={styles.roleFeedControls}>
@@ -2154,19 +2204,12 @@ function GroupedCatalogFeed({
           placeholderTextColor={colors.placeholder}
           style={styles.feedSearch}
         />
-        <RoleFilters
-          expanded={filtersExpanded}
-          onToggle={() => onFiltersExpandedChange(!filtersExpanded)}
-          employerFilter={employerFilter}
-          onEmployerFilterChange={onEmployerFilterChange}
-          jobStatus={jobStatus}
-          onJobStatusChange={onJobStatusChange}
-          sourceFilter={source}
-          onSourceFilterChange={onSourceChange}
-          hideUsCitizenshipRequired={hideUsCitizenshipRequired}
-          hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
-          onHideUsCitizenshipRequiredChange={onHideUsCitizenshipRequiredChange}
-          onHideAdvancedDegreeRequiredChange={onHideAdvancedDegreeRequiredChange}
+        <FilterBar activeCount={countActiveCatalogFilters(filters)} onOpen={() => setSheetVisible(true)} />
+        <FilterSheet
+          visible={sheetVisible}
+          filters={filters}
+          onFiltersChange={onFiltersChange}
+          onClose={() => setSheetVisible(false)}
         />
       </View>
       <FlatList
@@ -2175,14 +2218,24 @@ function GroupedCatalogFeed({
         contentContainerStyle={styles.feedListContent}
         onEndReached={onLoadMore}
         onEndReachedThreshold={0.6}
-        renderItem={({ item }) => (
-          <CatalogGroupCard
-            group={item}
-            status={jobStatus}
-            onOpenGroup={() => onOpenGroup(item)}
-            onOpenRole={onOpenRole}
-          />
-        )}
+        renderItem={({ item }) => {
+          const featuredJob = item.featuredRole ? catalogRoleJob(item.featuredRole) : undefined;
+          const isSaving = featuredJob ? savingJobIds?.has(featuredJob.jobId) : false;
+          const applicationStatus = featuredJob ? applicationStatuses?.get(featuredJob.jobId) : undefined;
+          return (
+            <CatalogGroupCard
+              group={item}
+              status={filters.jobStatus}
+              onOpenGroup={() => onOpenGroup(item)}
+              onOpenRole={onOpenRole}
+              onSaveForWeb={featuredJob && onSaveForWeb ? () => { void onSaveForWeb(featuredJob); } : undefined}
+              isSavingForWeb={isSaving}
+              onHideLocally={featuredJob && onHideLocally ? () => onHideLocally(featuredJob) : undefined}
+              applicationStatus={applicationStatus}
+              onUnsave={featuredJob && onUnsave ? () => onUnsave(featuredJob) : undefined}
+            />
+          );
+        }}
         ListEmptyComponent={
           loading ? <CatalogInitialLoading /> : error ? (
             <View style={styles.catalogUnavailable}>
@@ -2232,19 +2285,21 @@ function AppLoadingSkeleton() {
             <Skeleton width={46} height={14} />
           </View>
         ) : null}
-        <View style={styles.skeletonPage}>
-          <View style={styles.loadingTitleGroup}>
-            <Skeleton width={94} height={12} />
-            <View style={styles.skeletonGap8} />
-            <Skeleton width={168} height={28} />
+        <View style={styles.appMain}>
+          <View style={styles.skeletonPage}>
+            <View style={styles.loadingTitleGroup}>
+              <Skeleton width={94} height={12} />
+              <View style={styles.skeletonGap8} />
+              <Skeleton width={168} height={28} />
+            </View>
+            <View style={styles.skeletonSearch} />
+            <View style={styles.skeletonSection}>
+              <Skeleton width={132} height={12} />
+              <View style={styles.skeletonGap8} />
+              <Skeleton width={248} height={14} />
+            </View>
+            {[0, 1, 2].map((index) => <LoadingRoleCard key={index} index={index} />)}
           </View>
-          <View style={styles.skeletonSearch} />
-          <View style={styles.skeletonSection}>
-            <Skeleton width={132} height={12} />
-            <View style={styles.skeletonGap8} />
-            <Skeleton width={248} height={14} />
-          </View>
-          {[0, 1, 2].map((index) => <LoadingRoleCard key={index} index={index} />)}
         </View>
         {!usesNavigationRail ? (
           <View style={styles.skeletonNav}>
@@ -2361,12 +2416,7 @@ function AppContent() {
   const [hiddenFeedbackJob, setHiddenFeedbackJob] = useState<Job>();
   const [query, setQuery] = useState("");
   const [guestSearchQuery, setGuestSearchQuery] = useState("");
-  const [employerFilter, setEmployerFilter] = useState<EmployerCategory | "all">("all");
-  const [jobStatus, setJobStatus] = useState<"open" | "closed">("open");
-  const [catalogSource, setCatalogSource] = useState<CatalogSource>("all");
-  const [hideUsCitizenshipRequired, setHideUsCitizenshipRequired] = useState(false);
-  const [hideAdvancedDegreeRequired, setHideAdvancedDegreeRequired] = useState(false);
-  const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [catalogFilters, setCatalogFilters] = useState<CatalogFilterValues>(emptyCatalogFilters);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string>();
   const [selectedGroup, setSelectedGroup] = useState<CatalogGroupDetails>();
@@ -2501,7 +2551,7 @@ function AppContent() {
     setCatalogError(undefined);
     setCatalogMoreError(undefined);
     const catalogQuery = (token ? query : guestSearchQuery).trim();
-    const params = groupedCatalogParameters({ query: catalogQuery, source: catalogSource, status: jobStatus, employerCategory: employerFilter, hideUsCitizenshipRequired, hideAdvancedDegreeRequired });
+    const params = groupedCatalogParameters({ query: catalogQuery, source: catalogFilters.sourceFilter, status: catalogFilters.jobStatus, employerCategory: catalogFilters.employerFilter, disciplines: catalogFilters.disciplines, seasons: catalogFilters.seasons, workModes: catalogFilters.workModes, educationLevels: catalogFilters.educationLevels, hasCompensation: catalogFilters.hasCompensation, hideUsCitizenshipRequired: catalogFilters.hideUsCitizenshipRequired, hideAdvancedDegreeRequired: catalogFilters.hideAdvancedDegreeRequired });
     void api<GroupedCatalogPage<CatalogGroupRow>>(`/catalog?${params.toString()}`, "")
       .then((page) => {
         if (catalogRequestGeneration.current !== requestGeneration) return;
@@ -2509,8 +2559,7 @@ function AppContent() {
         catalogCursorRef.current = page.cursor;
         setCatalogGroups(page.groups);
         setNextCatalogCursor(page.cursor);
-        if (!catalogQuery && catalogSource === "all" && jobStatus === "open" && employerFilter === "all"
-          && !hideUsCitizenshipRequired && !hideAdvancedDegreeRequired) {
+        if (!catalogQuery && countActiveCatalogFilters(catalogFilters) === 0) {
           void responseCache.set(catalogCacheKey, page);
         }
       })
@@ -2535,7 +2584,7 @@ function AppContent() {
         catalogRequestInFlight.current = false;
       }
     };
-  }, [catalogRefresh, query, guestSearchQuery, catalogSource, jobStatus, employerFilter, hideUsCitizenshipRequired, hideAdvancedDegreeRequired, token]);
+  }, [catalogRefresh, query, guestSearchQuery, catalogFilters, token]);
   const loadNextCatalogPage = (retry = false) => {
     const cursor = catalogCursorRef.current;
     if (!cursor || catalogRequestInFlight.current || (!retry && catalogMoreError)) return;
@@ -2545,7 +2594,7 @@ function AppContent() {
     setCatalogMoreError(undefined);
     const catalogQuery = (token ? query : guestSearchQuery).trim();
     const params = groupedCatalogParameters(
-      { query: catalogQuery, source: catalogSource, status: jobStatus, employerCategory: employerFilter, hideUsCitizenshipRequired, hideAdvancedDegreeRequired },
+      { query: catalogQuery, source: catalogFilters.sourceFilter, status: catalogFilters.jobStatus, employerCategory: catalogFilters.employerFilter, disciplines: catalogFilters.disciplines, seasons: catalogFilters.seasons, workModes: catalogFilters.workModes, educationLevels: catalogFilters.educationLevels, hasCompensation: catalogFilters.hasCompensation, hideUsCitizenshipRequired: catalogFilters.hideUsCitizenshipRequired, hideAdvancedDegreeRequired: catalogFilters.hideAdvancedDegreeRequired },
       { cursor },
     );
     void api<GroupedCatalogPage<CatalogGroupRow>>(`/catalog?${params.toString()}`, "")
@@ -2693,6 +2742,11 @@ function AppContent() {
     setSelectedMatchReasons(destination.reasons);
     setSelectedExclusionsApplied(destination.exclusionsApplied);
     setJobRouteState("loading");
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("job", destination.jobId);
+      window.history.pushState({ jobId: destination.jobId }, "", url.toString());
+    }
     void api<Job>(`/jobs/${encodeURIComponent(destination.jobId)}`, "")
       .then((job) => {
         if (routedJobId.current !== destination.jobId) return;
@@ -2721,6 +2775,23 @@ function AppContent() {
     setSelectedMatchReasons([]);
     setSelectedExclusionsApplied(false);
     setJobRouteState("idle");
+    if (Platform.OS === "web" && typeof window !== "undefined" && wasVisible) {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("job")) {
+        url.searchParams.delete("job");
+        // If we pushed a job state, back will return to catalog without empty page.
+        // Use back when possible, otherwise replace.
+        if (window.history.state?.jobId) {
+          window.history.back();
+        } else {
+          window.history.replaceState({}, "", url.toString());
+        }
+        // Prevent double-dismiss from popstate
+        wasVisible && (detailDismissalPending.current = true);
+        InteractionManager.runAfterInteractions(finishDetailDismissal);
+        return;
+      }
+    }
     if (!wasVisible) return;
     detailDismissalPending.current = true;
     // React Native does not emit Modal.onDismiss on Android. Waiting for
@@ -2783,14 +2854,19 @@ function AppContent() {
     setSelectedExclusionsApplied(false);
     setJobRouteState("idle");
     setSelectedJob(job);
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("job", job.jobId);
+      window.history.pushState({ jobId: job.jobId }, "", url.toString());
+    }
   };
   const loadCatalogGroup = (groupId: string) => {
     const requestGeneration = groupRequestGuard.current.begin(groupId);
     setSelectedGroupLoading(true);
     setSelectedGroupError(undefined);
     const params = groupedCatalogParameters({
-      query: (token ? query : guestSearchQuery).trim(), source: catalogSource, status: jobStatus,
-      employerCategory: employerFilter, hideUsCitizenshipRequired, hideAdvancedDegreeRequired,
+      query: (token ? query : guestSearchQuery).trim(), source: catalogFilters.sourceFilter, status: catalogFilters.jobStatus,
+      employerCategory: catalogFilters.employerFilter, disciplines: catalogFilters.disciplines, seasons: catalogFilters.seasons, workModes: catalogFilters.workModes, educationLevels: catalogFilters.educationLevels, hasCompensation: catalogFilters.hasCompensation, hideUsCitizenshipRequired: catalogFilters.hideUsCitizenshipRequired, hideAdvancedDegreeRequired: catalogFilters.hideAdvancedDegreeRequired,
     });
     params.delete("limit");
     void api<CatalogGroupDetails>(`/catalog/groups/${encodeURIComponent(groupId)}?${params.toString()}`, "")
@@ -2861,33 +2937,52 @@ function AppContent() {
       urlSubscription.remove();
     };
   }, []);
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+    // Handle initial ?job param and back/forward navigation
+    const initialJobId = new URL(window.location.href).searchParams.get("job");
+    if (initialJobId && !detailVisible.current) {
+      openDestination({ kind: "job", jobId: initialJobId, reasons: [], exclusionsApplied: false });
+    }
+    const onPopState = () => {
+      const url = new URL(window.location.href);
+      const jobId = url.searchParams.get("job");
+      if (!jobId && detailVisible.current) {
+        dismissRoutedJob();
+      } else if (jobId && routedJobId.current !== jobId) {
+        openDestination({ kind: "job", jobId, reasons: [], exclusionsApplied: false });
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
   const catalogJobs = useMemo(() => {
-    const newJobs = jobStatus === "open" ? launchInbox?.jobs ?? [] : [];
+    const newJobs = catalogFilters.jobStatus === "open" ? launchInbox?.jobs ?? [] : [];
     return [
       ...newJobs,
       ...jobs.filter((job) => !newJobs.some((newJob) => newJob.jobId === job.jobId)),
     ];
-  }, [jobStatus, jobs, launchInbox]);
+  }, [catalogFilters.jobStatus, jobs, launchInbox]);
   const filtered = useMemo(
     () =>
       catalogJobs
         .filter((job) => !hiddenJobIds.has(job.jobId) || hiddenFeedbackJob?.jobId === job.jobId)
-        .filter((job) => employerFilter === "all" || (job.employerCategory ?? "normal") === employerFilter)
-        .filter((job) => !hideUsCitizenshipRequired || !job.requirements?.requiresUsCitizenship)
-        .filter((job) => !hideAdvancedDegreeRequired || !job.requirements?.advancedDegreeRequired)
+        .filter((job) => catalogFilters.employerFilter === "all" || (job.employerCategory ?? "normal") === catalogFilters.employerFilter)
+        .filter((job) => !catalogFilters.hideUsCitizenshipRequired || !job.requirements?.requiresUsCitizenship)
+        .filter((job) => !catalogFilters.hideAdvancedDegreeRequired || !job.requirements?.advancedDegreeRequired)
         .filter((job) =>
           `${job.company} ${job.title} ${job.location}`
             .toLowerCase()
             .includes(query.toLowerCase()),
         ),
-    [catalogJobs, employerFilter, hiddenFeedbackJob, hiddenJobIds, hideAdvancedDegreeRequired, hideUsCitizenshipRequired, query],
+    [catalogFilters, catalogJobs, hiddenFeedbackJob, hiddenJobIds, query],
   );
   const applicationStatuses = useMemo(
     () => new Map(applications.map((application) => [application.jobId, application.status])),
     [applications],
   );
   const roleSections = useMemo<RoleSection[]>(() => {
-    const newJobIds = new Set(jobStatus === "open" ? launchInbox?.jobs.map((job) => job.jobId) ?? [] : []);
+    const newJobIds = new Set(catalogFilters.jobStatus === "open" ? launchInbox?.jobs.map((job) => job.jobId) ?? [] : []);
     if (!newJobIds.size) return [{ kind: "all", data: filtered }];
     const newJobs = filtered.filter((job) => newJobIds.has(job.jobId));
     if (!newJobs.length) return [{ kind: "all", data: filtered }];
@@ -2896,7 +2991,7 @@ function AppContent() {
       { kind: "new", data: newJobs },
       ...(seenJobs.length ? [{ kind: "seen" as const, data: seenJobs }] : []),
     ];
-  }, [filtered, jobStatus, launchInbox]);
+  }, [catalogFilters.jobStatus, filtered, launchInbox]);
   const hideLocally = (job: Job) => {
     if (hiddenJobIds.has(job.jobId)) return;
     setHiddenJobIds((current) => {
@@ -2926,6 +3021,18 @@ function AppContent() {
     });
     if (hiddenFeedbackJob?.jobId === job.jobId) setHiddenFeedbackJob(undefined);
   };
+  const autoSavedJobId = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const job = selectedJob;
+    if (!job) {
+      autoSavedJobId.current = undefined;
+      return;
+    }
+    if (!token || autoSavedJobId.current === job.jobId) return;
+    if (applicationStatuses.has(job.jobId) || savingJobIds.has(job.jobId)) return;
+    autoSavedJobId.current = job.jobId;
+    saveForWeb(job, { silent: true });
+  }, [token, selectedJob, applicationStatuses, savingJobIds]);
   if (!ready)
     return <AppLoadingSkeleton />;
   if (sessionRecoveryMessage)
@@ -2952,19 +3059,9 @@ function AppContent() {
         onDismissRoute={dismissRoutedJob}
         onModalDismissedRoute={finishDetailDismissal}
         onRetryRoute={retryRoutedJob}
-        jobStatus={jobStatus}
-        onJobStatusChange={setJobStatus}
-        employerFilter={employerFilter}
-        onEmployerFilterChange={setEmployerFilter}
-        filtersExpanded={filtersExpanded}
-        onFiltersExpandedChange={setFiltersExpanded}
-        hideUsCitizenshipRequired={hideUsCitizenshipRequired}
-        onHideUsCitizenshipRequiredChange={setHideUsCitizenshipRequired}
-        hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
-        onHideAdvancedDegreeRequiredChange={setHideAdvancedDegreeRequired}
+        filters={catalogFilters}
+        onFiltersChange={setCatalogFilters}
         onSearchQueryChange={setGuestSearchQuery}
-        sourceFilter={catalogSource}
-        onSourceFilterChange={setCatalogSource}
         catalogInitialLoading={catalogInitialLoading}
         catalogError={catalogError}
         catalogLoadingMore={catalogLoadingMore}
@@ -3026,7 +3123,7 @@ function AppContent() {
     // immediately background the native app and suspend later JavaScript work.
     void openOfficialApplication(job.applyUrl);
   };
-  const saveForWeb = (job: Job) => {
+  const saveForWeb = (job: Job, options?: { silent?: boolean }) => {
     if (applicationStatuses.has(job.jobId) || savingJobIds.has(job.jobId)) return;
     setSavingJobIds((current) => new Set(current).add(job.jobId));
     void (async () => {
@@ -3048,10 +3145,33 @@ function AppContent() {
           ).catch(() => undefined);
         }
       } catch (error) {
-        Alert.alert(
-          "Could not save role",
-          error instanceof Error ? error.message : "Please try again.",
-        );
+        if (!options?.silent) {
+          Alert.alert(
+            "Could not save role",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        }
+      } finally {
+        setSavingJobIds((current) => {
+          const updated = new Set(current);
+          updated.delete(job.jobId);
+          return updated;
+        });
+      }
+    })();
+  };
+  const unsaveForWeb = (job: Job) => {
+    const app = applications.find((a) => a.jobId === job.jobId);
+    if (!app) return;
+    if (savingJobIds.has(job.jobId)) return;
+    setSavingJobIds((current) => new Set(current).add(job.jobId));
+    void (async () => {
+      try {
+        await api(`/me/applications/${encodeURIComponent(app.applicationId)}`, token, { method: "DELETE" });
+        setApplications((current) => current.filter((item) => item.applicationId !== app.applicationId));
+        void clearApplicationFollowUp(app.applicationId).catch(() => undefined);
+      } catch (error) {
+        Alert.alert("Could not unsave role", error instanceof Error ? error.message : "Please try again.");
       } finally {
         setSavingJobIds((current) => {
           const updated = new Set(current);
@@ -3086,18 +3206,8 @@ function AppContent() {
                 groups={catalogGroups}
                 query={query}
                 onQueryChange={setQuery}
-                source={catalogSource}
-                onSourceChange={setCatalogSource}
-                employerFilter={employerFilter}
-                onEmployerFilterChange={setEmployerFilter}
-                jobStatus={jobStatus}
-                onJobStatusChange={setJobStatus}
-                filtersExpanded={filtersExpanded}
-                onFiltersExpandedChange={setFiltersExpanded}
-                hideUsCitizenshipRequired={hideUsCitizenshipRequired}
-                onHideUsCitizenshipRequiredChange={setHideUsCitizenshipRequired}
-                hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
-                onHideAdvancedDegreeRequiredChange={setHideAdvancedDegreeRequired}
+                filters={catalogFilters}
+                onFiltersChange={setCatalogFilters}
                 loading={catalogInitialLoading}
                 error={catalogError}
                 loadingMore={catalogLoadingMore}
@@ -3108,6 +3218,11 @@ function AppContent() {
                 onRetry={() => setCatalogRefresh((value) => value + 1)}
                 onOpenGroup={openCatalogGroup}
                 onOpenRole={openCatalogJob}
+                onSaveForWeb={saveForWeb}
+                onHideLocally={hideLocally}
+                onUnsave={unsaveForWeb}
+                savingJobIds={savingJobIds}
+                applicationStatuses={applicationStatuses}
               />
             )
           ) : tab === "saved" ? (
@@ -3134,7 +3249,6 @@ function AppContent() {
             />
           )}
         </View>
-        {!usesNavigationRail ? <TabNavigation active={tab} onChange={changeTab} /> : null}
       </View>
       <JobDetailSheet
         job={selectedJob}
@@ -3151,6 +3265,10 @@ function AppContent() {
         onOpenListing={(job) => {
           void openOfficialApplication(job.applyUrl);
         }}
+        onSaveForWeb={(job) => saveForWeb(job)}
+        isSavingForWeb={selectedJob ? savingJobIds.has(selectedJob.jobId) : false}
+        applicationStatus={selectedJob ? applicationStatuses.get(selectedJob.jobId) : undefined}
+        onUnsave={unsaveForWeb}
       />
       <CatalogGroupSheet
         groupId={selectedGroupVisible ? selectedGroupId : undefined}
@@ -3503,19 +3621,9 @@ function GuestExperience({
   onDismissRoute,
   onModalDismissedRoute,
   onRetryRoute,
-  jobStatus,
-  onJobStatusChange,
-  employerFilter,
-  onEmployerFilterChange,
-  filtersExpanded,
-  onFiltersExpandedChange,
-  hideUsCitizenshipRequired,
-  onHideUsCitizenshipRequiredChange,
-  hideAdvancedDegreeRequired,
-  onHideAdvancedDegreeRequiredChange,
+  filters,
+  onFiltersChange,
   onSearchQueryChange,
-  sourceFilter,
-  onSourceFilterChange,
   catalogInitialLoading,
   catalogError,
   catalogLoadingMore,
@@ -3544,19 +3652,9 @@ function GuestExperience({
   onDismissRoute: () => void;
   onModalDismissedRoute: () => void;
   onRetryRoute: () => void;
-  jobStatus: "open" | "closed";
-  onJobStatusChange: (status: "open" | "closed") => void;
-  employerFilter: EmployerCategory | "all";
-  onEmployerFilterChange: (value: EmployerCategory | "all") => void;
-  filtersExpanded: boolean;
-  onFiltersExpandedChange: (value: boolean) => void;
-  hideUsCitizenshipRequired: boolean;
-  onHideUsCitizenshipRequiredChange: (value: boolean) => void;
-  hideAdvancedDegreeRequired: boolean;
-  onHideAdvancedDegreeRequiredChange: (value: boolean) => void;
+  filters: CatalogFilterValues;
+  onFiltersChange: (next: CatalogFilterValues) => void;
   onSearchQueryChange: (query: string) => void;
-  sourceFilter: CatalogSource;
-  onSourceFilterChange: (source: CatalogSource) => void;
   catalogInitialLoading: boolean;
   catalogError?: string;
   catalogLoadingMore: boolean;
@@ -3580,6 +3678,34 @@ function GuestExperience({
   const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
   const [query, setQuery] = useState("");
   const [showAccount, setShowAccount] = useState(false);
+  const openAccount = () => {
+    setShowAccount(true);
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("auth", "signin");
+      window.history.pushState({ auth: true }, "", url.toString());
+    }
+  };
+  const closeAccount = () => {
+    setShowAccount(false);
+    if (Platform.OS === "web" && typeof window !== "undefined" && window.history.state?.auth) {
+      window.history.back();
+    } else if (Platform.OS === "web" && typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("auth");
+      window.history.replaceState({}, "", url.toString());
+    }
+  };
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+    const onPopState = () => {
+      const hasAuth = new URL(window.location.href).searchParams.has("auth") || Boolean(window.history.state?.auth);
+      if (!hasAuth && showAccount) setShowAccount(false);
+      if (hasAuth && !showAccount) setShowAccount(true);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [showAccount]);
   return (
     <View style={styles.guestRoot}>
       <SafeAreaView
@@ -3600,18 +3726,8 @@ function GuestExperience({
                 groups={groups}
                 query={query}
                 onQueryChange={(value) => { setQuery(value); onSearchQueryChange(value); }}
-                source={sourceFilter}
-                onSourceChange={onSourceFilterChange}
-                employerFilter={employerFilter}
-                onEmployerFilterChange={onEmployerFilterChange}
-                jobStatus={jobStatus}
-                onJobStatusChange={onJobStatusChange}
-                filtersExpanded={filtersExpanded}
-                onFiltersExpandedChange={onFiltersExpandedChange}
-                hideUsCitizenshipRequired={hideUsCitizenshipRequired}
-                onHideUsCitizenshipRequiredChange={onHideUsCitizenshipRequiredChange}
-                hideAdvancedDegreeRequired={hideAdvancedDegreeRequired}
-                onHideAdvancedDegreeRequiredChange={onHideAdvancedDegreeRequiredChange}
+                filters={filters}
+                onFiltersChange={onFiltersChange}
                 loading={catalogInitialLoading}
                 error={catalogError}
                 loadingMore={catalogLoadingMore}
@@ -3622,12 +3738,14 @@ function GuestExperience({
                 onRetry={onRetryCatalog}
                 onOpenGroup={onOpenGroup}
                 onOpenRole={onOpenJob}
+                onSaveForWeb={async () => { openAccount(); return false; }}
+                onHideLocally={onHideLocally as unknown as (job: Job) => void}
               />
             </View>
             {tab === "saved" ? (
               <AccountGate
                 feature="save and track applications"
-                onSignIn={() => setShowAccount(true)}
+                onSignIn={openAccount}
               />
             ) : tab === "profile" ? (
               <Profile
@@ -3635,7 +3753,7 @@ function GuestExperience({
                 hiddenJobs={hiddenJobs}
                 onRestoreHiddenRole={onRestoreHiddenRole}
                 onPreferencesChanged={onPreferencesChanged}
-                onSignIn={() => setShowAccount(true)}
+                onSignIn={openAccount}
               />
             ) : null}
           </View>
@@ -3656,11 +3774,13 @@ function GuestExperience({
           onOpenListing={(job) => {
             void openOfficialApplication(job.applyUrl);
           }}
+          onSaveForWeb={async () => { openAccount(); return false; }}
+          onHideLocally={onHideLocally}
         />
       </SafeAreaView>
       {showAccount ? (
         <View style={styles.authOverlay}>
-          <SignIn onSession={onSession} onBrowse={() => setShowAccount(false)} />
+          <SignIn onSession={onSession} onBrowse={closeAccount} />
         </View>
       ) : null}
     </View>
@@ -3964,7 +4084,7 @@ function Applications({
           <View style={styles.card}>
             <Text style={styles.company}>{job?.company ?? "Saved role"}</Text>
             <Text style={styles.title}>{job?.title ?? "Role details unavailable"}</Text>
-            {job ? <JobSource source={source} identityUnconfirmed={job.postingIdentityStatus === "unconfirmed"} /> : null}
+            {job ? <JobSource source={source} showIdentityUnconfirmed={job.postingIdentityStatus === "unconfirmed"} /> : null}
             <View style={styles.statusPill}>
               <Text style={styles.statusPillText}>{item.status.toUpperCase()}</Text>
             </View>
@@ -5691,7 +5811,7 @@ const styles = StyleSheet.create({
   swipeCardSurface: { marginBottom: 0 },
   swipeSaveAction: {
     alignItems: "center",
-    backgroundColor: "#F59E0B",
+    backgroundColor: colors.ink,
     borderRadius: 14,
     bottom: 0,
     flexDirection: "row",
@@ -5729,18 +5849,18 @@ const styles = StyleSheet.create({
   catalogGroupFooterLeft: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12, gap: 12 },
   jobCardActionCompact: { alignItems: "center", flexDirection: "row", gap: 4 },
   jobCompanyLeft: { flexDirection: "row", alignItems: "center", flex: 1, minWidth: 0 },
-  sheetSaveBar: { alignItems: "center", backgroundColor: "#F59E0B", borderColor: "#F59E0B", borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
-  sheetSaveBarText: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
-  sheetSavedBar: { alignItems: "center", backgroundColor: "#FFFBEB", borderColor: "#FDE68A", borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
-  sheetSavedBarText: { color: "#92400E", fontSize: 16, fontWeight: "800" },
+  sheetSaveBar: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
+  sheetSaveBarText: { color: colors.ink, fontSize: 16, fontWeight: "800" },
+  sheetSavedBar: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
+  sheetSavedBarText: { color: colors.signal, fontSize: 16, fontWeight: "800" },
   sheetHideBar: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
   sheetHideBarText: { color: colors.body, fontSize: 16, fontWeight: "700" },
-  webSaveButton: { alignItems: "center", backgroundColor: "#F59E0B", borderColor: "#F59E0B", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
-  webSaveButtonCompact: { alignItems: "center", backgroundColor: "#F59E0B", borderColor: "#F59E0B", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
-  webSaveButtonText: { color: "#FFFFFF", fontSize: 13, fontWeight: "800" },
-  webUnsaveButton: { alignItems: "center", backgroundColor: "#FFFBEB", borderColor: "#FDE68A", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
-  webUnsaveButtonCompact: { alignItems: "center", backgroundColor: "#FFFBEB", borderColor: "#FDE68A", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
-  webUnsaveButtonText: { color: "#92400E", fontSize: 13, fontWeight: "800" },
+  webSaveButton: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
+  webSaveButtonCompact: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
+  webSaveButtonText: { color: colors.ink, fontSize: 13, fontWeight: "800" },
+  webUnsaveButton: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
+  webUnsaveButtonCompact: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
+  webUnsaveButtonText: { color: colors.signal, fontSize: 13, fontWeight: "800" },
   webHideButton: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
   webHideButtonCompact: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
   webHideButtonText: { color: colors.muted, fontSize: 13, fontWeight: "700" },
@@ -5893,23 +6013,14 @@ const styles = StyleSheet.create({
   jobSourceRow: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 7 },
   jobSourceText: { color: colors.muted, flexShrink: 1, fontSize: 13, fontWeight: "600", lineHeight: 18 },
   jobSourceCorroboration: { color: colors.signal, fontSize: 12, fontWeight: "700", lineHeight: 18 },
-  jobTrustSeparator: { color: colors.muted, fontSize: 13, lineHeight: 18 },
   pay: { color: colors.success, fontSize: 13, fontWeight: "700", marginTop: 6 },
+  payInline: { color: colors.success, fontSize: 13, fontWeight: "700" },
   closedStatus: { marginTop: 8, color: colors.danger, fontWeight: "700" },
   jobCardAction: { alignItems: "center", flexDirection: "row", marginTop: 14 },
   jobCardActionText: { color: colors.signal, fontSize: 15, fontWeight: "700" },
   jobCardActionArrow: { color: colors.signal, fontSize: 22, lineHeight: 20, marginLeft: 5 },
   identityTrustRow: { alignItems: "center", flexDirection: "row", gap: 5, marginTop: 6 },
   identityTrustText: { color: colors.muted, fontSize: 13, fontWeight: "600", lineHeight: 18 },
-  jobApplicationStatus: {
-    alignSelf: "flex-start",
-    backgroundColor: colors.signalSoft,
-    borderRadius: 999,
-    marginTop: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  jobApplicationStatusText: { color: colors.signal, fontSize: 12, fontWeight: "800", letterSpacing: 0.5 },
   search: {
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -5947,18 +6058,34 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     minHeight: 48,
-    paddingHorizontal: 2,
+    paddingHorizontal: 16,
   },
   filterToggleText: { color: colors.signal, fontSize: 15, fontWeight: "700" },
   filterToggleGlyph: { color: colors.signal, fontSize: 20, fontWeight: "400", marginLeft: 8 },
-  clearFilters: { minHeight: 48, justifyContent: "center", marginLeft: 16 },
-  clearFiltersText: { color: colors.muted, fontSize: 15, fontWeight: "600" },
-  filterPanel: {
+  filterSheetOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.4)" },
+  filterSheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     borderTopWidth: 1,
     borderTopColor: colors.separator,
-    marginTop: 4,
-    paddingTop: 16,
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: -2 },
+    elevation: 8,
+    maxHeight: "88%",
+    minHeight: 280,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 34,
   },
+  filterSheetApply: { alignSelf: "stretch" },
+  filterSheetClear: { alignSelf: "center", minHeight: 48, justifyContent: "center", paddingHorizontal: 16 },
+  filterSheetScroll: { marginTop: 8 },
+  filterSheetContent: { paddingBottom: 16 },
+  filterSheetActions: { alignItems: "stretch", flexDirection: "column", gap: 4, marginTop: 12, borderTopWidth: 1, borderTopColor: colors.separator, paddingTop: 12 },
+  clearFiltersText: { color: colors.muted, fontSize: 15, fontWeight: "600" },
   coverageRegion: {
     borderTopColor: colors.separator,
     borderTopWidth: 1,
@@ -6073,7 +6200,7 @@ const styles = StyleSheet.create({
     minHeight: 48,
     paddingHorizontal: 14,
     justifyContent: "center",
-    borderRadius: 20,
+    borderRadius: 999,
     backgroundColor: colors.surface,
   },
   chipOn: { backgroundColor: colors.signalSoft, borderColor: colors.signal },

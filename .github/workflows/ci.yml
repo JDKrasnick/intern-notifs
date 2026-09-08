@@ -88,6 +88,9 @@ jobs:
     needs: [changes, verify, verify-mobile]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
+    concurrency:
+      group: cloudflare-pages-production
+      cancel-in-progress: false
     environment:
       name: cloudflare-pages-production
       url: https://internnotifs.app
@@ -100,6 +103,8 @@ jobs:
         with:
           name: web-dist-${{ github.sha }}
           path: mobile/dist
+      - name: Reject an obsolete main revision
+        run: test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
       - name: Deploy verified web artifact
         run: npx wrangler pages deploy mobile/dist --project-name internnotifs --branch main --commit-hash "${GITHUB_SHA}" --commit-dirty=false
         env:
