@@ -806,8 +806,7 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
       await env.DB.prepare(`INSERT INTO shadow_publication_receipts
         (receipt_id, job_id, source_id, external_id, content_hash, run_key, policy_version, accepted_fields, evidence_fingerprint, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(job_id, source_id, external_id, content_hash, run_key) DO UPDATE SET
-          policy_version=excluded.policy_version, accepted_fields=excluded.accepted_fields, evidence_fingerprint=excluded.evidence_fingerprint, revoked_at=NULL`)
+        ON CONFLICT(receipt_id) DO NOTHING`)
         .bind(receiptId, run.job_id, run.source_id, run.external_id, run.content_hash, run.run_key, policy.version,
           JSON.stringify(acceptedFields.sort()), evidenceFingerprint, new Date().toISOString()).run();
       return withCors(Response.json({ receiptId, evidenceFingerprint, policyVersion: policy.version, acceptedFields }));

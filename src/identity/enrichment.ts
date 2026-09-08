@@ -15,9 +15,9 @@ import { canonicalCompanyKey } from '../core/normalize.js';
 const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   'official-api': -1,
   'official-ats': 0,
-  'reviewed-shadow': 0.5,
   'official-json-ld': 1,
   'official-page': 2,
+  'reviewed-shadow': 2.5,
   'reviewed-community': 3,
   'deterministic-inference': 4,
 };

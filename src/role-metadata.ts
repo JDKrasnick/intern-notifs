@@ -36,11 +36,11 @@ const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   // must not erase fields the list endpoint omits.
   'official-api': -1,
   'official-ats': 0,
-  // A publication receipt binds this to the exact official description. It can
-  // fill omissions in an ATS response, while direct page evidence still wins.
-  'reviewed-shadow': 0.5,
   'official-json-ld': 1,
   'official-page': 2,
+  // A publication receipt binds this to the exact official description. It can
+  // fill omissions in an ATS response, while direct page evidence still wins.
+  'reviewed-shadow': 2.5,
   'reviewed-community': 3,
   'deterministic-inference': 4,
 };

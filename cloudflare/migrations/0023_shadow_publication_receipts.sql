@@ -13,5 +13,5 @@ CREATE TABLE shadow_publication_receipts (
   created_at TEXT NOT NULL,
   revoked_at TEXT
 );
-CREATE UNIQUE INDEX shadow_publication_receipt_revision ON shadow_publication_receipts(job_id, source_id, external_id, content_hash, run_key);
+CREATE INDEX shadow_publication_receipt_revision ON shadow_publication_receipts(job_id, source_id, external_id, content_hash, run_key);
 CREATE INDEX shadow_publication_receipt_active ON shadow_publication_receipts(revoked_at, source_id, external_id, content_hash);
