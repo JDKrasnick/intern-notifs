@@ -4360,10 +4360,24 @@ function Applications({
       Alert.alert("Could not update queue", error instanceof Error ? error.message : "Please try again."),
     );
   };
+  const requeueInQueue = (item: Application) => {
+    void (async () => {
+      await api(`/me/applications/${encodeURIComponent(item.applicationId)}`, token, {
+        method: "PATCH",
+        body: JSON.stringify({ queued: true }),
+      });
+      onChanged();
+    })().catch((error) =>
+      Alert.alert("Could not update queue", error instanceof Error ? error.message : "Please try again."),
+    );
+  };
+  const queuedIds = new Set(queue.map((entry) => entry.applicationId));
+  const savedOnly = applications.filter((entry) => entry.status === "saved" && !queuedIds.has(entry.applicationId));
+  const ordered = [...queue, ...savedOnly, ...applications.filter((entry) => entry.status !== "saved" && !queuedIds.has(entry.applicationId))];
   return (
     <FlatList
       style={styles.list}
-      data={applications}
+      data={ordered}
       keyExtractor={(item) => item.applicationId}
       contentContainerStyle={styles.feedListContent}
       ListHeaderComponent={<>
@@ -4438,7 +4452,7 @@ function Applications({
           </View>
         ) : null}
       </>}
-      renderItem={({ item }) => {
+      renderItem={({ item, index }) => {
         const job = resolveApplicationJob(item, jobs);
         const source = sourcePresentation(job?.sourceReferences ?? []);
         const nextStatus = nextApplicationStatuses[item.status] ?? "interview";
@@ -4449,7 +4463,21 @@ function Applications({
           ? job.availability
           : job?.open ? "available" : "closed";
         const unavailableReason = job && "unavailableReason" in job ? job.unavailableReason : undefined;
+        const showQueueHeader = index === 0 && queue.length > 0;
+        const showSavedHeader = index === queue.length && savedOnly.length > 0;
+        const header = showQueueHeader
+          ? { icon: "bookmark" as const, label: "In queue" }
+          : showSavedHeader
+            ? { icon: "bookmark-outline" as const, label: "Saved for later" }
+            : undefined;
         return (
+          <>
+          {header ? (
+            <View accessibilityRole="header" style={styles.queueSectionHeader}>
+              <Ionicons name={header.icon} size={16} color={colors.signal} />
+              <Text style={styles.queueSectionHeaderText}>{header.label}</Text>
+            </View>
+          ) : null}
           <View style={styles.card}>
             <Text style={styles.company}>{job?.company ?? "Saved role"}</Text>
             <Text style={styles.title}>{job?.title ?? "Role details unavailable"}</Text>
@@ -4475,6 +4503,16 @@ function Applications({
                   compact
                   variant="secondary"
                   onPress={() => removeFromQueue(item)}
+                />
+              </View>
+            ) : null}
+            {item.status === "saved" && !item.queuedAt ? (
+              <View style={styles.applicationActionGap}>
+                <ActionButton
+                  label="Mark to apply"
+                  compact
+                  variant="secondary"
+                  onPress={() => requeueInQueue(item)}
                 />
               </View>
             ) : null}
@@ -4531,6 +4569,7 @@ function Applications({
               }
             />
           </View>
+          </>
         );
       }}
       ListEmptyComponent={
@@ -6683,7 +6722,6 @@ const styles = StyleSheet.create({
   saveFeedbackRetry: { color: colors.signal, fontSize: 14, fontWeight: "700", marginTop: 8 },
   hiddenRolePlaceholder: {
     alignItems: "center",
-    backgroundColor: colors.signalSoft,
     borderColor: colors.separator,
     borderRadius: 14,
     borderWidth: 1,
@@ -6741,6 +6779,8 @@ const styles = StyleSheet.create({
   queueSheetPosition: { color: colors.muted, fontSize: 14, fontWeight: "700", width: 20 },
   queueSheetText: { flex: 1 },
   queueBulkRow: { flexDirection: "row", gap: 8, marginTop: 10 },
+  queueSectionHeader: { alignItems: "center", flexDirection: "row", gap: 8, marginBottom: 4, marginTop: 16 },
+  queueSectionHeaderText: { color: colors.ink, fontSize: 15, fontWeight: "700" },
   catalogReviewNotice: {
     alignItems: "flex-start",
     backgroundColor: colors.signalSoft,
