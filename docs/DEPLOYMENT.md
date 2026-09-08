@@ -889,8 +889,13 @@ After Apple processing:
 3. The tester must accept their App Store Connect invitation and use TestFlight with that same Apple Account. Internal testers do not use redeem codes.
 4. Follow [`testflight-checklist.md`](testflight-checklist.md) on a physical iPhone.
 
-## Current release context (2026-09-07)
+## Current release context (2026-09-08)
 
+- Build `1.0.0 (25)` was built from `a8a00af` (merge of #170: tap-to-apply
+  sheet filters, fade modal with dim backdrop, stacked Show roles over Clear).
+  EAS build `2968602c-abc6-4029-97bb-9c160f1c7ba2`, auto-submitted to App Store
+  Connect (submission `efef6340-0fb1-41b9-b432-f4c85d54878b`). No Worker change:
+  production Worker `8ce99030` already serves the merged server code.
 - Build `1.0.0 (24)` was built from `beeae3c` (merge of #168: Filter roles
   bottom sheet with working Role focus/season/work-mode/education/pay filters,
   white Save pill with tap-to-unsave, inline pay, collapsed identity row).
