@@ -20,6 +20,20 @@ describe('catalog quality normalization', () => {
     expect(normalizeCompensation('CAD $50/hour').maxHourlyUSD).toBeUndefined();
   });
 
+  it('deduplicates agreeing pay disclosures before deciding scalar bounds are ambiguous', () => {
+    expect(normalizeCompensation('Pay: $20/hour. The hourly rate is $20/hr.')).toMatchObject({
+      minHourlyUSD: 20,
+      maxHourlyUSD: 20,
+    });
+    expect(normalizeCompensation('Salary: $100,000/year. Base pay is $100k annually.')).toMatchObject({
+      minAnnualUSD: 100_000,
+      maxAnnualUSD: 100_000,
+    });
+    const ambiguous = normalizeCompensation('The role pays $20/hour or $25/hour.');
+    expect(ambiguous.minHourlyUSD).toBeUndefined();
+    expect(ambiguous.maxHourlyUSD).toBeUndefined();
+  });
+
   it('cleans badges while retaining their structured meaning', () => {
     const company = '🇺🇸 Acme';
     const title = '🎓 Advanced Degree Required · ML Intern';
