@@ -31,16 +31,22 @@ export function sortApplyQueue<T extends QueueEntry>(applications: T[]): T[] {
     .sort((a, b) => (a.queuedAt ?? a.createdAt ?? '').localeCompare(b.queuedAt ?? b.createdAt ?? ''));
 }
 
+export function queueEntryTarget<T extends QueueEntry>(
+  item: T,
+  catalogJobs: Array<ApplicationJobSummary>,
+): { jobId: string; applyUrl: string } | undefined {
+  const job = resolveApplicationJob(item, catalogJobs);
+  const availability = job && 'availability' in job && job.availability
+    ? job.availability
+    : job?.open ? 'available' : 'closed';
+  const applyUrl = job && 'applyUrl' in job ? job.applyUrl : undefined;
+  return availability === 'available' && applyUrl ? { jobId: job.jobId, applyUrl } : undefined;
+}
+
 export function nextAvailableQueueEntry<T extends QueueEntry>(
   queue: T[],
   catalogJobs: Array<ApplicationJobSummary>,
   fromIndex = 0,
 ): T | undefined {
-  return queue.slice(fromIndex).find((item) => {
-    const job = resolveApplicationJob(item, catalogJobs);
-    const availability = job && 'availability' in job && job.availability
-      ? job.availability
-      : job?.open ? 'available' : 'closed';
-    return availability === 'available' && Boolean(job && 'applyUrl' in job && job.applyUrl);
-  });
+  return queue.slice(fromIndex).find((item) => queueEntryTarget(item, catalogJobs) !== undefined);
 }

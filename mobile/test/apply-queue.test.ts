@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextAvailableQueueEntry, sortApplyQueue, type QueueEntry } from "../src/application";
+import { nextAvailableQueueEntry, queueEntryTarget, sortApplyQueue, type QueueEntry } from "../src/application";
 
 const entry = (overrides: Partial<QueueEntry> & { jobId: string }): QueueEntry => ({
   applicationId: `app-${overrides.jobId}`,
@@ -40,5 +40,24 @@ describe("nextAvailableQueueEntry", () => {
   it("respects the current queue position", () => {
     expect(nextAvailableQueueEntry(queue, catalog, 3)?.jobId).toBe("open");
     expect(nextAvailableQueueEntry(queue, catalog, 4)).toBeUndefined();
+  });
+});
+
+describe("queueEntryTarget", () => {
+  const catalog = [
+    { jobId: "open", company: "Acme", title: "Open Role", applyUrl: "https://example.test/apply", open: true },
+    { jobId: "closed", company: "Acme", title: "Closed Role", open: false },
+  ];
+
+  it("returns the handoff target for available entries", () => {
+    expect(queueEntryTarget(entry({ jobId: "open" }), catalog)).toEqual({
+      jobId: "open",
+      applyUrl: "https://example.test/apply",
+    });
+  });
+
+  it("returns undefined for closed or url-less entries", () => {
+    expect(queueEntryTarget(entry({ jobId: "closed" }), catalog)).toBeUndefined();
+    expect(queueEntryTarget(entry({ jobId: "missing" }), catalog)).toBeUndefined();
   });
 });
