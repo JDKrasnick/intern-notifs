@@ -18,7 +18,9 @@ content hash plus model/prompt/schema/preprocessing versions, and records run
 state in D1. A later artifact revision becomes current before it is queued; a
 late result for an old revision is marked `obsolete` and cannot replace it.
 Results remain in `shadow_extraction_*` tables, separate from deterministic
-role metadata and public catalog tables.
+role metadata and public catalog tables unless a coordinator creates a receipt
+for one exact completed revision and the deployment policy independently names
+that same `{sourceId, externalId, contentHash}` cohort entry.
 
 The request contract combines classification and extraction. Factual fields
 retain `value` or `null`, `present`/`not-stated`/`conflicting`/`incomplete`,
@@ -50,11 +52,25 @@ latency, cost totals, version distribution, and deterministic-baseline differenc
 GET /internal/operations/shadow-extraction
 ```
 
+`LLM_METADATA_PUBLICATION_POLICY_JSON` is a plain Worker variable, not a
+secret. Its committed default is disabled and empty. A valid enabled policy has
+`version`, a non-empty supported `allowedFields` set, and unique exact cohort
+entries. The authenticated operations endpoint
+`/internal/operations/shadow-publication` reports its effective state and can
+create a receipt only for a completed, validator-accepted, current posting
+revision. Policy membership alone never authorizes publication.
+
+Receipts bind the run key, posting identity and hash, policy version, accepted
+field subset, and deterministic evidence fingerprint in D1. A newer posting
+revision invalidates the receipt check. Disabling the policy stops new receipts;
+it does not claim to repair any previously published metadata.
+
 ## Deployment and retention
 
 Apply migrations `0020_shadow_extraction.sql`,
 `0021_shadow_extraction_fencing.sql`, and
-`0022_shadow_extraction_cache_expiry.sql` before deploying the queue consumer.
+`0022_shadow_extraction_cache_expiry.sql`, and
+`0023_shadow_publication_receipts.sql` before deploying the queue consumer.
 Provision the private R2 bucket and the `shadow-extraction` work/DLQ
 queues from the infrastructure configuration. Configure this R2 lifecycle rule
 after the bucket exists, using credentials with only the documented R2 write

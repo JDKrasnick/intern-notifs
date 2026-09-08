@@ -504,6 +504,8 @@ export interface ProviderTimestamp {
 export type EvidenceSource =
   | 'official-api'
   | 'official-ats'
+  /** Reviewer-approved extraction from an exact official posting revision. */
+  | 'reviewed-shadow'
   | 'official-json-ld'
   | 'official-page'
   | 'reviewed-community'

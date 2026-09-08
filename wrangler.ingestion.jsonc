@@ -56,6 +56,7 @@
     "IDENTITY_CONFIRMED_COVERAGE_FLOOR": "1",
     "GMAIL_ENABLED": "true",
     "SHADOW_EXTRACTION_ENABLED": "false",
+    "LLM_METADATA_PUBLICATION_POLICY_JSON": "{\"enabled\":false,\"version\":\"disabled\",\"allowedFields\":[],\"cohort\":[]}",
     "ADMISSION_QUEUE_AGE_ALERT_HOURS": "120",
     "ADMISSION_STALE_ALERT_THRESHOLD": "1",
     "GMAIL_CLIENT_ID": "17433524169-4753680goh32205can9g00ijqan3hic5.apps.googleusercontent.com",
