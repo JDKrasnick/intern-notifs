@@ -8,14 +8,15 @@ const entry = (overrides: Partial<QueueEntry> & { jobId: string }): QueueEntry =
 });
 
 describe("sortApplyQueue", () => {
-  it("keeps only saved roles ordered by queue time with a created-at fallback", () => {
+  it("keeps only queued saved roles ordered by queue time", () => {
     const applications = [
       entry({ jobId: "b", queuedAt: "2026-09-03T00:00:00.000Z", createdAt: "2026-09-01T00:00:00.000Z" }),
       entry({ jobId: "applied", status: "applied", queuedAt: "2026-09-01T00:00:00.000Z" }),
       entry({ jobId: "legacy", createdAt: "2026-09-02T00:00:00.000Z" }),
+      entry({ jobId: "dequeued", createdAt: "2026-09-01T00:00:00.000Z" }),
       entry({ jobId: "a", queuedAt: "2026-09-01T00:00:00.000Z", createdAt: "2026-09-01T00:00:00.000Z" }),
     ];
-    expect(sortApplyQueue(applications).map((item) => item.jobId)).toEqual(["a", "legacy", "b"]);
+    expect(sortApplyQueue(applications).map((item) => item.jobId)).toEqual(["a", "b"]);
   });
 });
 

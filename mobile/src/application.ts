@@ -27,7 +27,7 @@ export type QueueEntry = {
 };
 export function sortApplyQueue<T extends QueueEntry>(applications: T[]): T[] {
   return applications
-    .filter((application) => application.status === 'saved')
+    .filter((application) => application.status === 'saved' && application.queuedAt !== undefined)
     .sort((a, b) => (a.queuedAt ?? a.createdAt ?? '').localeCompare(b.queuedAt ?? b.createdAt ?? ''));
 }
 
