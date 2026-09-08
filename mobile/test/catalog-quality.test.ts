@@ -30,4 +30,14 @@ describe("catalog presentation hardening", () => {
     expect(role.season).toBe("Season not specified");
     expect(seasonLabel("")).toBe("Season not specified");
   });
+
+  it("removes stale unknown-currency copy from raw compensation", () => {
+    const role = presentCatalogRole({ compensation: { raw: "Currency not stated 54/hour" } });
+    expect(role.compensation).toBe("54/hour");
+  });
+
+  it("formats structured compensation with explicit and source currencies", () => {
+    expect(presentCatalogRole({ compensation: { ranges: [{ minAmount: 40, maxAmount: 50, currency: "USD", period: "hourly", sourceText: "$40-$50/hour" }] } }).compensation).toBe("USD 40–50/hour");
+    expect(presentCatalogRole({ compensation: { ranges: [{ minAmount: 20, maxAmount: 20, currency: "XXX", period: "hourly", sourceText: "£20/hour" }] } }).compensation).toBe("£20/hour");
+  });
 });

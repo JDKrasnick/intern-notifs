@@ -6,7 +6,7 @@ import { employerCategory } from '../src/core/employers.js';
 import type { ApplicationSession } from '../src/application-automation.js';
 import { preferredJobIdentityConflicts, resolvePostingAliases, type AliasResolution } from '../src/identity/posting.js';
 import { deletedUserTombstoneKey, type InternshipStore, type LeverAdmission, type PostingObservationCommit, type PostingObservationCommitResult, type ReleaseStore, type UserStore, type CatalogQuery } from '../src/store.js';
-import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from '../src/catalog-groups.js';
+import { disciplineSearchVariants, filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from '../src/catalog-groups.js';
 import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, EvidenceSource, Internship, MetadataConflict, MonitoringChecklist, NotificationEvent, PostingIdentity, PostingIdentityDecision, PostingIdentityIncident, RoleMetadataEvidence, SourceCheckpoint, SourceHealth, SourceOccurrenceState, UserDocument, UserPreferences } from '../src/types.js';
 import type { D1Database, D1PreparedStatement } from './types.js';
 import { alertEligible, catalogEligible } from '../src/catalog-admission.js';
@@ -641,12 +641,16 @@ export class D1InternshipStore implements InternshipStore {
     if (filter.hideUsCitizenshipRequired) roleClauses.push("coalesce(json_extract(role.value, '$.requiresUsCitizenship'), 0) = 0");
     if (filter.hideAdvancedDegreeRequired) roleClauses.push("coalesce(json_extract(role.value, '$.advancedDegreeRequired'), 0) = 0");
     if (filter.postingIdentityConfirmedOnly) roleClauses.push("coalesce(json_extract(role.value, '$.postingIdentityStatus'), 'legacy') <> 'unconfirmed'");
+    if (filter.hasCompensation) roleClauses.push("trim(coalesce(json_extract(role.value, '$.compensation.raw'), '')) <> ''");
     const exactArrayFilter = (path: string, requested: string[]) => {
       const normalized = requested.map((value) => value.toLowerCase());
       roleClauses.push(`EXISTS (SELECT 1 FROM json_each(role.value, '${path}') AS item WHERE lower(item.value) IN (${placeholders(normalized)}))`);
       values.push(...normalized);
     };
-    if (filter.disciplines?.length) exactArrayFilter('$.disciplines', filter.disciplines);
+    if (filter.disciplines?.length) {
+      const expanded = [...new Set(filter.disciplines.flatMap(disciplineSearchVariants).map((value) => value.toLowerCase()))];
+      exactArrayFilter('$.disciplines', expanded);
+    }
     if (filter.seasons?.length) {
       const normalized = filter.seasons.map((value) => value.toLowerCase());
       roleClauses.push(`lower(json_extract(role.value, '$.season')) IN (${placeholders(normalized)})`);

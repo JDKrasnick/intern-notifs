@@ -1021,17 +1021,31 @@ After Apple processing:
 3. The tester must accept their App Store Connect invitation and use TestFlight with that same Apple Account. Internal testers do not use redeem codes.
 4. Follow [`testflight-checklist.md`](testflight-checklist.md) on a physical iPhone.
 
-## Current release context (2026-08-26)
+## Current release context (2026-09-08)
 
-- Build `1.0.0 (22)` was built from `a838fa4` with the issue #41 trust surface,
-  final app icon, policy/support links, signup consent, retention enforcement,
-  and production EAS URLs. It was uploaded to and accepted by App Store Connect.
-- Production D1 migration `0005_auth_consent.sql` and Worker version
-  `29e40ce2-bab7-4276-b196-41d1116d808d` were deployed on 2026-08-26 after a
-  successful 10% canary.
-- Before the public App Store release, finish physical TestFlight acceptance,
-  reconcile the final archive, complete the App Store listing/privacy
-  disclosures, and submit the selected build for App Review.
+- Build `1.0.0 (25)` was built from `a8a00af` (merge of #170: tap-to-apply
+  sheet filters, fade modal with dim backdrop, stacked Show roles over Clear).
+  EAS build `2968602c-abc6-4029-97bb-9c160f1c7ba2`, auto-submitted to App Store
+  Connect (submission `efef6340-0fb1-41b9-b432-f4c85d54878b`). No Worker change:
+  production Worker `8ce99030` already serves the merged server code.
+- Build `1.0.0 (24)` was built from `beeae3c` (merge of #168: Filter roles
+  bottom sheet with working Role focus/season/work-mode/education/pay filters,
+  white Save pill with tap-to-unsave, inline pay, collapsed identity row).
+  EAS build `1006ec45-ad48-4d34-afa9-1d396ee474bc`, auto-submitted to App Store
+  Connect (submission `5ff86328-e5ed-4501-9dec-fe60c1f72733`).
+- Production Worker version `8ce99030-a2b2-43e9-874d-f3cd4f203eb7` was deployed
+  from `beeae3c` on 2026-09-07 (D1 already at migration `0015_dlq_recovery.sql`,
+  nothing to apply). This was required: the previous Worker predated #168 and
+  silently ignored `hasCompensation` and discipline aliases.
+- Simulator parity verified against production on 2026-09-07 from the same
+  source: Role-focus AI/ML chip filters the feed, pay filter returns paid-only
+  roles, cards render `Los Gatos, CA · winter-2027 · $63/hour` inline with no
+  tofu glyphs, detail sheet stacks Save for web below Apply with collapsed
+  identity. Saved-state unsave toggle still needs a signed-in account check.
+- Remaining owner steps: add build 24 to Internal Testing, run
+  [`testflight-checklist.md`](testflight-checklist.md) on a physical iPhone
+  (push permission, real push delivery, deep links cannot be verified on the
+  simulator), then submit for App Review.
 
 ## Physical-device checks agents cannot fake
 

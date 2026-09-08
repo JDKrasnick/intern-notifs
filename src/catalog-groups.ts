@@ -6,6 +6,17 @@ import { canonicalCompanyKey } from './core/normalize.js';
 import { employerCategory, type EmployerCategory } from './core/employers.js';
 import { occurrenceProvenance } from './sources/provenance.js';
 import type { Internship } from './types.js';
+import { allDisciplineStyles, disciplineKey, disciplineSearchVariants } from '../shared/discipline-display.js';
+
+const DISCIPLINE_FILTER_VALUES: Record<string, string> = Object.fromEntries(
+  allDisciplineStyles().map(({ tag, style }) => [tag, style.filterValue]),
+);
+
+function disciplinesMatch(available: string[], requested: string[]): boolean {
+  const availableKeys = available.map(disciplineKey);
+  return requested.some((value) => availableKeys.includes(disciplineKey(value)));
+}
+export { disciplineSearchVariants };
 
 export type CatalogGroupKind = 'program-group' | 'employer-release' | 'individual';
 export type EducationEvidence = 'explicit' | 'inferred' | 'unspecified' | 'conflicting';
@@ -94,7 +105,8 @@ export interface CatalogGroupFilter {
   employerCategories?: EmployerCategory[];
   hideUsCitizenshipRequired?: boolean;
   hideAdvancedDegreeRequired?: boolean;
-  /** Internal rollout filter; absent statuses remain legacy-visible. */
+  /** Keep only roles whose stored compensation text is non-empty. */
+  hasCompensation?: boolean;
   postingIdentityConfirmedOnly?: boolean;
 }
 
@@ -221,13 +233,9 @@ function workModesFor(job: Internship) {
 function disciplinesFor(job: Internship) {
   const identity = identityFor(job);
   const structured = identity?.disciplineTags ?? identity?.disciplines;
-  const labels: Record<string, string> = {
-    software: 'SWE', 'ai-ml': 'AI/ML', data: 'Data', 'infrastructure-cloud': 'Cloud/Infra',
-    security: 'Security', quant: 'Quant/Fintech', product: 'Product', 'technical-design': 'Design',
-  };
   return unique(structured?.map((item) => {
     const value = typeof item === 'string' ? item : item.value ?? '';
-    return labels[value] ?? value;
+    return DISCIPLINE_FILTER_VALUES[value] ?? value;
   }).filter(Boolean) ?? inferJobFocuses(job));
 }
 
@@ -384,7 +392,8 @@ export function filterCatalogGroups(groups: BuiltGroup[], filter: CatalogGroupFi
         && (!filter.hideUsCitizenshipRequired || !job.requirements?.requiresUsCitizenship)
         && (!filter.hideAdvancedDegreeRequired || !job.requirements?.advancedDegreeRequired)
         && (!filter.source || filter.source === 'all' || catalogSourceClasses(job).includes(filter.source))
-        && (!filter.disciplines?.length || includesFolded(disciplinesFor(job), filter.disciplines))
+        && (!filter.hasCompensation || Boolean(job.compensation?.raw?.trim()))
+        && (!filter.disciplines?.length || disciplinesMatch(disciplinesFor(job), filter.disciplines))
         && (!filter.seasons?.length || includesFolded([seasonFor(job)], filter.seasons))
         // Unspecified education matches every audience but remains visibly unspecified.
         && (!filter.educationLevels?.length || education.evidence === 'unspecified' || includesFolded(education.levels, filter.educationLevels))
@@ -414,10 +423,11 @@ export function filterCatalogGroupDetails(groups: CatalogGroupDetails[], filter:
       && (!filter.hideAdvancedDegreeRequired || !role.advancedDegreeRequired)
       && (!filter.postingIdentityConfirmedOnly || role.postingIdentityStatus !== 'unconfirmed')
       && (!filter.source || credibilityMatches(role.sourceCredibility, filter.source))
-      && (!filter.disciplines?.length || includesFolded(role.disciplines, filter.disciplines))
+      && (!filter.disciplines?.length || disciplinesMatch(role.disciplines, filter.disciplines))
       && (!filter.seasons?.length || includesFolded([role.season], filter.seasons))
       && (!filter.educationLevels?.length || role.education.evidence === 'unspecified' || includesFolded(role.education.levels, filter.educationLevels))
       && (!filter.workModes?.length || includesFolded(role.workModes, filter.workModes))
+      && (!filter.hasCompensation || Boolean(role.compensation?.raw?.trim()))
       && (!filter.locations?.length || filter.locations.some((location) => folded((role.locations ?? role.location.split(/\s*(?:;|\||\n)\s*/)).join(' ')).includes(folded(location)))));
     if (!roles.length) return [];
     return [{
