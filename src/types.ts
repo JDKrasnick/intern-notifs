@@ -12,6 +12,8 @@ export interface ApplicationRecord {
   createdAt: string;
   /** Submission timestamp, whether manually confirmed or detected from mail metadata. */
   appliedAt?: string;
+  /** Queue membership timestamp; only set while status is 'saved'. */
+  queuedAt?: string;
   /** Mail-derived provenance is removed on Gmail disconnect without changing status. */
   detection?: { source: 'gmail'; detectedAt: string };
   notes?: string;

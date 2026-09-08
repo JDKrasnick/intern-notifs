@@ -123,7 +123,7 @@ async function historicalDatabase(options: { presentationAgrees?: boolean; autho
   });
 
   const insertUser = sqlite.prepare('INSERT INTO user_items (user_id, item_key, kind, value) VALUES (?, ?, ?, ?)');
-  insertUser.run('user-1', 'APPLICATION#saved', 'application', JSON.stringify({ applicationId: 'saved', jobId: 'plus-old', status: 'saved', notes: 'latest note', createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-04T00:00:00Z' }));
+  insertUser.run('user-1', 'APPLICATION#saved', 'application', JSON.stringify({ applicationId: 'saved', jobId: 'plus-old', status: 'saved', queuedAt: '2026-08-01T00:00:00Z', notes: 'latest note', createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-04T00:00:00Z' }));
   insertUser.run('user-1', 'APPLICATION#interview', 'application', JSON.stringify({ applicationId: 'interview', jobId: 'plus-duplicate', status: 'interview', appliedAt: '2026-08-02T12:00:00Z', detection: { source: 'gmail', detectedAt: '2026-08-02T12:00:00Z' }, applyMode: 'official-form', notes: 'interview note', createdAt: '2026-08-02T00:00:00Z', updatedAt: '2026-08-03T00:00:00Z' }));
   insertUser.run('user-1', 'APPLICATION_SESSION#session', 'application-session', JSON.stringify({ sessionId: 'session', userId: 'user-1', applicationId: 'saved', jobId: 'plus-old', status: 'created', version: 1, fields: [], fieldPlanDigest: 'x', runnerLifecycle: 'not-started', expiresAt: '2026-09-01T00:00:00Z', metadataExpiresAt: '2026-09-01T00:00:00Z', eventIds: [], createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' }));
   insertUser.run('user-1', 'RECEIPT#old-a#token', 'receipt', JSON.stringify({ userId: 'user-1', jobId: 'plus-old', token: 'token', status: 'error', deliveryState: 'definitive-failure', createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z' }));
@@ -657,6 +657,7 @@ describe('D1 posting identity repair', () => {
       applyMode: 'official-form',
       notes: 'interview note\n\nlatest note',
     })]);
+    expect(applications[0]).not.toHaveProperty('queuedAt');
     const release = JSON.parse((sqlite.prepare("SELECT value FROM user_items WHERE kind = 'catalog-release'").get() as { value: string }).value);
     expect(release).toMatchObject({ jobIds: ['plus-old', 'regular-a'], newJobIds: ['plus-old'] });
     const receipts = sqlite.prepare("SELECT value FROM user_items WHERE kind = 'receipt'").all().map((row) => JSON.parse((row as { value: string }).value));

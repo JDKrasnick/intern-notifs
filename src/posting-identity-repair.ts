@@ -908,17 +908,20 @@ export function postingIdentityRepairPlan(
     const keeper = ordered[0]!;
     const strongest = [...ordered].sort((a, b) => statusRank(b.value.status) - statusRank(a.value.status) || b.value.updatedAt.localeCompare(a.value.updatedAt))[0]!.value;
     const appliedAt = ordered.map((item) => item.value.appliedAt).filter((value): value is string => Boolean(value)).sort()[0];
+    const queuedAt = ordered.map((item) => item.value.queuedAt).filter((value): value is string => Boolean(value)).sort()[0];
     const detection = ordered.map((item) => item.value.detection).filter((value): value is NonNullable<ApplicationRecord['detection']> => Boolean(value))
       .sort((a, b) => b.detectedAt.localeCompare(a.detectedAt))[0];
     const applyMode = strongest.applyMode ?? ordered.map((item) => item.value.applyMode).find((value) => value !== undefined);
     const notes = uniqueNotes(ordered.map((item) => item.value));
+    const keeperRest = { ...keeper.value }; delete keeperRest.queuedAt;
     const value: ApplicationRecord = {
-      ...keeper.value,
+      ...keeperRest,
       jobId: canonicalJobId,
       status: strongest.status,
       createdAt: earliest(ordered.map((item) => item.value.createdAt)),
       updatedAt: latest(ordered.map((item) => item.value.updatedAt)),
       ...(appliedAt ? { appliedAt } : {}),
+      ...(strongest.status === 'saved' && queuedAt ? { queuedAt } : {}),
       ...(detection ? { detection } : {}),
       ...(applyMode ? { applyMode } : {}),
       ...(notes ? { notes } : {}),
