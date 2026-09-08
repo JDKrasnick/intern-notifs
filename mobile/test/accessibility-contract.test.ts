@@ -15,6 +15,11 @@ describe('cross-platform accessibility state contract', () => {
     expect(app.match(/extraData=\{\[applicationStatuses, savingJobIds\]\}/g)).toHaveLength(3);
   });
 
+  it('names an in-progress removal as unsaving', () => {
+    const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+    expect(app.match(/isSaved(?:ForWeb)? \? "Unsaving…" : "Saving…"/g)).toHaveLength(2);
+  });
+
   it('lets the primary application label wrap without overlapping its icon at large text sizes', () => {
     const source = ts.createSourceFile('App.tsx', readFileSync(new URL('../App.tsx', import.meta.url), 'utf8'),
       ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);

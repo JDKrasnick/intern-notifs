@@ -458,6 +458,7 @@ function JobCard({
   const [isHiding, setIsHiding] = useState(false);
   const canSaveForWeb = Boolean(onSaveForWeb) && !applicationStatus && !isSavingForWeb;
   const isSavedForWeb = applicationStatus === "saved";
+  const saveProgressLabel = isSavedForWeb ? "Unsaving…" : "Saving…";
   const canHideLocally = Boolean(onHideLocally);
   const postingTiming = postingTimingPresentation(job.sourceReferences, job.firstSeenAt);
   const recencyBadge = postingRecencyBadge(isNew, postingTiming);
@@ -557,7 +558,7 @@ function JobCard({
             style={[styles.swipeSaveAction, { opacity: saveActionProgress }]}
           >
             <Ionicons name="bookmark" size={20} color="#FFFFFF" />
-            <Text style={styles.swipeSaveActionText}>{isSavingForWeb ? "Saving…" : "Save"}</Text>
+            <Text style={styles.swipeSaveActionText}>{isSavingForWeb ? saveProgressLabel : "Save"}</Text>
           </Animated.View>
         ) : null}
         {canHideLocally ? (
@@ -639,7 +640,7 @@ function JobCard({
               <View style={styles.jobCardBottomActions}>
                 {isSavingForWeb ? (
                   <View style={styles.webSaveButtonCompact}>
-                    <Text style={styles.webSaveButtonText}>Saving…</Text>
+                    <Text style={styles.webSaveButtonText}>{saveProgressLabel}</Text>
                   </View>
                 ) : null}
                 {!isSavingForWeb && isSavedForWeb && onUnsave ? (
@@ -724,6 +725,7 @@ function CatalogGroupCard({
   const [isHiding, setIsHiding] = useState(false);
   const translateX = useRef(new Animated.Value(0)).current;
   const isSaved = applicationStatus === "saved";
+  const saveProgressLabel = isSaved ? "Unsaving…" : "Saving…";
   const canSaveForWeb = Boolean(onSaveForWeb) && !isSaved && !isSavingForWeb;
   const canHideLocally = Boolean(onHideLocally);
   const handleHide = () => {
@@ -795,7 +797,7 @@ function CatalogGroupCard({
         {canSaveForWeb || isSavingForWeb ? (
           <Animated.View pointerEvents="none" style={[styles.swipeSaveAction, { opacity: saveActionProgress }]}>
             <Ionicons name="bookmark" size={20} color="#FFFFFF" />
-            <Text style={styles.swipeSaveActionText}>{isSavingForWeb ? "Saving…" : "Save"}</Text>
+            <Text style={styles.swipeSaveActionText}>{isSavingForWeb ? saveProgressLabel : "Save"}</Text>
           </Animated.View>
         ) : null}
         {canHideLocally ? (
@@ -853,7 +855,7 @@ function CatalogGroupCard({
               <View style={styles.jobCardBottomActions}>
                 {isSavingForWeb ? (
                   <View style={styles.webSaveButtonCompact}>
-                    <Text style={styles.webSaveButtonText}>Saving…</Text>
+                    <Text style={styles.webSaveButtonText}>{saveProgressLabel}</Text>
                   </View>
                 ) : null}
                 {!isSavingForWeb && isSaved && onUnsave ? (
