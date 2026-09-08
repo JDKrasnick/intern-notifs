@@ -68,6 +68,7 @@
     "GITHUB_QUEUE_ID": "d40e2b26bf2140368fe88b10f1ef1575",
     "GMAIL_QUEUE_ID": "4fb23438b39d42faa6ca0cdc867373cc",
     "DESTINATION_VERIFICATION_QUEUE_ID": "9b48a594d06a441e8b8ed45de0c430af",
+    "SHADOW_EXTRACTION_QUEUE_NAME": "intern-notifs-shadow-extraction",
     "DEPLOYMENT_ROLE": "ingestion"
   }
 }

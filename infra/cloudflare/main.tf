@@ -32,6 +32,7 @@ locals {
       { name = "GMAIL_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["gmail"].queue_id },
       { name = "DESTINATION_VERIFICATION_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["destination-verification"].queue_id },
       { name = "SHADOW_EXTRACTION_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["shadow-extraction"].queue_id },
+      { name = "SHADOW_EXTRACTION_QUEUE_NAME", type = "plain_text", text = cloudflare_queue.work["shadow-extraction"].queue_name },
       { name = "DEPLOYMENT_ROLE", type = "plain_text", text = "ingestion" },
       { name = "ADMISSION_QUEUE_AGE_ALERT_HOURS", type = "plain_text", text = tostring(var.admission_queue_age_alert_hours) },
       { name = "ADMISSION_STALE_ALERT_THRESHOLD", type = "plain_text", text = tostring(var.admission_stale_alert_threshold) },

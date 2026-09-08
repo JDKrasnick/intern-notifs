@@ -91,7 +91,8 @@ export interface Environment extends AuthEnvironment {
   GITHUB_QUEUE_ID: string;
   GMAIL_QUEUE_ID: string;
   DESTINATION_VERIFICATION_QUEUE_ID: string;
-  SHADOW_EXTRACTION_QUEUE_ID: string;
+  SHADOW_EXTRACTION_QUEUE_ID?: string;
+  SHADOW_EXTRACTION_QUEUE_NAME?: string;
   ADMISSION_QUEUE_AGE_ALERT_HOURS?: string;
   ADMISSION_STALE_ALERT_THRESHOLD?: string;
   GMAIL_ENABLED?: string;
@@ -446,8 +447,21 @@ export function billingShutdownQueueIds(env: Environment): string[] {
     ...catalogProviderDefinitions.map((provider) => env[provider.runtime.cloudflareQueueIdBinding]),
     env.GMAIL_QUEUE_ID,
     env.DESTINATION_VERIFICATION_QUEUE_ID,
-    env.SHADOW_EXTRACTION_QUEUE_ID,
+    ...(env.SHADOW_EXTRACTION_QUEUE_ID ? [env.SHADOW_EXTRACTION_QUEUE_ID] : []),
   ];
+}
+
+async function resolvedBillingShutdownQueueIds(env: Environment): Promise<string[]> {
+  const configured = billingShutdownQueueIds(env);
+  if (env.SHADOW_EXTRACTION_QUEUE_ID) return configured;
+  if (!env.SHADOW_EXTRACTION_QUEUE_NAME) throw new Error('Shadow extraction queue identity is not configured');
+  const queues = await cloudflareApi(env, '/queues?per_page=100') as Array<{
+    queue_id?: string; queue_name?: string; id?: string; name?: string;
+  }>;
+  const matches = queues.filter((queue) => (queue.queue_name ?? queue.name) === env.SHADOW_EXTRACTION_QUEUE_NAME);
+  const queueId = matches.length === 1 ? matches[0]!.queue_id ?? matches[0]!.id : undefined;
+  if (!queueId) throw new Error(`Exact queue ${env.SHADOW_EXTRACTION_QUEUE_NAME} could not be resolved`);
+  return [...configured, queueId];
 }
 
 async function billingShutdown(request: Request, env: Environment): Promise<Response> {
@@ -455,7 +469,7 @@ async function billingShutdown(request: Request, env: Environment): Promise<Resp
     return Response.json({ message: 'Not found' }, { status: 404 });
   }
 
-  const queueIds = billingShutdownQueueIds(env);
+  const queueIds = await resolvedBillingShutdownQueueIds(env);
   const scriptPath = `/workers/scripts/${encodeURIComponent(env.WORKER_NAME)}`;
   if (new URL(request.url).searchParams.get('dry-run') === 'true') {
     await Promise.all([

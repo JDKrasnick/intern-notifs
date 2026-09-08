@@ -10,9 +10,10 @@ import {
   validateShadowExtraction,
   type NormalizedPostingInput,
   type ShadowStatus,
+  type ShadowValidationResult,
 } from '../src/shadow-extraction.js';
 import type { ProviderIdentity } from '../src/types.js';
-import type { D1Database, MessageBatch, Queue, R2Bucket } from './types.js';
+import type { D1Database, D1PreparedStatement, MessageBatch, Queue, R2Bucket } from './types.js';
 
 export interface ShadowExtractionMessage {
   version: 1;
@@ -177,10 +178,14 @@ async function currentRevision(db: D1Database, message: ShadowExtractionMessage)
   return row?.content_hash === message.contentHash;
 }
 
-async function finishRun(db: D1Database, message: ShadowExtractionMessage, leaseToken: string, state: 'disabled' | 'completed' | 'invalid-output' | 'transient-failure' | 'obsolete', now: Date, values: { responseKey?: string; validation?: unknown; error?: string; inputTokens?: number; outputTokens?: number; actualCostCents?: number } = {}): Promise<boolean> {
-  const result = await db.prepare(`UPDATE shadow_extraction_runs SET state = ?, lease_until = '', response_key = ?, validation = ?, error = ?, input_tokens = ?, output_tokens = ?, actual_cost_cents = ?, completed_at = ?, updated_at = ?
+function finishRunStatement(db: D1Database, message: ShadowExtractionMessage, leaseToken: string, state: 'disabled' | 'completed' | 'invalid-output' | 'transient-failure' | 'obsolete', now: Date, values: { responseKey?: string; validation?: unknown; error?: string; inputTokens?: number; outputTokens?: number; actualCostCents?: number } = {}): D1PreparedStatement {
+  return db.prepare(`UPDATE shadow_extraction_runs SET state = ?, lease_until = '', response_key = ?, validation = ?, error = ?, input_tokens = ?, output_tokens = ?, actual_cost_cents = ?, completed_at = ?, updated_at = ?
     WHERE run_key = ? AND content_hash = ? AND state = 'running' AND lease_token = ?`).bind(state, values.responseKey ?? null, values.validation ? JSON.stringify(values.validation) : null,
-    values.error ?? null, values.inputTokens ?? null, values.outputTokens ?? null, values.actualCostCents ?? null, now.toISOString(), now.toISOString(), message.runKey, message.contentHash, leaseToken).run();
+    values.error ?? null, values.inputTokens ?? null, values.outputTokens ?? null, values.actualCostCents ?? null, now.toISOString(), now.toISOString(), message.runKey, message.contentHash, leaseToken);
+}
+
+async function finishRun(db: D1Database, message: ShadowExtractionMessage, leaseToken: string, state: 'disabled' | 'completed' | 'invalid-output' | 'transient-failure' | 'obsolete', now: Date, values: { responseKey?: string; validation?: unknown; error?: string; inputTokens?: number; outputTokens?: number; actualCostCents?: number } = {}): Promise<boolean> {
+  const result = await finishRunStatement(db, message, leaseToken, state, now, values).run();
   return result.meta.changes === 1;
 }
 
@@ -191,6 +196,30 @@ async function reconcileUsage(db: D1Database, message: ShadowExtractionMessage, 
   if (inserted.meta.changes === 1) await db.prepare(`UPDATE shadow_extraction_cost_ledger
     SET actual_cents = actual_cents + ?, state = 'reconciled', updated_at = ? WHERE period = ? AND run_key = ?`)
     .bind(response.actualCostCents, now.toISOString(), month(startedAt), message.runKey).run();
+}
+
+function runAnalysisStatements(db: D1Database, runKey: string, leaseToken: string, validation: ShadowValidationResult, baseline: ShadowBaseline | undefined, recordedAt: Date): D1PreparedStatement[] {
+  const fieldOutcomes = validation.fieldOutcomes.map((outcome) => db.prepare(`INSERT INTO shadow_extraction_field_outcomes (run_key, field, status, accepted, failure)
+    SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM shadow_extraction_runs WHERE run_key = ? AND lease_token = ?)
+    ON CONFLICT(run_key, field) DO UPDATE SET status = excluded.status, accepted = excluded.accepted, failure = excluded.failure`)
+    .bind(runKey, outcome.field, outcome.status, outcome.accepted ? 1 : 0, outcome.failure ?? null, runKey, leaseToken));
+  const baselineDifferences = validation.fieldOutcomes.flatMap((outcome) => {
+    const baselineState = baseline?.[outcome.field as keyof ShadowBaseline];
+    return baselineState ? [db.prepare(`INSERT INTO shadow_extraction_baseline_differences (run_key, field, baseline_state, shadow_state, differs, recorded_at)
+      SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM shadow_extraction_runs WHERE run_key = ? AND lease_token = ?)
+      ON CONFLICT(run_key, field) DO UPDATE SET baseline_state = excluded.baseline_state,
+        shadow_state = excluded.shadow_state, differs = excluded.differs, recorded_at = excluded.recorded_at`)
+      .bind(runKey, outcome.field, baselineState, outcome.status, baselineState === outcome.status ? 0 : 1, recordedAt.toISOString(), runKey, leaseToken)] : [];
+  });
+  return [...fieldOutcomes, ...baselineDifferences];
+}
+
+async function finishRunWithAnalysis(db: D1Database, message: ShadowExtractionMessage, leaseToken: string, state: 'completed' | 'invalid-output', now: Date, values: { responseKey: string; validation: ShadowValidationResult; inputTokens?: number; outputTokens?: number; actualCostCents?: number }, baseline: ShadowBaseline | undefined): Promise<boolean> {
+  const [finished] = await db.batch([
+    finishRunStatement(db, message, leaseToken, state, now, values),
+    ...runAnalysisStatements(db, message.runKey, leaseToken, values.validation, baseline, now),
+  ]);
+  return finished?.meta.changes === 1;
 }
 
 export async function shadowExtractionSummary(db: D1Database): Promise<Record<string, unknown>> {
@@ -234,11 +263,24 @@ export async function processShadowExtractionBatch(batch: MessageBatch<unknown>,
       if (env.SHADOW_EXTRACTION_ENABLED !== 'true' || !infer) {
         await finishRun(env.DB, message, leaseToken, 'disabled', now(), { error: 'live model execution disabled pending pilot and budget approval' }); queued.ack(); continue;
       }
-      const cached = await env.DB.prepare('SELECT response_key, validation FROM shadow_extraction_cache WHERE cache_key = ?')
-        .bind(message.cacheKey).first<{ response_key: string; validation: string }>();
+      const cached = await env.DB.prepare('SELECT response_key, validation, expires_at FROM shadow_extraction_cache WHERE cache_key = ?')
+        .bind(message.cacheKey).first<{ response_key: string; validation: string; expires_at: string }>();
       if (cached) {
-        await finishRun(env.DB, message, leaseToken, 'completed', now(), { responseKey: cached.response_key, validation: JSON.parse(cached.validation) });
-        queued.ack(); continue;
+        const checkedAt = now();
+        if (!await currentRevision(env.DB, message)) {
+          await finishRun(env.DB, message, leaseToken, 'obsolete', checkedAt, { error: 'a newer posting revision arrived before cache reuse' });
+          queued.ack(); continue;
+        }
+        const retained = Date.parse(cached.expires_at) > checkedAt.getTime()
+          ? await env.SHADOW_EXTRACTION_ARTIFACTS.get(cached.response_key) : null;
+        if (retained) {
+          const validation = JSON.parse(cached.validation) as ShadowValidationResult;
+          await finishRunWithAnalysis(env.DB, message, leaseToken, 'completed', checkedAt,
+            { responseKey: cached.response_key, validation }, parsed.baseline);
+          queued.ack(); continue;
+        }
+        await env.DB.prepare('DELETE FROM shadow_extraction_cache WHERE cache_key = ? AND response_key = ?')
+          .bind(message.cacheKey, cached.response_key).run();
       }
       // Conservative upper bound: 5 cents/request. Actual model cost is reconciled below.
       if (!await reserveShadowCost(env.DB, startedAt, message.runKey, 5, env)) {
@@ -259,23 +301,12 @@ export async function processShadowExtractionBatch(batch: MessageBatch<unknown>,
       const responseKey = `shadow-response/${message.runKey}/${leaseToken}.json`;
       await env.SHADOW_EXTRACTION_ARTIFACTS.put(responseKey, new TextEncoder().encode(JSON.stringify({ response: response.response, validation })).buffer, { httpMetadata: { contentType: 'application/json' } });
       const state = validation.accepted ? 'completed' : 'invalid-output';
-      const finished = await finishRun(env.DB, message, leaseToken, state, now(), { responseKey, validation, inputTokens: response.inputTokens,
-        outputTokens: response.outputTokens, actualCostCents: response.actualCostCents });
+      const completedAt = now();
+      const finished = await finishRunWithAnalysis(env.DB, message, leaseToken, state, completedAt, { responseKey, validation,
+        inputTokens: response.inputTokens, outputTokens: response.outputTokens, actualCostCents: response.actualCostCents }, parsed.baseline);
       if (!finished) { queued.ack(); continue; }
-      if (validation.accepted) await env.DB.prepare(`INSERT INTO shadow_extraction_cache (cache_key, response_key, validation, created_at)
-        VALUES (?, ?, ?, ?) ON CONFLICT(cache_key) DO NOTHING`).bind(message.cacheKey, responseKey, JSON.stringify(validation), now().toISOString()).run();
-      await env.DB.batch(validation.fieldOutcomes.map((outcome) => env.DB.prepare(`INSERT INTO shadow_extraction_field_outcomes (run_key, field, status, accepted, failure)
-        VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_key, field) DO UPDATE SET status = excluded.status, accepted = excluded.accepted, failure = excluded.failure`)
-        .bind(message.runKey, outcome.field, outcome.status, outcome.accepted ? 1 : 0, outcome.failure ?? null)));
-      const baselineDifferences = validation.fieldOutcomes.flatMap((outcome) => {
-        const baselineState = parsed.baseline?.[outcome.field as keyof ShadowBaseline];
-        return baselineState ? [env.DB.prepare(`INSERT INTO shadow_extraction_baseline_differences
-          (run_key, field, baseline_state, shadow_state, differs, recorded_at) VALUES (?, ?, ?, ?, ?, ?)
-          ON CONFLICT(run_key, field) DO UPDATE SET baseline_state = excluded.baseline_state,
-            shadow_state = excluded.shadow_state, differs = excluded.differs, recorded_at = excluded.recorded_at`)
-          .bind(message.runKey, outcome.field, baselineState, outcome.status, baselineState === outcome.status ? 0 : 1, now().toISOString())] : [];
-      });
-      if (baselineDifferences.length) await env.DB.batch(baselineDifferences);
+      if (validation.accepted) await env.DB.prepare(`INSERT INTO shadow_extraction_cache (cache_key, response_key, validation, created_at, expires_at)
+        VALUES (?, ?, ?, ?, ?) ON CONFLICT(cache_key) DO NOTHING`).bind(message.cacheKey, responseKey, JSON.stringify(validation), completedAt.toISOString(), new Date(completedAt.getTime() + retentionDays * 86_400_000).toISOString()).run();
       queued.ack();
     } catch (error) {
       // A claim can be reclaimed while a model call is in flight. Its terminal
