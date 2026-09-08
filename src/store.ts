@@ -5,7 +5,7 @@ import { isPastSeason } from './core/early-career.js';
 import { employerCategory } from './core/employers.js';
 import { canonicalCatalogRecency, catalogRecency, catalogVisibleAt, compareCatalogRecency, openCatalogSortKey } from './catalog-recency.js';
 import { catalogSearchText, catalogSourceClasses, type CatalogSource } from './catalog-fields.js';
-import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, PostingIdentityDecision, PostingIdentityIncident, SourceCheckpoint, SourceHealth, SourceOccurrence, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
+import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, EvidenceSource, Internship, MetadataConflict, MonitoringChecklist, NotificationEvent, PostingIdentity, PostingIdentityDecision, PostingIdentityIncident, RoleMetadataEvidence, SourceCheckpoint, SourceHealth, SourceOccurrence, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
 import { preferredJobIdentityConflicts, resolvePostingAliases, type AliasResolution } from './identity/posting.js';
 import type { ApplicationSession } from './application-automation.js';
 import type { ReviewedLeverSource } from './sources/lever-config.js';
@@ -81,6 +81,9 @@ export interface InternshipStore {
   getJob(jobId: string): Promise<Internship | undefined>;
   getSourceOccurrences(sourceId: string): Promise<SourceOccurrenceState[]>;
   putSourceOccurrence(occurrence: SourceOccurrenceState): Promise<void>;
+  /** Append-only audit history; current evidence is selected by source/artifact slot. */
+  recordRoleMetadataEvidence?(jobId: string, evidence: readonly RoleMetadataEvidence[], conflicts: readonly MetadataConflict[], recordedAt: string,
+    replace?: { sourceId: string; sourceClasses: readonly EvidenceSource[] }): Promise<void>;
   /** Atomically exposes a notification-pending job and records its deterministic outbox event. */
   putInternshipWithNotificationEvent(job: Internship, event: NotificationEvent): Promise<boolean>;
   pendingSms(): Promise<Internship[]>;
@@ -114,6 +117,8 @@ export class MemoryInternshipStore implements InternshipStore {
   readonly postingIdentityReviewCandidates = new Map<string, {
     reviewFamilyKey: string; occurrenceKeys: Set<string>; firstObservedAt: string; lastObservedAt: string;
   }>();
+  readonly roleMetadataEvidence = new Map<string, RoleMetadataEvidence>();
+  readonly roleMetadataConflicts = new Map<string, MetadataConflict[]>();
   catalogProjection?: { generatedAt: string; groups: CatalogGroupDetails[] };
   async getCheckpoint(sourceId: string) { return this.checkpoints.get(sourceId); }
   async getCheckpointsMany(sourceIds: string[]) { return sourceIds.map((id) => this.checkpoints.get(id)).filter((value): value is SourceCheckpoint => Boolean(value)); }
@@ -200,6 +205,19 @@ export class MemoryInternshipStore implements InternshipStore {
   async putInternship(job: Internship) { const canonical = canonicalCatalogRecency(job); this.jobs.set(canonical.jobId, structuredClone(canonical)); }
   async getSourceOccurrences(sourceId: string) { return [...this.occurrences.values()].filter((value) => value.sourceId === sourceId).map((value) => structuredClone(value)); }
   async putSourceOccurrence(occurrence: SourceOccurrenceState) { this.occurrences.set(`${occurrence.sourceId}#${occurrence.externalId}`, structuredClone(occurrence)); }
+  async recordRoleMetadataEvidence(jobId: string, evidence: readonly RoleMetadataEvidence[], conflicts: readonly MetadataConflict[], _recordedAt: string,
+    replace?: { sourceId: string; sourceClasses: readonly EvidenceSource[] }) {
+    if (replace) {
+      const sourceClasses = new Set(replace.sourceClasses);
+      for (const [key, item] of this.roleMetadataEvidence) {
+        if (key.startsWith(`${jobId}\0`) && item.sourceId === replace.sourceId && sourceClasses.has(item.sourceClass)) {
+          this.roleMetadataEvidence.delete(key);
+        }
+      }
+    }
+    for (const item of evidence) this.roleMetadataEvidence.set(`${jobId}\0${item.sourceClass}\0${item.sourceId}\0${item.sourceUrl}\0${item.artifactHash}`, structuredClone(item));
+    this.roleMetadataConflicts.set(jobId, structuredClone([...conflicts]));
+  }
   async putInternshipWithNotificationEvent(job: Internship, event: NotificationEvent) {
     if (this.notificationEvents.has(event.eventId)) return false;
     const canonical = canonicalCatalogRecency(job);
@@ -765,6 +783,7 @@ export interface UserStore {
   listApplications(userId: string): Promise<ApplicationRecord[]>;
   getApplication(userId: string, applicationId: string): Promise<ApplicationRecord | undefined>;
   putApplication(userId: string, value: ApplicationRecord): Promise<void>;
+  deleteApplication(userId: string, applicationId: string): Promise<void>;
   getApplicationSession(userId: string, sessionId: string): Promise<ApplicationSession | undefined>;
   getApplicationSessionById(sessionId: string): Promise<ApplicationSession | undefined>;
   putApplicationSession(userId: string, value: ApplicationSession, expectedVersion?: number): Promise<boolean>;
@@ -834,8 +853,7 @@ export class MemoryUserStore implements UserStore {
   async activeDevices() { return [...this.devices.values()].filter((d) => d.active).map((d) => structuredClone(d)); }
   async putDevice(value: DeviceToken) { this.writable(value.userId); this.devices.set(`${value.userId}#${value.token}`, structuredClone(value)); } async deleteDevice(userId: string, token: string) { this.devices.delete(`${userId}#${token}`); }
   async getProfile(userId: string) { return this.profiles.get(userId); } async putProfile(value: ApplicantProfile) { this.writable(value.userId); this.profiles.set(value.userId, structuredClone(value)); }
-  async listApplications(userId: string) { return [...this.applications.entries()].filter(([key]) => key.startsWith(`${userId}#`)).map(([, value]) => value).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((a) => structuredClone(a)); }
-  async getApplication(userId: string, applicationId: string) { const value = this.applications.get(`${userId}#${applicationId}`); return value && structuredClone(value); } async putApplication(userId: string, value: ApplicationRecord) { this.writable(userId); this.applications.set(`${userId}#${value.applicationId}`, structuredClone(value)); }
+  async listApplications(userId: string) { return [...this.applications.entries()].filter(([key]) => key.startsWith(`${userId}#`)).map(([, value]) => value).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((a) => structuredClone(a)); } async getApplication(userId: string, applicationId: string) { const value = this.applications.get(`${userId}#${applicationId}`); return value && structuredClone(value); } async putApplication(userId: string, value: ApplicationRecord) { this.writable(userId); this.applications.set(`${userId}#${value.applicationId}`, structuredClone(value)); } async deleteApplication(userId: string, applicationId: string) { this.applications.delete(`${userId}#${applicationId}`); }
   async getApplicationSession(userId: string, sessionId: string) { const value = this.sessions.get(`${userId}#${sessionId}`); return value && structuredClone(value); }
   async getApplicationSessionById(sessionId: string) { const value = [...this.sessions.values()].find((session) => session.sessionId === sessionId); return value && structuredClone(value); }
   async putApplicationSession(userId: string, value: ApplicationSession, expectedVersion?: number) { if (await this.isUserDeletionPending(userId)) return false; const key = `${userId}#${value.sessionId}`; const current = this.sessions.get(key); if (expectedVersion !== undefined && current?.version !== expectedVersion) return false; if (expectedVersion === undefined && current) return false; this.sessions.set(key, structuredClone(value)); return true; }
@@ -880,7 +898,7 @@ export class DynamoUserStore implements UserStore {
   putDevice(value: DeviceToken) { return this.put(value.userId, `DEVICE#${value.token}`, 'device', value, value.active ? { activePk: 'ACTIVE', tokenPk: `TOKEN#${value.token}` } : { tokenPk: `TOKEN#${value.token}` }); } async deleteDevice(userId: string, token: string) { await this.client.send(new DeleteCommand({ TableName: this.tableName, Key: { pk: `USER#${userId}`, sk: `DEVICE#${token}` } })); }
   getProfile(userId: string) { return this.get<ApplicantProfile>(userId, 'PROFILE'); } putProfile(value: ApplicantProfile) { return this.put(value.userId, 'PROFILE', 'profile', value); }
   async listApplications(userId: string) { return (await this.queryAll({ TableName: this.tableName, KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)', ExpressionAttributeValues: { ':pk': `USER#${userId}`, ':prefix': 'APPLICATION#' } })).map((item) => item.value as ApplicationRecord).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
-  getApplication(userId: string, applicationId: string) { return this.get<ApplicationRecord>(userId, `APPLICATION#${applicationId}`); } putApplication(userId: string, value: ApplicationRecord) { return this.put(userId, `APPLICATION#${value.applicationId}`, 'application', value); }
+  getApplication(userId: string, applicationId: string) { return this.get<ApplicationRecord>(userId, `APPLICATION#${applicationId}`); } putApplication(userId: string, value: ApplicationRecord) { return this.put(userId, `APPLICATION#${value.applicationId}`, 'application', value); } async deleteApplication(userId: string, applicationId: string) { await this.client.send(new DeleteCommand({ TableName: this.tableName, Key: { pk: `USER#${userId}`, sk: `APPLICATION#${applicationId}` } })); }
   getApplicationSession(userId: string, sessionId: string) { return this.get<ApplicationSession>(userId, `APPLICATION_SESSION#${sessionId}`); }
   async getApplicationSessionById(sessionId: string) {
     const response = await this.client.send(new QueryCommand({ TableName: this.tableName, IndexName: 'activeSessionsIndex', KeyConditionExpression: 'activeSessionPk = :pk', ExpressionAttributeValues: { ':pk': `SESSION#${sessionId}` }, Limit: 1 }));

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { inferLeverSeason, LeverPostingsAdapter, leverRequirements, mapLeverPosting } from '../src/sources/lever.js';
+import { inferLeverSeason, LeverPostingsAdapter, leverRequirements, mapLeverPosting, mapLeverSourcedPosting } from '../src/sources/lever.js';
+import { extractPostingMetadataEvidence } from '../src/role-metadata.js';
 
 const postingId = (index: number) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
 const posting = {
@@ -15,6 +16,32 @@ const posting = {
 const options = { id: 'lever-acme', company: 'Acme', site: 'acme' };
 
 describe('LeverPostingsAdapter', () => {
+  it.each([['per-hour-wage', 30, 45, 'hourly'], ['per-year-salary', 100000, 140000, 'annual']] as const)(
+    'preserves structured %s pay through metadata extraction', (interval, min, max, period) => {
+      const mapped = mapLeverSourcedPosting({ ...posting, salaryRange: { currency: 'USD', interval, min, max },
+        lists: [{ text: 'Requirements', content: '<li>Must be pursuing a bachelor degree.</li>' }],
+        categories: { location: 'New York, NY', allLocations: ['New York, NY', 'Boston, MA'] },
+      }, options);
+      expect(mapped.locations).toEqual(['New York, NY', 'Boston, MA']);
+      expect(mapped.content.some(item => item.value.includes('bachelor degree'))).toBe(true);
+      const evidence = extractPostingMetadataEvidence({ exactPosting: true, sourceClass: 'official-ats', sourceId: mapped.sourceId,
+        sourceUrl: mapped.sourceUrl, observedAt: mapped.fetchedAt,
+        artifact: { title: mapped.title, compensationText: mapped.compensationText, locations: mapped.locations } });
+      expect(evidence[0]?.compensationRanges).toHaveLength(1);
+      expect(evidence[0]?.compensationRanges?.[0]).toMatchObject({ minAmount: min, maxAmount: max, currency: 'USD', period });
+    });
+  it.each([
+    { currency: 'USD', interval: 'one-time', min: 10000, max: 12000 },
+    { currency: 'USD', min: 30, max: 40 },
+    { currency: 'USD', interval: 'per-hour-wage', min: 40, max: 30 },
+    { currency: 'USD', interval: 'per-hour-wage', max: 30 },
+  ])('does not infer missing or unsupported structured pay: %j', salaryRange => {
+    expect(mapLeverSourcedPosting({ ...posting, salaryRange }, options).compensationText).toBeUndefined();
+  });
+  it('retains a separate disclosed salary description', () => {
+    expect(mapLeverSourcedPosting({ ...posting, salaryDescriptionPlain: 'Salary: CAD 30 - 40 per hour' }, options)
+      .compensationText).toBe('Salary: CAD 30 - 40 per hour');
+  });
   it('maps direct application URLs, Lever metadata, requirements, and a named season', () => {
     const mapped = mapLeverPosting(posting, options, '2026-07-20T00:00:00.000Z', 3);
     expect(mapped).toMatchObject({

@@ -8,6 +8,8 @@ import { metadataCompleteness } from '../catalog-admission.js';
 import { normalizeListing, normalizeLocations, locationSummary } from '../catalog-quality.js';
 import { applicationUrlRejection } from '../sources/quality.js';
 import { providerPostingReference } from '../identity/posting.js';
+import { extractPostingMetadataEvidence } from '../role-metadata.js';
+import { metadataDescriptionText } from '../core/metadata-text.js';
 import type {
   JobRequirements,
   PostingDecision,
@@ -16,6 +18,10 @@ import type {
   SourceSnapshot,
   SourcedPosting,
 } from '../types.js';
+
+// Source preprocessing can change independently of the shared API/page parser.
+// Revisit source snapshots without invalidating complete API acquisitions.
+export const SOURCE_METADATA_PROCESSING_REVISION = 2;
 
 function markdownToText(value: string): string {
   return htmlToText(value
@@ -109,6 +115,28 @@ export function processPosting(
     ...(posting.publishedAt ? { postedAt: posting.publishedAt } : {}),
     ...(posting.providerTimestamp ? { providerTimestamp: posting.providerTimestamp } : {}),
     ...(workMode ? { workMode } : {}),
+    metadataEvidence: extractPostingMetadataEvidence({
+      artifact: {
+        title,
+        text: posting.content.map(part => metadataDescriptionText(part.format === 'markdown'
+          ? part.value.replace(/!\[[^\]]*\]\([^)]*\)/gu, ' ')
+            .replace(/\[([^\]]+)\]\([^)]*\)/gu, '$1').replace(/[*`>#]/gu, ' ')
+          : part.value)).join('\n'),
+        ...(posting.compensationText ? { compensationText: posting.compensationText } : {}),
+        ...(posting.compensationBands?.length ? { compensationBands: posting.compensationBands } : {}),
+        locations: sourceLocations,
+        ...(posting.declaredWorkMode ? { workMode: posting.declaredWorkMode } : workMode ? { workMode } : {}),
+        ...(posting.providerTimestamp?.semantics === 'published' ? { publishedAt: posting.providerTimestamp.value }
+          : posting.publishedAt ? { publishedAt: posting.publishedAt } : {}),
+        ...(posting.providerTimestamp?.semantics === 'updated' ? { updatedAt: posting.providerTimestamp.value } : {}),
+      },
+      sourceClass: posting.provenance === 'reviewed-community' ? 'reviewed-community'
+        : posting.provenance === 'official-structured' ? 'official-json-ld' : 'official-ats',
+      sourceId: posting.sourceId,
+      sourceUrl: posting.sourceUrl,
+      observedAt: posting.fetchedAt,
+      exactPosting: true,
+    }),
     internshipIdentity: buildInternshipIdentity({
       sourceId: posting.sourceId,
       sourceUrl: posting.sourceUrl,

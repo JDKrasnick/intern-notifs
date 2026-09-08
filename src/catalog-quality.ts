@@ -87,18 +87,22 @@ export function normalizeCompensation(value: string): Compensation {
     const plausible = period === 'hourly' ? min >= 5 && max <= 500 : min >= 10_000 && max <= 1_000_000;
     if (plausible) candidates.push({ raw: match[0].trim(), min, max, period });
   }
-  const hourly = candidates.filter((item) => item.period === 'hourly');
-  const annual = candidates.filter((item) => item.period === 'annual');
+  const distinctCandidates = [...new Map(candidates.map((item) => [
+    `${item.period}\0${item.min}\0${item.max}`,
+    item,
+  ])).values()];
+  const hourly = distinctCandidates.filter((item) => item.period === 'hourly');
+  const annual = distinctCandidates.filter((item) => item.period === 'annual');
   const raw = boundedText([...new Set(candidates.map((item) => item.raw))].join(' · '), 160);
   const result: Compensation = { raw };
-  if (hourly.length) {
-    result.minHourlyUSD = Math.min(...hourly.map((item) => item.min));
-    result.maxHourlyUSD = Math.max(...hourly.map((item) => item.max));
+  if (hourly.length === 1) {
+    result.minHourlyUSD = hourly[0]!.min;
+    result.maxHourlyUSD = hourly[0]!.max;
   }
-  if (annual.length) {
-    result.minAnnualUSD = Math.min(...annual.map((item) => item.min));
-    result.maxAnnualUSD = Math.max(...annual.map((item) => item.max));
-    result.maxHourlyUSD = Math.max(result.maxHourlyUSD ?? 0, result.maxAnnualUSD / 2080);
+  if (annual.length === 1) {
+    result.minAnnualUSD = annual[0]!.min;
+    result.maxAnnualUSD = annual[0]!.max;
+    if (!hourly.length) result.maxHourlyUSD = result.maxAnnualUSD / 2080;
   }
   return result;
 }
@@ -165,7 +169,7 @@ export function normalizeListing<T extends ProcessedListing | SourceOccurrence>(
     title,
     locations,
     location: locationSummary(locations),
-    compensation: normalizeCompensation(listing.compensation.raw),
+    compensation: listing.compensation.ranges?.length ? listing.compensation : normalizeCompensation(listing.compensation.raw),
     ...('internshipIdentity' in listing && listing.internshipIdentity
       ? { internshipIdentity: normalizeIdentity(listing.internshipIdentity, listing.company, company, title) }
       : {}),

@@ -102,7 +102,6 @@ export function disciplineSearchVariants(raw: string): string[] {
 export function allDisciplineTags(): DisciplineTag[] {
   return Object.keys(DISCIPLINE_STYLES) as DisciplineTag[];
 }
-
 export function allDisciplineStyles(): Array<{ tag: DisciplineTag; style: DisciplineStyle }> {
   return (Object.keys(DISCIPLINE_STYLES) as DisciplineTag[]).map(tag => ({ tag, style: DISCIPLINE_STYLES[tag] }));
 }

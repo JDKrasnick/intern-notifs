@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { deriveCanonicalAdmission, evaluateCatalogAdmission, metadataCompleteness } from '../src/catalog-admission.js';
 import { classifyDestination, requiresBrowserVerification } from '../src/destination-verification.js';
 import { inspectApplicationPage, type ApplicationPageEvidence } from '../src/core/application-url.js';
+import { reachabilityFromFailure } from '../src/core/application-verification.js';
 import type { CatalogAdmission, ProcessedListing, SourceOccurrence } from '../src/types.js';
 
 function listing(overrides: Partial<ProcessedListing> = {}): ProcessedListing {
@@ -173,15 +174,37 @@ describe('record-level catalog admission', () => {
     }
   });
 
-  it('retains last-known-good handoff for seven days while pausing alerts', () => {
+  it('anchors temporary unreadability to the last successful exact-role verification and pauses alerts', () => {
     const role = listing({ applyUrl: 'https://careers.acme.test/roles/1234567' });
     const goodDestination = classifyDestination({ listing: role, reachability: 'live', evidence: page({ postingIdPresent: true }), inspectedAt: '2026-08-20T12:00:00Z' });
     const previous = evaluateCatalogAdmission({ listing: role, destination: goodDestination, postingAttributed: true, evaluatedAt: '2026-08-20T12:00:00Z' });
     const unresolved = classifyDestination({ listing: role, reachability: 'unreachable', inspectedAt: '2026-08-26T12:00:00Z' });
     const grace = evaluateCatalogAdmission({ listing: role, destination: unresolved, postingAttributed: true, evaluatedAt: '2026-08-26T12:00:00Z', previous });
-    expect(grace).toMatchObject({ catalogEligible: true, alertEligible: false, reasonCodes: ['destination-grace'], graceDeadline: '2026-09-02T12:00:00.000Z' });
-    const expired = evaluateCatalogAdmission({ listing: role, destination: unresolved, postingAttributed: true, evaluatedAt: '2026-09-03T12:00:00Z', previous: grace });
+    expect(grace).toMatchObject({ catalogEligible: true, alertEligible: false, reasonCodes: ['destination-grace'],
+      lastVerifiedAt: '2026-08-20T12:00:00Z', graceDeadline: '2026-08-27T12:00:00.000Z',
+      destination: { lastKnownGoodAt: '2026-08-20T12:00:00Z' } });
+    const retry = evaluateCatalogAdmission({ listing: role, destination: { ...unresolved, inspectedAt: '2026-08-26T18:00:00Z' },
+      postingAttributed: true, evaluatedAt: '2026-08-26T18:00:00Z', previous: grace });
+    expect(retry).toMatchObject({ catalogEligible: true, alertEligible: false,
+      lastVerifiedAt: '2026-08-20T12:00:00Z', graceDeadline: '2026-08-27T12:00:00.000Z',
+      destination: { lastKnownGoodAt: '2026-08-20T12:00:00Z' } });
+    const expired = evaluateCatalogAdmission({ listing: role, destination: unresolved, postingAttributed: true, evaluatedAt: '2026-08-27T12:00:00Z', previous: retry });
     expect(expired).toMatchObject({ catalogEligible: false, alertEligible: false, reasonCodes: ['destination-unresolved'] });
+  });
+
+  it.each([404, 410])('immediately closes a previously verified role on confirmed HTTP %s', (status) => {
+    const role = listing();
+    const previous = evaluateCatalogAdmission({ listing: role,
+      destination: classifyDestination({ listing: role, reachability: 'live', evidence: page({ postingIdPresent: true }), inspectedAt: '2026-08-20T12:00:00Z' }),
+      postingAttributed: true, evaluatedAt: '2026-08-20T12:00:00Z' });
+    const gone = classifyDestination({ listing: role,
+      reachability: reachabilityFromFailure(new Error(`official destination returned HTTP ${status}`)),
+      inspectedAt: '2026-08-21T12:00:00Z' });
+    expect(evaluateCatalogAdmission({ listing: role, destination: gone, postingAttributed: true,
+      evaluatedAt: '2026-08-21T12:00:00Z', previous })).toMatchObject({
+      catalogEligible: false, alertEligible: false, reasonCodes: ['destination-gone'],
+      lastVerifiedAt: '2026-08-20T12:00:00Z',
+    });
   });
 
   it('lets valid official evidence repair a community row and blocks reviewed employer conflicts', () => {

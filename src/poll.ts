@@ -17,7 +17,7 @@ import { isTechnicalJob, type JobFilter } from './core/filters.js';
 import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
 import { evaluateSourceFreshness } from './ingestion/monitoring.js';
 import { sourceProvider, sourceRegion } from './integration-registry.js';
-import { processSnapshot } from './ingestion/processor.js';
+import { processSnapshot, SOURCE_METADATA_PROCESSING_REVISION } from './ingestion/processor.js';
 import { deriveCanonicalAdmission, evaluateCatalogAdmission } from './catalog-admission.js';
 import { classifyDestination, matchingBrowserDestination, requiresBrowserVerification, type CatalogAdmissionResolver, type DestinationVerificationRequest } from './destination-verification.js';
 import { reviewedBoardIndex } from './sources/index.js';
@@ -31,6 +31,7 @@ import {
 } from './sources/trust-policy.js';
 import { trustedCommunityCircuitBreaches, trustedCommunityMetrics } from './sources/trusted-community-health.js';
 import { SourceFetchError } from './sources/source-error.js';
+import { extractVerifiedPageMetadataEvidence, mergeRoleMetadataEvidence, projectRoleMetadata, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION, VERIFIED_PAGE_METADATA_SOURCES } from './role-metadata.js';
 import { failedSourceHealth, sourceFailureOutcome, successfulSourceHealth } from './source-health.js';
 import type {
   Internship,
@@ -46,7 +47,7 @@ import type {
 } from './types.js';
 import type { InternshipStore } from './store.js';
 
-const applicationPageMetadataVersion = 1;
+const applicationPageMetadataVersion = ROLE_METADATA_EXTRACTION_VERSION + 1;
 
 function stableSourceMaterial(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableSourceMaterial).join(',')}]`;
@@ -60,6 +61,16 @@ function stableSourceMaterial(value: unknown): string {
   return JSON.stringify(value) ?? 'null';
 }
 
+function withoutObservationTimestamps(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutObservationTimestamps);
+  if (value && typeof value === 'object') return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key, item]) => key !== 'observedAt' && item !== undefined)
+      .map(([key, item]) => [key, withoutObservationTimestamps(item)]),
+  );
+  return value;
+}
+
 function sourceOwnedMaterial(value: ProcessedListing | SourceOccurrence): string {
   // GitHub row numbers and fetch timestamps move whenever a maintainer edits
   // the Markdown around a role. Compare only facts the source owns so that
@@ -71,6 +82,12 @@ function sourceOwnedMaterial(value: ProcessedListing | SourceOccurrence): string
     postedAt: value.postedAt,
     providerTimestamp: value.providerTimestamp,
     workMode: value.workMode,
+    // Destination verification can append page/browser evidence to a durable
+    // occurrence. Exclude it from the source comparison so an unchanged ATS
+    // row can still take the fast path on its next poll.
+    metadataEvidence: withoutObservationTimestamps(
+      value.metadataEvidence?.filter((item) => item.sourceUrl === value.sourceUrl),
+    ),
     company: value.company,
     title: value.title,
     location: value.location,
@@ -125,7 +142,10 @@ function quarantinedOccurrence(
     ...(listing.postedAt ? { postedAt: listing.postedAt } : {}),
     externalId,
     ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
+    ...(listing.metadataEvidence?.length ? { metadataEvidence: listing.metadataEvidence } : {}),
+    ...(listing.metadataExtraction ? { metadataExtraction: listing.metadataExtraction } : {}),
     ...(listing.admissionConfigurationVersion ? { admissionConfigurationVersion: listing.admissionConfigurationVersion } : {}),
+    ...(listing.sourceMetadataProcessing ? { sourceMetadataProcessing: listing.sourceMetadataProcessing } : {}),
     postingIdentityDecision: decision,
     company: listing.company,
     title: listing.title,
@@ -652,12 +672,14 @@ export class IngestionRunner {
     admissionConfigurationVersion?: string,
     reuseUnchangedOccurrences = false,
     completeFetchSequence?: number,
+    stampSourceMetadata = false,
   ) {
     const resolved = new Map<string, Internship | undefined>();
     const validatedAt = new Map<string, string>();
     const metadataValidated = new Map<string, number>();
     const alertEligible = new Set<string>();
     const handledExternalIds = new Set<string>();
+    const failedExternalIds = new Set<string>();
     // Slots keep the snapshot order stable so duplicate merging, alert order, and
     // reported failures do not depend on which worker finished first.
     const accepted = new Array<ProcessedListing | undefined>(listings.length);
@@ -713,10 +735,15 @@ export class IngestionRunner {
           ? { trustedCommunityAlertQualification: priorOccurrence.occurrence.trustedCommunityAlertQualification }
           : {}),
         ...(admissionConfigurationVersion ? { admissionConfigurationVersion } : {}),
+        ...(stampSourceMetadata ? { sourceMetadataProcessing: {
+          extractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+          processingRevision: SOURCE_METADATA_PROCESSING_REVISION,
+          sourceMaterialHash: sourceMaterialHash(sourceListing),
+        } } : {}),
       };
       const admissionAlreadyApplied = Boolean(admissionConfigurationVersion
         && priorOccurrence?.occurrence.admissionConfigurationVersion === admissionConfigurationVersion);
-      if (!trustedCommunityPolicy && (reuseUnchangedOccurrences || admissionAlreadyApplied) && priorOccurrence
+      if (!stampSourceMetadata && !trustedCommunityPolicy && (reuseUnchangedOccurrences || admissionAlreadyApplied) && priorOccurrence
         && sourceOwnedMaterial(priorOccurrence.occurrence) === sourceOwnedMaterial(listing)) {
         handledExternalIds.add(id);
         return;
@@ -934,8 +961,16 @@ export class IngestionRunner {
             reachability = reachabilityFromFailure(error);
             failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
             if (!admissionManaged) {
+              failedExternalIds.add(id);
               if (existing?.open && reachability === 'gone') await this.quarantine(existing);
               await completeFailedAdmissionMigration();
+              // A durable 404/410 outcome is complete, not a transient retry.
+              // Wait for quarantine and any prior admission record to persist
+              // before allowing this row into the metadata progress ledger.
+              if (stampSourceMetadata && reachability === 'gone' && handledExternalIds.has(id)) {
+                failedExternalIds.delete(id);
+                failures[slot] = undefined;
+              }
               return;
             }
           }
@@ -973,6 +1008,34 @@ export class IngestionRunner {
         const destination = freshNegative || (destinationRule && destinationRule.decision !== 'browser-required')
           ? observedDestination
           : browserDestination ?? reusableTrustedDestination ?? observedDestination;
+        if (!browserDestination && pageEvidence && ['posting-detail', 'application-form'].includes(destination.classification)) {
+          const pageMetadata = extractVerifiedPageMetadataEvidence({
+            expectedTitle: listing.title,
+            expectedPostingId: listing.providerIdentity?.postingId,
+            page: {
+              title: pageEvidence.title ?? listing.title,
+              // Structured descriptions must pass the JSON-LD posting match;
+              // do not also promote them as independently verified page text.
+              text: pageEvidence.contentSource === 'json-ld' ? undefined : pageEvidence.contentExcerpt,
+            },
+            jsonLdArtifacts: pageEvidence.metadataArtifacts,
+            sourceId: listing.sourceId,
+            sourceUrl: pageEvidence.url,
+            observedAt: inspectedAt,
+            exactPosting: true,
+          });
+          listing = {
+            ...listing,
+            metadataEvidence: mergeRoleMetadataEvidence(listing.metadataEvidence, pageMetadata),
+            metadataExtraction: {
+              version: ROLE_METADATA_EXTRACTION_VERSION,
+              artifactHash: pageEvidence.contentHash ?? pageEvidence.renderedEvidenceHash ?? createHash('sha256').update(JSON.stringify({ url: pageEvidence.url, title: pageEvidence.title, description: pageEvidence.description })).digest('hex'),
+              observedAt: inspectedAt,
+              outcome: pageMetadata.some(roleMetadataEvidenceHasFields) ? 'extracted' : 'no-explicit-metadata',
+            },
+          };
+          metadataValidated.set(id, applicationPageMetadataVersion);
+        }
         const trustedCommunityAlertQualification = trustedCommunityPolicy
           ? { ...advanceTrustedCommunityQualification({
             previous: priorOccurrence?.occurrence.trustedCommunityAlertQualification,
@@ -1025,6 +1088,7 @@ export class IngestionRunner {
             providerIdentity: listing.providerIdentity,
             candidateUrl: listing.applyUrl,
             reason: existing?.normalizedUrl && existing.normalizedUrl !== normalizedUrl ? 'url-change' : 'first-sight',
+            metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
           });
         }
         if (admission.catalogEligible && ['posting-detail', 'application-form'].includes(destination.classification)) {
@@ -1036,6 +1100,7 @@ export class IngestionRunner {
         handledExternalIds.add(id);
       } catch (error) {
         failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
+        failedExternalIds.add(id);
         await completeFailedAdmissionMigration();
       }
     });
@@ -1047,6 +1112,7 @@ export class IngestionRunner {
       metadataValidated,
       alertEligible,
       handledExternalIds,
+      failedExternalIds,
     };
   }
 
@@ -1094,7 +1160,9 @@ export class IngestionRunner {
         const configurationChanged = Boolean(prefetched.previous?.pendingAdmissionConfigurationVersion || (prefetched.admissionConfigurationVersion
           && prefetched.previous?.admissionConfigurationVersion
           && prefetched.admissionConfigurationVersion !== prefetched.previous.admissionConfigurationVersion));
-        const fetchCheckpoint = configurationChanged && prefetched.previous ? {
+        const metadataVersionChanged = prefetched.previous?.metadataExtractionVersion !== ROLE_METADATA_EXTRACTION_VERSION
+          || prefetched.previous?.metadataProcessingRevision !== SOURCE_METADATA_PROCESSING_REVISION;
+        const fetchCheckpoint = (configurationChanged || metadataVersionChanged) && prefetched.previous ? {
           ...prefetched.previous,
           etag: undefined,
           documentEtags: undefined,
@@ -1154,7 +1222,9 @@ export class IngestionRunner {
         const admissionConfigurationChanged = Boolean(previous?.pendingAdmissionConfigurationVersion || (admissionConfigurationVersion
           && previous?.admissionConfigurationVersion
           && admissionConfigurationVersion !== previous.admissionConfigurationVersion));
-        const fetchCheckpoint = admissionConfigurationChanged && previous ? {
+        const metadataVersionChanged = previous?.metadataExtractionVersion !== ROLE_METADATA_EXTRACTION_VERSION
+          || previous?.metadataProcessingRevision !== SOURCE_METADATA_PROCESSING_REVISION;
+        const fetchCheckpoint = (admissionConfigurationChanged || metadataVersionChanged) && previous ? {
           ...previous,
           etag: undefined,
           documentEtags: undefined,
@@ -1180,7 +1250,9 @@ export class IngestionRunner {
         const githubAdmissionConfigurationVersion = providerFor(connector.id) === 'github'
           ? admissionConfigurationVersion
           : undefined;
-        const migrationLimit = admissionConfigurationChanged && githubAdmissionConfigurationVersion
+        const boundedMetadataRefresh = Boolean(previous && metadataVersionChanged && githubAdmissionConfigurationVersion
+          && options.maxAdmissionMigrationListingsPerSourceRun !== undefined);
+        const migrationLimit = (admissionConfigurationChanged || boundedMetadataRefresh) && githubAdmissionConfigurationVersion
           ? remainingMigrationLimit
           : undefined;
         const priorByExternalId = new Map(priorOccurrences.map((occurrence) => [occurrence.externalId, occurrence]));
@@ -1195,8 +1267,29 @@ export class IngestionRunner {
             || (this.trustedCommunityCatalogEnabled && prior.occurrence.trustedCommunityAlertQualification?.sourceMaterialHash
               && prior.occurrence.trustedCommunityAlertQualification.sourceMaterialHash !== sourceMaterialHash(sourceListing)));
         });
+        const metadataRowProcessed = (sourceListing: ProcessedListing) => {
+          const materialHash = sourceMaterialHash(sourceListing);
+          const prior = priorByExternalId.get(externalId(sourceListing));
+          // Parser progress cannot stand in for lifecycle reconciliation. If a
+          // row disappeared after it was parsed, its unchanged reappearance
+          // must still restore the occurrence before the refresh certifies.
+          if (prior && (!prior.present || prior.occurrence.state !== sourceListing.state)) return false;
+          return previous?.pendingMetadataProcessedRows?.some((row) =>
+            row.externalId === externalId(sourceListing)
+            && row.sourceMaterialHash === materialHash
+            && row.extractionVersion === ROLE_METADATA_EXTRACTION_VERSION
+            && row.processingRevision === SOURCE_METADATA_PROCESSING_REVISION) === true;
+        };
         const opportunisticMigrationCandidates = migrationLimit === undefined ? [] : batch.processed.listings.filter((sourceListing) =>
-          !priorByExternalId.has(externalId(sourceListing)));
+          !priorByExternalId.has(externalId(sourceListing))
+          && !(boundedMetadataRefresh && metadataRowProcessed(sourceListing)));
+        const metadataMigrationCandidates = !boundedMetadataRefresh ? [] : batch.processed.listings.filter((sourceListing) => {
+          // The checkpoint ledger is the refresh transaction cursor. An
+          // occurrence stamp can be committed before a later metadata-evidence
+          // write fails, so it is observability only and cannot prove that this
+          // refresh row completed atomically.
+          return !metadataRowProcessed(sourceListing);
+        });
         const selectedRequiredMigrations = migrationLimit === undefined
           ? []
           : requiredMigrationCandidates.slice(0, migrationLimit);
@@ -1206,6 +1299,8 @@ export class IngestionRunner {
         const trustedPolicy = activeTrustedCommunityPolicy(connector.id, this.trustedCommunityCatalogEnabled);
         const opportunisticCapacity = migrationLimit === undefined
           ? 0
+          : boundedMetadataRefresh
+            ? Math.max(0, migrationLimit - selectedRequiredMigrations.length)
           : !trustedPolicy && requiredMigrationCandidates.length === 0
             ? opportunisticMigrationCandidates.length
             : Math.max(0, migrationLimit - selectedRequiredMigrations.length);
@@ -1223,14 +1318,19 @@ export class IngestionRunner {
         const publicationCapacity = migrationLimit === undefined ? 0
           : Math.max(0, migrationLimit - selectedRequiredMigrations.length - selectedOpportunisticMigrations.length);
         const selectedPublications = publicationCandidates.slice(0, publicationCapacity);
+        const admissionCandidates = [...selectedRequiredMigrations, ...selectedOpportunisticMigrations, ...selectedPublications];
+        const selectedMetadataMigrations = migrationLimit === undefined ? [] : metadataMigrationCandidates
+          .filter((listing) => !admissionCandidates.some((candidate) => externalId(candidate) === externalId(listing)))
+          .slice(0, Math.max(0, migrationLimit - admissionCandidates.length));
         const migrationCandidates = migrationLimit === undefined
           ? batch.processed.listings
-          : [...selectedRequiredMigrations, ...selectedOpportunisticMigrations, ...selectedPublications];
+          : [...admissionCandidates, ...selectedMetadataMigrations];
         const trustedFullBody = sourceAdmissionPolicy(connector.id).trust === 'trusted-community'
           && this.trustedCommunityCatalogEnabled
           && result.unchangedReason !== 'not_modified';
+        const metadataFullBody = metadataVersionChanged && result.unchangedReason !== 'not_modified';
         const listingsToResolve = migrationLimit === undefined
-          ? (batch.unchanged && !trustedFullBody ? [] : batch.processed.listings)
+          ? (batch.unchanged && !trustedFullBody && !metadataFullBody ? [] : batch.processed.listings)
           : migrationCandidates;
         const resolution = await this.resolveListings(
           listingsToResolve,
@@ -1241,6 +1341,7 @@ export class IngestionRunner {
             && !admissionConfigurationChanged
             && admissionConfigurationVersion === previous?.admissionConfigurationVersion),
           result.unchangedReason === 'not_modified' ? undefined : result.checkpoint.successfulFetches,
+          boundedMetadataRefresh,
         );
         // Existing catalog decisions are the durable migration obligation.
         // Rows with no prior occurrence are evaluated with spare slice capacity
@@ -1250,9 +1351,30 @@ export class IngestionRunner {
           || selectedRequiredMigrations.some((listing) => !resolution.handledExternalIds.has(externalId(listing)))
           || opportunisticMigrationCandidates.length > selectedOpportunisticMigrations.length
         );
-        let admissionMigrationPending = admissionEvidencePending
+        const metadataMigrationPending = boundedMetadataRefresh && (
+          result.unchangedReason === 'not_modified'
+          || metadataMigrationCandidates.length > migrationCandidates.filter((listing) =>
+            metadataMigrationCandidates.some((candidate) => externalId(candidate) === externalId(listing))).length
+          || migrationCandidates.filter((listing) => metadataMigrationCandidates.some((candidate) => externalId(candidate) === externalId(listing)))
+            .some((listing) => !resolution.handledExternalIds.has(externalId(listing)))
+        );
+        let admissionMigrationPending = admissionEvidencePending || metadataMigrationPending
           || publicationCandidates.length > selectedPublications.length
           || selectedPublications.some((listing) => !resolution.handledExternalIds.has(externalId(listing)));
+        const missingOccurrences = priorOccurrences.filter((prior) => !batch.activeExternalIds.has(prior.externalId));
+        const pendingOmissionIds = new Set((previous?.pendingMetadataOmissions ?? [])
+          .filter((item) => item.extractionVersion === ROLE_METADATA_EXTRACTION_VERSION
+            && item.processingRevision === SOURCE_METADATA_PROCESSING_REVISION
+            && !batch.activeExternalIds.has(item.externalId))
+          .map((item) => item.externalId));
+        const unprocessedMissingOccurrences = missingOccurrences.filter((prior) => !pendingOmissionIds.has(prior.externalId));
+        const selectedClosures = boundedMetadataRefresh && !admissionMigrationPending
+          ? (metadataMigrationCandidates.length ? [] : unprocessedMissingOccurrences.slice(0, migrationLimit))
+          : [];
+        const lifecycleMigrationPending = boundedMetadataRefresh
+          && (unprocessedMissingOccurrences.length > selectedClosures.length
+            || metadataMigrationCandidates.length > 0 && unprocessedMissingOccurrences.length > 0);
+        admissionMigrationPending ||= lifecycleMigrationPending;
         if (admissionMigrationPending) report.continuationSources.push(connector.id);
         if (trustedPolicy && result.unchangedReason !== 'not_modified') {
           const diagnostics = result.trustedCommunityDiagnostics ?? {
@@ -1310,18 +1432,17 @@ export class IngestionRunner {
         // Admission configuration migration is independent of source
         // lifecycle reconciliation. Replaying inactive historical occurrences
         // defeats the slice bound; the next ordinary poll handles omissions.
-        const closureCandidates = migrationLimit !== undefined ? [] : priorOccurrences.filter((prior) =>
-          !resolution.resolved.has(prior.externalId)
-          && !batch.activeExternalIds.has(prior.externalId)
-          && prior.consecutiveOmissions >= 1);
+        const partialMigration = migrationLimit !== undefined && admissionMigrationPending;
+        const closureScope = boundedMetadataRefresh ? selectedClosures : partialMigration ? [] : missingOccurrences;
+        const closureCandidates = closureScope.filter((prior) => !resolution.resolved.has(prior.externalId) && prior.consecutiveOmissions >= 1);
         await forEachBounded(closureCandidates, async (prior) => {
           resolution.resolved.set(prior.externalId, await this.store.getJob(prior.jobId));
         });
         const reconciliationPriorOccurrences = migrationLimit !== undefined
-          ? listingsToResolve.flatMap((listing) => {
+          ? [...listingsToResolve.flatMap((listing) => {
             const prior = priorByExternalId.get(externalId(listing));
             return prior ? [prior] : [];
-          })
+          }), ...selectedClosures]
           : priorOccurrences;
         const plan = this.reconciler.reconcile({
           sourceId: connector.id,
@@ -1345,6 +1466,7 @@ export class IngestionRunner {
         const committedJobIds = new Set<string>();
         const blockedJobIds = new Set<string>();
         const persistenceFailedJobIds = new Set<string>();
+        const persistenceFailedExternalIds = new Set<string>();
         const alertedJobIds = new Set<string>();
         const notificationErrors = new Array<unknown>(plan.notifications.length);
         const consumedEvents = new Set<string>();
@@ -1381,6 +1503,14 @@ export class IngestionRunner {
               return;
             }
             committedJobIds.add(job.jobId);
+            if (this.store.recordRoleMetadataEvidence && occurrence.occurrence.metadataEvidence?.length) {
+              const projected = projectRoleMetadata(job);
+              await this.store.recordRoleMetadataEvidence(job.jobId, occurrence.occurrence.metadataEvidence, projected.conflicts, now,
+                occurrence.occurrence.metadataExtraction ? {
+                  sourceId: occurrence.sourceId,
+                  sourceClasses: VERIFIED_PAGE_METADATA_SOURCES,
+                } : undefined);
+            }
             if (includeEvent) {
               consumedEvents.add(includeEvent.eventId);
               if (result.notificationInserted) alertedJobIds.add(job.jobId);
@@ -1391,6 +1521,7 @@ export class IngestionRunner {
             if (event) notificationErrors[plan.notifications.indexOf(event)] = error;
             if (migrationLimit === undefined || !githubAdmissionConfigurationVersion) throw error;
             persistenceFailedJobIds.add(occurrence.jobId);
+            persistenceFailedExternalIds.add(occurrence.externalId);
             const prior = priorByExternalId.get(occurrence.externalId);
             try {
               if (prior && prior.occurrence.admissionConfigurationVersion !== githubAdmissionConfigurationVersion) {
@@ -1412,6 +1543,12 @@ export class IngestionRunner {
             try { await this.store.putInternship(job); }
             catch (error) {
               if (migrationLimit === undefined) throw error;
+              if (boundedMetadataRefresh) {
+                persistenceFailedJobIds.add(job.jobId);
+                for (const occurrence of plan.occurrences.filter((item) => item.jobId === job.jobId)) {
+                  persistenceFailedExternalIds.add(occurrence.externalId);
+                }
+              }
               report.failures.push(`${connector.id}: ${job.jobId}: migration job persistence failed; preserved prior decision: ${error instanceof Error ? error.message : String(error)}`);
             }
           },
@@ -1421,7 +1558,15 @@ export class IngestionRunner {
           const job = plannedJobs.get(event.jobId);
           if (!job) { notificationErrors[index] = new Error(`Notification event ${event.eventId} has no catalog job`); return; }
           try { if (await this.store.putInternshipWithNotificationEvent(job, event)) alertedJobIds.add(event.jobId); }
-          catch (error) { notificationErrors[index] = error; }
+          catch (error) {
+            notificationErrors[index] = error;
+            if (boundedMetadataRefresh) {
+              persistenceFailedJobIds.add(job.jobId);
+              for (const occurrence of plan.occurrences.filter((item) => item.jobId === job.jobId)) {
+                persistenceFailedExternalIds.add(occurrence.externalId);
+              }
+            }
+          }
         });
         for (const job of plan.newJobs) {
           if (alertedJobIds.has(job.jobId)) report.newJobs.push(job);
@@ -1432,7 +1577,11 @@ export class IngestionRunner {
           report.failures.push(`${connector.id}: migration notification persistence failed: ${notificationError instanceof Error ? notificationError.message : String(notificationError)}`);
         }
         const provider = providerFor(connector.id);
-        if (trustedPolicy && migrationLimit !== undefined && persistenceFailedJobIds.size) {
+        if ((trustedPolicy || boundedMetadataRefresh) && migrationLimit !== undefined && persistenceFailedJobIds.size) {
+          admissionMigrationPending = true;
+          if (!report.continuationSources.includes(connector.id)) report.continuationSources.push(connector.id);
+        }
+        if (boundedMetadataRefresh && report.failures.length) {
           admissionMigrationPending = true;
           if (!report.continuationSources.includes(connector.id)) report.continuationSources.push(connector.id);
         }
@@ -1470,13 +1619,48 @@ export class IngestionRunner {
             ? { trustedCommunity: trustedMetrics ?? previousHealth!.trustedCommunity }
             : {}),
         };
+        if (admissionMigrationPending) successHealth.lastSuccessAt = previousHealth?.lastSuccessAt;
         await this.store.putSourceHealth(successHealth);
         health.push(successHealth);
         const checkpointAdmissionConfigurationVersion = admissionMigrationPending
           ? previous?.admissionConfigurationVersion
           : admissionConfigurationVersion;
+        const priorProcessedRows = previous?.pendingMetadataProcessedRows ?? [];
+        const processedRows = [
+          ...priorProcessedRows,
+          ...migrationCandidates.filter((listing) => metadataMigrationCandidates.some((candidate) => externalId(candidate) === externalId(listing))
+            && resolution.handledExternalIds.has(externalId(listing))
+            && !resolution.failedExternalIds.has(externalId(listing))
+            && !persistenceFailedExternalIds.has(externalId(listing)))
+            .map((listing) => ({ externalId: externalId(listing), sourceMaterialHash: sourceMaterialHash(listing),
+              extractionVersion: ROLE_METADATA_EXTRACTION_VERSION, processingRevision: SOURCE_METADATA_PROCESSING_REVISION })),
+        ].filter((row, index, rows) => rows.findIndex((candidate) => candidate.externalId === row.externalId
+          && candidate.sourceMaterialHash === row.sourceMaterialHash
+          && candidate.extractionVersion === row.extractionVersion
+          && candidate.processingRevision === row.processingRevision) === index);
+        const processedOmissionIds = [...new Set([
+          ...pendingOmissionIds,
+          ...selectedClosures.filter((prior) => !persistenceFailedExternalIds.has(prior.externalId)).map((prior) => prior.externalId),
+        ])];
+        const metadataReconciled = !unchanged304 && !admissionMigrationPending
+          && (boundedMetadataRefresh || migrationLimit === undefined)
+          && !persistenceFailedJobIds.size && !report.failures.length;
+        const checkpointSuccess = admissionMigrationPending ? {
+          successfulFetches: previous?.successfulFetches ?? 0,
+          lastSuccessAt: previous?.lastSuccessAt,
+        } : {};
         await this.store.putCheckpoint({
           ...result.checkpoint,
+          ...checkpointSuccess,
+          // A 304, migration slice or failed persistence cannot certify that
+          // unchanged source content has passed the current metadata parser.
+          metadataExtractionVersion: metadataReconciled ? ROLE_METADATA_EXTRACTION_VERSION : previous?.metadataExtractionVersion,
+          metadataProcessingRevision: metadataReconciled ? SOURCE_METADATA_PROCESSING_REVISION : previous?.metadataProcessingRevision,
+          pendingMetadataProcessedRows: metadataReconciled ? undefined : processedRows,
+          pendingMetadataOmissions: metadataReconciled ? undefined : processedOmissionIds.map((externalId) => ({
+            externalId, extractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+            processingRevision: SOURCE_METADATA_PROCESSING_REVISION,
+          })),
           contentHash: batch.snapshotHash,
           activeExternalIds: [...batch.activeExternalIds],
           pendingAdmissionConfigurationVersion: admissionMigrationPending ? admissionConfigurationVersion : undefined,

@@ -80,6 +80,7 @@ export interface CatalogGroupRole {
   requiresUsCitizenship: boolean;
   advancedDegreeRequired: boolean;
   compensation: Internship['compensation'];
+  housing?: Internship['housing'];
   workAuthorizationStatus: NonNullable<Internship['workAuthorizationStatus']>;
   applicationDeadline?: Internship['applicationDeadline'];
   graduationWindow?: Internship['graduationWindow'];
@@ -353,6 +354,7 @@ export function catalogGroupDetails(group: BuiltGroup): CatalogGroupDetails {
 }
 
 function catalogGroupRole(job: Internship): CatalogGroupRole {
+  const identityProgramType = provenancedText(identityFor(job)?.programType) as Internship['programType'];
   return {
     jobId: job.jobId, company: job.company, title: titleFor(job), location: job.location, season: seasonFor(job),
     locations: locationsFor(job), visibleAt: catalogVisibleAt(job),
@@ -362,10 +364,10 @@ function catalogGroupRole(job: Internship): CatalogGroupRole {
     employerCategory: job.employerCategory ?? employerCategory(job.company),
     requiresUsCitizenship: Boolean(job.requirements?.requiresUsCitizenship),
     advancedDegreeRequired: Boolean(job.requirements?.advancedDegreeRequired),
-    compensation: job.compensation, workAuthorizationStatus: job.workAuthorizationStatus ?? 'unknown',
+    compensation: job.compensation, ...(job.housing?.length ? { housing: job.housing } : {}), workAuthorizationStatus: job.workAuthorizationStatus ?? 'unknown',
     ...(job.applicationDeadline ? { applicationDeadline: job.applicationDeadline } : {}),
     ...(job.graduationWindow ? { graduationWindow: job.graduationWindow } : {}),
-    ...(job.programType ? { programType: job.programType } : {}),
+    ...(job.programType ?? identityProgramType ? { programType: job.programType ?? identityProgramType } : {}),
     firstSeenAt: job.firstSeenAt, lastSeenAt: job.lastSeenAt,
     sourceReferences: job.sourceReferences,
     ...(job.applicationUrlValidatedAt ? { applicationUrlValidatedAt: job.applicationUrlValidatedAt } : {}),

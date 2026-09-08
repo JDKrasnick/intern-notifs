@@ -32,6 +32,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { ApiError, api, authenticatedRead, responseCache, sessionStorage } from "./src/api";
 import { appendGroupedCatalogPage, catalogCardKind, type GroupedCatalogPage } from "./src/catalog";
 import { boundedCatalogText, compactLocations, presentCatalogRole, seasonLabel } from "./src/catalog-quality";
+import { housingLabels, type DisplayHousingDetail } from "../shared/housing-display";
 import { catalogGroupAvailabilityLabel, countActiveCatalogFilters, educationFilterOptions, emptyCatalogFilters, groupedCatalogParameters, seasonFilterOptions, workModeFilterOptions, type CatalogFilterValues, type ChipOption } from "./src/catalog-filters";
 import { allDisciplineStyles, disciplineStyleFor } from "../shared/discipline-display";
 import { createLatestRequestGuard } from "./src/latest-request";
@@ -98,6 +99,7 @@ type Job = {
   season: string;
   applyUrl: string;
   compensation: { raw: string };
+  housing?: DisplayHousingDetail[];
   employerCategory?: EmployerCategory;
   requirements?: { requiresUsCitizenship: boolean; advancedDegreeRequired: boolean };
   disciplines?: string[];
@@ -160,6 +162,7 @@ type CatalogGroupRole = {
   requiresUsCitizenship?: boolean;
   advancedDegreeRequired?: boolean;
   compensation: { raw: string };
+  housing?: DisplayHousingDetail[];
   firstSeenAt: string;
   lastSeenAt: string;
   sourceReferences: Job["sourceReferences"];
@@ -531,7 +534,7 @@ function JobCard({
         },
         onPanResponderTerminate: resetPosition,
       }),
-    [canHideLocally, canSaveForWeb, motionAllowed, onHideLocally, onSaveForWeb, translateX],
+    [canHideLocally, canSaveForWeb, hideFade, hideScale, hideTranslateY, isHiding, motionAllowed, onHideLocally, onSaveForWeb, translateX],
   );
   const saveActionProgress = translateX.interpolate({
     inputRange: [-108, -36, 0],
@@ -673,6 +676,7 @@ function catalogRoleJob(role: CatalogGroupRole): Job {
     season: role.season,
     applyUrl: role.officialApplyUrl,
     compensation: role.compensation ?? { raw: "" },
+    housing: role.housing,
     employerCategory: role.employerCategory,
     requirements: {
       requiresUsCitizenship: Boolean(role.requiresUsCitizenship),
@@ -1155,6 +1159,12 @@ function JobDetailSheet({
                   <Text style={styles.pay} numberOfLines={2}>{roleDisplay.compensation}</Text>
                 </View>
               ) : null}
+              {housingLabels(role.housing).map((housing, index) => (
+                <View key={`${housing.label}-${index}`} style={styles.sheetTrustBlock}>
+                  <Text style={styles.sheetTrustPrimary}>{housing.label}</Text>
+                  {housing.detail ? <Text style={styles.sheetTrustSecondary}>{housing.detail}</Text> : null}
+                </View>
+              ))}
               <View style={styles.sheetTrustBlock}>
                 <Text style={styles.sheetTrustPrimary}>{source.primary}</Text>
                 {source.corroboration ? <Text style={styles.sheetTrustSecondary}>{source.corroboration}</Text> : null}

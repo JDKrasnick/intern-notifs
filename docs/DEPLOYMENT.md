@@ -7,7 +7,8 @@
 
 ## Architecture
 
-InternNotifs is an Expo mobile app with a serverless AWS backend.
+InternNotifs is an Expo mobile app with a Cloudflare Worker backend. Retained
+AWS resources are rollback/export infrastructure, not active application targets.
 
 | Area | Service / implementation |
 | --- | --- |
@@ -89,6 +90,10 @@ The export includes Cloudflare Pages security headers plus the public policy pag
 
 `https://internnotifs.app` is the canonical public web address. It is registered, delegated to Cloudflare, and attached to the `internnotifs` Pages project through a proxied apex CNAME to `internnotifs.pages.dev`; the Pages custom-domain validation, verification, and HTTPS certificate must remain active. The customer catalog owns `/`, while the employer workspace is isolated to `/employer/*`. The similarly spelled `internotifs.app` is not the project domain. The web bundle calls the API Worker at `https://intern-notifs.jdkrasnick.workers.dev`; set `EXPO_PUBLIC_API_URL` explicitly on the build command only when deploying against another approved API origin. Local `.env` files cannot silently replace the production default.
 
+### Trusted-catalog regression probes
+
+`npm run probes:trusted-catalog` performs a read-only recheck of the three documented exact-role regressions. It fetches their official ATS API records and the corresponding public `GET /jobs/{id}` records, then prints field-level discrepancies. It writes no files or data and uses no credentials. Requests are limited to the fixed three probes, run concurrently, and time out after 10 seconds (override with `-- --timeout-ms 10000`, maximum 30 seconds). A 401/403 is reported as `blocked`; other HTTP, transport, timeout, and invalid-JSON failures are `unavailable`, never a closure or a passing check. Use `-- --api-url <approved API origin>` only for a non-production comparison.
+
 Keep `EMPLOYER_PORTAL_ENABLED=false` while deploying the persistence layer. Apply D1 migrations before the Worker so employer routes can never observe a partial schema:
 
 ```bash
@@ -134,6 +139,133 @@ changed or closed records. Confirm `GET /jobs`, `GET /catalog`, and a sampled
 summaries, structured `locations`, bounded compensation, and unchanged
 notification flags. Never store the operations secret in shell history, Git, or
 documentation.
+
+## Employer metadata enrichment (#134)
+
+Apply `0015_role_metadata_enrichment.sql`, `0016_role_metadata_repair_plans.sql`
+and `0017_metadata_acquisition.sql` before deploying the enrichment Worker.
+Extraction v8 and later additionally require `0018_metadata_review.sql` and
+`0019_metadata_job_review_revision.sql` before deployment.
+The migrations are additive: they store compact versioned field evidence,
+historical artifact versions, extraction outcomes, conflicts, and guarded repair
+staging, acquisition leases and host backoff. Full job descriptions are never
+written to these tables. Preserve the active production publication flags:
+`IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED=true` and
+`IDENTITY_CONFIRMED_COVERAGE_FLOOR=0.70`; local defaults differ.
+
+After deployment, use the existing destination-verification queue to collect
+historical exact-posting evidence. Identity-checked public APIs run first;
+Browser Rendering covers unsupported or unsuccessful API routes. Collection is
+staging-only and does not rewrite public jobs:
+
+```bash
+export CATALOG_API_URL=https://intern-notifs.jdkrasnick.workers.dev
+export OPERATIONS_SHARED_SECRET='use-the-deployed-operations-secret'
+npm run migrate:role-metadata -- collect --limit 100
+npm run migrate:role-metadata -- audit
+npm run migrate:role-metadata -- dry-run
+```
+
+After each queued batch drains, repeat collection with
+`--collection-token TOKEN_FROM_FIRST_RESPONSE` and
+`--cursor NEXT_CURSOR_FROM_PREVIOUS_RESPONSE` until the audit reports
+`collectionCoverage.complete: true`, with both `pendingOrUnobserved` and
+`stale` at zero. Queued or in-flight verifications remain pending until their
+extraction attempt is recorded. The dry run returns HTTP 409 and apply refuses
+to run while collection is incomplete. Cursor exhaustion only means no more
+eligible rows in this pass, not that queued work completed. Restart without a
+cursor after pending leases (30 minutes) or retry backoffs expire when needed.
+
+Archive the complete collection and dry-run reports. Review fills and
+corrections by field/source class, every conflict, unsupported currencies/pay periods, and
+blocked/inconclusive/aggregate outcomes. Unknown values must remain unknown.
+Apply only after owner approval, copying all three guards from the same dry run:
+
+`deferredProjections` must also be empty. These jobs retain accepted metadata
+whose contributing source evidence predates the current parser. Source
+checkpoints require a full successful refresh after extraction/preprocessing
+upgrades, without treating HTTP 304s or admission migration slices as completion.
+Do not clear evidence or bypass the deferral guard to make the audit pass.
+
+Existing GitHub sources refresh stale parser/preprocessing versions through the
+Worker's 20-row continuation limit. A versioned per-row material ledger resumes
+successful work, including explicit negative decisions; occurrence stamps alone
+do not certify completion because evidence writes can fail after the job commit.
+Missing-occurrence work uses separate bounded progress, and reappearing rows
+must reconcile before completion. Partial runs retain the previous successful
+source timestamp and fetch count. Verify all seven published GitHub checkpoints
+reach the current extraction/processing versions and a new complete success;
+destination collection is independent and cannot supply that proof. Do not
+clear source checkpoints, replay DLQs or bypass backoffs to force completion.
+
+Each dry run stages at most 250 jobs and 8 MiB of original/proposed UTF-8 JSON
+in stable job-ID order and reports
+`remainingJobs` separately. Field fill/correction counts describe only that batch;
+conflicts, evidence freshness and collection completeness still cover the entire
+cohort. After an approved batch applies, run a new dry run and obtain approval of
+its new token/counts. Repeat until `remainingJobs` and `expectedJobs` are zero;
+never increase the atomic limit or reuse approval across batches.
+
+```bash
+npm run migrate:role-metadata -- apply \
+  --repair-token EXACT_TOKEN \
+  --expected-jobs EXACT_JOB_COUNT \
+  --expected-occurrences EXACT_OCCURRENCE_COUNT
+```
+
+The transaction compares every original job JSON value, emits no outbox event,
+and refuses stale counts or any unreviewed metadata conflict. Migration 0018 adds
+an atomic revision guard covering evidence, extraction attempts, conflicts,
+reviews and catalog mutations, including changes outside the selected batch.
+A conflict-free apply refreshes grouped projections and returns an apply receipt
+with `verificationRequired: true`. Full verification runs in a separate request
+to stay within the Worker memory and D1 query budgets. Run `audit` and
+`dry-run` again; `projectionOnlyOmissions` must be empty.
+`supportedRoleSpecificDisclosedMetadataMisses` and `disclosureRecall` remain null
+until an independent disclosure benchmark exists; do not interpret them as zero.
+Sample `/jobs`, `/catalog`, and
+group detail results to confirm unchanged job IDs, occurrences, saves,
+applications, receipts, notification flags/tombstones, visibility timestamps,
+and lifecycle state. Roll back exposure with a new reviewed repair; retain the
+evidence and conflict history.
+
+### Reviewed omission of disputed pay
+
+When exact employer evidence genuinely contradicts itself, an operator can
+propose leaving compensation blank while preserving separately verified fields
+such as housing. This does not authorize choosing a salary or rewriting evidence:
+
+```bash
+npm run migrate:role-metadata -- preview-omission --job-id EXACT_JOB_ID
+```
+
+Inspect the returned evidence conflicts and obtain owner approval for its exact
+`reviewToken` and `expectedDecisions: 1`. Only then run:
+
+```bash
+npm run migrate:role-metadata -- approve-omission \
+  --review-token EXACT_REVIEW_TOKEN --expected-decisions 1
+```
+
+Approval records an auditable decision but changes **zero public jobs**. Run a
+fresh repair dry-run and obtain separate approval of its repair token/counts.
+Migration 0019 binds review approval to the exact posting's catalog/evidence
+revision, so unrelated collection does not expire the preview. Same-posting
+changes still reject approval atomically; the separate repair remains guarded
+by the catalog-wide revision. Pre-0019 previews must be regenerated.
+`reviewedOmissions` lists the exact decisions used by that plan. Every other
+field/job conflict and the full collection-completeness gate remain blocking.
+Conflict rows remain in history, not silently marked resolved. The activated
+receipt keeps pay blank during ordinary projection only while its versioned
+evidence fingerprint matches; changed evidence expires the omission and reopens
+review. A concurrent evidence, review or catalog change rejects the whole repair.
+Stale previews must be regenerated, not force-applied.
+
+After projection, the daily destination-verification scheduler rechecks up to
+100 eligible destinations, including never-inspected roles and old extraction
+versions, then the oldest observations beyond the revalidation cutoff. Host
+rotation and reservations prevent repeated selection of the same batch. The queued
+artifact hash prevents an older extraction from satisfying that revalidation.
 
 ## Catalog admission rollout (#120)
 

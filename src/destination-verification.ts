@@ -11,6 +11,10 @@ export interface DestinationVerificationRequest {
   providerIdentity: ProviderIdentity;
   candidateUrl: string;
   reason: 'first-sight' | 'url-change' | 'content-change' | 'daily-retry' | 'weekly-sample' | 'historical-backfill';
+  /** Optional additive fields keep already-queued v1 messages valid. */
+  metadataExtractionVersion?: number;
+  metadataArtifactHash?: string;
+  metadataBackfillToken?: string;
 }
 
 export interface CatalogAdmissionResolver {
