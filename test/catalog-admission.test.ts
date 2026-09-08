@@ -286,6 +286,10 @@ describe('record-level catalog admission', () => {
       evidence: page({ postingIdPresent: true, validThrough: '2026-09-01T12:00:00Z' }), inspectedAt: '2026-08-26T12:00:00Z' });
     expect(future).toMatchObject({ classification: 'posting-detail', closureState: 'open',
       validThrough: '2026-09-01T12:00:00Z', freshUntil: '2026-09-01T12:00:00.000Z', nextCheckAt: '2026-08-31T12:00:00.000Z' });
+    const nearDeadline = classifyDestination({ listing: role, reachability: 'live', browserVisible: true,
+      evidence: page({ postingIdPresent: true, validThrough: '2026-08-26T18:00:00Z' }), inspectedAt: '2026-08-26T12:00:00Z' });
+    expect(nearDeadline).toMatchObject({ classification: 'posting-detail',
+      freshUntil: '2026-08-26T18:00:00.000Z', nextCheckAt: '2026-08-27T12:00:00.000Z' });
   });
 
   it('lets valid official evidence repair a community row and blocks reviewed employer conflicts', () => {

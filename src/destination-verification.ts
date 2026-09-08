@@ -6,6 +6,7 @@ import { evidenceHash } from './catalog-admission.js';
 
 export const DESTINATION_EVIDENCE_TTL_MS = 7 * 86_400_000;
 export const DESTINATION_RECHECK_LEAD_MS = 24 * 60 * 60_000;
+const DESTINATION_MIN_RECHECK_INTERVAL_MS = 24 * 60 * 60_000;
 
 export interface DestinationVerificationRequest {
   jobId: string;
@@ -121,11 +122,14 @@ export function classifyDestination(input: {
   const validThroughTime = input.evidence?.validThrough ? Date.parse(input.evidence.validThrough) : Number.NaN;
   const freshUntilTime = Number.isFinite(validThroughTime) ? Math.min(ttlDeadline, validThroughTime) : ttlDeadline;
   const transientReachability = input.reachability === 'blocked' || input.reachability === 'unreachable';
-  const nextCheckTime = transientReachability
-    ? inspectedTime + 86_400_000
-    : Math.max(inspectedTime, freshUntilTime - DESTINATION_RECHECK_LEAD_MS);
   const evidenceGone = input.evidence?.closureState === 'gone'
     || (Number.isFinite(validThroughTime) && validThroughTime <= inspectedTime);
+  const nextCheckTime = transientReachability
+    ? inspectedTime + 86_400_000
+    : input.reachability === 'gone' || evidenceGone
+      ? inspectedTime + DESTINATION_EVIDENCE_TTL_MS - DESTINATION_RECHECK_LEAD_MS
+      : Math.max(inspectedTime + DESTINATION_MIN_RECHECK_INTERVAL_MS,
+        freshUntilTime - DESTINATION_RECHECK_LEAD_MS);
   const common = {
     candidateUrl,
     ...(finalUrl ? { finalUrl } : {}),

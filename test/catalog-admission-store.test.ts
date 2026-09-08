@@ -301,6 +301,35 @@ describe('D1 catalog admission operations', () => {
     expect(resumed[0]!.occurrenceKey).toBe(first[0]!.occurrenceKey);
   });
 
+  it('does not immediately re-lease a completed validThrough closure', async () => {
+    const { admission: store, jobs } = subject();
+    const current = job();
+    current.admission = admission(true);
+    current.admission.destination.nextCheckAt = '2026-09-08T12:00:00Z';
+    const reference = { sourceId: 'structured-acme', provenance: 'official-structured' as const, externalId: 'role-1',
+      document: 'role-1', sourceUrl: 'https://careers.acme.test/jobs', row: 1, company: 'Acme', title: current.title,
+      location: current.location, season: current.season, applyUrl: current.applyUrl,
+      compensation: current.compensation, state: 'open' as const, admission: current.admission };
+    current.sourceReferences = [reference];
+    await jobs.putInternship(current);
+    await store.syncVerificationSchedule('2026-09-08T12:00:00Z');
+    const [leased] = await store.leaseDueVerifications('2026-09-08T12:00:00Z');
+    const destination = classifyDestination({
+      listing: { ...reference, fetchedAt: '2026-09-08T12:00:00Z', providerIdentity: leased!.providerIdentity },
+      reachability: 'live', browserVisible: true, inspectedAt: '2026-09-08T12:00:00Z',
+      evidence: { url: reference.applyUrl, title: reference.title, postingIdPresent: true, jobPostingCount: 1,
+        validThrough: '2026-09-07T12:00:00Z', confidence: { score: 100, level: 'high', recommendation: 'alert-eligible', signals: [] } },
+    });
+    expect(destination).toMatchObject({ classification: 'gone', nextCheckAt: '2026-09-14T12:00:00.000Z' });
+    await store.completeScheduledVerification({ occurrenceKey: leased!.occurrenceKey, leaseToken: leased!.leaseToken,
+      completedAt: '2026-09-08T12:00:00Z', classification: destination.classification,
+      nextCheckAt: destination.nextCheckAt! });
+
+    await expect(store.leaseDueVerifications('2026-09-08T12:30:00Z')).resolves.toEqual([]);
+    await expect(store.leaseDueVerifications('2026-09-14T11:59:59Z')).resolves.toEqual([]);
+    await expect(store.leaseDueVerifications('2026-09-14T12:00:00Z')).resolves.toHaveLength(1);
+  });
+
   it('releases a stale lease immediately when the occurrence destination generation changes', async () => {
     const { admission: store, jobs } = subject();
     const current = job();
