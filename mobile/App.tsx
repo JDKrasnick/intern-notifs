@@ -352,20 +352,20 @@ function useMotionAllowed() {
 
 function useSheetEntranceOffset(visible: boolean) {
   const motionAllowed = useContext(MotionAllowedContext);
-  const offset = useRef(new Animated.Value(32)).current;
+  const offset = useRef(new Animated.Value(96)).current;
   useEffect(() => {
     if (!visible) {
-      offset.setValue(32);
+      offset.setValue(96);
       return;
     }
     if (!motionAllowed) {
       offset.setValue(0);
       return;
     }
-    offset.setValue(32);
+    offset.setValue(96);
     const animation = Animated.timing(offset, {
       toValue: 0,
-      duration: 280,
+      duration: 320,
       easing: Easing.bezier(0.16, 1, 0.3, 1),
       useNativeDriver: true,
     });

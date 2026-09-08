@@ -41,8 +41,8 @@ describe('mobile job routes', () => {
     const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 
     expect(app.match(/useSheetEntranceOffset\(/g)).toHaveLength(3);
-    expect(app).toContain('new Animated.Value(32)');
-    expect(app).toContain('duration: 280');
+    expect(app).toContain('new Animated.Value(96)');
+    expect(app).toContain('duration: 320');
     expect(app).toContain('easing: Easing.bezier(0.16, 1, 0.3, 1)');
     expect(app).not.toContain('new Animated.Value(windowHeight)');
   });
