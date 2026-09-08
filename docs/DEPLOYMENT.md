@@ -19,13 +19,11 @@ AWS resources are rollback/export infrastructure, not active application targets
 | Job catalog | D1 indexed canonical records and grouped projections |
 | Personal data | D1 user records and releases |
 | Résumés | Private R2 objects behind authenticated Worker routes |
-| Ingestion, delivery, and Gmail sync | Cron Triggers, five Queues with DLQs, Worker consumers, Gmail read-only API, Expo Push Service |
+| Ingestion, delivery, and Gmail sync | Cron Triggers, six Queues with DLQs, Worker consumers, Gmail read-only API, Expo Push Service |
 | Infrastructure | OpenTofu with Cloudflare provider v5 in `infra/cloudflare/` |
 | CI | GitHub Actions in `.github/workflows/ci.yml` |
 
 The catalog is public. Accounts, preferences, device tokens, profiles, documents, and application tracking are private to the verified user identity.
-
-## Gmail application detection rollout
 
 ## API and ingestion deployment boundary
 
@@ -34,6 +32,8 @@ configurations. Use `npm run build:cloudflare` to validate both; do not run a
 bare `wrangler deploy`. The cutover sequence, binding inventory, smoke checks,
 and rollback procedure are in [`api-ingestion-split.md`](api-ingestion-split.md).
 The coordinator alone performs that cutover.
+
+## Gmail application detection rollout
 
 Gmail detection is optional, account-gated, Apply-triggered, and disabled by default. It requests
 only `https://www.googleapis.com/auth/gmail.readonly`. A signed-in Apply click records a
@@ -64,9 +64,12 @@ Set secrets interactively; never put their values in Git, Terraform variables,
 shell arguments, mobile configuration, or `EXPO_PUBLIC_*` values:
 
 ```bash
-npx wrangler secret put GMAIL_CLIENT_SECRET
-npx wrangler secret put GMAIL_TOKEN_ENCRYPTION_KEY
-npx wrangler secret put GMAIL_MESSAGE_HMAC_KEY
+npx wrangler secret put GMAIL_CLIENT_SECRET --config wrangler.api.jsonc
+npx wrangler secret put GMAIL_TOKEN_ENCRYPTION_KEY --config wrangler.api.jsonc
+npx wrangler secret put GMAIL_MESSAGE_HMAC_KEY --config wrangler.api.jsonc
+npx wrangler secret put GMAIL_CLIENT_SECRET --config wrangler.ingestion.jsonc
+npx wrangler secret put GMAIL_TOKEN_ENCRYPTION_KEY --config wrangler.ingestion.jsonc
+npx wrangler secret put GMAIL_MESSAGE_HMAC_KEY --config wrangler.ingestion.jsonc
 ```
 
 The encryption key and message-HMAC key must be independently generated and

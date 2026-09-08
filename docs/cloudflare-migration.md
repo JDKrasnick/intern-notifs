@@ -72,8 +72,8 @@ export TF_VAR_zone_id='cloudflare-zone-id'
 
 npm run build:cloudflare
 tofu -chdir=infra/cloudflare init
-tofu -chdir=infra/cloudflare plan -out=.context/cloudflare.tfplan
-tofu -chdir=infra/cloudflare apply .context/cloudflare.tfplan
+tofu -chdir=infra/cloudflare plan -out=../../.context/cloudflare.tfplan
+tofu -chdir=infra/cloudflare apply ../../.context/cloudflare.tfplan
 ```
 
 Do not put the token, account identifiers, email addresses, or secret values in
@@ -94,8 +94,8 @@ the consent-aware signup handler. With the temporary remote configuration:
 npx wrangler d1 migrations apply intern-notifs-db --remote \
   --config wrangler.api.jsonc
 npm run build:cloudflare
-tofu -chdir=infra/cloudflare plan -out=.context/cloudflare.tfplan
-tofu -chdir=infra/cloudflare apply .context/cloudflare.tfplan
+tofu -chdir=infra/cloudflare plan -out=../../.context/cloudflare.tfplan
+tofu -chdir=infra/cloudflare apply ../../.context/cloudflare.tfplan
 ```
 
 Review the migration list and Terraform plan before applying either one. Never
@@ -108,6 +108,11 @@ npx wrangler secret put AUTH_SESSION_SECRET --name intern-notifs --config wrangl
 npx wrangler secret put OPERATIONS_SHARED_SECRET --name intern-notifs --config wrangler.api.jsonc
 npx wrangler secret put RESEND_API_KEY --name intern-notifs --config wrangler.api.jsonc
 ```
+
+Before the API/ingestion split cutover, configure the complete per-Worker
+secret inventory in [`api-ingestion-split.md`](api-ingestion-split.md). Several
+values are required on both Workers; the API-only commands above are not a
+complete split deployment.
 
 Set `auth_dev_mode=false` before any non-development deployment. `true` returns
 the email confirmation code in the signup response and is intentionally local/dev

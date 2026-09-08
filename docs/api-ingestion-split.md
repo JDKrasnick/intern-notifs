@@ -25,6 +25,43 @@ ingestion/email/Gmail/operations/billing secrets, and the same
 logs, shell arguments, or `EXPO_PUBLIC_*`; set it interactively from the
 approved secret manager for each Worker.
 
+## Secret inventory
+
+The two Workers intentionally share several secret values, but each secret is
+stored independently on each Worker. Retrieve shared values from the approved
+secret manager and enter the same value at both interactive prompts. Never put
+secret values in shell arguments, committed files, or `EXPO_PUBLIC_*` variables.
+
+API Worker secrets:
+
+```bash
+npx wrangler secret put AUTH_SESSION_SECRET --config wrangler.api.jsonc
+npx wrangler secret put OPERATIONS_SHARED_SECRET --config wrangler.api.jsonc
+npx wrangler secret put RESEND_API_KEY --config wrangler.api.jsonc
+npx wrangler secret put GMAIL_CLIENT_SECRET --config wrangler.api.jsonc
+npx wrangler secret put GMAIL_TOKEN_ENCRYPTION_KEY --config wrangler.api.jsonc
+npx wrangler secret put GMAIL_MESSAGE_HMAC_KEY --config wrangler.api.jsonc
+npx wrangler secret put INTERNAL_SERVICE_SECRET --config wrangler.api.jsonc
+```
+
+Ingestion Worker secrets:
+
+```bash
+npx wrangler secret put OPERATIONS_SHARED_SECRET --config wrangler.ingestion.jsonc
+npx wrangler secret put RESEND_API_KEY --config wrangler.ingestion.jsonc
+npx wrangler secret put GMAIL_CLIENT_SECRET --config wrangler.ingestion.jsonc
+npx wrangler secret put GMAIL_TOKEN_ENCRYPTION_KEY --config wrangler.ingestion.jsonc
+npx wrangler secret put GMAIL_MESSAGE_HMAC_KEY --config wrangler.ingestion.jsonc
+npx wrangler secret put INTERNAL_SERVICE_SECRET --config wrangler.ingestion.jsonc
+npx wrangler secret put BILLING_WEBHOOK_SECRET --config wrangler.ingestion.jsonc
+npx wrangler secret put CLOUDFLARE_SHUTDOWN_TOKEN --config wrangler.ingestion.jsonc
+```
+
+Set `ADMISSION_SUPPORT_RECIPIENT` on ingestion with the same command shape when
+admission-support email is enabled. The API-only `AUTH_SESSION_SECRET`, all five
+shared secrets, and the billing-only ingestion secrets must exist before the
+full cutover plan is applied.
+
 ## Controlled cutover
 
 Only the coordinator performs this procedure. No migration, queue replay,
@@ -33,30 +70,92 @@ purge, reset, or historical repair is part of it.
 1. Record the API Worker version, all current queue consumers, cron ownership,
    queue/DLQ depths, `GET /operations/sources` response, public `/jobs` and a
    filtered catalog response. Record the exact API and ingestion build SHAs.
-2. Create `intern-notifs-ingestion` from the ingestion configuration **with its
-   `queues.consumers` and `triggers` temporarily removed**, and with
-   `workers_dev=false` and `preview_urls=false` retained. Set the existing
-   applicable secrets plus a newly generated shared `INTERNAL_SERVICE_SECRET`
-   interactively on both Workers. Confirm the new Worker has no public route,
-   cron, or queue consumer.
-   The existing destination-verification queue and DLQ predate this Terraform
-   ownership entry: import both into the matching `cloudflare_queue.work` and
-   `cloudflare_queue.dead_letter` resources before applying an infrastructure
-   plan, so OpenTofu never attempts to recreate or replace them.
-3. Deploy `wrangler.api.jsonc` to `intern-notifs`. This preserves the public
-   hostname while removing its cron and consumer declarations. Verify there is
-   now exactly zero active consumer/schedule owners during this intentionally
-   short pause; do not trigger backfills or replays in the pause.
-4. Deploy the complete `wrangler.ingestion.jsonc`. Confirm each of the six
-   queues has exactly one consumer, every cron belongs only to
-   `intern-notifs-ingestion`, and no queue backlog was duplicated. The first
-   normal scheduled pass processes retained queue messages idempotently.
-5. Run the smoke checks below before enabling any optional policy or repair
+2. Build both bundles. The existing destination-verification queue and DLQ
+   predate their Terraform ownership entries, so import both before any plan:
+
+   ```bash
+   npm run build:cloudflare
+   tofu -chdir=infra/cloudflare import \
+     'cloudflare_queue.work["destination-verification"]' \
+     "${TF_VAR_cloudflare_account_id}/9b48a594d06a441e8b8ed45de0c430af"
+   tofu -chdir=infra/cloudflare import \
+     'cloudflare_queue.dead_letter["destination-verification"]' \
+     "${TF_VAR_cloudflare_account_id}/2b7435186d9741e29e720c43ec068c87"
+   ```
+
+   Confirm a refresh-only plan has no other unmanaged queue.
+3. Create a temporary shell configuration that cannot claim a trigger or
+   consumer, deploy it, and immediately import the new script and disabled
+   subdomain into OpenTofu state:
+
+   ```bash
+   jq 'del(.queues.consumers, .triggers)
+     | .main = "../cloudflare/ingestion-worker.ts"
+     | ."$schema" = "../node_modules/wrangler/config-schema.json"
+     | .d1_databases[0].migrations_dir = "../cloudflare/migrations"' \
+     wrangler.ingestion.jsonc > .context/wrangler.ingestion-shell.jsonc
+   npx wrangler deploy --config .context/wrangler.ingestion-shell.jsonc
+   tofu -chdir=infra/cloudflare import cloudflare_workers_script.ingestion \
+     "${TF_VAR_cloudflare_account_id}/intern-notifs-ingestion"
+   tofu -chdir=infra/cloudflare import cloudflare_workers_script_subdomain.ingestion \
+     "${TF_VAR_cloudflare_account_id}/intern-notifs-ingestion"
+   ```
+
+   Confirm `workers_dev=false`, previews are disabled, and the new Worker owns
+   no cron or queue consumer. The temporary configuration stays under the
+   gitignored `.context/` directory and is not reused after this step.
+4. Set the secrets from the inventory above. Generate one new
+   `INTERNAL_SERVICE_SECRET` and enter the same value for both Workers.
+5. Create a temporary API cutover configuration with an explicit empty cron
+   list, then deploy it to preserve the public hostname, activate the service
+   binding, and clear all nine old schedules. Wrangler does not remove queue
+   consumers merely because they are absent from a deployment configuration,
+   so remove each old consumer explicitly:
+
+   ```bash
+   jq '.triggers = { "crons": [] }
+     | .main = "../cloudflare/api-worker.ts"
+     | ."$schema" = "../node_modules/wrangler/config-schema.json"
+     | .d1_databases[0].migrations_dir = "../cloudflare/migrations"' \
+     wrangler.api.jsonc > .context/wrangler.api-cutover.jsonc
+   npx wrangler deploy --config .context/wrangler.api-cutover.jsonc
+   npx wrangler queues consumer remove intern-notifs-greenhouse intern-notifs --config wrangler.api.jsonc
+   npx wrangler queues consumer remove intern-notifs-lever intern-notifs --config wrangler.api.jsonc
+   npx wrangler queues consumer remove intern-notifs-ashby intern-notifs --config wrangler.api.jsonc
+   npx wrangler queues consumer remove intern-notifs-github intern-notifs --config wrangler.api.jsonc
+   npx wrangler queues consumer remove intern-notifs-gmail intern-notifs --config wrangler.api.jsonc
+   npx wrangler queues consumer remove intern-notifs-destination-verification intern-notifs --config wrangler.api.jsonc
+   ```
+
+   Confirm there are exactly zero active consumer and schedule owners before
+   continuing. Queue consumers cannot be imported by the provider, and changing
+   the cron resource's state address does not clear schedules on its former
+   Worker, so this explicit zero-owner step is required. Do not trigger
+   backfills or replays during the pause.
+6. Create and inspect the full OpenTofu plan. The checked-in `moved` blocks
+   transfer the existing consumer and cron state addresses from `application`
+   to `ingestion`; they prevent OpenTofu from treating the address rename as a
+   second independent fleet. Because step 5 removed the live old ownership,
+   the plan must attach consumers and schedules only to
+   `intern-notifs-ingestion`; reject any plan that targets the API Worker for a
+   consumer or cron.
+
+   ```bash
+   tofu -chdir=infra/cloudflare plan -out=../../.context/ingestion-cutover.tfplan
+   tofu -chdir=infra/cloudflare apply ../../.context/ingestion-cutover.tfplan
+   ```
+
+   Confirm each of the six queues has exactly one ingestion consumer, all nine
+   crons belong only to `intern-notifs-ingestion`, and the API service binding
+   resolves. Run a second plan and require no changes before considering the
+   state transition complete.
+7. Run the smoke checks below before enabling any optional policy or repair
    work. Keep the deployment versions and queue-owner evidence with the release
    record.
 
-Never deploy both full configurations while the original Worker still owns
-crons or consumers. That would create duplicate scheduling and could duplicate
+After the controlled shell deployments, never deploy either full Wrangler
+configuration alongside the OpenTofu-managed scripts. That bypasses the
+recorded state transition and can duplicate schedules, consumers, and
 notifications.
 
 ## Smoke checks

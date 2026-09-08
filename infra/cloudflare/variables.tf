@@ -34,6 +34,12 @@ variable "auth_dev_mode" {
   default     = false
 }
 
+variable "employer_portal_enabled" {
+  description = "Exposes the reviewed employer workspace API routes. Disable during persistence-layer rollout."
+  type        = bool
+  default     = true
+}
+
 variable "auth_from_email" {
   description = "Verified sender used for account verification and digest email."
   type        = string

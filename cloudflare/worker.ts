@@ -85,6 +85,7 @@ export interface Environment extends AuthEnvironment {
   ASHBY_QUEUE_ID: string;
   GITHUB_QUEUE_ID: string;
   GMAIL_QUEUE_ID: string;
+  DESTINATION_VERIFICATION_QUEUE_ID: string;
   GMAIL_ENABLED?: string;
   GMAIL_CLIENT_ID?: string;
   GMAIL_CLIENT_SECRET?: string;
@@ -429,15 +430,20 @@ export function dlqDependencies(env: Environment): DlqDependencies {
   };
 }
 
+export function billingShutdownQueueIds(env: Environment): string[] {
+  return [
+    ...catalogProviderDefinitions.map((provider) => env[provider.runtime.cloudflareQueueIdBinding]),
+    env.GMAIL_QUEUE_ID,
+    env.DESTINATION_VERIFICATION_QUEUE_ID,
+  ];
+}
+
 async function billingShutdown(request: Request, env: Environment): Promise<Response> {
   if (request.method !== 'POST' || !env.BILLING_WEBHOOK_SECRET || request.headers.get('cf-webhook-auth') !== env.BILLING_WEBHOOK_SECRET) {
     return Response.json({ message: 'Not found' }, { status: 404 });
   }
 
-  const queueIds = [
-    ...catalogProviderDefinitions.map((provider) => env[provider.runtime.cloudflareQueueIdBinding]),
-    env.GMAIL_QUEUE_ID,
-  ];
+  const queueIds = billingShutdownQueueIds(env);
   const scriptPath = `/workers/scripts/${encodeURIComponent(env.WORKER_NAME)}`;
   if (new URL(request.url).searchParams.get('dry-run') === 'true') {
     await Promise.all([

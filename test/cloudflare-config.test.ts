@@ -43,7 +43,7 @@ describe('Cloudflare deployment configuration', () => {
   it('keeps destination-verification consumer limits synchronized across Wrangler and OpenTofu', () => {
     const ingestion = JSON.parse(read('wrangler.ingestion.jsonc')) as { queues: { consumers: Array<{
       queue: string; max_batch_size: number; max_batch_timeout?: number; max_concurrency?: number; max_retries: number; dead_letter_queue: string;
-    }> } };
+    }> }; vars: { DESTINATION_VERIFICATION_QUEUE_ID: string } };
     const consumer = ingestion.queues.consumers.find(({ queue }) => queue === 'intern-notifs-destination-verification');
     expect(consumer).toEqual({
       queue: 'intern-notifs-destination-verification',
@@ -61,6 +61,25 @@ describe('Cloudflare deployment configuration', () => {
     expect(queueConsumer).toContain('batch_size       = each.key == "destination-verification" ? 5 : 1');
     expect(queueConsumer).toContain('max_concurrency  = contains(["greenhouse", "github"], each.key) ? 2 : 1');
     expect(queueConsumer).toContain('max_wait_time_ms = each.key == "destination-verification" ? 60000 : 5000');
+    expect(ingestion.vars.DESTINATION_VERIFICATION_QUEUE_ID).toBe('9b48a594d06a441e8b8ed45de0c430af');
+    expect(terraform).toContain('{ name = "DESTINATION_VERIFICATION_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["destination-verification"].queue_id }');
+  });
+
+  it('keeps behavior-critical API variables synchronized across Wrangler and OpenTofu', () => {
+    const api = JSON.parse(read('wrangler.api.jsonc')) as { vars: { EMPLOYER_PORTAL_ENABLED: string } };
+    const terraform = read('infra/cloudflare/main.tf');
+
+    expect(api.vars.EMPLOYER_PORTAL_ENABLED).toBe('true');
+    expect(terraform).toContain('{ name = "EMPLOYER_PORTAL_ENABLED", type = "plain_text", text = tostring(var.employer_portal_enabled) }');
+    expect(read('infra/cloudflare/variables.tf')).toContain('variable "employer_portal_enabled"');
+  });
+
+  it('moves queue and cron state to ingestion ownership', () => {
+    const terraform = read('infra/cloudflare/main.tf');
+    expect(terraform).toContain('from = cloudflare_queue_consumer.application');
+    expect(terraform).toContain('to   = cloudflare_queue_consumer.ingestion');
+    expect(terraform).toContain('from = cloudflare_workers_cron_trigger.application');
+    expect(terraform).toContain('to   = cloudflare_workers_cron_trigger.ingestion');
   });
 
   it('requires explicit Worker configuration rather than retaining a shared default', () => {

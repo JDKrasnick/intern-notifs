@@ -9,6 +9,7 @@ locals {
     [
       { name = "PUBLIC_API_URL", type = "plain_text", text = var.public_api_url },
       { name = "AUTH_DEV_MODE", type = "plain_text", text = tostring(var.auth_dev_mode) },
+      { name = "EMPLOYER_PORTAL_ENABLED", type = "plain_text", text = tostring(var.employer_portal_enabled) },
       { name = "GMAIL_ENABLED", type = "plain_text", text = tostring(var.gmail_enabled) },
       { name = "IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED", type = "plain_text", text = tostring(var.identity_unconfirmed_publication_enabled) },
       { name = "DEPLOYMENT_ROLE", type = "plain_text", text = "api" },
@@ -21,6 +22,7 @@ locals {
   ingestion_plain_bindings = concat(
     [
       { name = "PUBLIC_API_URL", type = "plain_text", text = var.public_api_url },
+      { name = "EMPLOYER_PORTAL_ENABLED", type = "plain_text", text = tostring(var.employer_portal_enabled) },
       { name = "GMAIL_ENABLED", type = "plain_text", text = tostring(var.gmail_enabled) },
       { name = "IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED", type = "plain_text", text = tostring(var.identity_unconfirmed_publication_enabled) },
       { name = "TRUSTED_COMMUNITY_CATALOG_ENABLED", type = "plain_text", text = tostring(var.trusted_community_catalog_enabled) },
@@ -28,6 +30,7 @@ locals {
       { name = "CLOUDFLARE_ACCOUNT_ID", type = "plain_text", text = var.cloudflare_account_id },
       { name = "WORKER_NAME", type = "plain_text", text = local.ingestion_worker_name },
       { name = "GMAIL_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["gmail"].queue_id },
+      { name = "DESTINATION_VERIFICATION_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["destination-verification"].queue_id },
       { name = "DEPLOYMENT_ROLE", type = "plain_text", text = "ingestion" },
     ],
     [for provider in local.catalog_providers : { name = "${upper(provider)}_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work[provider].queue_id }],
@@ -169,4 +172,17 @@ resource "cloudflare_workers_custom_domain" "api" {
       error_message = "zone_id is required when api_hostname is set."
     }
   }
+}
+
+# Preserve the existing resource instances while transferring their Worker
+# ownership. Without these moves, OpenTofu treats the address changes as
+# unrelated destroy/create operations before it evaluates the script change.
+moved {
+  from = cloudflare_queue_consumer.application
+  to   = cloudflare_queue_consumer.ingestion
+}
+
+moved {
+  from = cloudflare_workers_cron_trigger.application
+  to   = cloudflare_workers_cron_trigger.ingestion
 }

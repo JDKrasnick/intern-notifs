@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import apiWorker, { type ApiEnvironment } from '../cloudflare/api-worker.js';
 import ingestionWorker, { type IngestionEnvironment } from '../cloudflare/ingestion-worker.js';
 import { isIngestionOperationPath, secretMatches } from '../cloudflare/split.js';
+import { billingShutdownQueueIds, type Environment } from '../cloudflare/worker.js';
 
 describe('API and ingestion Worker boundary', () => {
   it('forwards only ingestion operations through the authenticated service binding', async () => {
@@ -59,6 +60,18 @@ describe('API and ingestion Worker boundary', () => {
     expect(secretMatches('same', 'same')).toBe(true);
     expect(secretMatches('', '')).toBe(false);
     expect(secretMatches('different', 'same')).toBe(false);
+  });
+
+  it('stops every ingestion queue during billing shutdown', () => {
+    const env = {
+      GREENHOUSE_QUEUE_ID: 'greenhouse', LEVER_QUEUE_ID: 'lever', ASHBY_QUEUE_ID: 'ashby',
+      GITHUB_QUEUE_ID: 'github', GMAIL_QUEUE_ID: 'gmail',
+      DESTINATION_VERIFICATION_QUEUE_ID: 'destination-verification',
+    } as Environment;
+
+    expect(billingShutdownQueueIds(env)).toEqual([
+      'greenhouse', 'lever', 'ashby', 'github', 'gmail', 'destination-verification',
+    ]);
   });
 
   it('returns 502 instead of throwing when ingestion is unreachable', async () => {
