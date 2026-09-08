@@ -74,7 +74,7 @@ npx wrangler secret put CLOUDFLARE_SHUTDOWN_TOKEN --config wrangler.ingestion.js
 ```
 
 Set `ADMISSION_SUPPORT_RECIPIENT` on ingestion with the same command shape when
-admission-support email is enabled. The API-only `AUTH_SESSION_SECRET`, all five
+admission-support email is enabled. The API-only `AUTH_SESSION_SECRET`, all six
 shared secrets, and the billing-only ingestion secrets must exist before the
 full cutover plan is applied.
 

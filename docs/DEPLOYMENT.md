@@ -56,14 +56,25 @@ export AWS_REGION='auto'
 tofu -chdir=infra/cloudflare init -reconfigure
 ```
 
-Before the first plan, import every existing production resource. This includes
-`cloudflare_d1_database.application`, `cloudflare_r2_bucket.documents`,
-`cloudflare_workers_script.application`,
-`cloudflare_workers_script_subdomain.application`,
+State adoption is deployment-phase-sensitive. During the API/ingestion split,
+follow the serialized imports in [`api-ingestion-split.md`](api-ingestion-split.md)
+instead of bootstrapping the steady-state configuration directly. An existing
+pre-split state keeps `cloudflare_workers_cron_trigger.application` and
+`cloudflare_queue_consumer.application` until the checked-in `moved` blocks
+transfer them during that cutover; do not re-import those old addresses from
+the post-split configuration.
+
+For a fresh adoption after the split is complete, import every existing
+production resource at its current address. This includes
+`cloudflare_d1_database.application`, `cloudflare_r2_bucket.documents`, both
+`cloudflare_workers_script.application` and
+`cloudflare_workers_script.ingestion`, both
+`cloudflare_workers_script_subdomain.application` and
+`cloudflare_workers_script_subdomain.ingestion`,
 `cloudflare_workers_custom_domain.api[0]` when configured,
-`cloudflare_workers_cron_trigger.application`, and all keys in each of
+`cloudflare_workers_cron_trigger.ingestion`, and all keys in each of
 `cloudflare_queue.work`, `cloudflare_queue.dead_letter`, and
-`cloudflare_queue_consumer.application`: `greenhouse`, `lever`, `ashby`,
+`cloudflare_queue_consumer.ingestion`: `greenhouse`, `lever`, `ashby`,
 `github`, `gmail`, and `destination-verification`. Resolve import IDs from the
 live Cloudflare account and provider-v5 import contract; never guess an ID or
 allow a failed import to turn into a create. Import one address at a time and
