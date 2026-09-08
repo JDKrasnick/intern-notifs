@@ -73,10 +73,11 @@ describe('API and ingestion Worker boundary', () => {
       GREENHOUSE_QUEUE_ID: 'greenhouse', LEVER_QUEUE_ID: 'lever', ASHBY_QUEUE_ID: 'ashby',
       GITHUB_QUEUE_ID: 'github', GMAIL_QUEUE_ID: 'gmail',
       DESTINATION_VERIFICATION_QUEUE_ID: 'destination-verification',
+      SHADOW_EXTRACTION_QUEUE_ID: 'shadow-extraction',
     } as Environment;
 
     expect(billingShutdownQueueIds(env)).toEqual([
-      'greenhouse', 'lever', 'ashby', 'github', 'gmail', 'destination-verification',
+      'greenhouse', 'lever', 'ashby', 'github', 'gmail', 'destination-verification', 'shadow-extraction',
     ]);
   });
 

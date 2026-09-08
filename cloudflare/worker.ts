@@ -456,7 +456,6 @@ async function billingShutdown(request: Request, env: Environment): Promise<Resp
   }
 
   const queueIds = billingShutdownQueueIds(env);
-  const queueIds = billingShutdownQueueIds(env);
   const scriptPath = `/workers/scripts/${encodeURIComponent(env.WORKER_NAME)}`;
   if (new URL(request.url).searchParams.get('dry-run') === 'true') {
     await Promise.all([

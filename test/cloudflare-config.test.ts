@@ -53,6 +53,7 @@ describe('Cloudflare deployment configuration', () => {
     expect(api.queues?.producers?.map(({ binding }) => binding)).toEqual(['GMAIL_QUEUE']);
     expect(ingestion.queues?.consumers?.map(({ queue }) => queue)).toEqual([
       'intern-notifs-greenhouse', 'intern-notifs-lever', 'intern-notifs-ashby', 'intern-notifs-github', 'intern-notifs-gmail', 'intern-notifs-destination-verification',
+      'intern-notifs-shadow-extraction',
     ]);
     expect(ingestion.triggers?.crons).toHaveLength(9);
     expect(ingestion.workers_dev).toBe(false);

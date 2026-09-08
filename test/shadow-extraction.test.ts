@@ -43,6 +43,7 @@ class MemoryR2 implements R2Bucket {
 function schema(): D1Database {
   const database = new DatabaseSync(':memory:');
   database.exec(readFileSync(new URL('../cloudflare/migrations/0020_shadow_extraction.sql', import.meta.url), 'utf8'));
+  database.exec(readFileSync(new URL('../cloudflare/migrations/0021_shadow_extraction_fencing.sql', import.meta.url), 'utf8'));
   return d1(database);
 }
 
@@ -174,5 +175,43 @@ describe('shadow extraction queue and cost ledger', () => {
         { field: 'locations', baseline_state: 'present', shadow_state: 'present', differs: 0 },
         { field: 'workMode', baseline_state: 'not-stated', shadow_state: 'not-stated', differs: 0 },
       ] });
+  });
+
+  it('fences a reclaimed lease so stale output cannot replace the newer completion', async () => {
+    const DB = schema(); const artifacts = new MemoryR2(); const queue: Queue = { async send() {}, async sendBatch() {} };
+    const message = await enqueueShadowExtraction({ DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts }, {
+      jobId: 'job-fenced', sourceId: identity.sourceId, externalId: 'fenced', sourceUrl: identity.sourceUrl, providerIdentity: identity,
+      title: 'Software Engineering Intern', description, observedAt: '2026-09-08T00:00:00.000Z',
+    });
+    let releaseFirst!: () => void;
+    const firstResponse = new Promise<ReturnType<typeof output>>((resolve) => { releaseFirst = () => resolve({ response: { nope: true }, inputTokens: 3, outputTokens: 2, actualCostCents: 1 } as never); });
+    const env = { DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts, SHADOW_EXTRACTION_ENABLED: 'true', SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS: '100', SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS: '100' };
+    const first = processShadowExtractionBatch({ queue: 'intern-notifs-shadow-extraction', messages: [{ id: 'first', body: message, ack() {}, retry() {} }] }, env,
+      () => new Date('2026-09-08T00:00:00.000Z'), async () => firstResponse as never);
+    while ((await DB.prepare('SELECT state FROM shadow_extraction_runs').first<{ state: string }>())?.state !== 'running') await Promise.resolve();
+    await processShadowExtractionBatch({ queue: 'intern-notifs-shadow-extraction', messages: [{ id: 'second', body: message, ack() {}, retry() {} }] }, env,
+      () => new Date('2026-09-08T00:06:00.000Z'), async () => ({ response: output(), inputTokens: 10, outputTokens: 5, actualCostCents: 2 }));
+    releaseFirst(); await first;
+    expect(await DB.prepare('SELECT state, input_tokens, output_tokens, actual_cost_cents FROM shadow_extraction_runs WHERE run_key = ?').bind(message!.runKey).first())
+      .toEqual({ state: 'completed', input_tokens: 10, output_tokens: 5, actual_cost_cents: 2 });
+    expect(await DB.prepare('SELECT SUM(actual_cents) AS actual FROM shadow_extraction_cost_ledger').first()).toEqual({ actual: 3 });
+  });
+
+  it('accounts for an obsolete inference and lets an identical posting finish independently', async () => {
+    const DB = schema(); const artifacts = new MemoryR2(); const queued: unknown[] = []; const queue: Queue = { async send(body) { queued.push(body); }, async sendBatch() {} };
+    const common = { sourceId: identity.sourceId, sourceUrl: identity.sourceUrl, providerIdentity: identity, title: 'Software Engineering Intern', description, observedAt: '2026-09-08T00:00:00.000Z' };
+    const a = await enqueueShadowExtraction({ DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts }, { ...common, jobId: 'a', externalId: 'a' });
+    const b = await enqueueShadowExtraction({ DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts }, { ...common, jobId: 'b', externalId: 'b' });
+    const env = { DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts, SHADOW_EXTRACTION_ENABLED: 'true', SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS: '100', SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS: '100' };
+    await processShadowExtractionBatch({ queue: 'intern-notifs-shadow-extraction', messages: [{ id: 'a', body: a, ack() {}, retry() {} }] }, env, undefined, async () => {
+      await enqueueShadowExtraction({ DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts }, { ...common, jobId: 'a', externalId: 'a', description: `${description} updated`, observedAt: '2026-09-08T00:01:00.000Z' });
+      return { response: output(), inputTokens: 70, outputTokens: 20, actualCostCents: 7 };
+    });
+    await processShadowExtractionBatch({ queue: 'intern-notifs-shadow-extraction', messages: [{ id: 'b', body: b, ack() {}, retry() {} }] }, env, undefined, async () => ({ response: output(), inputTokens: 5, outputTokens: 3, actualCostCents: 1 }));
+    expect(a!.runKey).not.toBe(b!.runKey);
+    expect(await DB.prepare('SELECT state, input_tokens, output_tokens, actual_cost_cents FROM shadow_extraction_runs WHERE run_key = ?').bind(a!.runKey).first())
+      .toEqual({ state: 'obsolete', input_tokens: 70, output_tokens: 20, actual_cost_cents: 7 });
+    expect(await DB.prepare('SELECT state FROM shadow_extraction_runs WHERE run_key = ?').bind(b!.runKey).first()).toEqual({ state: 'completed' });
+    expect(await DB.prepare('SELECT SUM(actual_cents) AS actual FROM shadow_extraction_cost_ledger').first()).toEqual({ actual: 8 });
   });
 });
