@@ -26,6 +26,14 @@ The catalog is public. Accounts, preferences, device tokens, profiles, documents
 
 ## Gmail application detection rollout
 
+## API and ingestion deployment boundary
+
+The API Worker and ingestion Worker have separate, explicit Wrangler
+configurations. Use `npm run build:cloudflare` to validate both; do not run a
+bare `wrangler deploy`. The cutover sequence, binding inventory, smoke checks,
+and rollback procedure are in [`api-ingestion-split.md`](api-ingestion-split.md).
+The coordinator alone performs that cutover.
+
 Gmail detection is optional, account-gated, Apply-triggered, and disabled by default. It requests
 only `https://www.googleapis.com/auth/gmail.readonly`. A signed-in Apply click records a
 short-lived check for that exact catalog role and publishes delayed queue work for
@@ -94,7 +102,7 @@ Keep `EMPLOYER_PORTAL_ENABLED=false` while deploying the persistence layer. Appl
 ```bash
 npm run cloudflare:migrate:remote
 npm run build:cloudflare
-npx wrangler deploy
+# Follow docs/api-ingestion-split.md for the serialized two-Worker cutover.
 ```
 
 The first provider dispatch idempotently seeds the checked-in Greenhouse, Lever, and Ashby records into `reviewed_source_registry`; scheduled dispatch and queue consumers then read reviewed runtime configuration from D1. Before enabling the portal, compare D1 registry counts and exact source IDs with the checked-in manifests, then verify source health, catalog ordering, grouped projections, and notification outbox counts are unchanged.
@@ -152,7 +160,7 @@ Apply the migration and deploy only after reviewing the generated resource diff:
 ```bash
 npm run build:cloudflare
 npm run cloudflare:migrate:remote
-npx wrangler deploy
+# Follow docs/api-ingestion-split.md for the serialized two-Worker cutover.
 ```
 
 All review and repair endpoints are hidden behind the existing operations

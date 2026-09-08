@@ -48,7 +48,7 @@ npm test
 npm run build:cloudflare
 npm run cloudflare:migrate:local
 cp .dev.vars.example .dev.vars
-npx wrangler dev --local
+npx wrangler dev --local --config wrangler.api.jsonc
 ```
 
 Use throwaway local values in `.dev.vars`. The file is ignored. Wrangler can
@@ -80,10 +80,9 @@ second operator or CI starts applying infrastructure.
 
 ## Initialize D1 and secrets
 
-After apply, replace the placeholder `database_id` in a temporary copy of
-`wrangler.jsonc` with `tofu -chdir=infra/cloudflare output -raw d1_database_id`,
-then apply `cloudflare/migrations/` with that temporary configuration. Do not
-commit the generated configuration.
+After apply, update the D1 identifier in both explicit Worker configurations
+only when provisioning a new database, then apply `cloudflare/migrations/` with
+`wrangler.api.jsonc`. Do not restore a shared default `wrangler.jsonc`.
 
 Apply every pending D1 migration before deploying Worker code that depends on
 its schema. In particular, migration `0005_auth_consent.sql` must land before
@@ -91,7 +90,7 @@ the consent-aware signup handler. With the temporary remote configuration:
 
 ```bash
 npx wrangler d1 migrations apply intern-notifs-db --remote \
-  --config .context/wrangler.remote.json
+  --config wrangler.api.jsonc
 npm run build:cloudflare
 tofu -chdir=infra/cloudflare plan -out=.context/cloudflare.tfplan
 tofu -chdir=infra/cloudflare apply .context/cloudflare.tfplan
@@ -103,9 +102,9 @@ deploy the Worker first: the new signup query requires the consent columns.
 Create separate random secrets for user sessions and operator access:
 
 ```bash
-npx wrangler secret put AUTH_SESSION_SECRET --name intern-notifs
-npx wrangler secret put OPERATIONS_SHARED_SECRET --name intern-notifs
-npx wrangler secret put RESEND_API_KEY --name intern-notifs
+npx wrangler secret put AUTH_SESSION_SECRET --name intern-notifs --config wrangler.api.jsonc
+npx wrangler secret put OPERATIONS_SHARED_SECRET --name intern-notifs --config wrangler.api.jsonc
+npx wrangler secret put RESEND_API_KEY --name intern-notifs --config wrangler.api.jsonc
 ```
 
 Set `auth_dev_mode=false` before any non-development deployment. `true` returns
