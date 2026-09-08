@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import apiWorker, { type ApiEnvironment } from '../cloudflare/api-worker.js';
 import ingestionWorker, { type IngestionEnvironment } from '../cloudflare/ingestion-worker.js';
@@ -57,5 +58,44 @@ describe('API and ingestion Worker boundary', () => {
     expect(secretMatches('same', 'same')).toBe(true);
     expect(secretMatches('', '')).toBe(false);
     expect(secretMatches('different', 'same')).toBe(false);
+  });
+
+  it('returns 502 instead of throwing when ingestion is unreachable', async () => {
+    const throwingEnv = {
+      INTERNAL_SERVICE_SECRET: 'internal-test-secret', OPERATIONS_SHARED_SECRET: 'operations-test-secret',
+      INGESTION: { async fetch(): Promise<Response> { throw new Error('connection refused'); } },
+    } as ApiEnvironment;
+    const headers = { 'X-Operations-Key': 'operations-test-secret' };
+    const threw = await apiWorker.fetch(new Request('https://api.example.test/internal/deployment', { headers }), throwingEnv);
+    expect(threw.status).toBe(502);
+
+    const nonJsonEnv = {
+      ...throwingEnv,
+      INGESTION: { async fetch() { return new Response('not json', { status: 200 }); } },
+    } as ApiEnvironment;
+    const nonJson = await apiWorker.fetch(new Request('https://api.example.test/internal/deployment', { headers }), nonJsonEnv);
+    expect(nonJson.status).toBe(502);
+  });
+
+  it('keeps the ingestion route inventory synchronized with the worker router', () => {
+    const router = readFileSync(new URL('../cloudflare/worker.ts', import.meta.url), 'utf8');
+    const exactPaths = [...router.matchAll(/url\.pathname === ["']([^"']+)["']/g)].map((match) => match[1]!);
+    const prefixPaths = [...router.matchAll(/url\.pathname\.startsWith\(["']([^"']+)["']\)/g)].map((match) => match[1]!);
+    expect(exactPaths.length).toBeGreaterThan(0);
+    expect(prefixPaths.length).toBeGreaterThan(0);
+
+    // Any /internal/* or /operations/* route added to the router must be
+    // classified for ingestion forwarding; anything else must stay on the API.
+    for (const path of exactPaths) {
+      const ingestionOwned = path.startsWith('/internal/') || path.startsWith('/operations/');
+      expect(isIngestionOperationPath(path)).toBe(ingestionOwned);
+    }
+    for (const prefix of prefixPaths) {
+      const ingestionOwned = prefix.startsWith('/internal/') || prefix.startsWith('/operations/');
+      expect(isIngestionOperationPath(`${prefix}probe`)).toBe(ingestionOwned);
+    }
+    // Regex-routed public paths never enter ingestion.
+    expect(isIngestionOperationPath('/roles/engineer/reports')).toBe(false);
+    expect(isIngestionOperationPath('/me/documents/abc/content')).toBe(false);
   });
 });

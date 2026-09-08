@@ -71,7 +71,7 @@ resource "cloudflare_queue" "dead_letter" {
 resource "cloudflare_workers_script" "ingestion" {
   account_id          = var.cloudflare_account_id
   script_name         = local.ingestion_worker_name
-  main_module         = "worker.js"
+  main_module         = "ingestion-worker.js"
   content_file        = local.ingestion_worker_bundle
   content_sha256      = filesha256(local.ingestion_worker_bundle)
   compatibility_date  = "2026-09-08"
@@ -103,7 +103,7 @@ resource "cloudflare_workers_script_subdomain" "ingestion" {
 resource "cloudflare_workers_script" "application" {
   account_id          = var.cloudflare_account_id
   script_name         = var.worker_name
-  main_module         = "worker.js"
+  main_module         = "api-worker.js"
   content_file        = local.api_worker_bundle
   content_sha256      = filesha256(local.api_worker_bundle)
   compatibility_date  = "2026-09-08"

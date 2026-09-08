@@ -24,12 +24,16 @@ export default {
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/internal/deployment') {
       if (!authorized(request, env)) return Response.json({ message: 'Not found' }, { status: 404 });
-      const response = await forwardToIngestion(new Request(new URL('/internal/deployment/ingestion', request.url)), env);
-      if (!response.ok) return Response.json({ message: 'Ingestion deployment identity is unavailable' }, { status: 502 });
-      return Response.json({
-        api: { role: env.DEPLOYMENT_ROLE ?? 'api', version: env.VERSION_METADATA ?? null },
-        ingestion: await response.json(),
-      });
+      try {
+        const response = await forwardToIngestion(new Request(new URL('/internal/deployment/ingestion', request.url)), env);
+        if (!response.ok) return Response.json({ message: 'Ingestion deployment identity is unavailable' }, { status: 502 });
+        return Response.json({
+          api: { role: env.DEPLOYMENT_ROLE ?? 'api', version: env.VERSION_METADATA ?? null },
+          ingestion: await response.json(),
+        });
+      } catch {
+        return Response.json({ message: 'Ingestion deployment identity is unavailable' }, { status: 502 });
+      }
     }
     if (isIngestionOperationPath(url.pathname)) return forwardToIngestion(request, env);
     // Public routes never enter the ingestion branches in the shared handler.
