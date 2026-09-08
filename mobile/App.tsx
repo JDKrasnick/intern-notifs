@@ -904,7 +904,7 @@ function CatalogGroupSheet({
   error?: string;
   onDismiss: () => void;
   onRetry: () => void;
-  onOpenRole: (jobId: string) => void;
+  onOpenRole: (job: Job) => void;
 }) {
   return (
     <Modal visible={Boolean(groupId)} transparent animationType="none" onRequestClose={onDismiss}>
@@ -945,7 +945,7 @@ function CatalogGroupSheet({
                   <TouchableOpacity
                     accessibilityRole="button"
                     accessibilityLabel={`${boundedCatalogText(item.title, 240)}, ${compactLocations(item.locations, item.location)}${item.postingIdentityStatus === "unconfirmed" ? ", identity unconfirmed" : ""}`}
-                    onPress={() => onOpenRole(item.jobId)}
+                    onPress={() => onOpenRole(catalogRoleJob(item))}
                     style={styles.catalogGroupRole}
                   >
                     <View style={styles.catalogGroupRoleCopy}>
@@ -2936,10 +2936,10 @@ function AppContent() {
     setSelectedGroupError(undefined);
     setSelectedGroupLoading(false);
   };
-  const openGroupedRole = (jobId: string) => {
+  const openGroupedRole = (job: Job) => {
     setSelectedGroupVisible(false);
     returnToGroupedRoles.current = true;
-    InteractionManager.runAfterInteractions(() => presentDestination({ kind: "job", jobId, reasons: [], exclusionsApplied: false }));
+    openCatalogJob(job);
   };
   const retryRoutedJob = () => {
     const jobId = routedJobId.current;

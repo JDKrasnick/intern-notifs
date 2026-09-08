@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { URL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   destinationFromNotification,
@@ -17,6 +19,16 @@ import {
 } from '../src/job-detail.js';
 
 describe('mobile job routes', () => {
+  it('opens a grouped role through the immediate catalog-card path', () => {
+    const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+    const handler = /const openGroupedRole = \(job: Job\) => \{(?<body>[\s\S]*?)\n  \};/.exec(app);
+
+    expect(app).toContain('onPress={() => onOpenRole(catalogRoleJob(item))}');
+    expect(handler?.groups?.body).toContain('openCatalogJob(job);');
+    expect(handler?.groups?.body).not.toContain('presentDestination');
+    expect(handler?.groups?.body).not.toContain('InteractionManager');
+  });
+
   it('parses compatible notification payloads and encoded app URLs', () => {
     expect(destinationFromNotification({ jobId: 'legacy/job' })).toEqual({ kind: 'job', jobId: 'legacy/job', reasons: [], exclusionsApplied: false });
     expect(destinationFromNotification({ applicationId: 'application-1', destination: 'saved' })).toEqual({ kind: 'saved' });
