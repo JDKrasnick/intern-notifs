@@ -644,7 +644,7 @@ function JobCard({
                 ) : null}
                 {!isSavingForWeb && !applicationStatus && canSaveForWeb ? (
                   <TouchableOpacity accessibilityRole="button" accessibilityLabel="Save for web" onPress={handleSave} style={styles.webSaveButtonCompact}>
-                    <Ionicons name="bookmark" size={14} color={colors.onDark} />
+                    <Ionicons name="bookmark" size={14} color={colors.ink} />
                     <Text style={styles.webSaveButtonText}>Save</Text>
                   </TouchableOpacity>
                 ) : null}
@@ -857,7 +857,7 @@ function CatalogGroupCard({
                 ) : null}
                 {canSaveForWeb ? (
                   <TouchableOpacity accessibilityRole="button" accessibilityLabel="Save for web" onPress={handleSave} style={styles.webSaveButtonCompact}>
-                    <Ionicons name="bookmark" size={14} color={colors.onDark} />
+                    <Ionicons name="bookmark" size={14} color={colors.ink} />
                     <Text style={styles.webSaveButtonText}>Save</Text>
                   </TouchableOpacity>
                 ) : null}
@@ -1204,7 +1204,7 @@ function JobDetailSheet({
                     }}
                     style={styles.sheetSaveBar}
                   >
-                    <Ionicons name="bookmark" size={18} color={colors.onDark} />
+                    <Ionicons name="bookmark" size={18} color={colors.ink} />
                     <Text style={styles.sheetSaveBarText}>Save</Text>
                   </TouchableOpacity>
                 ) : isSaved && onUnsave && role ? (
@@ -5863,15 +5863,15 @@ const styles = StyleSheet.create({
   catalogGroupFooterLeft: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12, gap: 12 },
   jobCardActionCompact: { alignItems: "center", flexDirection: "row", gap: 4 },
   jobCompanyLeft: { flexDirection: "row", alignItems: "center", flex: 1, minWidth: 0 },
-  sheetSaveBar: { alignItems: "center", backgroundColor: colors.ink, borderColor: colors.ink, borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
-  sheetSaveBarText: { color: colors.onDark, fontSize: 16, fontWeight: "800" },
+  sheetSaveBar: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
+  sheetSaveBarText: { color: colors.ink, fontSize: 16, fontWeight: "800" },
   sheetSavedBar: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
   sheetSavedBarText: { color: colors.signal, fontSize: 16, fontWeight: "800" },
   sheetHideBar: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, justifyContent: "center", minHeight: 52, paddingHorizontal: 16 },
   sheetHideBarText: { color: colors.body, fontSize: 16, fontWeight: "700" },
-  webSaveButton: { alignItems: "center", backgroundColor: colors.ink, borderColor: colors.ink, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
-  webSaveButtonCompact: { alignItems: "center", backgroundColor: colors.ink, borderColor: colors.ink, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
-  webSaveButtonText: { color: colors.onDark, fontSize: 13, fontWeight: "800" },
+  webSaveButton: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
+  webSaveButtonCompact: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
+  webSaveButtonText: { color: colors.ink, fontSize: 13, fontWeight: "800" },
   webUnsaveButton: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
   webUnsaveButtonCompact: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
   webUnsaveButtonText: { color: colors.signal, fontSize: 13, fontWeight: "800" },
