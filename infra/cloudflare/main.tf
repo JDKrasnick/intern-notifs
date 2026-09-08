@@ -3,7 +3,7 @@ locals {
   ingestion_worker_bundle = "${path.module}/../../cloudflare/dist/ingestion/ingestion-worker.js"
   ingestion_worker_name   = "${var.worker_name}-ingestion"
   catalog_providers       = toset(["greenhouse", "lever", "ashby", "github"])
-  asynchronous_queues     = setunion(local.catalog_providers, toset(["gmail", "destination-verification"]))
+  asynchronous_queues     = setunion(local.catalog_providers, toset(["gmail", "destination-verification", "shadow-extraction"]))
 
   api_plain_bindings = concat(
     [
@@ -31,6 +31,8 @@ locals {
       { name = "WORKER_NAME", type = "plain_text", text = local.ingestion_worker_name },
       { name = "GMAIL_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["gmail"].queue_id },
       { name = "DESTINATION_VERIFICATION_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["destination-verification"].queue_id },
+      { name = "SHADOW_EXTRACTION_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["shadow-extraction"].queue_id },
+      { name = "SHADOW_EXTRACTION_QUEUE_NAME", type = "plain_text", text = cloudflare_queue.work["shadow-extraction"].queue_name },
       { name = "DEPLOYMENT_ROLE", type = "plain_text", text = "ingestion" },
       { name = "ADMISSION_QUEUE_AGE_ALERT_HOURS", type = "plain_text", text = tostring(var.admission_queue_age_alert_hours) },
       { name = "ADMISSION_STALE_ALERT_THRESHOLD", type = "plain_text", text = tostring(var.admission_stale_alert_threshold) },
@@ -55,6 +57,16 @@ resource "cloudflare_d1_database" "application" {
 resource "cloudflare_r2_bucket" "documents" {
   account_id    = var.cloudflare_account_id
   name          = "${var.worker_name}-documents"
+  location      = "WNAM"
+  storage_class = "Standard"
+}
+
+# Private, bounded operational artifacts only. Retention is configured with the
+# R2 lifecycle API because the provider version used here has no lifecycle-rule
+# resource; docs/shadow-extraction.md records the required 30-day rule.
+resource "cloudflare_r2_bucket" "shadow_extraction" {
+  account_id    = var.cloudflare_account_id
+  name          = "${var.worker_name}-shadow-extraction"
   location      = "WNAM"
   storage_class = "Standard"
 }
@@ -89,6 +101,8 @@ resource "cloudflare_workers_script" "ingestion" {
   bindings = concat(
     [
       { name = "DB", type = "d1", id = cloudflare_d1_database.application.id },
+      { name = "DOCUMENTS", type = "r2_bucket", bucket_name = cloudflare_r2_bucket.documents.name },
+      { name = "SHADOW_EXTRACTION_ARTIFACTS", type = "r2_bucket", bucket_name = cloudflare_r2_bucket.shadow_extraction.name },
       { name = "DESTINATION_BROWSER", type = "browser" },
       { name = "VERSION_METADATA", type = "version_metadata" },
     ],
@@ -153,7 +167,8 @@ resource "cloudflare_queue_consumer" "ingestion" {
     # because per-account leases serialize sync work.
     max_concurrency  = each.key == "greenhouse" ? 2 : 1
     max_retries      = each.key == "gmail" ? 5 : 2
-    max_wait_time_ms = each.key == "destination-verification" ? 60000 : 5000
+    max_wait_time_ms = contains(["destination-verification", "shadow-extraction"], each.key) ? 60000 : 5000
+    retry_delay      = each.key == "shadow-extraction" ? 300 : null
   }
 }
 

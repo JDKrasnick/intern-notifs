@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash, randomUUID } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
@@ -64,6 +65,8 @@ before(async () => {
         DEPLOYMENT_ROLE: { type: 'text', value: 'api' },
         IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED: { type: 'text', value: 'false' },
         PUBLIC_API_URL: { type: 'text', value: 'https://api.example.test' },
+        AUTH_DEV_MODE: { type: 'text', value: 'true' },
+        AUTH_SESSION_SECRET: { type: 'text', value: 'e2e-auth-session-secret-at-least-32-characters' },
         DB: { type: 'd1', id: 'intern-notifs-e2e' },
         INGESTION: { type: 'worker', workerName: ingestionWorkerName },
       }),
@@ -133,4 +136,85 @@ test('keeps public catalog requests on the API Worker', async () => {
   const response = await api.fetch('https://api.example.test/jobs');
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).jobs, []);
+});
+
+test('runs a dev account through signup, verification, sign-in, and private reads', async () => {
+  const email = `review-${randomUUID()}@example.test`;
+  const password = 'Review-only password 175!';
+  const signup = await api.fetch('https://api.example.test/auth/signup', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, ageAttested: true, termsVersion: '2026-08-25', privacyVersion: '2026-08-26' }),
+  });
+  assert.equal(signup.status, 201);
+  const signupBody = await signup.json();
+  assert.equal(signupBody.delivery, 'development');
+  assert.match(signupBody.confirmationCode, /^\d{6}$/);
+
+  const confirm = await api.fetch('https://api.example.test/auth/confirm', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, code: signupBody.confirmationCode }),
+  });
+  assert.equal(confirm.status, 204);
+  const signin = await api.fetch('https://api.example.test/auth/signin', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }),
+  });
+  assert.equal(signin.status, 200);
+  const { token } = await signin.json();
+  const preferences = await api.fetch('https://api.example.test/me/preferences', { headers: { Authorization: `Bearer ${token}` } });
+  assert.equal(preferences.status, 200);
+  const preferencesBody = await preferences.json();
+  assert.equal(typeof preferencesBody.userId, 'string');
+  assert.deepEqual({ ...preferencesBody, userId: '<user>' }, { userId: '<user>', filter: {}, alertsEnabled: false, onboardingComplete: false });
+});
+
+test('processes a compiled shadow queue event through R2 and exposes its disabled state to operations', async () => {
+  const bundleDirectory = join(repositoryRoot, 'cloudflare/dist/ingestion');
+  const shadowRuntime = new Miniflare({ workers: [
+    await createWorkerConfig('intern-notifs-e2e-shadow', bundleDirectory, 'ingestion-worker.js', {
+      SHADOW_EXTRACTION_ENABLED: { type: 'text', value: 'false' },
+      INTERNAL_SERVICE_SECRET: { type: 'text', value: internalServiceSecret },
+      OPERATIONS_SHARED_SECRET: { type: 'text', value: operationsSecret },
+      DB: { type: 'd1', id: 'intern-notifs-e2e-shadow' },
+      SHADOW_EXTRACTION_ARTIFACTS: { type: 'r2', name: 'intern-notifs-e2e-shadow' },
+    }),
+  ] });
+  await shadowRuntime.ready;
+  const database = await shadowRuntime.getD1Database('DB', 'intern-notifs-e2e-shadow');
+  await applyMigrations(database);
+  const sha256 = (value) => createHash('sha256').update(value).digest('hex');
+  const normalized = { title: 'Software Engineering Intern', description: 'Austin\n$50 - $60 per hour', completeness: 'complete' };
+  normalized.contentHash = sha256(JSON.stringify(normalized));
+  const cacheKey = sha256([normalized.contentHash, 'unapproved-pilot-model', 'shadow-extraction-prompt-v1',
+    'shadow-extraction-schema-v1', 'exact-posting-markdown-v1'].join('\0'));
+  const identity = { provider: 'greenhouse', sourceId: 'greenhouse-review', tenant: 'review', postingId: '175', sourceUrl: 'https://example.test/175' };
+  const runKey = sha256(['review-job', 'greenhouse-review', '175', normalized.contentHash, cacheKey].join('\0'));
+  const inputKey = `shadow-input/${runKey}.json`;
+  const observedAt = new Date().toISOString();
+  await database.prepare(`INSERT INTO shadow_extraction_posting_revisions (job_id, source_id, external_id, content_hash, observed_at)
+    VALUES (?, ?, ?, ?, ?)`).bind('review-job', 'greenhouse-review', '175', normalized.contentHash, observedAt).run();
+  const bucket = await shadowRuntime.getR2Bucket('SHADOW_EXTRACTION_ARTIFACTS', 'intern-notifs-e2e-shadow');
+  await bucket.put(inputKey, JSON.stringify({ version: 1, normalized, baseline: { compensation: 'incomplete' }, identity: {
+    jobId: 'review-job', sourceId: 'greenhouse-review', externalId: '175', sourceUrl: identity.sourceUrl,
+    providerIdentity: identity, observedAt,
+  } }));
+  const { default: builtWorker } = await import(new URL('../../cloudflare/dist/ingestion/ingestion-worker.js', import.meta.url));
+  let acked = false;
+  await builtWorker.queue({ queue: 'intern-notifs-shadow-extraction', messages: [{ id: 'review-message',
+    body: { version: 1, runKey, cacheKey, jobId: 'review-job', sourceId: 'greenhouse-review', externalId: '175',
+      sourceUrl: identity.sourceUrl, providerIdentity: identity, contentHash: normalized.contentHash, inputKey, queuedAt: observedAt },
+    attempts: 1, ack() { acked = true; }, retry() { throw new Error('disabled execution should not retry'); } }] }, {
+    DB: database, SHADOW_EXTRACTION_ARTIFACTS: bucket, SHADOW_EXTRACTION_ENABLED: 'false',
+  });
+  const row = await database.prepare('SELECT state, attempts, error FROM shadow_extraction_runs WHERE run_key = ?').bind(runKey).first();
+  const worker = await shadowRuntime.getWorker('intern-notifs-e2e-shadow');
+  const summary = await worker.fetch('https://ingestion.example.test/internal/operations/shadow-extraction', {
+    headers: { 'X-InternNotifs-Service-Key': internalServiceSecret, 'X-Operations-Key': operationsSecret },
+  });
+  const summaryBody = await summary.json();
+  await shadowRuntime.dispose();
+
+  assert.equal(acked, true);
+  assert.deepEqual(row, { state: 'disabled', attempts: 1, error: 'live model execution disabled pending pilot and budget approval' });
+  assert.equal(summary.status, 200);
+  assert.ok(summaryBody.runs.some((item) => item.state === 'disabled' && item.count === 1));
 });

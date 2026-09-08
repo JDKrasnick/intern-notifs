@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import apiWorker, { type ApiEnvironment } from '../cloudflare/api-worker.js';
 import ingestionWorker, { type IngestionEnvironment } from '../cloudflare/ingestion-worker.js';
 import { isIngestionOperationPath, secretMatches } from '../cloudflare/split.js';
@@ -73,11 +73,40 @@ describe('API and ingestion Worker boundary', () => {
       GREENHOUSE_QUEUE_ID: 'greenhouse', LEVER_QUEUE_ID: 'lever', ASHBY_QUEUE_ID: 'ashby',
       GITHUB_QUEUE_ID: 'github', GMAIL_QUEUE_ID: 'gmail',
       DESTINATION_VERIFICATION_QUEUE_ID: 'destination-verification',
+      SHADOW_EXTRACTION_QUEUE_ID: 'shadow-extraction',
     } as Environment;
 
     expect(billingShutdownQueueIds(env)).toEqual([
-      'greenhouse', 'lever', 'ashby', 'github', 'gmail', 'destination-verification',
+      'greenhouse', 'lever', 'ashby', 'github', 'gmail', 'destination-verification', 'shadow-extraction',
     ]);
+  });
+
+  it('resolves the shadow queue by exact name for Wrangler billing shutdowns without a configured ID', async () => {
+    const requested: string[] = [];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (input: string | URL | Request) => {
+      const url = String(input);
+      requested.push(url);
+      return Response.json({ success: true, result: url.endsWith('/queues?per_page=100')
+        ? [{ queue_id: 'resolved-shadow-id', queue_name: 'intern-notifs-shadow-extraction' }] : [] });
+    }));
+    try {
+      const env = {
+        INTERNAL_SERVICE_SECRET: 'internal-test-secret', BILLING_WEBHOOK_SECRET: 'billing-test-secret',
+        CLOUDFLARE_SHUTDOWN_TOKEN: 'cloudflare-test-token', CLOUDFLARE_ACCOUNT_ID: 'account', WORKER_NAME: 'intern-notifs-ingestion',
+        GREENHOUSE_QUEUE_ID: 'greenhouse', LEVER_QUEUE_ID: 'lever', ASHBY_QUEUE_ID: 'ashby', GITHUB_QUEUE_ID: 'github',
+        GMAIL_QUEUE_ID: 'gmail', DESTINATION_VERIFICATION_QUEUE_ID: 'destination-verification',
+        SHADOW_EXTRACTION_QUEUE_NAME: 'intern-notifs-shadow-extraction',
+      } as IngestionEnvironment;
+      const response = await ingestionWorker.fetch(new Request('https://ingestion.example.test/internal/billing-shutdown?dry-run=true', {
+        method: 'POST', headers: { 'X-InternNotifs-Service-Key': 'internal-test-secret', 'cf-webhook-auth': 'billing-test-secret' },
+      }), env);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ready: true });
+      expect(requested.some((url) => url.endsWith('/queues/resolved-shadow-id/consumers'))).toBe(true);
+      expect(requested.some((url) => url.includes('/queues/undefined/'))).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('returns 502 instead of throwing when ingestion is unreachable', async () => {

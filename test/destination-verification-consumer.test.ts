@@ -6,7 +6,7 @@ import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import { enqueueDueDestinationVerifications, processDestinationVerificationBatch, sendAdmissionOperationalAlert,
   type DestinationVerificationEnvironment,
   type DestinationVerificationMessage } from '../cloudflare/destination-verification.js';
-import type { D1Database, D1PreparedStatement, MessageBatch, QueueMessage } from '../cloudflare/types.js';
+import type { D1Database, D1PreparedStatement, MessageBatch, QueueMessage, R2Bucket } from '../cloudflare/types.js';
 import type { Internship, SourceOccurrence } from '../src/types.js';
 
 const launch = vi.hoisted(() => vi.fn());
@@ -34,7 +34,9 @@ function subject() {
   for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0008_catalog_admission_occurrence_repair.sql',
     '0010_posting_identity.sql',
     '0012_destination_verification_schedule.sql', '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql',
-    '0017_metadata_acquisition.sql', '0018_metadata_review.sql', '0019_metadata_job_review_revision.sql']) {
+    '0017_metadata_acquisition.sql', '0018_metadata_review.sql', '0019_metadata_job_review_revision.sql',
+    '0020_shadow_extraction.sql', '0021_shadow_extraction_fencing.sql',
+    '0022_shadow_extraction_cache_expiry.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   const db = sqliteD1(database);
@@ -216,6 +218,44 @@ describe('destination verification queue consumer', () => {
     database.prepare("DELETE FROM destination_verification_attempts WHERE id = 'recent-live-attempt'").run();
     await expect(operations.hasVerificationAttemptSince(job.jobId, reference.sourceId, reference.applyUrl,
       '2026-08-29T00:00:00Z')).resolves.toBe(false);
+  });
+
+  it('hands a verified exact posting off through R2 and the shadow queue after catalog persistence', async () => {
+    const { database, db, jobs } = subject();
+    const { job, reference } = role();
+    await jobs.putInternship(job);
+    const frame = {
+      waitForFunction: vi.fn().mockResolvedValue({ dispose: vi.fn() }),
+      evaluate: vi.fn().mockResolvedValue({ url: reference.applyUrl, title: reference.title,
+        visibleText: `${reference.title}\nAustin\n$50 - $60 per hour\n${'Build reliable systems. '.repeat(30)}`,
+        structuredJobText: JSON.stringify({ '@type': 'JobPosting', identifier: reference.externalId, title: reference.title }),
+        jobPostingCount: 1, distinctJobLinkCount: 0, applicationFormPresent: true }),
+      parentFrame: () => null,
+    };
+    launch.mockResolvedValue({ newPage: vi.fn().mockResolvedValue({
+      goto: vi.fn().mockResolvedValue({ status: () => 200 }), url: () => reference.applyUrl,
+      evaluate: vi.fn().mockResolvedValue([]), frames: () => [frame], close: vi.fn(),
+    }), close: vi.fn() });
+    const shadowQueue = { send: vi.fn(), sendBatch: vi.fn() };
+    const artifactPut = vi.fn().mockResolvedValue(undefined);
+    const shadowArtifacts = { put: artifactPut } as unknown as R2Bucket;
+    const queued = queueMessage({ version: 1, jobId: job.jobId, sourceId: reference.sourceId,
+      externalId: reference.externalId!, candidateUrl: reference.applyUrl, providerIdentity: {
+        provider: 'greenhouse', sourceId: reference.sourceId, sourceUrl: reference.sourceUrl,
+        tenant: 'acme', postingId: reference.externalId,
+      }, reason: 'daily-retry', queuedAt: '2026-08-30T00:00:00Z', idempotencyKey: 'shadow-handoff' });
+
+    await processDestinationVerificationBatch({ queue: 'destination-verification', messages: [queued] }, {
+      ...environment(db), SHADOW_EXTRACTION_QUEUE: shadowQueue, SHADOW_EXTRACTION_ARTIFACTS: shadowArtifacts,
+    }, () => new Date('2026-08-30T00:01:00Z'));
+
+    expect(queued.ack).toHaveBeenCalledOnce();
+    expect(artifactPut).toHaveBeenCalledOnce();
+    expect(shadowQueue.send).toHaveBeenCalledOnce();
+    expect(shadowQueue.send.mock.calls[0]![0]).toMatchObject({ version: 1, jobId: job.jobId,
+      sourceId: reference.sourceId, externalId: reference.externalId });
+    expect(database.prepare('SELECT job_id, source_id, external_id FROM shadow_extraction_posting_revisions').get())
+      .toEqual({ job_id: job.jobId, source_id: reference.sourceId, external_id: reference.externalId });
   });
 
   it('retries a transient browser failure for platform retry and eventual DLQ handling', async () => {

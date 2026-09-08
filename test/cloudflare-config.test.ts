@@ -20,6 +20,7 @@ type WorkerConfig = {
       queue: string;
       max_batch_size: number;
       max_batch_timeout?: number;
+      retry_delay?: number;
       max_retries: number;
       max_concurrency?: number;
       dead_letter_queue: string;
@@ -52,6 +53,7 @@ describe('Cloudflare deployment configuration', () => {
     expect(api.queues?.producers?.map(({ binding }) => binding)).toEqual(['GMAIL_QUEUE']);
     expect(ingestion.queues?.consumers?.map(({ queue }) => queue)).toEqual([
       'intern-notifs-greenhouse', 'intern-notifs-lever', 'intern-notifs-ashby', 'intern-notifs-github', 'intern-notifs-gmail', 'intern-notifs-destination-verification',
+      'intern-notifs-shadow-extraction',
     ]);
     expect(ingestion.triggers?.crons).toHaveLength(9);
     expect(ingestion.workers_dev).toBe(false);
@@ -82,7 +84,8 @@ describe('Cloudflare deployment configuration', () => {
     expect(terraform).toContain('{ name = "DESTINATION_BROWSER", type = "browser" }');
     expect(terraform).toContain('{ name = "DESTINATION_VERIFICATION_QUEUE_ID", type = "plain_text"');
     expect(terraform).toContain('batch_size = each.key == "destination-verification" ? 5 : 1');
-    expect(terraform).toContain('max_wait_time_ms = each.key == "destination-verification" ? 60000 : 5000');
+    expect(terraform).toContain('max_retries      = each.key == "gmail" ? 5 : 2');
+    expect(terraform).toContain('max_wait_time_ms = contains(["destination-verification", "shadow-extraction"], each.key) ? 60000 : 5000');
   });
 
   it('keeps admission alert thresholds synchronized across Wrangler and OpenTofu', () => {
@@ -105,7 +108,6 @@ describe('Cloudflare deployment configuration', () => {
 
   it('keeps behavior-critical API variables synchronized across Wrangler and OpenTofu', () => {
     const terraform = read('infra/cloudflare/main.tf');
-
     expect(api.vars.EMPLOYER_PORTAL_ENABLED).toBe('true');
     expect(terraform).toContain('{ name = "EMPLOYER_PORTAL_ENABLED", type = "plain_text", text = tostring(var.employer_portal_enabled) }');
     expect(read('infra/cloudflare/variables.tf')).toContain('variable "employer_portal_enabled"');
@@ -131,5 +133,29 @@ describe('Cloudflare deployment configuration', () => {
   it('requires explicit Worker configuration rather than retaining a shared default', () => {
     expect(existsSync(new URL('../wrangler.jsonc', import.meta.url))).toBe(false);
     expect(api.services).toEqual([{ binding: 'INGESTION', service: 'intern-notifs-ingestion' }]);
+  });
+
+  it('keeps shadow extraction private, bounded, and owned by ingestion', () => {
+    const terraform = read('infra/cloudflare/main.tf');
+    const worker = read('cloudflare/worker.ts');
+    const producerBindings = new Map(ingestion.queues?.producers?.map((binding) => [binding.binding, binding.queue]));
+    const consumer = ingestion.queues?.consumers?.find(({ queue }) => queue === 'intern-notifs-shadow-extraction');
+
+    expect(producerBindings.get('SHADOW_EXTRACTION_QUEUE')).toBe('intern-notifs-shadow-extraction');
+    expect(producerBindings.get('SHADOW_EXTRACTION_DLQ')).toBe('intern-notifs-shadow-extraction-dlq');
+    expect(consumer).toEqual({
+      queue: 'intern-notifs-shadow-extraction', max_batch_size: 1, max_concurrency: 1,
+      max_batch_timeout: 60, max_retries: 2, retry_delay: 300, dead_letter_queue: 'intern-notifs-shadow-extraction-dlq',
+    });
+    expect(ingestion.vars.SHADOW_EXTRACTION_ENABLED).toBe('false');
+    expect(ingestion.vars.SHADOW_EXTRACTION_QUEUE_NAME).toBe('intern-notifs-shadow-extraction');
+    expect(terraform).toContain('cloudflare_r2_bucket" "shadow_extraction');
+    expect(terraform).toContain('SHADOW_EXTRACTION_ARTIFACTS');
+    expect(terraform).toContain('"shadow-extraction"');
+    expect(terraform).toContain('{ name = "SHADOW_EXTRACTION_QUEUE_ID", type = "plain_text"');
+    expect(terraform).toContain('{ name = "SHADOW_EXTRACTION_QUEUE_NAME", type = "plain_text"');
+    expect(terraform).toContain('contains(["destination-verification", "shadow-extraction"], each.key) ? 60000 : 5000');
+    expect(terraform).toContain('retry_delay      = each.key == "shadow-extraction" ? 300 : null');
+    expect(worker).toContain('env.SHADOW_EXTRACTION_QUEUE_ID');
   });
 });
