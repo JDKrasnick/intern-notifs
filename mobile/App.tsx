@@ -3289,6 +3289,7 @@ function AppContent() {
       if (first) openApplicationAndScheduleCheck(first);
       return;
     }
+    let blocked = 0;
     for (const target of targets) {
       void api("/me/gmail/checks", token, {
         method: "POST",
@@ -3296,7 +3297,13 @@ function AppContent() {
       }).catch((error) => {
         console.warn("Could not schedule Gmail application check", error);
       });
-      window.open(target.applyUrl, "_blank", "noopener");
+      if (window.open(target.applyUrl, "_blank", "noopener") === null) blocked += 1;
+    }
+    if (blocked > 0) {
+      Alert.alert(
+        "Pop-ups blocked",
+        `Your browser blocked ${blocked} of ${targets.length} role pages. Allow pop-ups for this site, then try again.`,
+      );
     }
   };
   const saveForWeb = (job: Job, options?: { silent?: boolean }) => {
