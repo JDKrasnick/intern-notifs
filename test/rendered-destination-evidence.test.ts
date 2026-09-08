@@ -62,6 +62,18 @@ describe('rendered destination frame evidence', () => {
       inspectedAt: '2026-08-28T00:00:00Z' }).classification).toBe('application-form');
   });
 
+  it('does not close a live form from related-role copy when structured data is unavailable', () => {
+    const role = listing();
+    const evidence = combineRenderedFrameEvidence({ role: role.title, expectedPostingId: '1234567', frames: [frame({
+      title: role.title,
+      visibleText: `${role.title} Job ID 1234567 Responsibilities Apply. Related roles: This job has expired.`,
+      applicationFormPresent: true,
+    })] })!;
+    expect(evidence).toMatchObject({ closureState: 'open', postingIdPresent: true, applicationFormPresent: true });
+    expect(classifyDestination({ listing: role, reachability: 'live', evidence, browserVisible: true,
+      inspectedAt: '2026-08-28T00:00:00Z' }).classification).toBe('application-form');
+  });
+
   it('still honors explicit closure in the selected structured posting', () => {
     const role = listing();
     const evidence = combineRenderedFrameEvidence({ role: role.title, expectedPostingId: '1234567', frames: [frame({

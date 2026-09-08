@@ -216,7 +216,7 @@ export async function persistDestinationAdmission(input: {
       acquired: Boolean(apiEvidence.length || (evidence && ['posting-detail', 'application-form'].includes(destination.classification))), complete }),
     excerpts: [...pageExtracted, ...apiEvidence].flatMap((item) => item.compensationRanges?.map((range) => range.sourceText) ?? []).slice(0, 8),
   }, retryAfter);
-  if ((pageComplete || apiEvidence.length) && enrichedReference.metadataExtraction) await operations.recordRoleMetadataExtraction({
+  if (complete && enrichedReference.metadataExtraction) await operations.recordRoleMetadataExtraction({
     jobId: job.jobId, sourceId: message.sourceId, sourceUrl: input.apiAcquisition?.artifact ? input.apiAcquisition.sourceUrl : evidence!.url,
     artifactHash: enrichedReference.metadataExtraction.artifactHash,
     extractionVersion: enrichedReference.metadataExtraction.version,

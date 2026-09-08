@@ -426,7 +426,8 @@ export async function inspectApplicationPage(
   const jobPostingCount = [...html.matchAll(/["']@type["']\s*:\s*["']JobPosting["']/gi)].length;
   const jobLinkCount = distinctJobLinkCount(html, destination);
   const applicationFormPresent = /<form\b[^>]*(?:action=["'][^"']*(?:apply|application)|id=["'][^"']*(?:apply|application))|<input\b[^>]*(?:type=["']file["']|name=["'](?:resume|cv)["'])/i.test(html);
-  const explicitlyGone = [title, description, content.excerpt?.slice(0, 2_000)]
+  const explicitlyGone = [title, description,
+    ...(content.source !== 'json-ld' && applicationFormPresent ? [] : [content.excerpt?.slice(0, 2_000)])]
     .some((value) => explicitDestinationClosure(value ?? ''));
   const validThroughExpired = Boolean(content.validThrough && Date.parse(content.validThrough) < Date.now());
   if (title && /^(?:404 |page )?not found$|^(?:access denied|application error|error)$/i.test(title)) {

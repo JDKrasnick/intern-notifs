@@ -15,7 +15,9 @@ describe('housing display', () => {
     expect(housingLabels([{ kind: 'stipend', conditional: true, sourceText: 'Up to $2,500, subject to eligibility.' }]))
       .toEqual([{ label: 'Housing stipend · conditional', detail: 'Up to $2,500, subject to eligibility.' }]);
     expect(housingLabels([{ kind: 'employee-cost', minAmount: 500, maxAmount: 500, sourceText: 'Housing costs $500.' }])[0]?.label)
-      .toBe('Housing cost to you: 500 · period not stated');
+      .toBe('Housing cost to you: $500 · period not stated');
+    expect(housingLabels([{ kind: 'employee-cost', minAmount: 500, maxAmount: 500, sourceText: 'Housing costs 500.' }])[0]?.label)
+      .toBe('Housing cost to you: Currency not stated 500 · period not stated');
     expect(housingLabels(undefined)).toEqual([]);
   });
 });

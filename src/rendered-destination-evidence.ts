@@ -88,7 +88,8 @@ function frameEvidence(frame: RenderedFrameSnapshot, expectedPostingId?: string)
   // When it exists, arbitrary body text can include expired related-role cards
   // and must not become closure evidence for the selected posting.
   const closureArtifact = frame.structuredJobText ?? contentExcerpt;
-  const explicitlyGone = [frame.title, frame.description, closureArtifact]
+  const explicitlyGone = [frame.title, frame.description,
+    ...(!frame.structuredJobText && frame.applicationFormPresent ? [] : [closureArtifact])]
     .some((value) => explicitDestinationClosure(value ?? ''));
   const metadataArtifacts = applicationMetadataArtifactsFromJsonDocuments(frame.structuredJobDocuments ?? []);
   const compensationSections = (frame.compensationRows ?? []).slice(0, 20).flatMap((row) => {

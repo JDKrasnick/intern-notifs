@@ -242,6 +242,14 @@ describe('application URL validation', () => {
         { status: 200, headers: { 'content-type': 'text/html' } }));
     expect(evidence).toMatchObject({ closureState: 'open' });
   });
+  it('does not close a live application form from related-role copy in the same body', async () => {
+    const evidence = await inspectApplicationPage('https://careers.example.com/jobs/123456', async () =>
+      new Response(`<title>Software Engineering Intern</title><main>${'Software Engineering Intern responsibilities. '.repeat(10)}
+        <form id="application"><input type="file" name="resume"></form>
+        <aside>Related role: This job has expired.</aside></main>`,
+      { status: 200, headers: { 'content-type': 'text/html' } }));
+    expect(evidence).toMatchObject({ closureState: 'open', applicationFormPresent: true, postingIdPresent: false });
+  });
   it('caps a generic career shell at catalog-only even when its metadata is present', async () => {
     await expect(inspectApplicationPage('https://careers.example.com/jobs/123456', async () =>
       new Response('<title>JPMC Candidate Experience page</title><meta name="description" content="Search opportunities.">', { status: 200, headers: { 'content-type': 'text/html' } }),
