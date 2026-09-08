@@ -29,6 +29,14 @@ describe('mobile job routes', () => {
     expect(handler?.groups?.body).not.toContain('InteractionManager');
   });
 
+  it('keeps the grouped sheet stable with role-shaped loading placeholders', () => {
+    const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+
+    expect(app).toContain('<CatalogGroupLoadingSkeleton />');
+    expect(app).toContain('accessibilityLabel="Loading grouped roles"');
+    expect(app).not.toContain('<Text style={styles.catalogPaginationText}>Loading roles…</Text>');
+  });
+
   it('parses compatible notification payloads and encoded app URLs', () => {
     expect(destinationFromNotification({ jobId: 'legacy/job' })).toEqual({ kind: 'job', jobId: 'legacy/job', reasons: [], exclusionsApplied: false });
     expect(destinationFromNotification({ applicationId: 'application-1', destination: 'saved' })).toEqual({ kind: 'saved' });

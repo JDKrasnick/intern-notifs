@@ -913,11 +913,9 @@ function CatalogGroupSheet({
         <View style={styles.catalogGroupSheet}>
           <View style={styles.sheetHandle} />
           {loading ? (
-            <View accessibilityRole="progressbar" accessibilityLabel="Loading grouped roles" style={styles.catalogGroupLoading}>
-              <Text style={styles.catalogPaginationText}>Loading roles…</Text>
-            </View>
+            <CatalogGroupLoadingSkeleton />
           ) : error ? (
-            <View style={styles.catalogGroupLoading}>
+            <View style={styles.catalogGroupErrorState}>
               <Text accessibilityRole="alert" style={styles.catalogGroupError}>{error}</Text>
               <ActionButton label="Try again" onPress={onRetry} />
             </View>
@@ -963,6 +961,30 @@ function CatalogGroupSheet({
         </View>
       </View>
     </Modal>
+  );
+}
+
+function CatalogGroupLoadingSkeleton() {
+  return (
+    <View accessibilityRole="progressbar" accessibilityLabel="Loading grouped roles" style={styles.catalogGroupLoading}>
+      <View style={styles.catalogGroupSkeletonHeader}>
+        <Skeleton width={168} height={20} />
+        <View style={styles.skeletonGap8} />
+        <Skeleton width={92} height={13} />
+      </View>
+      <View style={styles.catalogGroupRoles}>
+        {[0, 1].map((index) => (
+          <View key={index} style={styles.catalogGroupRole}>
+            <View style={styles.catalogGroupRoleCopy}>
+              <Skeleton width={232} height={16} />
+              <View style={styles.skeletonGap8} />
+              <Skeleton width={148} height={12} />
+            </View>
+            <Skeleton width={18} height={18} />
+          </View>
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -5820,7 +5842,9 @@ const styles = StyleSheet.create({
     paddingBottom: 28,
   },
   catalogGroupSheetHeader: { paddingBottom: 18 },
-  catalogGroupLoading: { gap: 16, justifyContent: "center", minHeight: 220 },
+  catalogGroupLoading: { minHeight: 220 },
+  catalogGroupSkeletonHeader: { paddingBottom: 18 },
+  catalogGroupErrorState: { gap: 16, justifyContent: "center", minHeight: 220 },
   catalogGroupError: { color: colors.danger, fontSize: 15, lineHeight: 21, textAlign: "center" },
   catalogGroupRoles: { borderTopColor: colors.separator, borderTopWidth: 1, paddingBottom: 8 },
   catalogGroupRole: {
