@@ -11,7 +11,9 @@ import type { ProviderIdentity } from './types.js';
 type Json = Record<string, unknown>;
 type Fetch = typeof fetch;
 export const RANDOM_OFFICIAL_PROBE_TIMEOUT_MS = 12_000;
-export const RANDOM_OFFICIAL_PROBE_MAX_PAGES = 20;
+/** A guard against a looping or hostile cursor; reaching it is an audit error,
+ * never permission to sample a biased catalog prefix. */
+export const RANDOM_OFFICIAL_PROBE_MAX_PAGES = 2_000;
 export type RandomOfficialProbeState = 'ok' | 'discrepant' | 'unsupported' | 'unavailable' | 'blocked';
 export type RandomOfficialProbeResult = {
   jobId: string; seed: string; state: RandomOfficialProbeState; provider?: string; sourceId?: string;
@@ -52,9 +54,12 @@ function exactDestination(identity: ProviderIdentity, value: unknown): boolean {
   const urlText = string(value); if (!urlText) return false;
   try { const url = new URL(urlText); const tenant = identity.tenant!; const id = identity.postingId!;
     if (url.protocol !== 'https:') return false;
-    if (identity.provider === 'greenhouse') return ['boards.greenhouse.io', 'job-boards.greenhouse.io'].includes(url.hostname) && (url.pathname === `/${tenant}/jobs/${id}` || (url.pathname === '/embed/job_app' && url.searchParams.get('for') === tenant && url.searchParams.get('token') === id));
-    if (identity.provider === 'lever') return url.hostname === 'jobs.lever.co' && url.pathname.replace(/\/$/u, '') === `/${tenant}/${id}/apply`;
-    return url.hostname === 'jobs.ashbyhq.com' && url.pathname === `/${tenant}/${id}/application`;
+    // Reviewed sources may use an employer-controlled application host. Its
+    // exact value is bound by the occurrence evidence, so only impose an ATS
+    // path contract if the public URL is actually on that ATS host.
+    if (identity.provider === 'greenhouse') return !['boards.greenhouse.io', 'job-boards.greenhouse.io'].includes(url.hostname) || (url.pathname === `/${tenant}/jobs/${id}` || (url.pathname === '/embed/job_app' && url.searchParams.get('for') === tenant && url.searchParams.get('token') === id));
+    if (identity.provider === 'lever') return url.hostname !== 'jobs.lever.co' || url.pathname.replace(/\/$/u, '') === `/${tenant}/${id}/apply`;
+    return url.hostname !== 'jobs.ashbyhq.com' || url.pathname === `/${tenant}/${id}/application`;
   } catch { return false; }
 }
 
@@ -70,8 +75,13 @@ export async function runRandomOfficialProbes(options: { apiUrl?: string; count?
   const apiUrl = (options.apiUrl ?? 'https://intern-notifs.jdkrasnick.workers.dev').replace(/\/$/u, ''); const fetchImpl = options.fetchImpl ?? fetch;
   const count = options.count ?? 10; const seed = options.seed ?? `${options.now?.() ?? new Date()}`; const timeoutMs = options.timeoutMs ?? RANDOM_OFFICIAL_PROBE_TIMEOUT_MS;
   if (!Number.isInteger(count) || count < 1 || count > 50) throw new Error('count must be an integer from 1 to 50');
-  const jobs: Json[] = []; let cursor: string | undefined;
-  for (let page = 0; page < (options.maxPages ?? RANDOM_OFFICIAL_PROBE_MAX_PAGES); page += 1) { const result = await getJson(`${apiUrl}/jobs?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, fetchImpl, timeoutMs); if (result.state !== 'ok' || !record(result.body) || !Array.isArray(result.body.jobs)) break; jobs.push(...result.body.jobs.filter(record)); cursor = string(result.body.cursor); if (!cursor) break; }
+  const jobs: Json[] = []; let cursor: string | undefined; const maxPages = options.maxPages ?? RANDOM_OFFICIAL_PROBE_MAX_PAGES;
+  for (let page = 0; page < maxPages; page += 1) {
+    const result = await getJson(`${apiUrl}/jobs?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, fetchImpl, timeoutMs);
+    if (result.state !== 'ok' || !record(result.body) || !Array.isArray(result.body.jobs)) throw new Error(`Unable to read the complete public catalog${result.status ? ` (${result.status})` : ''}`);
+    jobs.push(...result.body.jobs.filter(record)); cursor = string(result.body.cursor); if (!cursor) break;
+    if (page + 1 === maxPages) throw new Error(`Public catalog exceeded the explicit ${maxPages}-page audit cap; no biased prefix was sampled`);
+  }
   const candidates = jobs.filter(providerIdentity); const selected = shuffled(candidates, seed).slice(0, count);
   const results = await Promise.all(selected.map(async (job): Promise<RandomOfficialProbeResult> => {
     const candidate = providerIdentity(job)!; const route = metadataApiRoute(candidate.identity, string(candidate.reference.applyUrl));

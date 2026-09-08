@@ -33,4 +33,17 @@ describe('random official probes', () => {
     const run = await runRandomOfficialProbes({ fetchImpl: fetchImpl as typeof fetch, apiUrl: 'https://api.example.test', count: 1, seed: 'one' });
     expect(run.results[0]).toMatchObject({ state: 'unavailable' });
   });
+  it('accepts a reviewed custom official apply host when its exact occurrence evidence agrees', async () => {
+    const customApply = 'https://careers.acme.test/apply/platform-intern';
+    const custom = { ...job, applyUrl: customApply, sourceReferences: [{ ...job.sourceReferences[0], applyUrl: customApply }] };
+    const run = await runRandomOfficialProbes({ fetchImpl: fetchFor(custom) as typeof fetch, apiUrl: 'https://api.example.test', count: 1, seed: 'custom' });
+    expect(run.results[0]).toMatchObject({ state: 'ok' });
+  });
+  it('never samples a catalog prefix when its explicit traversal cap is reached', async () => {
+    const fetchImpl = vi.fn(async (url: string) => url.includes('/jobs?')
+      ? Response.json({ jobs: [job], cursor: 'next' }) : Response.json(greenhouse));
+    await expect(runRandomOfficialProbes({ fetchImpl: fetchImpl as typeof fetch, apiUrl: 'https://api.example.test', count: 1, maxPages: 1 }))
+      .rejects.toThrow('no biased prefix was sampled');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
 });
