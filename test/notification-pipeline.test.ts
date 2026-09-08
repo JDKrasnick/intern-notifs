@@ -95,7 +95,7 @@ describe('NotificationPipeline', () => {
   });
   it('rechecks freshness at the current flush attempt after a bucket was closed earlier', () => {
     const job = { open: true, technical: true, admission: {
-      destination: { freshUntil: '2026-08-30T00:00:00Z' }, alertEligible: true,
+      destination: { inspectedAt: '2026-08-23T00:00:00Z', freshUntil: '2026-08-30T00:00:00Z' }, alertEligible: true,
     } } as Internship;
     const priorClosedAt = new Date('2026-08-29T23:59:59Z');
     const retriedAt = new Date('2026-08-30T00:00:01Z');

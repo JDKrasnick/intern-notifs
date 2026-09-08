@@ -68,7 +68,7 @@ export function isProviderSourceDue(
   now: Date,
   health?: SourceHealth,
 ): boolean {
-  if (health?.sourceStatus === 'paused') return false;
+  if (health?.sourceStatus === 'paused' || health?.state === 'quarantined') return false;
   const backoffUntil = timestamp(health?.backoffUntil);
   if (backoffUntil !== undefined && backoffUntil > now.getTime()) return false;
   if (sourceStatus === 'published') return true;

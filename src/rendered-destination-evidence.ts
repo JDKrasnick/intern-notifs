@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { explicitDestinationClosure, sourceRoleAgreement, type ApplicationPageEvidence } from './core/application-url.js';
+import { applicationMetadataArtifactsFromJsonDocuments } from './role-metadata.js';
 
 export interface RenderedFrameSnapshot {
   url: string;
@@ -9,9 +10,20 @@ export interface RenderedFrameSnapshot {
   visibleText?: string;
   structuredJobText?: string;
   validThrough?: string;
+  structuredJobDocuments?: string[];
+  compensationRows?: string[];
   jobPostingCount: number;
   distinctJobLinkCount: number;
   applicationFormPresent: boolean;
+  inspectionTruncated?: boolean;
+  loadingShell?: boolean;
+}
+
+/** Serializable into the browser frame; optional text permits pure regressions. */
+export function renderedDescriptionReady(title: string, text = document.body?.innerText ?? ''): boolean {
+  const terms = title.toLowerCase().split(/[^a-z0-9]+/u).filter((term) => term.length > 3);
+  return /no longer available|job (?:not found|has expired)|position (?:has been filled|is closed)|under maintenance|sign in to continue/iu.test(text)
+    || (text.length > 500 && terms.length > 0 && terms.filter((term) => text.toLowerCase().includes(term)).length >= Math.ceil(terms.length / 2));
 }
 
 function hash(value: unknown): string {
@@ -41,6 +53,26 @@ function includesPostingId(value: string | undefined, expectedPostingId?: string
   return new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, 'iu').test(value);
 }
 
+/** Only an observed same-origin link with the exact immutable path ID is a
+ * recovery candidate. Query-only directory links, title guesses and ambiguity
+ * are intentionally rejected. The destination still needs normal verification. */
+export function exactPostingRecoveryUrl(currentUrl: string, postingId: string | undefined, links: readonly string[]): string | undefined {
+  if (!postingId) return undefined;
+  try {
+    const current = new URL(currentUrl);
+    if (current.pathname.split('/').includes(postingId)) return undefined;
+    const candidates = new Set(links.flatMap((value) => {
+      try {
+        const url = new URL(value, current);
+        if (url.protocol !== 'https:' || url.origin !== current.origin || url.username || url.password
+          || !url.pathname.split('/').some((part) => decodeURIComponent(part) === postingId)) return [];
+        url.hash = ''; return [url.toString()];
+      } catch { return []; }
+    }));
+    return candidates.size === 1 ? [...candidates][0] : undefined;
+  } catch { return undefined; }
+}
+
 function withoutExpectedPostingId(value: string | undefined, expectedPostingId?: string): string | undefined {
   if (!value || !expectedPostingId) return value;
   const escaped = expectedPostingId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -48,7 +80,7 @@ function withoutExpectedPostingId(value: string | undefined, expectedPostingId?:
 }
 
 function frameEvidence(frame: RenderedFrameSnapshot, expectedPostingId?: string): ApplicationPageEvidence {
-  const contentExcerpt = frame.visibleText?.replace(/\s+/gu, ' ').trim().slice(0, 12_000);
+  const contentExcerpt = frame.visibleText?.split(/[\r\n]+/u).map(line => line.replace(/\s+/gu, ' ').trim()).filter(Boolean).join('\n').slice(0, 40_000);
   const renderedPostingText = [contentExcerpt, frame.structuredJobText].filter(Boolean).join(' ');
   const postingIdPresent = includesPostingId(renderedPostingText, expectedPostingId);
   const validThroughExpired = Boolean(frame.validThrough && Date.parse(frame.validThrough) <= Date.now());
@@ -58,8 +90,17 @@ function frameEvidence(frame: RenderedFrameSnapshot, expectedPostingId?: string)
   const closureArtifact = frame.structuredJobText ?? contentExcerpt;
   const explicitlyGone = [frame.title, frame.description, closureArtifact]
     .some((value) => explicitDestinationClosure(value ?? ''));
+  const metadataArtifacts = applicationMetadataArtifactsFromJsonDocuments(frame.structuredJobDocuments ?? []);
+  const compensationSections = (frame.compensationRows ?? []).slice(0, 20).flatMap((row) => {
+    // Rows come only from a visible list under an explicit compensation heading.
+    // Keep publisher labels verbatim rather than guessing geography or education.
+    const match = /^([^$€£\d]{0,120}?)((?:(?:US|CA|AU|NZ|SG|HK)\$|[$€£]|[A-Z]{3}\s+)\s*\d[\s\S]*)$/u.exec(row.trim());
+    return match ? [{ label: match[1]!.trim(), text: match[2]!.trim() }] : [];
+  });
   return {
     url: frame.url,
+    ...(frame.inspectionTruncated ? { inspectionTruncated: true } : {}),
+    ...(frame.loadingShell ? { loadingShell: true } : {}),
     ...(frame.title ? { title: frame.title } : {}),
     ...(frame.description ? { description: frame.description } : {}),
     ...(expectedPostingId ? { expectedPostingId } : {}),
@@ -73,6 +114,8 @@ function frameEvidence(frame: RenderedFrameSnapshot, expectedPostingId?: string)
       : explicitlyGone ? { closureState: 'gone' as const, closureSignal: 'explicit-language' as const }
         : { closureState: 'open' as const }),
     ...(contentExcerpt ? { contentExcerpt, contentHash: hash(withoutExpectedPostingId(renderedPostingText, expectedPostingId)), contentSource: 'body' as const } : {}),
+    ...(metadataArtifacts.length ? { metadataArtifacts } : {}),
+    ...(compensationSections.length ? { compensationSections } : {}),
     confidence: { score: 100, level: 'high', recommendation: 'alert-eligible', signals: ['browser-visible evidence'] },
   };
 }

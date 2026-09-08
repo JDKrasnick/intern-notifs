@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { alertEligible, catalogEligible, deriveCanonicalAdmission, evaluateCatalogAdmission, metadataCompleteness } from '../src/catalog-admission.js';
-import { classifyDestination } from '../src/destination-verification.js';
+import { classifyDestination, requiresBrowserVerification } from '../src/destination-verification.js';
 import { inspectApplicationPage, type ApplicationPageEvidence } from '../src/core/application-url.js';
+import { reachabilityFromFailure } from '../src/core/application-verification.js';
 import type { CatalogAdmission, ProcessedListing, SourceOccurrence } from '../src/types.js';
 
 function listing(overrides: Partial<ProcessedListing> = {}): ProcessedListing {
@@ -63,6 +64,14 @@ describe('record-level catalog admission', () => {
     expect(valid.classification).toBe('posting-detail');
   });
 
+  it('does not treat one structured posting in a truncated prefix as exact-page proof', () => {
+    const role = listing({ applyUrl: 'https://careers.acme.test/custom' });
+    const destination = classifyDestination({ listing: role, reachability: 'live', inspectedAt: '2026-09-04T12:00:00Z',
+      evidence: page({ title: 'Careers', contentExcerpt: 'Browse opportunities', jobPostingCount: 1,
+        inspectionTruncated: true, inspectedBytes: 512 * 1024 }) });
+    expect(destination).toMatchObject({ classification: 'unresolved', inspectionTruncated: true, inspectedBytes: 512 * 1024 });
+  });
+
   it('uses the required missing-location copy but rejects truncated and malformed display fields', () => {
     expect(metadataCompleteness({ title: 'Software Engineering Intern', locations: [] }))
       .toEqual({ complete: true, title: 'complete', location: 'not-specified' });
@@ -107,20 +116,96 @@ describe('record-level catalog admission', () => {
     expect(destination.classification).toBe('posting-detail');
   });
 
-  it('rechecks before evidence expiry, then retains the handoff for seven catalog-only grace days', () => {
+  it.each([7, 8, 10, 14, 17, 100])('admits a matching single posting with %s navigation/related links', async (links) => {
+    const role = listing({ applyUrl: 'https://careers.future-employer.test/opportunities/software-intern',
+      providerIdentity: { provider: 'github', sourceId: 'community', sourceUrl: 'https://example.test/source' } });
+    const evidence = await inspectApplicationPage(role.applyUrl, async () => new Response(`
+      <title>Software Engineering Intern</title>
+      <script type="application/ld+json">{"@type":"JobPosting","title":"Software Engineering Intern",
+      "description":"Build software with our engineering team during this internship."}</script>
+      ${Array.from({ length: links }, (_, i) => `<a href="/jobs/related-${i}">Related role</a>`).join('')}
+    `, { headers: { 'content-type': 'text/html' } }));
+    expect(evidence).toMatchObject({ jobPostingCount: 1, distinctJobLinkCount: links });
+    for (const browserVisible of [undefined, true]) {
+      const destination = classifyDestination({ listing: role, evidence, reachability: 'live',
+        inspectedAt: role.fetchedAt, browserVisible });
+      expect(destination.classification).toBe('posting-detail');
+      expect(evaluateCatalogAdmission({ listing: role, destination, postingAttributed: true, evaluatedAt: role.fetchedAt }))
+        .toMatchObject({ catalogEligible: true, alertEligible: true });
+    }
+  });
+
+  it.each([
+    { jobPostingCount: 2 },
+    { redirectedToGenericDestination: true },
+    { identicalEvidenceForDifferentPosting: true },
+    { title: 'Restaurant General Manager', description: 'Manage restaurant staffing', contentExcerpt: 'Restaurant management' },
+    { jobPostingCount: 0, postingIdPresent: true },
+    { jobPostingCount: 0, applicationFormPresent: true },
+  ])('keeps contradictory or weak high-link-count pages withheld: %j', (overrides) => {
+    const role = listing({ applyUrl: 'https://careers.future-employer.test/jobs/1234567' });
+    const evidence = page({ jobPostingCount: 1, distinctJobLinkCount: 14, ...overrides });
+    for (const browserVisible of [undefined, true]) {
+      const destination = classifyDestination({ listing: role, evidence, reachability: 'live',
+        inspectedAt: role.fetchedAt, browserVisible });
+      expect(destination.classification).toBe('aggregate-board');
+      expect(evaluateCatalogAdmission({ listing: role, destination, postingAttributed: true, evaluatedAt: role.fetchedAt }))
+        .toMatchObject({ catalogEligible: false, alertEligible: false });
+    }
+  });
+
+  it('queues a matching truncated structured page instead of permanently labeling its navigation a board', () => {
+    const role = listing({ applyUrl: 'https://careers.future-employer.test/opportunities/software-intern' });
+    const evidence = page({ jobPostingCount: 1, distinctJobLinkCount: 14, inspectionTruncated: true });
+    for (const browserVisible of [undefined, true]) {
+      const destination = classifyDestination({ listing: role, evidence, reachability: 'live',
+        inspectedAt: role.fetchedAt, browserVisible });
+      expect(destination.classification).toBe('unresolved');
+      expect(requiresBrowserVerification(destination)).toBe(true);
+      expect(evaluateCatalogAdmission({ listing: role, destination, postingAttributed: true, evaluatedAt: role.fetchedAt }))
+        .toMatchObject({ catalogEligible: false, alertEligible: false });
+    }
+    const verified = classifyDestination({ listing: role, evidence: { ...evidence, inspectionTruncated: false },
+      reachability: 'live', inspectedAt: role.fetchedAt, browserVisible: true });
+    expect(verified.classification).toBe('posting-detail');
+    for (const contradiction of [{ jobPostingCount: 2 }, { redirectedToGenericDestination: true }, { identicalEvidenceForDifferentPosting: true }]) {
+      expect(classifyDestination({ listing: role, evidence: { ...evidence, ...contradiction }, reachability: 'live',
+        inspectedAt: role.fetchedAt }).classification).toBe('aggregate-board');
+    }
+  });
+
+  it('anchors temporary unreadability to the last successful exact-role verification and pauses alerts', () => {
     const role = listing({ applyUrl: 'https://careers.acme.test/roles/1234567' });
     const goodDestination = classifyDestination({ listing: role, reachability: 'live', evidence: page({ postingIdPresent: true }), inspectedAt: '2026-08-20T12:00:00Z' });
     const previous = evaluateCatalogAdmission({ listing: role, destination: goodDestination, postingAttributed: true, evaluatedAt: '2026-08-20T12:00:00Z' });
     const unresolved = classifyDestination({ listing: role, reachability: 'unreachable', inspectedAt: '2026-08-26T12:00:00Z' });
-    const retrying = evaluateCatalogAdmission({ listing: role, destination: unresolved, postingAttributed: true, evaluatedAt: '2026-08-26T12:00:00Z', previous });
-    expect(retrying).toMatchObject({ catalogEligible: true, alertEligible: true, reasonCodes: [] });
-    const grace = evaluateCatalogAdmission({ listing: role, destination: unresolved, postingAttributed: true,
-      evaluatedAt: '2026-08-28T12:00:00Z', previous: retrying });
+    const grace = evaluateCatalogAdmission({ listing: role, destination: unresolved, postingAttributed: true, evaluatedAt: '2026-08-26T12:00:00Z', previous });
     expect(grace).toMatchObject({ catalogEligible: true, alertEligible: false, reasonCodes: ['destination-grace'],
-      graceDeadline: '2026-09-03T12:00:00.000Z' });
-    const expired = evaluateCatalogAdmission({ listing: role, destination: unresolved, postingAttributed: true,
-      evaluatedAt: '2026-09-04T12:00:00Z', previous: grace });
+      lastVerifiedAt: '2026-08-20T12:00:00Z', graceDeadline: '2026-08-27T12:00:00.000Z',
+      destination: { lastKnownGoodAt: '2026-08-20T12:00:00Z' } });
+    const retry = evaluateCatalogAdmission({ listing: role, destination: { ...unresolved, inspectedAt: '2026-08-26T18:00:00Z' },
+      postingAttributed: true, evaluatedAt: '2026-08-26T18:00:00Z', previous: grace });
+    expect(retry).toMatchObject({ catalogEligible: true, alertEligible: false,
+      lastVerifiedAt: '2026-08-20T12:00:00Z', graceDeadline: '2026-08-27T12:00:00.000Z',
+      destination: { lastKnownGoodAt: '2026-08-20T12:00:00Z' } });
+    const expired = evaluateCatalogAdmission({ listing: role, destination: unresolved, postingAttributed: true, evaluatedAt: '2026-08-27T12:00:00Z', previous: retry });
     expect(expired).toMatchObject({ catalogEligible: false, alertEligible: false, reasonCodes: ['destination-unresolved'] });
+  });
+
+  it.each([404, 410])('immediately closes a previously verified role on confirmed HTTP %s', (status) => {
+    const role = listing();
+    const previous = evaluateCatalogAdmission({ listing: role,
+      destination: classifyDestination({ listing: role, reachability: 'live', evidence: page({ postingIdPresent: true }), inspectedAt: '2026-08-20T12:00:00Z' }),
+      postingAttributed: true, evaluatedAt: '2026-08-20T12:00:00Z' });
+    const gone = classifyDestination({ listing: role,
+      reachability: reachabilityFromFailure(new Error(`official destination returned HTTP ${status}`)),
+      inspectedAt: '2026-08-21T12:00:00Z' });
+    expect(evaluateCatalogAdmission({ listing: role, destination: gone, postingAttributed: true,
+      evaluatedAt: '2026-08-21T12:00:00Z', previous })).toMatchObject({
+      catalogEligible: false, alertEligible: false, reasonCodes: ['destination-gone'],
+      lastVerifiedAt: '2026-08-20T12:00:00Z',
+    });
+
   });
 
   it('fails closed from wall-clock freshness even when a scheduled verifier is unavailable', () => {
@@ -131,8 +216,8 @@ describe('record-level catalog admission', () => {
       evaluatedAt: '2026-08-20T12:00:00Z' });
     expect(alertEligible({ admission }, new Date('2026-08-27T11:59:59Z'))).toBe(true);
     expect(alertEligible({ admission }, new Date('2026-08-27T12:00:00Z'))).toBe(false);
-    expect(catalogEligible({ admission }, new Date('2026-09-03T11:59:59Z'))).toBe(true);
-    expect(catalogEligible({ admission }, new Date('2026-09-03T12:00:00Z'))).toBe(false);
+    expect(catalogEligible({ admission }, new Date('2026-08-27T11:59:59Z'))).toBe(true);
+    expect(catalogEligible({ admission }, new Date('2026-08-27T12:00:00Z'))).toBe(false);
   });
 
   it('bounds admissions written before freshUntil was persisted', () => {
@@ -145,8 +230,8 @@ describe('record-level catalog admission', () => {
 
     expect(alertEligible({ admission }, new Date('2026-08-27T11:59:59Z'))).toBe(true);
     expect(alertEligible({ admission }, new Date('2026-08-27T12:00:00Z'))).toBe(false);
-    expect(catalogEligible({ admission }, new Date('2026-09-03T11:59:59Z'))).toBe(true);
-    expect(catalogEligible({ admission }, new Date('2026-09-03T12:00:00Z'))).toBe(false);
+    expect(catalogEligible({ admission }, new Date('2026-08-27T11:59:59Z'))).toBe(true);
+    expect(catalogEligible({ admission }, new Date('2026-08-27T12:00:00Z'))).toBe(false);
 
     admission.destination.freshUntil = 'not-a-date';
     expect(alertEligible({ admission }, new Date('2026-08-27T12:00:00Z'))).toBe(false);
@@ -162,6 +247,7 @@ describe('record-level catalog admission', () => {
     admission.destination.freshUntil = 'not-a-date';
     admission.destination.inspectedAt = 'not-a-date';
     admission.evidenceObservedAt = 'not-a-date';
+    admission.lastVerifiedAt = 'not-a-date';
 
     expect(alertEligible({ admission }, new Date('1970-01-01T00:00:00Z'))).toBe(false);
     expect(catalogEligible({ admission }, new Date('1970-01-01T00:00:00Z'))).toBe(false);

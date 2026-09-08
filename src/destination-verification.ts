@@ -18,6 +18,10 @@ export interface DestinationVerificationRequest {
   leaseToken?: string;
   idempotencyKey?: string;
   generationId?: string;
+  /** Optional additive fields keep already-queued v1 messages valid. */
+  metadataExtractionVersion?: number;
+  metadataArtifactHash?: string;
+  metadataBackfillToken?: string;
 }
 
 export interface CatalogAdmissionResolver {
@@ -141,6 +145,8 @@ export function classifyDestination(input: {
       title: input.evidence.title,
       description: input.evidence.description,
       contentHash: input.evidence.contentHash,
+      inspectionTruncated: input.evidence.inspectionTruncated,
+      inspectedBytes: input.evidence.inspectedBytes,
       postingIdPresent: input.evidence.postingIdPresent,
       jobPostingCount: input.evidence.jobPostingCount,
       distinctJobLinkCount: input.evidence.distinctJobLinkCount,
@@ -157,6 +163,8 @@ export function classifyDestination(input: {
       validThrough: input.evidence.validThrough,
     }) } : {}),
     ...(input.evidence?.postingIdPresent !== undefined ? { postingIdPresent: input.evidence.postingIdPresent } : {}),
+    ...(input.evidence?.inspectionTruncated !== undefined ? { inspectionTruncated: input.evidence.inspectionTruncated } : {}),
+    ...(input.evidence?.inspectedBytes !== undefined ? { inspectedBytes: input.evidence.inspectedBytes } : {}),
     ...(input.evidence?.jobPostingCount !== undefined ? { jobPostingCount: input.evidence.jobPostingCount } : {}),
     ...(input.evidence?.distinctJobLinkCount !== undefined ? { distinctJobLinkCount: input.evidence.distinctJobLinkCount } : {}),
     ...(input.evidence?.applicationFormPresent !== undefined ? { applicationFormPresent: input.evidence.applicationFormPresent } : {}),
@@ -173,11 +181,26 @@ export function classifyDestination(input: {
 
   if (input.reachability === 'gone' || evidenceGone) return { ...common, classification: 'gone' };
   if (input.rule?.decision === 'aggregate-board') return { ...common, classification: 'aggregate-board' };
+  const singleStructuredPosting = input.evidence?.inspectionTruncated !== true && input.evidence?.jobPostingCount === 1;
   const exactPostingEvidence = input.evidence?.postingIdPresent === true
-    || input.evidence?.jobPostingCount === 1 || input.evidence?.applicationFormPresent === true;
+    || singleStructuredPosting || input.evidence?.applicationFormPresent === true;
+  // Navigation and related-role links do not turn a matching, structured
+  // single posting into a board. A URL/ID echoed in a shell is not enough to
+  // override the high-link-count guard; contradictory evidence still wins.
+  const matchingSinglePosting = singleStructuredPosting && input.evidence
+    && sourceRoleAgreement(input.listing.title, input.evidence) !== 'weak';
   if (input.evidence?.identicalEvidenceForDifferentPosting || input.evidence?.redirectedToGenericDestination
-    || (input.evidence?.jobPostingCount ?? 0) > 1 || (input.evidence?.distinctJobLinkCount ?? 0) >= 8
+    || (input.evidence?.jobPostingCount ?? 0) > 1) {
+    return { ...common, classification: 'aggregate-board' };
+  }
+  if (((input.evidence?.distinctJobLinkCount ?? 0) >= 8 && !matchingSinglePosting)
     || ((input.evidence?.distinctJobLinkCount ?? 0) > 1 && !exactPostingEvidence)) {
+    // A matching structured prefix cannot prove either a single posting or a
+    // board. Keep it hidden but recoverable by the browser-verification queue.
+    if (input.evidence?.inspectionTruncated === true && input.evidence.jobPostingCount === 1
+      && sourceRoleAgreement(input.listing.title, input.evidence) !== 'weak') {
+      return { ...common, classification: 'unresolved' };
+    }
     return { ...common, classification: 'aggregate-board' };
   }
   if (input.reachability === 'blocked' && input.rule?.decision === 'blocked-accepted' && routeContainsPostingId(identity, candidateUrl)) {
@@ -198,12 +221,12 @@ export function classifyDestination(input: {
   if (input.reachability !== 'live') return { ...common, classification: 'unresolved' };
   const matchingRole = input.evidence ? sourceRoleAgreement(input.listing.title, input.evidence) !== 'weak' : false;
   const renderedPostingArtifact = matchingRole && Boolean(input.evidence && (input.evidence.postingIdPresent
-    || input.evidence.jobPostingCount === 1 || input.evidence.applicationFormPresent
+    || (input.evidence.inspectionTruncated !== true && input.evidence.jobPostingCount === 1) || input.evidence.applicationFormPresent
     || (input.evidence.contentExcerpt?.length ?? 0) >= 300));
   if (input.evidence?.selfReferentialFrame && !renderedPostingArtifact) return { ...common, classification: 'unresolved' };
   const specificEvidence = input.browserVisible === true
     ? renderedPostingArtifact
-    : Boolean(input.evidence?.postingIdPresent || input.evidence?.jobPostingCount === 1 || matchingRole || input.evidence?.applicationFormPresent);
+    : Boolean(input.evidence?.postingIdPresent || singleStructuredPosting || matchingRole || input.evidence?.applicationFormPresent);
   if (specificEvidence) {
     return { ...common, classification: looksLikeForm(finalUrl ?? candidateUrl, input.evidence) ? 'application-form' : 'posting-detail' };
   }

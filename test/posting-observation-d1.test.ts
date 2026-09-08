@@ -83,6 +83,25 @@ function admission(evaluatedAt: string, browserVisible?: boolean): CatalogAdmiss
   };
 }
 
+function withOfficialEmployerConflict(base: Internship): Internship {
+  const officialAdmission = (id: string): CatalogAdmission => ({
+    ...admission('2026-08-29T12:00:00.000Z'), canonicalEmployer: { id, displayName: id },
+  });
+  const reference = base.sourceReferences[0]!;
+  return {
+    ...base,
+    sourceReferences: [
+      { ...reference, sourceId: 'official-a', externalId: 'official-a', provenance: 'official-ats', admission: officialAdmission('employer-a') },
+      { ...reference, sourceId: 'official-b', externalId: 'official-b', provenance: 'official-structured', admission: officialAdmission('employer-b') },
+    ],
+    admission: {
+      ...admission('2026-08-29T12:00:00.000Z'), canonicalEmployer: undefined, employerResolution: 'conflict',
+      catalogEligible: false, alertEligible: false, reasonCodes: ['employer-conflict'],
+    },
+    notification: { smsPending: false, digestPending: false },
+  };
+}
+
 describe('D1 atomic posting observation', () => {
   it('writes the complete observation in one D1 transaction', async () => {
     const { sqlite, store } = subject();
@@ -135,6 +154,23 @@ describe('D1 atomic posting observation', () => {
     const projectedOccurrence = (await store.getSourceOccurrences(original.occurrence.sourceId))[0];
     expect(projected?.sourceReferences[0]?.admission).toEqual(browserAdmission);
     expect(projectedOccurrence?.occurrence.admission).toEqual(browserAdmission);
+  });
+
+  it('does not persist a stale promotion when the committed projection has an employer conflict', async () => {
+    const { sqlite, store } = subject();
+    const stalePromotion = input();
+    await store.putInternship(withOfficialEmployerConflict(stalePromotion.job));
+
+    await expect(store.commitPostingObservation(stalePromotion)).resolves.toMatchObject({
+      outcome: 'committed', notificationInserted: false,
+    });
+
+    expect(await store.getJob(stalePromotion.job.jobId)).toMatchObject({
+      admission: { employerResolution: 'conflict', catalogEligible: false, alertEligible: false },
+      notification: { smsPending: false, digestPending: false },
+    });
+    expect(sqlite.prepare("SELECT count(*) AS count FROM catalog_items WHERE kind = 'notification-event'").get())
+      .toEqual({ count: 0 });
   });
 
   it('rolls back every public write when a failure is injected mid-commit', async () => {

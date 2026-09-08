@@ -1,6 +1,7 @@
 import { applicationUrlRejection } from '../sources/quality.js';
 import { createHash } from 'node:crypto';
 import { platformFetch } from './platform-fetch.js';
+import { applicationMetadataArtifactsFromJsonDocuments, type ApplicationMetadataArtifact } from '../role-metadata.js';
 
 const requestHeaders = {
   Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -43,6 +44,12 @@ export interface ApplicationPageConfidence {
 
 export interface ApplicationPageEvidence {
   url: string;
+  /** True when only the bounded prefix of the response was inspected. */
+  inspectionTruncated?: boolean;
+  /** Renderer never reached a role description or a recognized terminal state. */
+  loadingShell?: boolean;
+  /** Exact number of response bytes inspected before decoding. */
+  inspectedBytes?: number;
   /** A specific source path collapsed to a site's root after redirecting. */
   redirectedToGenericDestination?: boolean;
   title?: string;
@@ -70,6 +77,9 @@ export interface ApplicationPageEvidence {
   contentExcerpt?: string;
   contentHash?: string;
   contentSource?: 'json-ld' | 'main' | 'body';
+  /** Transient normalized JSON-LD artifacts. Callers persist only extracted field evidence. */
+  metadataArtifacts?: ApplicationMetadataArtifact[];
+  compensationSections?: Array<{ label: string; text: string }>;
   confidence: ApplicationPageConfidence;
 }
 
@@ -165,8 +175,10 @@ function structuredPostingDeclaresIdentity(record: Record<string, unknown>): boo
     .some((key) => record[key] !== undefined && record[key] !== null);
 }
 
-function structuredJobText(html: string, expectedPostingId?: string): { text?: string; source?: 'json-ld'; validThrough?: string } {
+function structuredJobText(html: string, expectedPostingId?: string): { text?: string; source?: 'json-ld'; validThrough?: string; metadataArtifacts?: ApplicationMetadataArtifact[] } {
   const postings: Record<string, unknown>[] = [];
+  const documents = [...html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)].map((match) => match[1]!);
+  const metadataArtifacts = applicationMetadataArtifactsFromJsonDocuments(documents);
   for (const match of html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
     try {
       const parsed = JSON.parse(match[1]);
@@ -186,8 +198,9 @@ function structuredJobText(html: string, expectedPostingId?: string): { text?: s
   const matching = expectedPostingId ? postings.filter((record) => structuredPostingMatches(record, expectedPostingId)) : [];
   const selected = matching.length === 1 ? matching[0]
     : postings.length === 1 && (!expectedPostingId || !structuredPostingDeclaresIdentity(postings[0])) ? postings[0] : undefined;
-  if (!selected) return {};
+  if (!selected) return metadataArtifacts.length ? { metadataArtifacts } : {};
   return {
+    ...(metadataArtifacts.length ? { metadataArtifacts } : {}),
     ...(typeof selected.description === 'string' ? { text: textFromHtml(selected.description), source: 'json-ld' as const } : {}),
     ...(normalizedStructuredDate(selected.validThrough) ? { validThrough: normalizedStructuredDate(selected.validThrough) } : {}),
   };
@@ -205,13 +218,13 @@ async function discardResponseBody(response: Response): Promise<void> {
   }
 }
 
-async function boundedResponseText(response: Response, maximumBytes = 512 * 1024): Promise<string> {
-  const declared = Number(response.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > maximumBytes) {
-    await discardResponseBody(response);
-    throw new ApplicationUrlValidationError('Application page exceeds the inspection size limit');
-  }
-  if (!response.body) return '';
+async function boundedResponseText(
+  response: Response,
+  maximumBytes = 512 * 1024,
+): Promise<{ text: string; inspectedBytes: number; inspectionTruncated: boolean }> {
+  const declaredHeader = response.headers.get('content-length');
+  const declared = declaredHeader === null ? undefined : Number(declaredHeader);
+  if (!response.body) return { text: '', inspectedBytes: 0, inspectionTruncated: false };
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -228,9 +241,15 @@ async function boundedResponseText(response: Response, maximumBytes = 512 * 1024
     while (true) {
       const { done, value } = await readChunk();
       if (done) { complete = true; break; }
+      const remaining = maximumBytes - size;
+      if (value.byteLength > remaining) {
+        if (remaining > 0) chunks.push(value.slice(0, remaining));
+        size = maximumBytes;
+        break;
+      }
       size += value.byteLength;
-      if (size > maximumBytes) throw new ApplicationUrlValidationError('Application page exceeds the inspection size limit');
       chunks.push(value);
+      if (size === maximumBytes) break;
     }
   } finally {
     if (!complete) {
@@ -245,16 +264,33 @@ async function boundedResponseText(response: Response, maximumBytes = 512 * 1024
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-  return new TextDecoder().decode(bytes);
+  return {
+    text: new TextDecoder().decode(bytes),
+    inspectedBytes: size,
+    inspectionTruncated: !complete || (Number.isFinite(declared) && declared! > size),
+  };
 }
 
-function applicationContent(html: string, expectedPostingId?: string): { excerpt?: string; hash?: string; source?: 'json-ld' | 'main' | 'body'; validThrough?: string } {
+function applicationContent(
+  html: string,
+  expectedPostingId: string | undefined,
+  inspection: Pick<ApplicationPageEvidence, 'inspectionTruncated' | 'inspectedBytes'>,
+): { excerpt?: string; hash?: string; source?: 'json-ld' | 'main' | 'body'; metadataArtifacts?: ApplicationMetadataArtifact[]; validThrough?: string } {
   const structured = structuredJobText(html, expectedPostingId);
   const main = /<main\b[^>]*>([\s\S]*?)<\/main>/i.exec(html)?.[1];
   const text = structured.text ?? (main ? textFromHtml(main) : textFromHtml(/<body\b[^>]*>([\s\S]*?)<\/body>/i.exec(html)?.[1] ?? html));
-  if (!text) return structured.validThrough ? { validThrough: structured.validThrough } : {};
-  return { excerpt: text.slice(0, 12_000), hash: createHash('sha256').update(text).digest('hex'),
-    source: structured.source ?? (main ? 'main' : 'body'), ...(structured.validThrough ? { validThrough: structured.validThrough } : {}) };
+  if (!text) return structured.metadataArtifacts?.length ? { metadataArtifacts: structured.metadataArtifacts } : {};
+  return {
+    ...(structured.validThrough ? { validThrough: structured.validThrough } : {}),
+    excerpt: text.slice(0, 12_000),
+    hash: createHash('sha256').update(JSON.stringify({
+      text,
+      inspectionTruncated: inspection.inspectionTruncated === true,
+      inspectedBytes: inspection.inspectedBytes ?? 0,
+    })).digest('hex'),
+    source: structured.source ?? (main ? 'main' : 'body'),
+    ...(structured.metadataArtifacts?.length ? { metadataArtifacts: structured.metadataArtifacts } : {}),
+  };
 }
 
 /** Deliberately narrow: generic careers copy mentioning expiry must not close a specific role. */
@@ -380,11 +416,13 @@ export async function inspectApplicationPage(
       confidence: confidenceFor({ html: false, ...(expectedPostingId ? { expectedPostingId } : {}) }),
     };
   }
-  const html = await boundedResponseText(response);
-  const content = applicationContent(html, expectedPostingId);
+  const inspection = await boundedResponseText(response);
+  const html = inspection.text;
+  const content = applicationContent(html, expectedPostingId, inspection);
   const title = /<title[^>]*>\s*([^<]+?)\s*<\/title>/i.exec(html)?.[1]?.replace(/\s+/g, ' ').trim();
   const description = /<meta[^>]+(?:name|property)=["'](?:description|og:description)["'][^>]+content=["']([^"']+)["']/i.exec(html)?.[1]?.replace(/\s+/g, ' ').trim();
-  const postingIdPresent = expectedPostingId ? html.includes(expectedPostingId) : undefined;
+  const postingIdObserved = expectedPostingId ? html.includes(expectedPostingId) : undefined;
+  const postingIdPresent = inspection.inspectionTruncated && postingIdObserved === false ? undefined : postingIdObserved;
   const jobPostingCount = [...html.matchAll(/["']@type["']\s*:\s*["']JobPosting["']/gi)].length;
   const jobLinkCount = distinctJobLinkCount(html, destination);
   const applicationFormPresent = /<form\b[^>]*(?:action=["'][^"']*(?:apply|application)|id=["'][^"']*(?:apply|application))|<input\b[^>]*(?:type=["']file["']|name=["'](?:resume|cv)["'])/i.test(html);
@@ -396,6 +434,8 @@ export async function inspectApplicationPage(
   }
   return {
     url: destination.toString(),
+    inspectionTruncated: inspection.inspectionTruncated,
+    inspectedBytes: inspection.inspectedBytes,
     ...(title ? { title } : {}),
     ...(description ? { description } : {}),
     ...(expectedPostingId ? { expectedPostingId } : {}),
@@ -409,6 +449,7 @@ export async function inspectApplicationPage(
       : explicitlyGone ? { closureState: 'gone' as const, closureSignal: 'explicit-language' as const }
         : { closureState: 'open' as const }),
     ...(content.excerpt ? { contentExcerpt: content.excerpt, contentHash: content.hash, contentSource: content.source } : {}),
+    ...(content.metadataArtifacts?.length ? { metadataArtifacts: content.metadataArtifacts } : {}),
     confidence: confidenceFor({ html: true, ...(title ? { title } : {}), ...(description ? { description } : {}), ...(content.excerpt ? { contentExcerpt: content.excerpt } : {}), ...(expectedPostingId ? { expectedPostingId } : {}), ...(postingIdPresent !== undefined ? { postingIdPresent } : {}) }),
   };
 }

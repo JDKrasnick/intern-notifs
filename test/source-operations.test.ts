@@ -95,7 +95,7 @@ describe('shared source operations', () => {
     expect(body.providers.find((provider: { id: string }) => provider.id === 'github')).toMatchObject({
       availability: 'unavailable',
       unavailableReasons: ['Work queue is not configured.', 'Dead-letter queue is not configured.'],
-      sourceActions: ['replay'],
+      sourceActions: ['pause', 'resume', 'replay', 'quarantine', 'recover', 'acknowledge', 'resolve', 'set-tier'],
     });
     expect(body.providers.filter((provider: { id: string }) => provider.id !== 'github'))
       .toEqual(expect.arrayContaining([expect.objectContaining({ availability: 'available' })]));
@@ -265,7 +265,7 @@ describe('shared source operations', () => {
     expect(await store.getSourceHealth(source.id)).toMatchObject({ pollTier: 'quiet', pollTierMode: 'operator' });
   });
 
-  it('enforces GitHub capabilities and builds its provider-specific replay message', async () => {
+  it('exposes GitHub controls and builds its provider-specific forced replay message', async () => {
     const store = new MemoryInternshipStore();
     const setup = dependencies(store);
     const source = defaultSources[0]!;
@@ -278,14 +278,14 @@ describe('shared source operations', () => {
     });
 
     const paused = await handler(event(`/operations/sources/${source.id}/actions`, 'POST', { action: 'pause' }));
-    expect(paused.statusCode).toBe(409);
-    expect(JSON.parse(paused.body)).toMatchObject({ code: 'ACTION_NOT_SUPPORTED' });
+    expect(paused.statusCode).toBe(200);
+    expect(await store.getSourceHealth(source.id)).toMatchObject({ sourceStatus: 'paused', provider: 'github' });
 
     const replayed = await handler(event(`/operations/sources/${source.id}/actions`, 'POST', { action: 'replay' }));
     expect(replayed.statusCode).toBe(202);
     const replay = setup.commands.find((command) => command instanceof SendMessageCommand) as SendMessageCommand;
     expect(replay.input.QueueUrl).toBe('https://sqs.test/github');
-    expect(JSON.parse(replay.input.MessageBody!)).toEqual({ sourceId: source.id });
+    expect(JSON.parse(replay.input.MessageBody!)).toEqual({ sourceId: source.id, force: true });
   });
 
   it('keeps historical provider and region strings visible but read-only', async () => {
@@ -356,6 +356,18 @@ describe('shared source operations', () => {
     ));
     expect(response.statusCode).toBe(409);
     expect(JSON.parse(response.body)).toMatchObject({ code: 'SOURCE_NOT_QUARANTINED' });
+  });
+
+  it('requires successful recovery before a quarantined source can resume', async () => {
+    const store = new MemoryInternshipStore();
+    const setup = dependencies(store);
+    const source = reviewedAshbySources[0]!;
+    const handler = createSourceOperationsHandler(setup.value);
+    await handler(event(`/operations/sources/${source.id}/actions`, 'POST', { action: 'quarantine', reason: 'Schema drift' }));
+    const response = await handler(event(`/operations/sources/${source.id}/actions`, 'POST', { action: 'resume' }));
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body)).toMatchObject({ code: 'SOURCE_STILL_QUARANTINED' });
+    expect(await store.getSourceHealth(source.id)).toMatchObject({ state: 'quarantined', sourceStatus: 'paused' });
   });
 
   it('keeps a quarantined incident open when its recovery fleet is unavailable', async () => {

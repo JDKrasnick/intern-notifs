@@ -416,6 +416,9 @@ export function createSourceOperationsHandler(dependencies: SourceOperationsDepe
         };
       }
       if (action === 'resume') {
+        if (base.state === 'quarantined') {
+          return reply(409, { code: 'SOURCE_STILL_QUARANTINED', message: 'Run recovery successfully before resuming this source.' });
+        }
         const withoutBackoff = { ...updated };
         delete withoutBackoff.backoffUntil;
         updated = { ...withoutBackoff, sourceStatus: 'active' };

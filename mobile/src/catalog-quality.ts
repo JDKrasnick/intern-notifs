@@ -1,3 +1,6 @@
+import { compensationLabels, type DisplayCompensation } from '../../shared/compensation-display';
+export { compensationLabels };
+
 export function boundedCatalogText(value: unknown, maximum: number): string {
   const clean = typeof value === "string" ? value.normalize("NFC").replace(/\s+/gu, " ").trim() : "";
   if ([...clean].length <= maximum) return clean;
@@ -18,12 +21,12 @@ export function seasonLabel(value: unknown): string {
   return !season || season.toLowerCase() === "ongoing" ? "Season not specified" : season;
 }
 
-export function presentCatalogRole<T extends { company?: unknown; title?: unknown; location?: unknown; locations?: unknown; season?: unknown; compensation?: { raw?: unknown } }>(role: T) {
+export function presentCatalogRole<T extends { company?: unknown; title?: unknown; location?: unknown; locations?: unknown; season?: unknown; compensation?: DisplayCompensation }>(role: T) {
   return {
     company: boundedCatalogText(role.company, 160) || "Unknown company",
     title: boundedCatalogText(role.title, 240) || "Role title unavailable",
     location: compactLocations(role.locations, role.location),
     season: seasonLabel(role.season),
-    compensation: boundedCatalogText(role.compensation?.raw, 160),
+    compensation: compensationLabels(role.compensation).join(' · '),
   };
 }

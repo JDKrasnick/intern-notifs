@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 import { catalogGroupDetails, groupCatalogJobs } from '../src/catalog-groups.js';
-import type { Internship } from '../src/types.js';
+import type { Internship, InternshipIdentity } from '../src/types.js';
 
 function job(jobId: string, title: string): Internship {
   return {
@@ -30,14 +30,18 @@ function job(jobId: string, title: string): Internship {
 
 type SqliteValue = string | number | bigint | null | Uint8Array;
 
-function sqliteD1(database: DatabaseSync): D1Database {
+function sqliteD1(database: DatabaseSync, inspectRows?: (query: string, rows: unknown[]) => void): D1Database {
   const prepared = (query: string, values: unknown[] = []): D1PreparedStatement => {
     const statement: StatementSync = database.prepare(query);
     const bound = values as SqliteValue[];
     return {
       bind(...next: unknown[]) { return prepared(query, next); },
       async first<T>() { return (statement.get(...bound) as T | undefined) ?? null; },
-      async all<T>() { return { results: statement.all(...bound) as T[] }; },
+      async all<T>() {
+        const results = statement.all(...bound) as T[];
+        inspectRows?.(query, results);
+        return { results };
+      },
       async run() { return { meta: { changes: Number(statement.run(...bound).changes) } }; },
     };
   };
@@ -48,6 +52,41 @@ function sqliteD1(database: DatabaseSync): D1Database {
 }
 
 describe('D1 filtered catalog projection', () => {
+  it('lists and filters the catalog through bounded composite-key pages', async () => {
+    const database = new DatabaseSync(':memory:');
+    database.exec(`
+      CREATE TABLE catalog_items (
+        pk TEXT NOT NULL,
+        sk TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        value TEXT NOT NULL,
+        PRIMARY KEY (pk, sk)
+      )
+    `);
+    const insert = database.prepare('INSERT INTO catalog_items (pk, sk, kind, value) VALUES (?, ?, ?, ?)');
+    for (let index = 0; index < 205; index++) {
+      const item = job(`job-${String(index).padStart(3, '0')}`, 'Software Engineering Intern');
+      insert.run(`JOB#${String(index).padStart(3, '0')}`, 'META', 'internship', JSON.stringify(item));
+    }
+    insert.run('JOB#099', 'SECOND', 'internship', JSON.stringify(job('shared-key', 'Data Engineering Intern')));
+    insert.run('JOB#filtered', 'META', 'internship', JSON.stringify({ ...job('filtered', 'Software Engineering Intern'), technical: false }));
+    insert.run('OTHER', 'META', 'checkpoint', '{}');
+    const pageSizes: number[] = [];
+    try {
+      const store = new D1InternshipStore(sqliteD1(database, (query, rows) => {
+        if (/SELECT pk, sk, value FROM catalog_items/iu.test(query)) pageSizes.push(rows.length);
+      }));
+      const listed = await store.listCatalog();
+      expect(listed).toHaveLength(206);
+      expect(listed.some((item) => item.jobId === 'shared-key')).toBe(true);
+      expect(listed.some((item) => item.jobId === 'filtered')).toBe(false);
+      expect(listed.every((item) => item.employerCategory === 'normal')).toBe(true);
+      expect(pageSizes).toEqual([100, 100, 7]);
+    } finally {
+      database.close();
+    }
+  });
+
   it('packs a production-sized projection within D1 query and binding budgets', async () => {
     const template = catalogGroupDetails(groupCatalogJobs([job('template', 'Software Engineering Intern')])[0]!);
     const groups = Array.from({ length: 1_503 }, (_, index) => ({
@@ -132,6 +171,82 @@ describe('D1 filtered catalog projection', () => {
         status: 'open', locations: ['Ithaca'],
       });
       expect(page?.groups).toMatchObject([{ roles: [{ jobId: 'location', locations: ['Ithaca, NY'] }] }]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('keeps only pay-listed roles when the pay filter is set', async () => {
+    const database = new DatabaseSync(':memory:');
+    database.exec(`
+      CREATE TABLE catalog_items (
+        pk TEXT NOT NULL,
+        sk TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        value TEXT NOT NULL,
+        catalog_sort_key TEXT,
+        PRIMARY KEY (pk, sk)
+      )
+    `);
+    const details = catalogGroupDetails(groupCatalogJobs([job('paid', 'Software Engineering Intern'), job('unpaid', 'Software Engineering Intern')])[0]!);
+    details.roles.find((role) => role.jobId === 'paid')!.compensation = { raw: '$54/hour' };
+    const generatedAt = new Date().toISOString();
+    const insert = database.prepare('INSERT INTO catalog_items (pk, sk, kind, value, catalog_sort_key) VALUES (?, ?, ?, ?, ?)');
+    insert.run('CATALOG_PROJECTION', 'CURRENT', 'catalog-projection-pointer', JSON.stringify({ version: 'version-a', generatedAt, schemaVersion: 4 }), null);
+    insert.run('CATALOG_PROJECTION#version-a', `GROUP#${details.group.groupId}`, 'catalog-projection', JSON.stringify(details), '00000000');
+
+    try {
+      const page = await new D1InternshipStore(sqliteD1(database)).listCatalogProjectionFiltered(undefined, 25, {
+        status: 'open', hasCompensation: true,
+      });
+      expect(page?.groups).toMatchObject([{ roles: [{ jobId: 'paid' }] }]);
+      expect(page?.groups[0]?.roles).toHaveLength(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('matches discipline aliases when the discipline filter is set', async () => {
+    const database = new DatabaseSync(':memory:');
+    database.exec(`
+      CREATE TABLE catalog_items (
+        pk TEXT NOT NULL,
+        sk TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        value TEXT NOT NULL,
+        catalog_sort_key TEXT,
+        PRIMARY KEY (pk, sk)
+      )
+    `);
+    const provenance = [{ source: 'deterministic-inference' as const, sourceId: 'test', evidenceCode: 'test' }];
+    const tagged = (title: string, discipline: 'software' | 'ai-ml'): InternshipIdentity => ({
+      company: { canonicalId: 'acme', displayName: { value: 'Acme', provenance } },
+      programType: { value: 'internship', provenance },
+      season: { term: 'summer', year: 2027, evidenceStatus: 'explicit', provenance },
+      education: { levels: ['undergraduate'], evidenceStatus: 'explicit', provenance },
+      title: {
+        official: { value: title, provenance },
+        display: { value: title, provenance },
+        search: { value: title.toLowerCase(), provenance },
+      },
+      disciplines: [{ value: discipline, provenance }],
+      locations: [],
+    });
+    const details = catalogGroupDetails(groupCatalogJobs([
+      { ...job('swe', 'Software Engineering Intern'), internshipIdentity: tagged('Software Engineering Intern', 'software') },
+      { ...job('ml', 'Machine Learning Intern'), internshipIdentity: tagged('Machine Learning Intern', 'ai-ml') },
+    ])[0]!);
+    const generatedAt = new Date().toISOString();
+    const insert = database.prepare('INSERT INTO catalog_items (pk, sk, kind, value, catalog_sort_key) VALUES (?, ?, ?, ?, ?)');
+    insert.run('CATALOG_PROJECTION', 'CURRENT', 'catalog-projection-pointer', JSON.stringify({ version: 'version-a', generatedAt, schemaVersion: 4 }), null);
+    insert.run('CATALOG_PROJECTION#version-a', `GROUP#${details.group.groupId}`, 'catalog-projection', JSON.stringify(details), '00000000');
+
+    try {
+      const page = await new D1InternshipStore(sqliteD1(database)).listCatalogProjectionFiltered(undefined, 25, {
+        status: 'open', disciplines: ['SWE'],
+      });
+      expect(page?.groups).toMatchObject([{ roles: [{ jobId: 'swe' }] }]);
+      expect(page?.groups[0]?.roles).toHaveLength(1);
     } finally {
       database.close();
     }

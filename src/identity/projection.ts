@@ -1,9 +1,10 @@
 import { canonicalCatalogRecency } from '../catalog-recency.js';
-import { deriveCanonicalAdmission } from '../catalog-admission.js';
+import { alertEligible, deriveCanonicalAdmission } from '../catalog-admission.js';
 import { isPastSeason } from '../core/early-career.js';
 import { isOfficialOccurrence } from '../sources/provenance.js';
-import type { Internship, SourceOccurrence, SourceOccurrenceState } from '../types.js';
+import type { Internship, NotificationEvent, SourceOccurrence, SourceOccurrenceState } from '../types.js';
 import { mergeSourceOccurrenceReferences, sourceOccurrenceKey } from './source-occurrence.js';
+import { projectRoleMetadata } from '../role-metadata.js';
 
 function earliest(values: Array<string | undefined>): string | undefined {
   return values.filter((value): value is string => Boolean(value)).sort()[0];
@@ -38,8 +39,10 @@ function presentationOwner(current: Internship | undefined, proposed: Internship
   if (currentOfficial || proposedOfficial) {
     if (!currentOfficial) return proposed;
     if (!proposedOfficial) return current;
-    return proposedOfficial.localeCompare(currentOfficial) < 0 ? proposed : current;
+    return proposedOfficial.localeCompare(currentOfficial) <= 0 ? proposed : current;
   }
+  const currentReferences = new Set(current.sourceReferences.map(sourceOccurrenceKey));
+  if (proposed.sourceReferences.some((reference) => currentReferences.has(sourceOccurrenceKey(reference)))) return proposed;
   const currentFirst = current.catalogVisibleAt ?? current.firstSeenAt;
   const proposedFirst = proposed.catalogVisibleAt ?? proposed.firstSeenAt;
   return proposedFirst.localeCompare(currentFirst) < 0 ? proposed : current;
@@ -62,13 +65,20 @@ export function postingObservationProjection(
   const digestedAt = latest([current?.notification.digestedAt, proposed.notification.digestedAt]);
   const postingIdentityStatus = postingIdentityStatusForOccurrences(sourceReferences);
   const anyOpen = sourceReferences.some((reference) => reference.state === 'open');
-  const season = proposed.season;
+  const becomingCatalogVisible = !current?.catalogVisibleAt && current?.admission?.catalogEligible === false
+    && admission?.catalogEligible === true;
+  const season = presentation.season;
   const seasonEvidence = (proposed.internshipIdentity ?? current?.internshipIdentity) as { season?: { evidenceStatus?: string } } | undefined;
   const seasonAllowsOpen = !isPastSeason(season, new Date(proposed.lastSeenAt))
     || (seasonEvidence?.season?.evidenceStatus === 'explicit'
       && sourceReferences.some((reference) => reference.state === 'open' && isOfficialOccurrence(reference)));
+  const base = { ...proposed };
+  if (admission?.catalogEligible === false && !current?.catalogVisibleAt) {
+    delete base.catalogVisibleAt;
+    delete base.catalogRecency;
+  }
   const projected = {
-    ...proposed,
+    ...base,
     company: presentation.company,
     title: presentation.title,
     location: presentation.location,
@@ -76,16 +86,20 @@ export function postingObservationProjection(
     applyUrl: presentation.applyUrl,
     normalizedUrl: presentation.normalizedUrl,
     fingerprint: presentation.fingerprint,
+    season,
     sourceReferences,
     ...(admission ? { admission } : {}),
     ...(postingIdentityStatus ? { postingIdentityStatus } : {}),
     technical: sourceReferences.some((reference) => (!anyOpen || reference.state === 'open') && reference.technical !== false),
     open: !proposed.invalidApplicationUrl && anyOpen && seasonAllowsOpen && Boolean(current?.open || proposed.open),
     firstSeenAt: earliest([current?.firstSeenAt, proposed.firstSeenAt]) ?? proposed.firstSeenAt,
-    catalogVisibleAt: earliest([
-      current?.catalogVisibleAt ?? current?.firstSeenAt,
-      proposed.catalogVisibleAt ?? proposed.firstSeenAt,
-    ]),
+    ...(admission?.catalogEligible === false && !current?.catalogVisibleAt
+      ? {}
+      : becomingCatalogVisible
+        ? { catalogVisibleAt: proposed.catalogVisibleAt ?? proposed.lastSeenAt, catalogRecency: proposed.catalogRecency ?? 'normal' as const }
+        : current?.catalogVisibleAt || proposed.catalogVisibleAt
+          ? { catalogVisibleAt: earliest([current?.catalogVisibleAt, proposed.catalogVisibleAt]) }
+          : { catalogVisibleAt: earliest([current?.firstSeenAt, proposed.firstSeenAt]) }),
     lastSeenAt: latest([current?.lastSeenAt, proposed.lastSeenAt]) ?? proposed.lastSeenAt,
     notification: {
       smsPending: !smsSentAt && Boolean(current?.notification.smsPending || proposed.notification.smsPending),
@@ -94,5 +108,34 @@ export function postingObservationProjection(
       ...(digestedAt ? { digestedAt } : {}),
     },
   };
-  return canonicalCatalogRecency(projected);
+  return canonicalCatalogRecency(projectRoleMetadata(projected).job);
+}
+
+/**
+ * Finalizes delayed notification state from the same canonical projection that
+ * the store compare-and-swap commits. A stale caller may propose a promotion
+ * after another source has made the canonical job ineligible; in that case,
+ * retain only notification state that was already durable.
+ */
+export function postingObservationNotificationProjection(
+  current: Internship | undefined,
+  projected: Internship,
+  notificationEvent: NotificationEvent | undefined,
+): { job: Internship; notificationEvent?: NotificationEvent } {
+  if (!notificationEvent || (alertEligible(projected) && projected.open && projected.technical !== false)) {
+    return { job: projected, ...(notificationEvent ? { notificationEvent } : {}) };
+  }
+  const smsSentAt = projected.notification.smsSentAt;
+  const digestedAt = projected.notification.digestedAt;
+  return {
+    job: {
+      ...projected,
+      notification: {
+        smsPending: !smsSentAt && Boolean(current?.notification.smsPending),
+        digestPending: !digestedAt && Boolean(current?.notification.digestPending),
+        ...(smsSentAt ? { smsSentAt } : {}),
+        ...(digestedAt ? { digestedAt } : {}),
+      },
+    },
+  };
 }

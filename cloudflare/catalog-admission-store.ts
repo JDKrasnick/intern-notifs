@@ -3,22 +3,43 @@ import { alertEligible, catalogEligible, deriveCanonicalAdmission, evaluateCatal
 import { openCatalogSortKey } from '../src/catalog-recency.js';
 import { catalogSearchText, catalogSourceClasses } from '../src/catalog-fields.js';
 import { canonicalCompanyKey } from '../src/core/normalize.js';
-import { providerPostingReference } from '../src/identity/posting.js';
+import { providerPostingReference, providerPostingAlias } from '../src/identity/posting.js';
 import type {
   AdmissionIncident,
   CanonicalEmployer,
   CatalogAdmission,
   DestinationReviewRule,
   EmployerMapping,
+  EvidenceSource,
   Internship,
   ProcessedListing,
   ProviderIdentity,
   SourceOccurrence,
   SourceOccurrenceState,
+  MetadataConflict,
+  RoleMetadataEvidence,
+  RoleMetadataOmission,
 } from '../src/types.js';
+import { projectRoleMetadata, reconcileRoleMetadata, replaceVerifiedPageMetadataEvidence, roleMetadataReviewFingerprint, ROLE_METADATA_EXTRACTION_VERSION, unsupportedMetadataCurrencies, unsupportedMetadataPeriods } from '../src/role-metadata.js';
 import type { D1Database, D1PreparedStatement } from './types.js';
 
 export const ATOMIC_REPAIR_RECORD_LIMIT = 900;
+// Metadata apply performs bounded preflight scans before its atomic batch.
+// Leave headroom under D1's 1,000-query invocation limit for those guards.
+export const METADATA_REPAIR_RECORD_LIMIT = 250;
+export const ATOMIC_REPAIR_BYTE_LIMIT = 8 * 1024 * 1024;
+export const ROLE_METADATA_REVALIDATION_MS = 30 * 24 * 60 * 60_000;
+
+export interface RoleMetadataCollectionCoverage {
+  extractionVersion: number;
+  eligible: number;
+  current: number;
+  pendingOrUnobserved: number;
+  stale: number;
+  complete: boolean;
+  outcomes: Record<string, number>;
+  backfillTokens: Record<string, number>;
+}
 
 type JsonRow = { value: string };
 export type RepairChange = {
@@ -59,6 +80,57 @@ export interface AdmissionBackfillGeneration {
 
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function roleMetadataEvidenceDigest(row: { job_id: string; evidence: string }): string {
+  return `${row.job_id}\0${hash(row.evidence)}`;
+}
+
+function roleMetadataEvidenceSnapshot(digests: Iterable<string>): string {
+  return hash([...digests].sort().join('\n'));
+}
+
+function utf8Bytes(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function roleMetadataSchemaMissing(error: unknown): boolean {
+  return error instanceof Error && /no such table:\s*role_metadata_/iu.test(error.message);
+}
+
+function metadataCollectionTarget(reference: SourceOccurrence): { candidateUrl: string; providerIdentity: ProviderIdentity } | undefined {
+  if (!reference.externalId) return undefined;
+  const destination = reference.admission?.destination;
+  if (destination) {
+    if (!['posting-detail', 'application-form'].includes(destination.classification)) return undefined;
+    return { candidateUrl: destination.finalUrl ?? destination.candidateUrl, providerIdentity: {
+      provider: destination.provider, sourceId: reference.sourceId, sourceUrl: reference.sourceUrl,
+      tenant: destination.tenant, postingId: destination.expectedPostingId,
+    } };
+  }
+  // Legacy public roles can have confirmed per-occurrence posting identity but
+  // no admission snapshot. Reuse that exact identity, never a title/tenant guess.
+  const decision = reference.postingIdentityDecision;
+  if (decision?.status !== 'confirmed') return undefined;
+  try {
+    const route = providerPostingReference(reference.applyUrl);
+    if (!route.postingId || decision.exactKey !== providerPostingAlias(route)) return undefined;
+    return { candidateUrl: reference.applyUrl, providerIdentity: { ...route,
+      sourceId: reference.sourceId, sourceUrl: reference.sourceUrl } };
+  } catch { return undefined; }
+}
+
+function roleMetadataCollectionSnapshot(value: RoleMetadataCollectionCoverage): string {
+  const sorted = (items: Record<string, number>) => Object.fromEntries(Object.entries(items).sort(([left], [right]) => left.localeCompare(right)));
+  return hash(JSON.stringify({
+    extractionVersion: value.extractionVersion,
+    eligible: value.eligible,
+    current: value.current,
+    pendingOrUnobserved: value.pendingOrUnobserved,
+    stale: value.stale,
+    outcomes: sorted(value.outcomes),
+    backfillTokens: sorted(value.backfillTokens),
+  }));
 }
 
 function repairToken(
@@ -182,6 +254,680 @@ function preserveDurableFields(current: Internship, change: RepairChange): Inter
 
 export class D1CatalogAdmissionStore {
   constructor(private readonly db: D1Database) {}
+
+  private async *catalogInternshipPages(limit = 100, openOnly = false): AsyncGenerator<Array<{ pk: string; sk: string; value: string }>> {
+    let after = ['', ''];
+    while (true) {
+      const page = await this.db.prepare(`SELECT pk, sk, value FROM catalog_items
+        WHERE kind = 'internship' ${openOnly ? "AND json_extract(value, '$.open') = 1" : ''}
+          AND (pk, sk) > (?, ?) ORDER BY pk, sk LIMIT ?`)
+        .bind(...after, limit).all<{ pk: string; sk: string; value: string }>();
+      if (!page.results.length) return;
+      const last = page.results[page.results.length - 1];
+      after = [last.pk, last.sk];
+      yield page.results;
+    }
+  }
+
+  private async *currentRoleMetadataEvidencePages(limit = 100): AsyncGenerator<Array<{
+    job_id: string; source_class: string; source_id: string; source_url: string; artifact_hash: string; evidence: string;
+  }>> {
+    let after = ['', '', '', '', ''];
+    while (true) {
+      const page = await this.db.prepare(`SELECT job_id, source_class, source_id, source_url, artifact_hash, evidence
+        FROM role_metadata_evidence WHERE is_current = 1
+          AND (job_id, source_class, source_id, source_url, artifact_hash) > (?, ?, ?, ?, ?)
+        ORDER BY job_id, source_class, source_id, source_url, artifact_hash LIMIT ?`).bind(...after, limit)
+        .all<{ job_id: string; source_class: string; source_id: string; source_url: string; artifact_hash: string; evidence: string }>();
+      if (!page.results.length) return;
+      const last = page.results[page.results.length - 1];
+      after = [last.job_id, last.source_class, last.source_id, last.source_url, last.artifact_hash];
+      yield page.results;
+    }
+  }
+
+  private async roleMetadataCollectionCoverage(
+    jobsOrEligible: readonly Internship[] | Set<string>,
+    observedAfter: string,
+  ): Promise<RoleMetadataCollectionCoverage> {
+    const [attempts, evidence] = await Promise.all([
+      this.db.prepare(`SELECT job_id, source_id, observed_at, outcome, backfill_token
+        FROM role_metadata_extraction_attempts WHERE extraction_version = ?`)
+        .bind(ROLE_METADATA_EXTRACTION_VERSION)
+        .all<{ job_id: string; source_id: string; observed_at: string; outcome: string; backfill_token: string | null }>(),
+      this.db.prepare(`SELECT job_id, source_id, observed_at,
+          CASE WHEN coalesce(json_array_length(json_extract(evidence, '$.compensationRanges')), 0) > 0
+            OR coalesce(json_array_length(json_extract(evidence, '$.housing')), 0) > 0
+            OR coalesce(json_extract(evidence, '$.education'), '') NOT IN ('', 0)
+            OR coalesce(json_array_length(json_extract(evidence, '$.locations')), 0) > 0
+            OR coalesce(json_extract(evidence, '$.workMode'), '') NOT IN ('', 0)
+            OR coalesce(json_extract(evidence, '$.applicationDeadline'), '') NOT IN ('', 0)
+            OR coalesce(json_extract(evidence, '$.employerPublishedAt'), '') NOT IN ('', 0)
+            OR coalesce(json_extract(evidence, '$.employerUpdatedAt'), '') NOT IN ('', 0)
+          THEN 1 ELSE 0 END AS has_fields
+        FROM role_metadata_evidence WHERE extraction_version = ? AND is_current = 1
+          AND source_class IN ('official-page', 'official-json-ld')`)
+        .bind(ROLE_METADATA_EXTRACTION_VERSION)
+        .all<{ job_id: string; source_id: string; observed_at: string; has_fields: number }>(),
+    ]);
+    const latest = new Map<string, { observedAt: string; outcome: string; backfillToken?: string }>();
+    const recordLatest = (key: string, value: { observedAt: string; outcome: string; backfillToken?: string }) => {
+      const previous = latest.get(key);
+      if (!previous || value.observedAt > previous.observedAt) latest.set(key, value);
+    };
+    for (const item of attempts.results) recordLatest(`${item.job_id}\0${item.source_id}`, {
+      observedAt: item.observed_at,
+      outcome: item.outcome,
+      ...(item.backfill_token ? { backfillToken: item.backfill_token } : {}),
+    });
+    for (const item of evidence.results) {
+      recordLatest(`${item.job_id}\0${item.source_id}`, {
+        observedAt: item.observed_at,
+        outcome: item.has_fields ? 'extracted' : 'no-explicit-metadata',
+      });
+    }
+    const eligible = new Set<string>();
+    if (jobsOrEligible instanceof Set) {
+      for (const key of jobsOrEligible) eligible.add(key);
+    } else {
+      for (const job of jobsOrEligible) {
+        if (!job.open) continue;
+        for (const reference of job.sourceReferences) {
+          if (metadataCollectionTarget(reference)) {
+            eligible.add(`${job.jobId}\0${reference.sourceId}`);
+          }
+        }
+      }
+    }
+    let current = 0; let pendingOrUnobserved = 0; let stale = 0;
+    const outcomes: Record<string, number> = {}; const backfillTokens: Record<string, number> = {};
+    for (const key of eligible) {
+      const observation = latest.get(key);
+      if (!observation) { pendingOrUnobserved += 1; continue; }
+      outcomes[observation.outcome] = (outcomes[observation.outcome] ?? 0) + 1;
+      if (observation.backfillToken) backfillTokens[observation.backfillToken] = (backfillTokens[observation.backfillToken] ?? 0) + 1;
+      if (observation.observedAt <= observedAfter) stale += 1;
+      else current += 1;
+    }
+    return {
+      extractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+      eligible: eligible.size,
+      current,
+      pendingOrUnobserved,
+      stale,
+      complete: pendingOrUnobserved === 0 && stale === 0,
+      outcomes,
+      backfillTokens,
+    };
+  }
+
+  async recordRoleMetadataEvidence(
+    jobId: string,
+    evidence: readonly RoleMetadataEvidence[],
+    conflicts: readonly MetadataConflict[],
+    recordedAt: string,
+    replace?: { sourceId: string; sourceClasses: readonly EvidenceSource[] },
+  ): Promise<void> {
+    const statements = [];
+    if (replace?.sourceClasses.length) {
+      statements.push(this.db.prepare(`UPDATE role_metadata_evidence SET is_current = 0
+        WHERE job_id = ? AND source_id = ? AND source_class IN (${replace.sourceClasses.map(() => '?').join(', ')}) AND is_current = 1`)
+        .bind(jobId, replace.sourceId, ...replace.sourceClasses));
+    }
+    for (const item of evidence) {
+      statements.push(this.db.prepare(`UPDATE role_metadata_evidence SET is_current = 0
+        WHERE job_id = ? AND source_class = ? AND source_id = ? AND artifact_hash <> ? AND is_current = 1`)
+        .bind(jobId, item.sourceClass, item.sourceId, item.artifactHash));
+      statements.push(this.db.prepare(`INSERT INTO role_metadata_evidence
+        (job_id, source_class, source_id, source_url, artifact_hash, extraction_version, evidence, observed_at, is_current)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+        ON CONFLICT(job_id, source_class, source_id, source_url, artifact_hash) DO UPDATE SET
+          extraction_version=excluded.extraction_version, evidence=excluded.evidence,
+          observed_at=excluded.observed_at, is_current=1`)
+        .bind(jobId, item.sourceClass, item.sourceId, item.sourceUrl, item.artifactHash,
+          item.extractionVersion, JSON.stringify(item), item.observedAt));
+    }
+    statements.push(this.db.prepare("UPDATE role_metadata_conflicts SET state = 'resolved', updated_at = ? WHERE job_id = ? AND state = 'open'")
+      .bind(recordedAt, jobId));
+    for (const conflict of conflicts) {
+      const id = createHash('sha256').update(`${jobId}\0${conflict.field}\0${conflict.applicabilityKey ?? ''}\0${JSON.stringify(conflict.values)}`).digest('hex');
+      statements.push(this.db.prepare(`INSERT INTO role_metadata_conflicts
+        (id, job_id, field, applicability_key, evidence_hashes, values_json, state, opened_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)
+        ON CONFLICT(id) DO UPDATE SET evidence_hashes=excluded.evidence_hashes,
+          values_json=excluded.values_json, state='open', updated_at=excluded.updated_at`)
+        .bind(id, jobId, conflict.field, conflict.applicabilityKey ?? null, JSON.stringify(conflict.evidenceHashes),
+          JSON.stringify(conflict.values), recordedAt, recordedAt));
+    }
+    try {
+      for (let offset = 0; offset < statements.length; offset += 50) await this.db.batch(statements.slice(offset, offset + 50));
+    } catch (error) {
+      // Destination verification messages already in flight remain compatible
+      // during the migration-before-deploy rollout window.
+      if (!roleMetadataSchemaMissing(error)) throw error;
+    }
+  }
+
+  async recordRoleMetadataExtraction(value: {
+    jobId: string; sourceId: string; sourceUrl: string; artifactHash: string; extractionVersion: number;
+    outcome: 'extracted' | 'no-explicit-metadata'; observedAt: string; backfillToken?: string;
+  }): Promise<void> {
+    const id = createHash('sha256').update(`${value.jobId}\0${value.sourceId}\0${value.artifactHash}\0${value.extractionVersion}`).digest('hex');
+    try {
+      await this.db.prepare(`INSERT INTO role_metadata_extraction_attempts
+        (id, job_id, source_id, source_url, artifact_hash, extraction_version, outcome, observed_at, backfill_token)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET outcome=excluded.outcome, observed_at=excluded.observed_at,
+          backfill_token=coalesce(excluded.backfill_token, role_metadata_extraction_attempts.backfill_token)`)
+        .bind(id, value.jobId, value.sourceId, value.sourceUrl, value.artifactHash, value.extractionVersion,
+          value.outcome, value.observedAt, value.backfillToken ?? null).run();
+    } catch (error) {
+      if (!roleMetadataSchemaMissing(error)) throw error;
+    }
+  }
+
+  async roleMetadataAudit(now = new Date()): Promise<{
+    scanned: number;
+    enriched: number;
+    projectionOnlyOmissions: Array<{ jobId: string; fields: string[] }>;
+    deferredProjections: Array<{ jobId: string; evidenceHashes: string[] }>;
+    supportedRoleSpecificDisclosedMetadataMisses: null;
+    currentEvidenceBySourceClass: Record<string, number>;
+    unsupportedCurrencies: Record<string, number>;
+    unsupportedPeriods: Record<string, number>;
+    openConflicts: number;
+    verificationOutcomes: Record<string, number>;
+    collectionCoverage: RoleMetadataCollectionCoverage;
+    fieldOutcomes: Record<string, Record<string, number>>;
+    fieldOutcomeDenominator: { unit: 'source-occurrence'; count: number; scope: 'all-stored-roles' };
+    acquisitionReports: Array<{ jobId: string; sourceId: string; report: unknown }>;
+    disclosureRecall: null;
+  }> {
+    const acquisitionReports: Array<{ jobId: string; sourceId: string; report: unknown }> = [];
+    const byReference = new Map<string, Record<string, unknown>>();
+    let reportAfter = ['', ''];
+    while (true) {
+      const reports = await this.db.prepare(`SELECT job_id, source_id, report FROM role_metadata_acquisition
+        WHERE report IS NOT NULL AND (job_id, source_id) > (?, ?) ORDER BY job_id, source_id LIMIT 100`)
+        .bind(...reportAfter).all<{ job_id: string; source_id: string; report: string }>();
+      if (!reports.results.length) break;
+      for (const row of reports.results) {
+        reportAfter = [row.job_id, row.source_id];
+        const report = JSON.parse(row.report) as Record<string, unknown>;
+        acquisitionReports.push({ jobId: row.job_id, sourceId: row.source_id, report });
+        byReference.set(`${row.job_id}\0${row.source_id}`, report);
+      }
+    }
+    const projectionOnlyOmissions: Array<{ jobId: string; fields: string[] }> = [];
+    const deferredProjections: Array<{ jobId: string; evidenceHashes: string[] }> = [];
+    const eligibleTargets = new Set<string>();
+    const fieldOutcomes: Record<string, Record<string, number>> = {};
+    let scanned = 0; let enriched = 0; let sourceOccurrenceCount = 0;
+    for await (const page of this.catalogInternshipPages()) {
+      const jobs = page.map((row) => JSON.parse(row.value) as Internship);
+      const placeholders = jobs.map(() => '?').join(', ');
+      const current = await this.db.prepare(`SELECT job_id, evidence FROM role_metadata_evidence
+        WHERE is_current = 1 AND job_id IN (${placeholders})`).bind(...jobs.map((job) => job.jobId))
+        .all<{ job_id: string; evidence: string }>();
+      const evidenceByJob = new Map<string, RoleMetadataEvidence[]>();
+      for (const row of current.results) evidenceByJob.set(row.job_id,
+        [...(evidenceByJob.get(row.job_id) ?? []), JSON.parse(row.evidence) as RoleMetadataEvidence]);
+      for (const job of jobs) {
+        scanned += 1; if (job.roleMetadata) enriched += 1;
+        const historical = evidenceByJob.get(job.jobId) ?? [];
+        const sourceReferences = job.sourceReferences.map((reference) => {
+          const matching = historical.filter((item) => item.sourceId === reference.sourceId);
+          return { ...reference, metadataEvidence: replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, matching, reference.sourceId) };
+        });
+        const result = projectRoleMetadata({ ...job, sourceReferences });
+        if (result.deferredEvidenceHashes?.length) deferredProjections.push({ jobId: job.jobId, evidenceHashes: result.deferredEvidenceHashes });
+        const projected = result.job;
+        const fields = ['compensation', 'housing', 'programType', 'workMode', 'applicationDeadline', 'graduationWindow', 'locations', 'employerPublishedAt', 'employerUpdatedAt']
+          .filter((field) => JSON.stringify(projected[field as keyof Internship]) !== JSON.stringify(job[field as keyof Internship]));
+        if (fields.length) projectionOnlyOmissions.push({ jobId: job.jobId, fields });
+        const missing = new Set(fields);
+        for (const reference of job.sourceReferences) {
+          sourceOccurrenceCount += 1;
+          if (job.open && metadataCollectionTarget(reference)) eligibleTargets.add(`${job.jobId}\0${reference.sourceId}`);
+          const report = byReference.get(`${job.jobId}\0${reference.sourceId}`);
+          const reportedFields = report?.fields as Record<string, string> | undefined;
+          for (const field of ['compensation', 'housing', 'education', 'graduation-window', 'locations', 'work-mode', 'application-deadline', 'employer-published-at', 'employer-updated-at']) {
+            const key = `${reference.admission?.destination.provider ?? 'unknown'}/${String(report?.method ?? 'unobserved')}/${field}`;
+            const counts = fieldOutcomes[key] ?? {};
+            const projectionField = ({ 'graduation-window': 'graduationWindow', 'work-mode': 'workMode', 'application-deadline': 'applicationDeadline',
+              'employer-published-at': 'employerPublishedAt', 'employer-updated-at': 'employerUpdatedAt' } as Record<string, string>)[field] ?? field;
+            const outcome = reportedFields?.[field] === 'extracted' && missing.has(projectionField)
+              ? 'projection-missing' : reportedFields?.[field] ?? 'inspection-pending';
+            counts[outcome] = (counts[outcome] ?? 0) + 1; fieldOutcomes[key] = counts;
+          }
+        }
+      }
+    }
+    const currentEvidenceBySourceClass: Record<string, number> = {};
+    const unsupportedCurrencies: Record<string, number> = {};
+    const unsupportedPeriods: Record<string, number> = {};
+    for await (const current of this.currentRoleMetadataEvidencePages()) {
+      for (const row of current) {
+        currentEvidenceBySourceClass[row.source_class] = (currentEvidenceBySourceClass[row.source_class] ?? 0) + 1;
+        const parsed = JSON.parse(row.evidence) as RoleMetadataEvidence;
+        for (const currency of unsupportedMetadataCurrencies([parsed])) unsupportedCurrencies[currency] = (unsupportedCurrencies[currency] ?? 0) + 1;
+        for (const period of unsupportedMetadataPeriods([parsed])) unsupportedPeriods[period] = (unsupportedPeriods[period] ?? 0) + 1;
+      }
+    }
+    const conflicts = await this.db.prepare("SELECT count(*) AS count FROM role_metadata_conflicts WHERE state = 'open'").first<{ count: number }>();
+    const outcomes = await this.db.prepare(`SELECT coalesce(classification, state) AS outcome, count(*) AS count
+      FROM destination_verification_attempts GROUP BY coalesce(classification, state)`).all<{ outcome: string; count: number }>();
+    const collectionCoverage = await this.roleMetadataCollectionCoverage(
+      eligibleTargets,
+      new Date(now.getTime() - ROLE_METADATA_REVALIDATION_MS).toISOString(),
+    );
+    return {
+      scanned,
+      enriched,
+      projectionOnlyOmissions,
+      deferredProjections,
+      supportedRoleSpecificDisclosedMetadataMisses: null,
+      currentEvidenceBySourceClass,
+      unsupportedCurrencies,
+      unsupportedPeriods,
+      openConflicts: Number(conflicts?.count ?? 0),
+      verificationOutcomes: Object.fromEntries(outcomes.results.map((row) => [row.outcome, Number(row.count)])),
+      collectionCoverage,
+      fieldOutcomes,
+      fieldOutcomeDenominator: { unit: 'source-occurrence', count: sourceOccurrenceCount, scope: 'all-stored-roles' },
+      acquisitionReports,
+      // A projection delta is not an independently measured extraction recall.
+      disclosureRecall: null,
+    };
+  }
+
+  async metadataVerificationCandidates(limit = 100, options: {
+    observedBefore?: string;
+    includeUnobserved?: boolean;
+    requireProjectedEvidence?: boolean;
+    after?: string;
+    reserveAt?: string;
+  } = {}): Promise<Array<{
+    jobId: string; sourceId: string; externalId: string; candidateUrl: string; providerIdentity: ProviderIdentity;
+    metadataArtifactHash?: string;
+  }>> {
+    const [attempts, evidence, reservations] = await Promise.all([
+      this.db.prepare(`SELECT job_id, source_id, observed_at, artifact_hash
+        FROM role_metadata_extraction_attempts WHERE extraction_version = ?`)
+        .bind(ROLE_METADATA_EXTRACTION_VERSION)
+        .all<{ job_id: string; source_id: string; observed_at: string; artifact_hash: string }>(),
+      this.db.prepare(`SELECT job_id, source_id, observed_at, artifact_hash
+        FROM role_metadata_evidence WHERE extraction_version = ? AND is_current = 1
+          AND source_class IN ('official-page', 'official-json-ld')`)
+        .bind(ROLE_METADATA_EXTRACTION_VERSION)
+        .all<{ job_id: string; source_id: string; observed_at: string; artifact_hash: string }>(),
+      this.db.prepare("SELECT job_id, source_id, lease_until, retry_after, json_extract(report, '$.extractionVersion') AS version FROM role_metadata_acquisition")
+        .all<{ job_id: string; source_id: string; lease_until: string; retry_after: string; version: number | null }>(),
+    ]);
+    const now = options.reserveAt ?? new Date().toISOString();
+    const unavailable = new Set(reservations.results.filter((item) => item.lease_until > now
+      || (item.retry_after > now && (item.version === null || item.version >= ROLE_METADATA_EXTRACTION_VERSION)))
+      .map((item) => `${item.job_id}\0${item.source_id}`));
+    const latest = new Map<string, { observedAt: string; artifactHash: string }>();
+    for (const item of [...attempts.results, ...evidence.results]) {
+      const key = `${item.job_id}\0${item.source_id}`;
+      const previous = latest.get(key);
+      if (!previous || item.observed_at > previous.observedAt) latest.set(key, { observedAt: item.observed_at, artifactHash: item.artifact_hash });
+    }
+    const candidates: Array<{ jobId: string; sourceId: string; externalId: string; candidateUrl: string;
+      providerIdentity: ProviderIdentity; metadataArtifactHash?: string }> = [];
+    // Match collectionCoverage's open-role cohort, including withheld roles.
+    // Metadata collection must not require or grant catalog admission.
+    for await (const page of this.catalogInternshipPages(100, true)) {
+      for (const row of page) {
+        const job = JSON.parse(row.value) as Internship;
+        for (const reference of job.sourceReferences) {
+          const key = `${job.jobId}\0${reference.sourceId}`;
+          if (unavailable.has(key) || (options.after && key <= options.after)) continue;
+          const target = metadataCollectionTarget(reference);
+          if (!target || !reference.externalId) continue;
+          const current = reference.metadataEvidence?.some((item) => ['official-page', 'official-json-ld'].includes(item.sourceClass)
+            && item.extractionVersion === ROLE_METADATA_EXTRACTION_VERSION) === true;
+          if (options.requireProjectedEvidence && !current) continue;
+          const observation = latest.get(key);
+          if (!observation && options.includeUnobserved === false) continue;
+          if (observation && (!options.observedBefore || observation.observedAt > options.observedBefore)) continue;
+          candidates.push({
+            jobId: job.jobId, sourceId: reference.sourceId, externalId: reference.externalId,
+            ...target,
+            ...(observation ? { metadataArtifactHash: observation.artifactHash } : {}),
+          });
+        }
+      }
+    }
+    // Lexicographic cursors support manual resumption. Automated batches
+    // interleave hosts so a large board cannot monopolize each run.
+    candidates.sort((a, b) => {
+      const left = `${a.jobId}\0${a.sourceId}`; const right = `${b.jobId}\0${b.sourceId}`;
+      if (options.after === undefined) {
+        const first = latest.get(left)?.observedAt ?? '';
+        const second = latest.get(right)?.observedAt ?? '';
+        if (first !== second) return first < second ? -1 : 1;
+      }
+      return left < right ? -1 : left > right ? 1 : 0;
+    });
+    const ordered = options.after !== undefined ? candidates : (() => {
+      const hosts = new Map<string, typeof candidates>();
+      for (const item of candidates) {
+        let host: string;
+        try { host = new URL(item.candidateUrl).hostname; } catch { continue; }
+        const group = hosts.get(host) ?? []; group.push(item); hosts.set(host, group);
+      }
+      const result: typeof candidates = [];
+      while ([...hosts.values()].some((group) => group.length)) for (const group of hosts.values()) {
+        const item = group.shift(); if (item) result.push(item);
+      }
+      return result;
+    })();
+    const selected: typeof candidates = [];
+    for (const candidate of ordered) {
+      if (selected.length >= limit) break;
+      if (options.reserveAt) {
+        const lease = new Date(Date.parse(options.reserveAt) + 30 * 60_000).toISOString();
+        const reserved = await this.db.prepare(`INSERT INTO role_metadata_acquisition(job_id, source_id, lease_until)
+          VALUES (?, ?, ?) ON CONFLICT(job_id, source_id) DO UPDATE SET lease_until=excluded.lease_until
+          WHERE role_metadata_acquisition.lease_until <= ? AND (role_metadata_acquisition.retry_after <= ?
+            OR coalesce(json_extract(role_metadata_acquisition.report, '$.extractionVersion'), ?) < ?)`)
+          .bind(candidate.jobId, candidate.sourceId, lease, options.reserveAt, options.reserveAt,
+            ROLE_METADATA_EXTRACTION_VERSION, ROLE_METADATA_EXTRACTION_VERSION).run();
+        if (reserved.meta?.changes !== 1) continue;
+      }
+      selected.push(candidate);
+    }
+    return selected;
+  }
+
+  async recordMetadataAcquisition(jobId: string, sourceId: string, observedAt: string, report: Record<string, unknown>, retryAfter: string): Promise<void> {
+    await this.db.prepare(`INSERT INTO role_metadata_acquisition(job_id, source_id, lease_until, retry_after, observed_at, report)
+      VALUES (?, ?, '', ?, ?, ?) ON CONFLICT(job_id, source_id) DO UPDATE SET
+      lease_until='', retry_after=excluded.retry_after, observed_at=excluded.observed_at, report=excluded.report`)
+      .bind(jobId, sourceId, retryAfter, observedAt, JSON.stringify(report)).run();
+  }
+
+  async metadataHostAvailable(host: string, now = new Date().toISOString()): Promise<boolean> {
+    const row = await this.db.prepare('SELECT retry_after FROM role_metadata_api_backoff WHERE host = ?').bind(host).first<{ retry_after: string }>();
+    return !row || row.retry_after <= now;
+  }
+
+  async deferMetadataHost(host: string, retryAfter: string): Promise<void> {
+    await this.db.prepare(`INSERT INTO role_metadata_api_backoff(host, retry_after) VALUES (?, ?)
+      ON CONFLICT(host) DO UPDATE SET retry_after=max(role_metadata_api_backoff.retry_after, excluded.retry_after)`)
+      .bind(host, retryAfter).run();
+  }
+
+  private async metadataRevision(): Promise<number> {
+    const row = await this.db.prepare('SELECT revision FROM role_metadata_revision WHERE id = 1').first<{ revision: number }>();
+    if (!row) throw new Error('Metadata review migration is required');
+    return Number(row.revision);
+  }
+
+  private async metadataReviewSubject(jobId: string) {
+    const row = await this.db.prepare("SELECT value FROM catalog_items WHERE pk = ? AND sk = 'META' AND kind = 'internship'")
+      .bind(`JOB#${jobId}`).first<JsonRow>();
+    if (!row) throw new Error('Role not found');
+    const historical = await this.db.prepare('SELECT evidence FROM role_metadata_evidence WHERE job_id = ? AND is_current = 1')
+      .bind(jobId).all<{ evidence: string }>();
+    const job = JSON.parse(row.value) as Internship;
+    const all = historical.results.map(item => JSON.parse(item.evidence) as RoleMetadataEvidence);
+    const evidence = job.sourceReferences.flatMap(reference => replaceVerifiedPageMetadataEvidence(reference.metadataEvidence,
+      all.filter(item => item.sourceId === reference.sourceId), reference.sourceId));
+    return { original: row.value, job, evidence };
+  }
+
+  private async metadataJobRevision(jobId: string): Promise<number> {
+    const row = await this.db.prepare('SELECT revision FROM role_metadata_job_revision WHERE job_id = ?')
+      .bind(jobId).first<{ revision: number }>();
+    return Number(row?.revision ?? 0);
+  }
+
+  async stageRoleMetadataOmission(jobId: string, createdAt: string) {
+    const revision = await this.metadataJobRevision(jobId);
+    const subject = await this.metadataReviewSubject(jobId);
+    const conflicts = reconcileRoleMetadata(subject.evidence, subject.job).conflicts.filter(item => item.field === 'compensation');
+    if (!conflicts.length) throw new Error('Only currently conflicting compensation may be reviewed for omission');
+    const evidenceFingerprint = roleMetadataReviewFingerprint(subject.evidence);
+    const decision = { field: 'compensation' as const, action: 'omit' as const, reason: 'publisher-inconsistent' as const, evidenceFingerprint };
+    const reviewToken = hash(`posting-review-v2\0${jobId}\0${subject.original}\0${JSON.stringify(decision)}\0${revision}`);
+    if (await this.metadataJobRevision(jobId) !== revision) throw new Error('Posting metadata changed during review; preview again');
+    const receipt: RoleMetadataOmission = { ...decision, reviewToken };
+    await this.db.prepare(`INSERT INTO role_metadata_review_plans
+      (token, job_id, original_value, decision, metadata_revision, job_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(token) DO NOTHING`).bind(reviewToken, jobId, subject.original, JSON.stringify(receipt), await this.metadataRevision(), revision, createdAt).run();
+    return { reviewToken, expectedDecisions: 1, jobId, company: subject.job.company, title: subject.job.title,
+      decision: receipt, conflicts, publicJobsChanged: 0, requiresSeparateRepairApproval: true };
+  }
+
+  async approveRoleMetadataOmission(token: string, expectedDecisions: number, approvedAt: string) {
+    if (expectedDecisions !== 1) throw new Error('expectedDecisions must match the review preview exactly');
+    const plan = await this.db.prepare('SELECT * FROM role_metadata_review_plans WHERE token = ?').bind(token)
+      .first<{ job_id: string; original_value: string; decision: string; job_revision: number; approved_at: string | null }>();
+    if (!plan || plan.approved_at) throw new Error('Review plan is missing or already approved; preview again');
+    const guard = this.db.prepare(`INSERT INTO role_metadata_review_guards(token, ok, approved_at)
+      SELECT ?, CASE WHEN coalesce((SELECT revision FROM role_metadata_job_revision WHERE job_id = ?), 0) = ?
+        AND EXISTS (SELECT 1 FROM catalog_items WHERE pk = ? AND sk = 'META' AND kind = 'internship' AND value = ?)
+        AND EXISTS (SELECT 1 FROM role_metadata_review_plans WHERE token = ? AND approved_at IS NULL)
+      THEN 1 ELSE 0 END, ?`).bind(token, plan.job_id, plan.job_revision, `JOB#${plan.job_id}`, plan.original_value, token, approvedAt);
+    await this.db.batch([guard,
+      this.db.prepare(`INSERT INTO role_metadata_review_decisions(job_id, token, decision, approved_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(job_id) DO UPDATE SET token=excluded.token, decision=excluded.decision, approved_at=excluded.approved_at`)
+        .bind(plan.job_id, token, plan.decision, approvedAt),
+      this.db.prepare('UPDATE role_metadata_review_plans SET approved_at = ? WHERE token = ?').bind(approvedAt, token),
+    ]);
+    return { approvedDecisions: 1, publicJobsChanged: 0, requiresSeparateRepairApproval: true };
+  }
+
+  async stageRoleMetadataRepair(createdAt: string): Promise<{
+    repairToken: string;
+    expectedJobs: number;
+    remainingJobs: number;
+    expectedOccurrences: 0;
+    fillsByField: Record<string, number>;
+    correctionsByField: Record<string, number>;
+    changesBySourceClass: Record<string, number>;
+    conflicts: MetadataConflict[];
+    unsupportedCurrencies: Record<string, number>;
+    unsupportedPeriods: Record<string, number>;
+    reviewedOmissions: Array<{ jobId: string; reviewToken: string }>;
+  }> {
+    const revision = await this.metadataRevision();
+    const reviewRows = await this.db.prepare('SELECT job_id, decision FROM role_metadata_review_decisions')
+      .all<{ job_id: string; decision: string }>();
+    const reviews = new Map(reviewRows.results.map(row => [row.job_id, JSON.parse(row.decision) as RoleMetadataOmission]));
+    const reviewedOmissions: Array<{ jobId: string; reviewToken: string }> = [];
+    const staged: Array<{ jobId: string; original: string; proposed: string }> = [];
+    let remainingJobs = 0; let stagedBytes = 0; let stagingFull = false;
+    const fillsByField: Record<string, number> = {}; const correctionsByField: Record<string, number> = {};
+    const changesBySourceClass: Record<string, number> = {}; const unsupportedCurrencies: Record<string, number> = {};
+    const unsupportedPeriods: Record<string, number> = {};
+    const conflicts: MetadataConflict[] = [];
+    const evidenceDigests: string[] = [];
+    let statisticsJobId: string | undefined; let statisticsEvidence: RoleMetadataEvidence[] = [];
+    const recordEvidenceStatistics = (evidence: RoleMetadataEvidence[]) => {
+      for (const currency of unsupportedMetadataCurrencies(evidence)) {
+        unsupportedCurrencies[currency] = (unsupportedCurrencies[currency] ?? 0) + 1;
+      }
+      for (const period of unsupportedMetadataPeriods(evidence)) {
+        unsupportedPeriods[period] = (unsupportedPeriods[period] ?? 0) + 1;
+      }
+    };
+    for await (const page of this.currentRoleMetadataEvidencePages()) {
+      for (const row of page) {
+        evidenceDigests.push(roleMetadataEvidenceDigest(row));
+        if (statisticsJobId !== undefined && row.job_id !== statisticsJobId) {
+          recordEvidenceStatistics(statisticsEvidence); statisticsEvidence = [];
+        }
+        statisticsJobId = row.job_id;
+        statisticsEvidence.push(JSON.parse(row.evidence) as RoleMetadataEvidence);
+      }
+    }
+    if (statisticsEvidence.length) recordEvidenceStatistics(statisticsEvidence);
+    const fields: Array<keyof Internship> = ['compensation', 'housing', 'programType', 'workMode', 'applicationDeadline', 'graduationWindow', 'locations', 'employerPublishedAt', 'employerUpdatedAt'];
+    const eligibleTargets = new Set<string>();
+    for await (const page of this.catalogInternshipPages()) {
+      const jobs = page.map(row => JSON.parse(row.value) as Internship);
+      for (const job of jobs) if (job.open) for (const reference of job.sourceReferences) {
+        if (metadataCollectionTarget(reference)) eligibleTargets.add(`${job.jobId}\0${reference.sourceId}`);
+      }
+      const placeholders = jobs.map(() => '?').join(', ');
+      const current = await this.db.prepare(`SELECT job_id, evidence FROM role_metadata_evidence
+        WHERE is_current = 1 AND job_id IN (${placeholders}) ORDER BY job_id, source_class`)
+        .bind(...jobs.map(job => job.jobId)).all<{ job_id: string; evidence: string }>();
+      const evidenceByJob = new Map<string, RoleMetadataEvidence[]>();
+      for (const item of current.results) evidenceByJob.set(item.job_id,
+        [...(evidenceByJob.get(item.job_id) ?? []), JSON.parse(item.evidence) as RoleMetadataEvidence]);
+      for (let index = 0; index < jobs.length; index += 1) {
+        const job = jobs[index]; const row = page[index];
+        const historical = evidenceByJob.get(job.jobId) ?? [];
+        if (!historical.length) continue;
+        const sourceReferences = job.sourceReferences.map((reference) => {
+          const matching = historical.filter((item) => item.sourceId === reference.sourceId);
+          return { ...reference, metadataEvidence: replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, matching, reference.sourceId) };
+        });
+        const evidence = sourceReferences.flatMap(reference => reference.metadataEvidence ?? []);
+        const review = reviews.get(job.jobId);
+        const validReview = review && review.evidenceFingerprint === roleMetadataReviewFingerprint(evidence) ? review : undefined;
+        if (validReview) reviewedOmissions.push({ jobId: job.jobId, reviewToken: validReview.reviewToken });
+        const result = projectRoleMetadata({ ...job, sourceReferences, metadataOmission: validReview });
+        conflicts.push(...result.conflicts);
+        const proposed = JSON.stringify(result.job);
+        if (result.conflicts.length || proposed === row.value) continue;
+        const jobBytes = utf8Bytes(row.value) + utf8Bytes(proposed);
+        if (!staged.length && jobBytes > ATOMIC_REPAIR_BYTE_LIMIT) {
+          throw new Error(`Role metadata repair job ${job.jobId} exceeds the atomic byte limit of ${ATOMIC_REPAIR_BYTE_LIMIT}`);
+        }
+        // Keep a contiguous stable prefix. Continue inspecting the full cohort
+        // so conflicts outside the bounded transaction still block it.
+        if (stagingFull || staged.length >= METADATA_REPAIR_RECORD_LIMIT || stagedBytes + jobBytes > ATOMIC_REPAIR_BYTE_LIMIT) {
+          stagingFull = true; remainingJobs += 1; continue;
+        }
+        for (const field of fields) if (JSON.stringify(result.job[field]) !== JSON.stringify(job[field])) {
+          const target = job[field] === undefined || field === 'compensation' && !job.compensation.raw ? fillsByField : correctionsByField;
+          target[field] = (target[field] ?? 0) + 1;
+        }
+        for (const sourceClass of new Set(historical.map((item) => item.sourceClass))) changesBySourceClass[sourceClass] = (changesBySourceClass[sourceClass] ?? 0) + 1;
+        staged.push({ jobId: job.jobId, original: row.value, proposed }); stagedBytes += jobBytes;
+      }
+    }
+    const evidenceSnapshot = roleMetadataEvidenceSnapshot(evidenceDigests);
+    const collectionCoverage = await this.roleMetadataCollectionCoverage(
+      eligibleTargets,
+      new Date(Date.parse(createdAt) - ROLE_METADATA_REVALIDATION_MS).toISOString(),
+    );
+    const collectionSnapshot = roleMetadataCollectionSnapshot(collectionCoverage);
+    const conflictSnapshot = conflicts.map((conflict) => JSON.stringify(conflict)).sort().join('\n');
+    const repairToken = createHash('sha256').update([
+      ...staged.map((item) => `${item.jobId}\0${hash(item.original)}\0${hash(item.proposed)}`),
+      `evidence\0${evidenceSnapshot}`,
+      `collection\0${collectionSnapshot}`,
+      `conflicts\0${hash(conflictSnapshot)}`,
+      `revision\0${revision}`,
+    ].sort().join('\n')).digest('hex');
+    if (await this.metadataRevision() !== revision) throw new Error('Metadata changed during the dry-run; run it again');
+    const statements = staged.map((item) => this.db.prepare(`INSERT INTO role_metadata_repair_stage
+      (token, job_id, original_value, proposed_value, created_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(token, job_id) DO UPDATE SET original_value=excluded.original_value,
+        proposed_value=excluded.proposed_value, created_at=excluded.created_at`)
+      .bind(repairToken, item.jobId, item.original, item.proposed, createdAt));
+    for (let offset = 0; offset < statements.length; offset += 50) await this.db.batch(statements.slice(offset, offset + 50));
+    const reviewed = reviewedOmissions.map(item => this.db.prepare(`INSERT INTO role_metadata_repair_review_stage(token, job_id, decision_token)
+      VALUES (?, ?, ?) ON CONFLICT(token, job_id) DO NOTHING`).bind(repairToken, item.jobId, item.reviewToken));
+    for (let offset = 0; offset < reviewed.length; offset += 50) await this.db.batch(reviewed.slice(offset, offset + 50));
+    await this.db.prepare(`INSERT INTO role_metadata_repair_plans
+      (token, expected_jobs, expected_occurrences, conflict_count, evidence_snapshot, collection_snapshot, collection_complete, created_at, metadata_revision)
+      VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(token) DO UPDATE SET expected_jobs=excluded.expected_jobs,
+        expected_occurrences=excluded.expected_occurrences, conflict_count=excluded.conflict_count,
+        evidence_snapshot=excluded.evidence_snapshot, collection_snapshot=excluded.collection_snapshot,
+        collection_complete=excluded.collection_complete, created_at=excluded.created_at, metadata_revision=excluded.metadata_revision`)
+      .bind(repairToken, staged.length, conflicts.length, evidenceSnapshot, collectionSnapshot,
+        collectionCoverage.complete ? 1 : 0, createdAt, revision).run();
+    return { repairToken, expectedJobs: staged.length, remainingJobs, expectedOccurrences: 0, fillsByField, correctionsByField,
+      changesBySourceClass, conflicts, unsupportedCurrencies, unsupportedPeriods, reviewedOmissions };
+  }
+
+  async applyRoleMetadataRepair(token: string, expectedJobs: number, expectedOccurrences: number, appliedAt: string): Promise<{
+    changed: number; occurrencesChanged: 0; projectionRefreshRequired: boolean;
+  }> {
+    if (expectedOccurrences !== 0) throw new Error('Role metadata repair does not rewrite source occurrences');
+    const plan = await this.db.prepare(`SELECT expected_jobs, expected_occurrences, conflict_count, evidence_snapshot,
+        collection_snapshot, collection_complete, metadata_revision
+      FROM role_metadata_repair_plans WHERE token = ?`).bind(token)
+      .first<{ expected_jobs: number; expected_occurrences: number; conflict_count: number; evidence_snapshot: string;
+        collection_snapshot: string; collection_complete: number; metadata_revision: number }>();
+    if (!plan || Number(plan.expected_jobs) !== expectedJobs || Number(plan.expected_occurrences) !== expectedOccurrences) {
+      throw new Error('Role metadata repair plan changed; run the dry-run again');
+    }
+    const stagedSize = await this.db.prepare(`SELECT count(*) AS count,
+        coalesce(sum(length(CAST(original_value AS BLOB)) + length(CAST(proposed_value AS BLOB))), 0) AS bytes
+      FROM role_metadata_repair_stage WHERE token = ?`).bind(token).first<{ count: number; bytes: number }>();
+    if (Number(stagedSize?.bytes ?? 0) > ATOMIC_REPAIR_BYTE_LIMIT) {
+      throw new Error(`Role metadata repair exceeds the atomic byte limit of ${ATOMIC_REPAIR_BYTE_LIMIT}; run the dry-run again`);
+    }
+    if (Number(stagedSize?.count ?? 0) !== expectedJobs) throw new Error('Role metadata repair count changed; run the dry-run again');
+    if (expectedJobs > METADATA_REPAIR_RECORD_LIMIT) {
+      throw new Error(`Role metadata repair exceeds the guarded metadata limit of ${METADATA_REPAIR_RECORD_LIMIT} records; run the dry-run again`);
+    }
+    const rows = await this.db.prepare('SELECT * FROM role_metadata_repair_stage WHERE token = ? ORDER BY job_id').bind(token)
+      .all<{ job_id: string; original_value: string; proposed_value: string }>();
+    if (Number(plan.conflict_count) > 0) throw new Error('Role metadata conflicts must be resolved before apply');
+    if (Number(plan.collection_complete) !== 1) throw new Error('Role metadata collection was incomplete during the dry-run; collect and run the dry-run again');
+    const audit = await this.roleMetadataAudit(new Date(appliedAt));
+    if (audit.deferredProjections.length) throw new Error('Accepted metadata is awaiting source re-extraction; refresh deferred sources and run the dry-run again');
+    const collection = audit.collectionCoverage;
+    if (!collection.complete || roleMetadataCollectionSnapshot(collection) !== plan.collection_snapshot) {
+      throw new Error('Role metadata collection changed or is incomplete; collect and run the dry-run again');
+    }
+    const evidenceDigests: string[] = [];
+    for await (const page of this.currentRoleMetadataEvidencePages()) {
+      for (const row of page) evidenceDigests.push(roleMetadataEvidenceDigest(row));
+    }
+    if (roleMetadataEvidenceSnapshot(evidenceDigests) !== plan.evidence_snapshot) {
+      throw new Error('Role metadata evidence changed; run the dry-run again');
+    }
+    if (rows.results.length !== expectedJobs) throw new Error('Role metadata repair count changed; run the dry-run again');
+    if (await this.metadataRevision() !== Number(plan.metadata_revision)) throw new Error('Metadata or reviews changed; run the dry-run again');
+    // The only exception is an exact, approved field omission validated over
+    // the full cohort during this plan. Unrelated jobs/fields still block all batches.
+    const unreviewedConflictSql = `SELECT 1 FROM role_metadata_conflicts AS conflict WHERE state = 'open'
+      AND NOT (field = 'compensation' AND EXISTS (
+        SELECT 1 FROM role_metadata_repair_review_stage AS reviewed
+        JOIN role_metadata_review_decisions AS decision ON decision.job_id = reviewed.job_id AND decision.token = reviewed.decision_token
+        WHERE reviewed.token = ? AND reviewed.job_id = conflict.job_id))`;
+    const conflicts = await this.db.prepare(`SELECT count(*) AS count FROM (${unreviewedConflictSql})`).bind(token).first<{ count: number }>();
+    if (Number(conflicts?.count ?? 0) > 0) throw new Error('Role metadata conflicts must be resolved before apply');
+    const guard = this.db.prepare(`INSERT INTO role_metadata_repair_guards (token, ok, applied_at)
+      SELECT ?, CASE WHEN (SELECT count(*) FROM role_metadata_repair_stage WHERE token = ?) = ?
+        AND (SELECT revision FROM role_metadata_revision WHERE id = 1) = ?
+        AND NOT EXISTS (${unreviewedConflictSql})
+        AND EXISTS (SELECT 1 FROM role_metadata_repair_plans WHERE token = ? AND conflict_count = 0
+          AND expected_jobs = ? AND expected_occurrences = ? AND collection_complete = 1 AND collection_snapshot = ?)
+        AND NOT EXISTS (
+          SELECT 1 FROM role_metadata_repair_stage AS stage
+          LEFT JOIN catalog_items AS item ON item.pk = 'JOB#' || stage.job_id AND item.sk = 'META' AND item.kind = 'internship'
+          WHERE stage.token = ? AND (item.value IS NULL OR item.value <> stage.original_value)
+        ) THEN 1 ELSE 0 END, ?`)
+      .bind(token, token, expectedJobs, plan.metadata_revision, token, token, expectedJobs, expectedOccurrences, plan.collection_snapshot, token, appliedAt);
+    const updates = rows.results.map((row) => {
+      const proposed = JSON.parse(row.proposed_value) as Internship;
+      return this.db.prepare(`UPDATE catalog_items SET value = ?, search_text = ?
+        WHERE pk = ? AND sk = 'META' AND kind = 'internship' AND value = ?
+          AND EXISTS (SELECT 1 FROM role_metadata_repair_guards WHERE token = ? AND ok = 1)`)
+        .bind(row.proposed_value, catalogSearchText(proposed), `JOB#${row.job_id}`, row.original_value, token);
+    });
+    const results = await this.db.batch([guard, ...updates]);
+    if (!results[0]?.meta.changes || updates.some((_, index) => results[index + 1]?.meta.changes !== 1)) {
+      throw new Error('Role metadata repair guard failed; run the dry-run again');
+    }
+    await this.db.prepare('DELETE FROM role_metadata_repair_stage WHERE token = ?').bind(token).run();
+    await this.db.prepare('DELETE FROM role_metadata_repair_plans WHERE token = ?').bind(token).run();
+    await this.db.prepare('DELETE FROM role_metadata_repair_review_stage WHERE token = ?').bind(token).run();
+    return { changed: rows.results.length, occurrencesChanged: 0, projectionRefreshRequired: rows.results.length > 0 };
+  }
 
   async audit(): Promise<{
     scanned: number;

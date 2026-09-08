@@ -31,6 +31,8 @@ export interface Queue {
 export interface QueueMessage<T> {
   id: string;
   body: T;
+  attempts?: number;
+  timestamp?: Date;
   ack(): void;
   retry(options?: { delaySeconds?: number }): void;
 }

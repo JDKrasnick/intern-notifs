@@ -13,6 +13,9 @@ export function catalogVisibleAt(job: Internship): string {
 }
 
 export function canonicalCatalogRecency(job: Internship): Internship {
+  // Admission-managed roles can exist durably before their first publication.
+  // Do not synthesize visibility metadata for that hidden state.
+  if (job.admission?.catalogEligible === false && !job.catalogVisibleAt) return job;
   if (job.catalogRecency && job.catalogVisibleAt) return job;
   return {
     ...job,

@@ -13,6 +13,7 @@ import type {
 import { canonicalCompanyKey } from '../core/normalize.js';
 
 const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
+  'official-api': -1,
   'official-ats': 0,
   'official-json-ld': 1,
   'official-page': 2,

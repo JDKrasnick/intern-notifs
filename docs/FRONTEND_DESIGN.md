@@ -193,6 +193,13 @@ Every screen follows these rules. They are as important as colors and type.
 - On detail, explain: “We verified the employer and application page, but have not yet matched this listing to reviewed exact posting evidence. It may later be combined with another listing.” Keep **Apply on employer site** as the only primary action.
 - Group cards report the number of unconfirmed roles. Individual and grouped notifications use the same plain-language disclosure. An absent status is a legacy record and must not be presented as confirmed or unconfirmed.
 
+### Housing evidence in role details
+
+- Show housing as separate evidence rows below the role details, keeping it separate from salary and base pay. Omit the rows when housing evidence is absent.
+- Preserve the distinctions **Housing stipend**, **Employer-paid housing**, **Housing cost to you**, and **Housing available · cost not confirmed**. Availability alone must not imply free or employer-paid accommodation.
+- Place a supported amount, currency, and period beside its housing label; append **conditional** when the evidence is conditional. Keep the employer’s source excerpt immediately below so eligibility and other conditions remain visible. The shared formatter bounds the excerpt to 240 characters and the display to eight rows.
+- Reuse the sheet’s existing evidence treatment: bold body-colored labels, smaller muted source text, and wrapping rows in the scrollable content. Keep the official application handoff as the primary action for an open role.
+
 ### Buttons
 
 - Primary: 52 pt, 12 pt radius, ink fill, white semibold label.

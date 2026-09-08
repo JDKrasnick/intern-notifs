@@ -35,6 +35,14 @@ function identity(options: {
 }
 
 describe('grouped catalog domain', () => {
+  it('preserves housing separately from compensation in featured and detailed roles', () => {
+    const housing = [{ kind: 'stipend', minAmount: 2500, maxAmount: 2500, currency: 'USD', period: 'monthly',
+      sourceText: 'Monthly housing stipend.', provenance: [] }];
+    const details = catalogGroupDetails(groupCatalogJobs([job('housing', 0, { housing, compensation: { raw: 'USD 8,500/month' } })])[0]!);
+    expect(details.roles[0]?.housing).toEqual(housing);
+    expect(details.group.featuredRole.housing).toEqual(housing);
+    expect(details.group.compensations).toEqual(['USD 8,500/month']);
+  });
   it('uses an eight-second employer burst and does not absorb a later unrelated program', () => {
     const jobs = [job('one', 0), job('two', 2), job('three', 4), job('four', 8), job('later', 20, { season: 'fall-2027' })];
     const groups = groupCatalogJobs(jobs);
@@ -158,5 +166,43 @@ describe('grouped catalog domain', () => {
       job('inferred-season', 20, { internshipIdentity: identity({ seasonEvidence: 'inferred' }) }),
     ]);
     expect(groups.map(({ row }) => row.kind)).toEqual(['individual', 'individual', 'individual']);
+  });
+
+  it('keeps only roles with listed pay when the pay filter is set', () => {
+    const groups = groupCatalogJobs([
+      job('paid', 0, { compensation: { raw: '$54/hour' } }),
+      job('unpaid', 10, { compensation: { raw: '' } }),
+      job('blank', 20, { compensation: { raw: '   ' } }),
+    ]);
+    const filtered = filterCatalogGroups(groups, { hasCompensation: true });
+    expect(filtered.flatMap((group) => group.jobs.map((item) => item.jobId))).toEqual(['paid']);
+    const details = filterCatalogGroupDetails(groups.map(catalogGroupDetails), { hasCompensation: true });
+    expect(details.flatMap((group) => group.roles.map((role) => role.jobId))).toEqual(['paid']);
+  });
+  it('filters groups and details by discipline alias, season, work mode, education, and pay', () => {
+    const base = identity();
+    const softwareIdentity = {
+      ...base,
+      disciplines: [{ value: 'software' as const, provenance: base.title.official.provenance }],
+    };
+    const mlIdentity = {
+      ...base,
+      season: { term: 'fall' as const, year: 2026, evidenceStatus: 'explicit' as const, provenance: base.season.provenance },
+      disciplines: [{ value: 'ai-ml' as const, provenance: base.title.official.provenance }],
+    };
+    const groups = groupCatalogJobs([
+      job('swe', 0, { location: 'Remote', compensation: { raw: '$50/hr' }, internshipIdentity: softwareIdentity }),
+      job('ml', 10, { location: 'Onsite in New York, NY', internshipIdentity: mlIdentity }),
+    ]);
+    const jobsOf = (filtered: typeof groups) => filtered.flatMap((group) => group.jobs.map((item) => item.jobId));
+    expect(jobsOf(filterCatalogGroups(groups, { disciplines: ['SWE'] }))).toEqual(['swe']);
+    expect(jobsOf(filterCatalogGroups(groups, { seasons: ['fall-2026'] }))).toEqual(['ml']);
+    expect(jobsOf(filterCatalogGroups(groups, { workModes: ['onsite'] }))).toEqual(['ml']);
+    expect(jobsOf(filterCatalogGroups(groups, { educationLevels: ['undergraduate'] }))).toEqual(['ml', 'swe']);
+    expect(jobsOf(filterCatalogGroups(groups, { educationLevels: ['masters'] }))).toEqual([]);
+    expect(jobsOf(filterCatalogGroups(groups, { hasCompensation: true }))).toEqual(['swe']);
+    const rolesOf = filterCatalogGroupDetails(groups.map(catalogGroupDetails), { disciplines: ['software'] })
+      .flatMap((group) => group.roles.map((role) => role.jobId));
+    expect(rolesOf).toEqual(['swe']);
   });
 });

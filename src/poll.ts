@@ -17,12 +17,21 @@ import { isTechnicalJob, type JobFilter } from './core/filters.js';
 import { CatalogReconciler } from './ingestion/catalog-reconciler.js';
 import { evaluateSourceFreshness } from './ingestion/monitoring.js';
 import { sourceProvider, sourceRegion } from './integration-registry.js';
-import { processSnapshot } from './ingestion/processor.js';
-import { evaluateCatalogAdmission } from './catalog-admission.js';
+import { processSnapshot, SOURCE_METADATA_PROCESSING_REVISION } from './ingestion/processor.js';
+import { deriveCanonicalAdmission, evaluateCatalogAdmission } from './catalog-admission.js';
 import { classifyDestination, matchingBrowserDestination, requiresBrowserVerification, type CatalogAdmissionResolver, type DestinationVerificationRequest } from './destination-verification.js';
 import { reviewedBoardIndex } from './sources/index.js';
 import { sourceQualityFailures } from './sources/quality.js';
+import {
+  activeTrustedCommunityPolicy,
+  advanceTrustedCommunityQualification,
+  effectiveAdmissionConfigurationVersion,
+  postingSpecificDestination,
+  sourceAdmissionPolicy,
+} from './sources/trust-policy.js';
+import { trustedCommunityCircuitBreaches, trustedCommunityMetrics } from './sources/trusted-community-health.js';
 import { SourceFetchError } from './sources/source-error.js';
+import { extractVerifiedPageMetadataEvidence, mergeRoleMetadataEvidence, projectRoleMetadata, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION, VERIFIED_PAGE_METADATA_SOURCES } from './role-metadata.js';
 import { failedSourceHealth, sourceFailureOutcome, successfulSourceHealth } from './source-health.js';
 import type {
   Internship,
@@ -38,7 +47,7 @@ import type {
 } from './types.js';
 import type { InternshipStore } from './store.js';
 
-const applicationPageMetadataVersion = 1;
+const applicationPageMetadataVersion = ROLE_METADATA_EXTRACTION_VERSION + 1;
 
 function stableSourceMaterial(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableSourceMaterial).join(',')}]`;
@@ -52,6 +61,16 @@ function stableSourceMaterial(value: unknown): string {
   return JSON.stringify(value) ?? 'null';
 }
 
+function withoutObservationTimestamps(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutObservationTimestamps);
+  if (value && typeof value === 'object') return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key, item]) => key !== 'observedAt' && item !== undefined)
+      .map(([key, item]) => [key, withoutObservationTimestamps(item)]),
+  );
+  return value;
+}
+
 function sourceOwnedMaterial(value: ProcessedListing | SourceOccurrence): string {
   // GitHub row numbers and fetch timestamps move whenever a maintainer edits
   // the Markdown around a role. Compare only facts the source owns so that
@@ -63,6 +82,12 @@ function sourceOwnedMaterial(value: ProcessedListing | SourceOccurrence): string
     postedAt: value.postedAt,
     providerTimestamp: value.providerTimestamp,
     workMode: value.workMode,
+    // Destination verification can append page/browser evidence to a durable
+    // occurrence. Exclude it from the source comparison so an unchanged ATS
+    // row can still take the fast path on its next poll.
+    metadataEvidence: withoutObservationTimestamps(
+      value.metadataEvidence?.filter((item) => item.sourceUrl === value.sourceUrl),
+    ),
     company: value.company,
     title: value.title,
     location: value.location,
@@ -75,6 +100,12 @@ function sourceOwnedMaterial(value: ProcessedListing | SourceOccurrence): string
     state: value.state,
     providerEvidence: value.providerEvidence,
   });
+}
+
+function sourceMaterialHash(listing: ProcessedListing): string {
+  let applyUrl = listing.applyUrl;
+  try { applyUrl = canonicalApplicationUrl(applyUrl); } catch { /* Resolution rejects malformed URLs. */ }
+  return createHash('sha256').update(sourceOwnedMaterial({ ...listing, applyUrl })).digest('hex');
 }
 
 // Catalog rows written before posting identity v1 retained gh_src while
@@ -111,7 +142,10 @@ function quarantinedOccurrence(
     ...(listing.postedAt ? { postedAt: listing.postedAt } : {}),
     externalId,
     ...(listing.providerEvidence ? { providerEvidence: listing.providerEvidence } : {}),
+    ...(listing.metadataEvidence?.length ? { metadataEvidence: listing.metadataEvidence } : {}),
+    ...(listing.metadataExtraction ? { metadataExtraction: listing.metadataExtraction } : {}),
     ...(listing.admissionConfigurationVersion ? { admissionConfigurationVersion: listing.admissionConfigurationVersion } : {}),
+    ...(listing.sourceMetadataProcessing ? { sourceMetadataProcessing: listing.sourceMetadataProcessing } : {}),
     postingIdentityDecision: decision,
     company: listing.company,
     title: listing.title,
@@ -264,6 +298,42 @@ function emitFreshnessMetric(records: SourceHealth[], now: Date) {
   }
 }
 
+function emitTrustedCommunityMetric(sourceId: string, metrics: NonNullable<SourceHealth['trustedCommunity']>, runId?: string) {
+  console.log(JSON.stringify({
+    _aws: {
+      Timestamp: Date.now(),
+      CloudWatchMetrics: [{
+        Namespace: 'InternNotifs/Ingestion',
+        Dimensions: [['sourceId']],
+        Metrics: [
+          { Name: 'TrustedRawRows', Unit: 'Count' },
+          { Name: 'TrustedEligibleRows', Unit: 'Count' },
+          { Name: 'TrustedRejectedAggregators', Unit: 'Count' },
+          { Name: 'TrustedSurvivingAggregators', Unit: 'Count' },
+          { Name: 'TrustedDuplicateOccurrences', Unit: 'Count' },
+          { Name: 'TrustedDestinationFailures', Unit: 'Count' },
+          { Name: 'TrustedBrowserInspectionShare', Unit: 'Percent' },
+          { Name: 'TrustedCatalogYield', Unit: 'Percent' },
+          { Name: 'TrustedAlertYield', Unit: 'Percent' },
+        ],
+      }],
+    },
+    event: 'trusted_community_source_evaluated',
+    runId,
+    sourceId,
+    TrustedRawRows: metrics.rawRows,
+    TrustedEligibleRows: metrics.eligibleRows,
+    TrustedRejectedAggregators: metrics.rejectedAggregatorRows,
+    TrustedSurvivingAggregators: metrics.survivingAggregatorRows,
+    TrustedDuplicateOccurrences: metrics.duplicateOccurrenceIds,
+    TrustedDestinationFailures: metrics.destinationFailures,
+    TrustedBrowserInspectionShare: metrics.browserInspectionShare * 100,
+    TrustedCatalogYield: metrics.catalogYield * 100,
+    TrustedAlertYield: metrics.alertYield * 100,
+    metrics,
+  }));
+}
+
 function emitFailureMetric(
   sourceId: string,
   provider: SourceHealth['provider'],
@@ -390,6 +460,7 @@ export class IngestionRunner {
     private readonly enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>,
     private readonly catalogAdmissionResolver?: CatalogAdmissionResolver,
     private readonly publishUnconfirmedIdentities = true,
+    private readonly trustedCommunityCatalogEnabled = false,
   ) {}
 
   private async quarantine(job: Internship) {
@@ -427,6 +498,93 @@ export class IngestionRunner {
         while (nextJob < jobs.length) await validateJob();
       }));
     } while (cursor);
+  }
+
+  /** A source-level breaker blocks the batch, but a newly proven unsafe
+   * destination must still disappear from the existing catalog immediately.
+   * Reuse the normal projection and atomic occurrence write; never close or
+   * otherwise rewrite unaffected backlog rows. */
+  private async hideUnsafeTrustedCommunityListings(input: {
+    sourceId: string;
+    snapshotHash: string;
+    listings: ProcessedListing[];
+    priorOccurrences: SourceOccurrenceState[];
+    resolvedJobs: Map<string, Internship | undefined>;
+    now: string;
+  }): Promise<void> {
+    const unsafeListings = input.listings.filter((listing) => {
+      const existing = input.resolvedJobs.get(externalId(listing));
+      return Boolean(existing && existing.admission?.catalogEligible !== false && listing.admission?.catalogEligible === false);
+    });
+    if (!unsafeListings.length) return;
+    const unsafeIds = new Set(unsafeListings.map(externalId));
+    const plan = this.reconciler.reconcile({
+      sourceId: input.sourceId,
+      snapshotHash: input.snapshotHash,
+      activeExternalIds: unsafeIds,
+      listings: unsafeListings,
+      priorOccurrences: input.priorOccurrences.filter((occurrence) => unsafeIds.has(occurrence.externalId)),
+      resolvedJobs: input.resolvedJobs,
+      now: input.now,
+      baseline: true,
+      publishUnconfirmedIdentities: true,
+    });
+    const jobs = new Map(plan.jobs.map((job) => [job.jobId, job]));
+    for (const occurrence of plan.occurrences) {
+      const job = jobs.get(occurrence.jobId);
+      const decision = occurrence.occurrence.postingIdentityDecision;
+      if (!job || !decision || decision.status === 'quarantined') continue;
+      const hidden = job.admission?.catalogEligible === false
+        ? { ...job, notification: { ...job.notification, smsPending: false, digestPending: false } }
+        : job;
+      await this.store.commitPostingObservation({
+        decision,
+        ...(hidden.postingIdentity ? { identity: hidden.postingIdentity } : {}),
+        job: hidden,
+        occurrence,
+      });
+    }
+  }
+
+  /** Revocation depends on durable evidence, not on a successful upstream fetch.
+   * Retain lifecycle/history and any independently eligible official reference. */
+  private async revokeTrustedCommunityAdmission(
+    prior: SourceOccurrenceState,
+    admissionConfigurationVersion: string | undefined,
+    now: string,
+  ): Promise<void> {
+    const reference = prior.occurrence;
+    const previousAdmission = reference.admission!;
+    const job = await this.store.getJob(prior.jobId);
+    const admission = evaluateCatalogAdmission({
+      listing: { ...reference, fetchedAt: now,
+        ...(previousAdmission.canonicalEmployer ? { employerEvidence: {
+          authority: 'reviewed-registry', canonicalEmployer: previousAdmission.canonicalEmployer,
+        } } : {}),
+      },
+      destination: previousAdmission.destination,
+      postingAttributed: previousAdmission.postingAttribution === 'attributed',
+      evaluatedAt: now,
+    });
+    const updatedReference = { ...reference, admission, admissionConfigurationVersion };
+    const occurrence = { ...prior, occurrence: updatedReference, changedAt: now };
+    if (!job) {
+      await this.store.putSourceOccurrence(occurrence);
+      return;
+    }
+    const decision = reference.postingIdentityDecision;
+    if (!decision || decision.status === 'quarantined') {
+      throw new Error(`Cannot revoke trusted admission without a classified occurrence: ${prior.externalId}`);
+    }
+    const sourceReferences = job.sourceReferences.map((item) => item.sourceId === prior.sourceId
+      && item.externalId === prior.externalId ? updatedReference : item);
+    const result = await this.store.commitPostingObservation({
+      decision,
+      ...(job.postingIdentity ? { identity: job.postingIdentity } : {}),
+      job: { ...job, sourceReferences, admission: deriveCanonicalAdmission(sourceReferences, now) },
+      occurrence,
+    });
+    if (result.outcome !== 'committed') throw new Error(`Trusted admission revocation conflicted: ${prior.externalId}`);
   }
 
   private readonly boardIndex = reviewedBoardIndex();
@@ -513,12 +671,15 @@ export class IngestionRunner {
     priorOccurrences: SourceOccurrenceState[] = [],
     admissionConfigurationVersion?: string,
     reuseUnchangedOccurrences = false,
+    completeFetchSequence?: number,
+    stampSourceMetadata = false,
   ) {
     const resolved = new Map<string, Internship | undefined>();
     const validatedAt = new Map<string, string>();
     const metadataValidated = new Map<string, number>();
     const alertEligible = new Set<string>();
     const handledExternalIds = new Set<string>();
+    const failedExternalIds = new Set<string>();
     // Slots keep the snapshot order stable so duplicate merging, alert order, and
     // reported failures do not depend on which worker finished first.
     const accepted = new Array<ProcessedListing | undefined>(listings.length);
@@ -532,6 +693,10 @@ export class IngestionRunner {
       const supportsAdmission = Boolean(sourceListing.employerEvidence || sourceListing.providerIdentity);
       const id = externalId(sourceListing);
       const priorOccurrence = priorByExternalId.get(id);
+      const trustedCommunityPolicy = activeTrustedCommunityPolicy(
+        sourceListing.sourceId,
+        this.trustedCommunityCatalogEnabled,
+      );
       const completeFailedAdmissionMigration = async () => {
         if (!admissionConfigurationVersion) return;
         if (priorOccurrence
@@ -566,12 +731,76 @@ export class IngestionRunner {
         externalId: externalId(sourceListing),
         applyUrl: canonicalUrl,
         technical: sourceListing.technical ?? true,
+        ...(priorOccurrence?.occurrence.trustedCommunityAlertQualification
+          ? { trustedCommunityAlertQualification: priorOccurrence.occurrence.trustedCommunityAlertQualification }
+          : {}),
         ...(admissionConfigurationVersion ? { admissionConfigurationVersion } : {}),
+        ...(stampSourceMetadata ? { sourceMetadataProcessing: {
+          extractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+          processingRevision: SOURCE_METADATA_PROCESSING_REVISION,
+          sourceMaterialHash: sourceMaterialHash(sourceListing),
+        } } : {}),
       };
       const admissionAlreadyApplied = Boolean(admissionConfigurationVersion
         && priorOccurrence?.occurrence.admissionConfigurationVersion === admissionConfigurationVersion);
-      if ((reuseUnchangedOccurrences || admissionAlreadyApplied) && priorOccurrence
+      if (!stampSourceMetadata && !trustedCommunityPolicy && (reuseUnchangedOccurrences || admissionAlreadyApplied) && priorOccurrence
         && sourceOwnedMaterial(priorOccurrence.occurrence) === sourceOwnedMaterial(listing)) {
+        handledExternalIds.add(id);
+        return;
+      }
+      const priorTrustedQualification = priorOccurrence?.occurrence.trustedCommunityAlertQualification;
+      const materialHash = sourceMaterialHash(sourceListing);
+      const sameTrustedMaterial = priorTrustedQualification?.sourceMaterialHash
+        ? priorTrustedQualification.sourceMaterialHash === materialHash
+        : Boolean(priorOccurrence && sourceOwnedMaterial(priorOccurrence.occurrence) === sourceOwnedMaterial(listing));
+      // Publication slices consume evidence collected under this exact policy;
+      // they must not repeat every HTTP probe merely to clear suppression.
+      if (trustedCommunityPolicy && admissionAlreadyApplied && priorOccurrence
+        && priorTrustedQualification?.catalogPublicationSuppressed === true
+        && priorOccurrence.present
+        && priorOccurrence.occurrence.state === listing.state
+        && priorOccurrence.occurrence.admission
+        && sameTrustedMaterial) {
+        const existing = await this.store.getJob(priorOccurrence.jobId);
+        if (existing) {
+          const priorListing = priorOccurrence.occurrence;
+          const qualification = advanceTrustedCommunityQualification({
+            previous: priorTrustedQualification,
+            destination: priorListing.admission!.destination,
+            postingIdentityDecision: priorListing.postingIdentityDecision,
+            alertMode: trustedCommunityPolicy.alertMode,
+            completeFetchSequence,
+            catalogPublicationSuppressed: false,
+          });
+          const admission = evaluateCatalogAdmission({
+            listing: { ...listing, ...priorListing,
+              ...(priorListing.admission!.canonicalEmployer ? { employerEvidence: {
+                authority: 'reviewed-registry', canonicalEmployer: priorListing.admission!.canonicalEmployer,
+              } } : {}),
+            },
+            destination: priorListing.admission!.destination,
+            postingAttributed: priorListing.admission!.postingAttribution === 'attributed',
+            evaluatedAt: this.now().toISOString(),
+            trustedCommunity: { policy: trustedCommunityPolicy, qualification },
+          });
+          accepted[slot] = { ...listing, ...priorListing, admission,
+            ...(priorListing.postingIdentityDecision?.status === 'confirmed' && existing.postingIdentity
+              ? { postingIdentity: existing.postingIdentity } : {}),
+            trustedCommunityAlertQualification: qualification };
+          resolved.set(id, existing);
+          if (admission.alertEligible) alertEligible.add(id);
+          handledExternalIds.add(id);
+          return;
+        }
+      }
+      if (trustedCommunityPolicy && admissionAlreadyApplied && priorOccurrence
+        && priorTrustedQualification?.basis
+        && priorOccurrence.present
+        && priorOccurrence.occurrence.state === listing.state
+        && priorTrustedQualification.catalogPublicationSuppressed !== true
+        && priorOccurrence.occurrence.admission
+        && postingSpecificDestination(priorOccurrence.occurrence.admission.destination)
+        && sameTrustedMaterial) {
         handledExternalIds.add(id);
         return;
       }
@@ -732,8 +961,16 @@ export class IngestionRunner {
             reachability = reachabilityFromFailure(error);
             failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
             if (!admissionManaged) {
+              failedExternalIds.add(id);
               if (existing?.open && reachability === 'gone') await this.quarantine(existing);
               await completeFailedAdmissionMigration();
+              // A durable 404/410 outcome is complete, not a transient retry.
+              // Wait for quarantine and any prior admission record to persist
+              // before allowing this row into the metadata progress ledger.
+              if (stampSourceMetadata && reachability === 'gone' && handledExternalIds.has(id)) {
+                failedExternalIds.delete(id);
+                failures[slot] = undefined;
+              }
               return;
             }
           }
@@ -759,7 +996,61 @@ export class IngestionRunner {
             sourceId: listing.sourceId, externalId: id, providerIdentity: listing.providerIdentity, candidateUrl: listing.applyUrl,
           })
           : undefined;
-        const destination = browserDestination ?? observedDestination;
+        const priorDestination = priorOccurrence?.occurrence.admission?.destination;
+        const reusableTrustedDestination = trustedCommunityPolicy
+          && !needsValidation && !destinationRule
+          && priorDestination
+          && postingSpecificDestination(priorDestination)
+          && sameApplicationUrl(priorDestination.candidateUrl, normalizedUrl)
+          ? priorDestination
+          : undefined;
+        const freshNegative = needsValidation && !postingSpecificDestination(observedDestination);
+        const destination = freshNegative || (destinationRule && destinationRule.decision !== 'browser-required')
+          ? observedDestination
+          : browserDestination ?? reusableTrustedDestination ?? observedDestination;
+        if (!browserDestination && pageEvidence && ['posting-detail', 'application-form'].includes(destination.classification)) {
+          const pageMetadata = extractVerifiedPageMetadataEvidence({
+            expectedTitle: listing.title,
+            expectedPostingId: listing.providerIdentity?.postingId,
+            page: {
+              title: pageEvidence.title ?? listing.title,
+              // Structured descriptions must pass the JSON-LD posting match;
+              // do not also promote them as independently verified page text.
+              text: pageEvidence.contentSource === 'json-ld' ? undefined : pageEvidence.contentExcerpt,
+            },
+            jsonLdArtifacts: pageEvidence.metadataArtifacts,
+            sourceId: listing.sourceId,
+            sourceUrl: pageEvidence.url,
+            observedAt: inspectedAt,
+            exactPosting: true,
+          });
+          listing = {
+            ...listing,
+            metadataEvidence: mergeRoleMetadataEvidence(listing.metadataEvidence, pageMetadata),
+            metadataExtraction: {
+              version: ROLE_METADATA_EXTRACTION_VERSION,
+              artifactHash: pageEvidence.contentHash ?? pageEvidence.renderedEvidenceHash ?? createHash('sha256').update(JSON.stringify({ url: pageEvidence.url, title: pageEvidence.title, description: pageEvidence.description })).digest('hex'),
+              observedAt: inspectedAt,
+              outcome: pageMetadata.some(roleMetadataEvidenceHasFields) ? 'extracted' : 'no-explicit-metadata',
+            },
+          };
+          metadataValidated.set(id, applicationPageMetadataVersion);
+        }
+        const trustedCommunityAlertQualification = trustedCommunityPolicy
+          ? { ...advanceTrustedCommunityQualification({
+            previous: priorOccurrence?.occurrence.trustedCommunityAlertQualification,
+            destination,
+            postingIdentityDecision: listing.postingIdentityDecision,
+            alertMode: trustedCommunityPolicy.alertMode,
+            completeFetchSequence,
+            // Every occurrence observed while alerts are disabled belongs to
+            // the quiet baseline, including roles added during a multi-run
+            // catalog migration.
+            baselineSuppressed: trustedCommunityPolicy.alertMode === 'disabled'
+              || Boolean(priorOccurrence && !priorOccurrence.occurrence.trustedCommunityAlertQualification),
+            catalogPublicationSuppressed: false,
+          }), sourceMaterialHash: materialHash }
+          : undefined;
         const admission = evaluateCatalogAdmission({
           listing,
           destination,
@@ -767,7 +1058,10 @@ export class IngestionRunner {
             || existing?.sourceReferences.some((reference) => reference.sourceId === listing.sourceId && reference.externalId === id
               && reference.admission?.postingAttribution === 'attributed') === true,
           evaluatedAt: inspectedAt,
-          previous: existing?.admission,
+          previous: priorOccurrence?.occurrence.admission ?? existing?.admission,
+          ...(trustedCommunityPolicy && trustedCommunityAlertQualification
+            ? { trustedCommunity: { policy: trustedCommunityPolicy, qualification: trustedCommunityAlertQualification } }
+            : {}),
         });
         // Activating reviewed employer mappings must not hide a previously
         // visible exact-URL role merely because its per-posting browser check
@@ -778,7 +1072,11 @@ export class IngestionRunner {
           && knownLegacyDestination && listing.provenance === 'reviewed-community'
           && destination.classification === 'posting-detail'
           && admission.reasonCodes.length === 1 && admission.reasonCodes[0] === 'posting-unattributed');
-        if (!preserveLegacyWhileAttributionPending) listing = { ...listing, admission };
+        if (!preserveLegacyWhileAttributionPending) listing = {
+          ...listing,
+          admission,
+          ...(trustedCommunityAlertQualification ? { trustedCommunityAlertQualification } : {}),
+        };
         const needsPostingAttributionVerification = admission.reasonCodes.includes('posting-unattributed')
           && ['posting-detail', 'application-form'].includes(destination.classification);
         if (!browserDestination && this.enqueueDestinationVerification && listing.providerIdentity
@@ -790,6 +1088,7 @@ export class IngestionRunner {
             providerIdentity: listing.providerIdentity,
             candidateUrl: listing.applyUrl,
             reason: existing?.normalizedUrl && existing.normalizedUrl !== normalizedUrl ? 'url-change' : 'first-sight',
+            metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
           });
         }
         if (admission.catalogEligible && ['posting-detail', 'application-form'].includes(destination.classification)) {
@@ -801,6 +1100,7 @@ export class IngestionRunner {
         handledExternalIds.add(id);
       } catch (error) {
         failures[slot] = `${listing.sourceId}: row ${listing.row}: ${error instanceof Error ? error.message : String(error)}`;
+        failedExternalIds.add(id);
         await completeFailedAdmissionMigration();
       }
     });
@@ -812,6 +1112,7 @@ export class IngestionRunner {
       metadataValidated,
       alertEligible,
       handledExternalIds,
+      failedExternalIds,
     };
   }
 
@@ -851,11 +1152,17 @@ export class IngestionRunner {
       prefetchedBoards.set(connector.id, prefetched);
       try {
         prefetched.previous = await this.store.getCheckpoint(connector.id);
-        prefetched.admissionConfigurationVersion = await this.catalogAdmissionResolver?.configurationVersion?.();
-        const configurationChanged = Boolean(prefetched.admissionConfigurationVersion
+        prefetched.admissionConfigurationVersion = effectiveAdmissionConfigurationVersion({
+          sourceId: connector.id,
+          resolverVersion: await this.catalogAdmissionResolver?.configurationVersion?.(),
+          trustedCommunityCatalogEnabled: this.trustedCommunityCatalogEnabled,
+        });
+        const configurationChanged = Boolean(prefetched.previous?.pendingAdmissionConfigurationVersion || (prefetched.admissionConfigurationVersion
           && prefetched.previous?.admissionConfigurationVersion
-          && prefetched.admissionConfigurationVersion !== prefetched.previous.admissionConfigurationVersion);
-        const fetchCheckpoint = configurationChanged && prefetched.previous ? {
+          && prefetched.admissionConfigurationVersion !== prefetched.previous.admissionConfigurationVersion));
+        const metadataVersionChanged = prefetched.previous?.metadataExtractionVersion !== ROLE_METADATA_EXTRACTION_VERSION
+          || prefetched.previous?.metadataProcessingRevision !== SOURCE_METADATA_PROCESSING_REVISION;
+        const fetchCheckpoint = (configurationChanged || metadataVersionChanged) && prefetched.previous ? {
           ...prefetched.previous,
           etag: undefined,
           documentEtags: undefined,
@@ -882,15 +1189,42 @@ export class IngestionRunner {
       const previous = prefetched ? prefetched.previous : await this.store.getCheckpoint(connector.id);
       const previousHealth = await this.store.getSourceHealth(connector.id);
       let failureCategory: NonNullable<SourceHealth['diagnosticCategory']> = 'transport';
+      let trustedMetrics: SourceHealth['trustedCommunity'];
       try {
-        if (prefetched?.error) throw prefetched.error;
         const admissionConfigurationVersion = prefetched
           ? prefetched.admissionConfigurationVersion
-          : await this.catalogAdmissionResolver?.configurationVersion?.();
-        const admissionConfigurationChanged = Boolean(admissionConfigurationVersion
+          : effectiveAdmissionConfigurationVersion({
+            sourceId: connector.id,
+            resolverVersion: await this.catalogAdmissionResolver?.configurationVersion?.(),
+            trustedCommunityCatalogEnabled: this.trustedCommunityCatalogEnabled,
+          });
+        let remainingMigrationLimit = options.maxAdmissionMigrationListingsPerSourceRun;
+        if (!this.trustedCommunityCatalogEnabled && sourceAdmissionPolicy(connector.id).trust === 'trusted-community') {
+          failureCategory = 'persistence';
+          const revocations = (await this.store.getSourceOccurrences(connector.id))
+            .filter((item) => item.occurrence.admission?.evidenceCodes?.includes('trusted-community-source'));
+          if (revocations.length) await this.store.putCheckpoint({
+            sourceId: connector.id, successfulFetches: 0, ...previous,
+            pendingAdmissionConfigurationVersion: admissionConfigurationVersion ?? 'standard-v1',
+          });
+          const selected = remainingMigrationLimit === undefined ? revocations : revocations.slice(0, remainingMigrationLimit);
+          for (const occurrence of selected) {
+            await this.revokeTrustedCommunityAdmission(occurrence, admissionConfigurationVersion, this.now().toISOString());
+          }
+          if (remainingMigrationLimit !== undefined) remainingMigrationLimit -= selected.length;
+          if (selected.length < revocations.length) {
+            report.continuationSources.push(connector.id);
+            continue;
+          }
+        }
+        failureCategory = 'transport';
+        if (prefetched?.error) throw prefetched.error;
+        const admissionConfigurationChanged = Boolean(previous?.pendingAdmissionConfigurationVersion || (admissionConfigurationVersion
           && previous?.admissionConfigurationVersion
-          && admissionConfigurationVersion !== previous.admissionConfigurationVersion);
-        const fetchCheckpoint = admissionConfigurationChanged && previous ? {
+          && admissionConfigurationVersion !== previous.admissionConfigurationVersion));
+        const metadataVersionChanged = previous?.metadataExtractionVersion !== ROLE_METADATA_EXTRACTION_VERSION
+          || previous?.metadataProcessingRevision !== SOURCE_METADATA_PROCESSING_REVISION;
+        const fetchCheckpoint = (admissionConfigurationChanged || metadataVersionChanged) && previous ? {
           ...previous,
           etag: undefined,
           documentEtags: undefined,
@@ -916,8 +1250,10 @@ export class IngestionRunner {
         const githubAdmissionConfigurationVersion = providerFor(connector.id) === 'github'
           ? admissionConfigurationVersion
           : undefined;
-        const migrationLimit = admissionConfigurationChanged && githubAdmissionConfigurationVersion
-          ? options.maxAdmissionMigrationListingsPerSourceRun
+        const boundedMetadataRefresh = Boolean(previous && metadataVersionChanged && githubAdmissionConfigurationVersion
+          && options.maxAdmissionMigrationListingsPerSourceRun !== undefined);
+        const migrationLimit = (admissionConfigurationChanged || boundedMetadataRefresh) && githubAdmissionConfigurationVersion
+          ? remainingMigrationLimit
           : undefined;
         const priorByExternalId = new Map(priorOccurrences.map((occurrence) => [occurrence.externalId, occurrence]));
         const requiredMigrationCandidates = migrationLimit === undefined ? [] : batch.processed.listings.filter((sourceListing) => {
@@ -927,32 +1263,74 @@ export class IngestionRunner {
           // verified season) that deliberately differs from the raw source;
           // reopening those rows by material comparison makes a completed
           // slice recur forever.
-          return prior && prior.occurrence.admissionConfigurationVersion !== githubAdmissionConfigurationVersion;
+          return prior && (prior.occurrence.admissionConfigurationVersion !== githubAdmissionConfigurationVersion
+            || (this.trustedCommunityCatalogEnabled && prior.occurrence.trustedCommunityAlertQualification?.sourceMaterialHash
+              && prior.occurrence.trustedCommunityAlertQualification.sourceMaterialHash !== sourceMaterialHash(sourceListing)));
         });
+        const metadataRowProcessed = (sourceListing: ProcessedListing) => {
+          const materialHash = sourceMaterialHash(sourceListing);
+          const prior = priorByExternalId.get(externalId(sourceListing));
+          // Parser progress cannot stand in for lifecycle reconciliation. If a
+          // row disappeared after it was parsed, its unchanged reappearance
+          // must still restore the occurrence before the refresh certifies.
+          if (prior && (!prior.present || prior.occurrence.state !== sourceListing.state)) return false;
+          return previous?.pendingMetadataProcessedRows?.some((row) =>
+            row.externalId === externalId(sourceListing)
+            && row.sourceMaterialHash === materialHash
+            && row.extractionVersion === ROLE_METADATA_EXTRACTION_VERSION
+            && row.processingRevision === SOURCE_METADATA_PROCESSING_REVISION) === true;
+        };
         const opportunisticMigrationCandidates = migrationLimit === undefined ? [] : batch.processed.listings.filter((sourceListing) =>
-          !priorByExternalId.has(externalId(sourceListing)));
+          !priorByExternalId.has(externalId(sourceListing))
+          && !(boundedMetadataRefresh && metadataRowProcessed(sourceListing)));
+        const metadataMigrationCandidates = !boundedMetadataRefresh ? [] : batch.processed.listings.filter((sourceListing) => {
+          // The checkpoint ledger is the refresh transaction cursor. An
+          // occurrence stamp can be committed before a later metadata-evidence
+          // write fails, so it is observability only and cannot prove that this
+          // refresh row completed atomically.
+          return !metadataRowProcessed(sourceListing);
+        });
         const selectedRequiredMigrations = migrationLimit === undefined
           ? []
           : requiredMigrationCandidates.slice(0, migrationLimit);
-        // Once the durable migration backlog is empty, finish one ordinary
-        // full-role pass before advancing the checkpoint. Until then, new rows
-        // may use only spare slice capacity and an overflow forces another
-        // unconditional fetch. This prevents a later GitHub 304 from stranding
-        // valid roles that were present in the migration snapshot but never
-        // resolved.
+        // Standard migrations retain their final full-role pass. Trusted
+        // migrations bound new evidence too, then use spare capacity to publish
+        // already inspected occurrences. Overflow forces another full fetch.
+        const trustedPolicy = activeTrustedCommunityPolicy(connector.id, this.trustedCommunityCatalogEnabled);
         const opportunisticCapacity = migrationLimit === undefined
           ? 0
-          : requiredMigrationCandidates.length === 0
+          : boundedMetadataRefresh
+            ? Math.max(0, migrationLimit - selectedRequiredMigrations.length)
+          : !trustedPolicy && requiredMigrationCandidates.length === 0
             ? opportunisticMigrationCandidates.length
             : Math.max(0, migrationLimit - selectedRequiredMigrations.length);
         const selectedOpportunisticMigrations = migrationLimit === undefined
           ? []
           : opportunisticMigrationCandidates.slice(0, opportunisticCapacity);
+        const publicationCandidates = trustedPolicy && migrationLimit !== undefined
+          ? batch.processed.listings.filter((listing) => {
+            const prior = priorByExternalId.get(externalId(listing));
+            return prior && prior.occurrence.admissionConfigurationVersion === githubAdmissionConfigurationVersion
+              && (!prior.occurrence.trustedCommunityAlertQualification?.sourceMaterialHash
+                || prior.occurrence.trustedCommunityAlertQualification.sourceMaterialHash === sourceMaterialHash(listing))
+              && prior.occurrence.trustedCommunityAlertQualification?.catalogPublicationSuppressed === true;
+          }) : [];
+        const publicationCapacity = migrationLimit === undefined ? 0
+          : Math.max(0, migrationLimit - selectedRequiredMigrations.length - selectedOpportunisticMigrations.length);
+        const selectedPublications = publicationCandidates.slice(0, publicationCapacity);
+        const admissionCandidates = [...selectedRequiredMigrations, ...selectedOpportunisticMigrations, ...selectedPublications];
+        const selectedMetadataMigrations = migrationLimit === undefined ? [] : metadataMigrationCandidates
+          .filter((listing) => !admissionCandidates.some((candidate) => externalId(candidate) === externalId(listing)))
+          .slice(0, Math.max(0, migrationLimit - admissionCandidates.length));
         const migrationCandidates = migrationLimit === undefined
           ? batch.processed.listings
-          : [...selectedRequiredMigrations, ...selectedOpportunisticMigrations];
+          : [...admissionCandidates, ...selectedMetadataMigrations];
+        const trustedFullBody = sourceAdmissionPolicy(connector.id).trust === 'trusted-community'
+          && this.trustedCommunityCatalogEnabled
+          && result.unchangedReason !== 'not_modified';
+        const metadataFullBody = metadataVersionChanged && result.unchangedReason !== 'not_modified';
         const listingsToResolve = migrationLimit === undefined
-          ? (batch.unchanged ? [] : batch.processed.listings)
+          ? (batch.unchanged && !trustedFullBody && !metadataFullBody ? [] : batch.processed.listings)
           : migrationCandidates;
         const resolution = await this.resolveListings(
           listingsToResolve,
@@ -960,32 +1338,111 @@ export class IngestionRunner {
           priorOccurrences,
           githubAdmissionConfigurationVersion,
           Boolean(githubAdmissionConfigurationVersion
+            && !admissionConfigurationChanged
             && admissionConfigurationVersion === previous?.admissionConfigurationVersion),
+          result.unchangedReason === 'not_modified' ? undefined : result.checkpoint.successfulFetches,
+          boundedMetadataRefresh,
         );
         // Existing catalog decisions are the durable migration obligation.
         // Rows with no prior occurrence are evaluated with spare slice capacity
         // but fail closed and cannot hold the source checkpoint open forever.
-        const admissionMigrationPending = migrationLimit !== undefined && (
+        const admissionEvidencePending = migrationLimit !== undefined && (
           requiredMigrationCandidates.length > selectedRequiredMigrations.length
           || selectedRequiredMigrations.some((listing) => !resolution.handledExternalIds.has(externalId(listing)))
           || opportunisticMigrationCandidates.length > selectedOpportunisticMigrations.length
         );
+        const metadataMigrationPending = boundedMetadataRefresh && (
+          result.unchangedReason === 'not_modified'
+          || metadataMigrationCandidates.length > migrationCandidates.filter((listing) =>
+            metadataMigrationCandidates.some((candidate) => externalId(candidate) === externalId(listing))).length
+          || migrationCandidates.filter((listing) => metadataMigrationCandidates.some((candidate) => externalId(candidate) === externalId(listing)))
+            .some((listing) => !resolution.handledExternalIds.has(externalId(listing)))
+        );
+        let admissionMigrationPending = admissionEvidencePending || metadataMigrationPending
+          || publicationCandidates.length > selectedPublications.length
+          || selectedPublications.some((listing) => !resolution.handledExternalIds.has(externalId(listing)));
+        const missingOccurrences = priorOccurrences.filter((prior) => !batch.activeExternalIds.has(prior.externalId));
+        const pendingOmissionIds = new Set((previous?.pendingMetadataOmissions ?? [])
+          .filter((item) => item.extractionVersion === ROLE_METADATA_EXTRACTION_VERSION
+            && item.processingRevision === SOURCE_METADATA_PROCESSING_REVISION
+            && !batch.activeExternalIds.has(item.externalId))
+          .map((item) => item.externalId));
+        const unprocessedMissingOccurrences = missingOccurrences.filter((prior) => !pendingOmissionIds.has(prior.externalId));
+        const selectedClosures = boundedMetadataRefresh && !admissionMigrationPending
+          ? (metadataMigrationCandidates.length ? [] : unprocessedMissingOccurrences.slice(0, migrationLimit))
+          : [];
+        const lifecycleMigrationPending = boundedMetadataRefresh
+          && (unprocessedMissingOccurrences.length > selectedClosures.length
+            || metadataMigrationCandidates.length > 0 && unprocessedMissingOccurrences.length > 0);
+        admissionMigrationPending ||= lifecycleMigrationPending;
         if (admissionMigrationPending) report.continuationSources.push(connector.id);
+        if (trustedPolicy && result.unchangedReason !== 'not_modified') {
+          const diagnostics = result.trustedCommunityDiagnostics ?? {
+            rejectedAggregatorRows: result.rejectedApplicationUrls?.filter((item) => item.reason.includes('aggregator')).length ?? 0,
+            survivingAggregatorRows: 0,
+            duplicateOccurrenceIds: 0,
+          };
+          trustedMetrics = trustedCommunityMetrics({
+            rawRows: batch.processed.counts.raw,
+            eligibleRows: batch.processed.counts.eligible,
+            listings: resolution.accepted,
+            priorOccurrences,
+            eligibleExternalIds: new Set(batch.processed.listings
+              .filter((listing) => listing.technical !== false)
+              .map(externalId)),
+            admissionConfigurationVersion: githubAdmissionConfigurationVersion,
+            ...diagnostics,
+          });
+          emitTrustedCommunityMetric(connector.id, trustedMetrics, options.runId);
+          const breaches = trustedCommunityCircuitBreaches({
+            metrics: trustedMetrics,
+            alertMode: trustedPolicy.alertMode,
+            // Partial bounded slices are allowed to accumulate evidence. Any
+            // pass that can clear suppression or advance the policy checkpoint
+            // must prove that the current eligible snapshot was inspected.
+            requireCompleteInspection: !admissionEvidencePending,
+          });
+          if (breaches.length) {
+            report.continuationSources = report.continuationSources.filter((sourceId) => sourceId !== connector.id);
+            await this.hideUnsafeTrustedCommunityListings({
+              sourceId: connector.id,
+              snapshotHash: batch.snapshotHash,
+              listings: resolution.accepted,
+              priorOccurrences,
+              resolvedJobs: resolution.resolved,
+              now,
+            });
+            throw new SourceFetchError(`${connector.id}: trusted-community circuit breaker: ${breaches.join('; ')}`, 'quality', undefined, undefined, true);
+          }
+        }
+        // A bounded policy migration stores evidence but exposes none of its
+        // newly admitted rows until one complete healthy evaluation can pass.
+        if (trustedPolicy && admissionEvidencePending) {
+          for (const listing of resolution.accepted) {
+            if (listing.trustedCommunityAlertQualification) {
+              listing.trustedCommunityAlertQualification = {
+                ...listing.trustedCommunityAlertQualification,
+                catalogPublicationSuppressed: true,
+              };
+            }
+            if (listing.admission) listing.admission = { ...listing.admission, catalogEligible: false, alertEligible: false };
+          }
+          resolution.alertEligible.clear();
+        }
         // Admission configuration migration is independent of source
         // lifecycle reconciliation. Replaying inactive historical occurrences
         // defeats the slice bound; the next ordinary poll handles omissions.
-        const closureCandidates = migrationLimit !== undefined ? [] : priorOccurrences.filter((prior) =>
-          !resolution.resolved.has(prior.externalId)
-          && !batch.activeExternalIds.has(prior.externalId)
-          && prior.consecutiveOmissions >= 1);
+        const partialMigration = migrationLimit !== undefined && admissionMigrationPending;
+        const closureScope = boundedMetadataRefresh ? selectedClosures : partialMigration ? [] : missingOccurrences;
+        const closureCandidates = closureScope.filter((prior) => !resolution.resolved.has(prior.externalId) && prior.consecutiveOmissions >= 1);
         await forEachBounded(closureCandidates, async (prior) => {
           resolution.resolved.set(prior.externalId, await this.store.getJob(prior.jobId));
         });
         const reconciliationPriorOccurrences = migrationLimit !== undefined
-          ? listingsToResolve.flatMap((listing) => {
+          ? [...listingsToResolve.flatMap((listing) => {
             const prior = priorByExternalId.get(externalId(listing));
             return prior ? [prior] : [];
-          })
+          }), ...selectedClosures]
           : priorOccurrences;
         const plan = this.reconciler.reconcile({
           sourceId: connector.id,
@@ -1001,6 +1458,7 @@ export class IngestionRunner {
           metadataValidated: resolution.metadataValidated,
           alertEligible: resolution.alertEligible,
           publishUnconfirmedIdentities: this.publishUnconfirmedIdentities,
+          trustedCommunityAlertsEnabled: trustedPolicy?.alertMode === 'exact-identity-or-two-complete-snapshots',
         });
         failureCategory = 'persistence';
         const notificationByJobId = new Map(plan.notifications.map((event) => [event.jobId, event]));
@@ -1008,6 +1466,7 @@ export class IngestionRunner {
         const committedJobIds = new Set<string>();
         const blockedJobIds = new Set<string>();
         const persistenceFailedJobIds = new Set<string>();
+        const persistenceFailedExternalIds = new Set<string>();
         const alertedJobIds = new Set<string>();
         const notificationErrors = new Array<unknown>(plan.notifications.length);
         const consumedEvents = new Set<string>();
@@ -1044,6 +1503,14 @@ export class IngestionRunner {
               return;
             }
             committedJobIds.add(job.jobId);
+            if (this.store.recordRoleMetadataEvidence && occurrence.occurrence.metadataEvidence?.length) {
+              const projected = projectRoleMetadata(job);
+              await this.store.recordRoleMetadataEvidence(job.jobId, occurrence.occurrence.metadataEvidence, projected.conflicts, now,
+                occurrence.occurrence.metadataExtraction ? {
+                  sourceId: occurrence.sourceId,
+                  sourceClasses: VERIFIED_PAGE_METADATA_SOURCES,
+                } : undefined);
+            }
             if (includeEvent) {
               consumedEvents.add(includeEvent.eventId);
               if (result.notificationInserted) alertedJobIds.add(job.jobId);
@@ -1054,6 +1521,7 @@ export class IngestionRunner {
             if (event) notificationErrors[plan.notifications.indexOf(event)] = error;
             if (migrationLimit === undefined || !githubAdmissionConfigurationVersion) throw error;
             persistenceFailedJobIds.add(occurrence.jobId);
+            persistenceFailedExternalIds.add(occurrence.externalId);
             const prior = priorByExternalId.get(occurrence.externalId);
             try {
               if (prior && prior.occurrence.admissionConfigurationVersion !== githubAdmissionConfigurationVersion) {
@@ -1075,6 +1543,12 @@ export class IngestionRunner {
             try { await this.store.putInternship(job); }
             catch (error) {
               if (migrationLimit === undefined) throw error;
+              if (boundedMetadataRefresh) {
+                persistenceFailedJobIds.add(job.jobId);
+                for (const occurrence of plan.occurrences.filter((item) => item.jobId === job.jobId)) {
+                  persistenceFailedExternalIds.add(occurrence.externalId);
+                }
+              }
               report.failures.push(`${connector.id}: ${job.jobId}: migration job persistence failed; preserved prior decision: ${error instanceof Error ? error.message : String(error)}`);
             }
           },
@@ -1084,7 +1558,15 @@ export class IngestionRunner {
           const job = plannedJobs.get(event.jobId);
           if (!job) { notificationErrors[index] = new Error(`Notification event ${event.eventId} has no catalog job`); return; }
           try { if (await this.store.putInternshipWithNotificationEvent(job, event)) alertedJobIds.add(event.jobId); }
-          catch (error) { notificationErrors[index] = error; }
+          catch (error) {
+            notificationErrors[index] = error;
+            if (boundedMetadataRefresh) {
+              persistenceFailedJobIds.add(job.jobId);
+              for (const occurrence of plan.occurrences.filter((item) => item.jobId === job.jobId)) {
+                persistenceFailedExternalIds.add(occurrence.externalId);
+              }
+            }
+          }
         });
         for (const job of plan.newJobs) {
           if (alertedJobIds.has(job.jobId)) report.newJobs.push(job);
@@ -1095,6 +1577,14 @@ export class IngestionRunner {
           report.failures.push(`${connector.id}: migration notification persistence failed: ${notificationError instanceof Error ? notificationError.message : String(notificationError)}`);
         }
         const provider = providerFor(connector.id);
+        if ((trustedPolicy || boundedMetadataRefresh) && migrationLimit !== undefined && persistenceFailedJobIds.size) {
+          admissionMigrationPending = true;
+          if (!report.continuationSources.includes(connector.id)) report.continuationSources.push(connector.id);
+        }
+        if (boundedMetadataRefresh && report.failures.length) {
+          admissionMigrationPending = true;
+          if (!report.continuationSources.includes(connector.id)) report.continuationSources.push(connector.id);
+        }
         const unchanged304 = result.unchangedReason === 'not_modified';
         const metricCounts: ProcessedSnapshot['counts'] = unchanged304 ? {
           raw: previous?.lastRawCount ?? previous?.lastRawRowCount ?? previousHealth?.rawRows ?? batch.processed.counts.raw,
@@ -1125,16 +1615,55 @@ export class IngestionRunner {
             withheldRows: metricCounts.withheld,
           }),
           counts: metricCounts,
+          ...(trustedMetrics ?? previousHealth?.trustedCommunity
+            ? { trustedCommunity: trustedMetrics ?? previousHealth!.trustedCommunity }
+            : {}),
         };
+        if (admissionMigrationPending) successHealth.lastSuccessAt = previousHealth?.lastSuccessAt;
         await this.store.putSourceHealth(successHealth);
         health.push(successHealth);
         const checkpointAdmissionConfigurationVersion = admissionMigrationPending
           ? previous?.admissionConfigurationVersion
           : admissionConfigurationVersion;
+        const priorProcessedRows = previous?.pendingMetadataProcessedRows ?? [];
+        const processedRows = [
+          ...priorProcessedRows,
+          ...migrationCandidates.filter((listing) => metadataMigrationCandidates.some((candidate) => externalId(candidate) === externalId(listing))
+            && resolution.handledExternalIds.has(externalId(listing))
+            && !resolution.failedExternalIds.has(externalId(listing))
+            && !persistenceFailedExternalIds.has(externalId(listing)))
+            .map((listing) => ({ externalId: externalId(listing), sourceMaterialHash: sourceMaterialHash(listing),
+              extractionVersion: ROLE_METADATA_EXTRACTION_VERSION, processingRevision: SOURCE_METADATA_PROCESSING_REVISION })),
+        ].filter((row, index, rows) => rows.findIndex((candidate) => candidate.externalId === row.externalId
+          && candidate.sourceMaterialHash === row.sourceMaterialHash
+          && candidate.extractionVersion === row.extractionVersion
+          && candidate.processingRevision === row.processingRevision) === index);
+        const processedOmissionIds = [...new Set([
+          ...pendingOmissionIds,
+          ...selectedClosures.filter((prior) => !persistenceFailedExternalIds.has(prior.externalId)).map((prior) => prior.externalId),
+        ])];
+        const metadataReconciled = !unchanged304 && !admissionMigrationPending
+          && (boundedMetadataRefresh || migrationLimit === undefined)
+          && !persistenceFailedJobIds.size && !report.failures.length;
+        const checkpointSuccess = admissionMigrationPending ? {
+          successfulFetches: previous?.successfulFetches ?? 0,
+          lastSuccessAt: previous?.lastSuccessAt,
+        } : {};
         await this.store.putCheckpoint({
           ...result.checkpoint,
+          ...checkpointSuccess,
+          // A 304, migration slice or failed persistence cannot certify that
+          // unchanged source content has passed the current metadata parser.
+          metadataExtractionVersion: metadataReconciled ? ROLE_METADATA_EXTRACTION_VERSION : previous?.metadataExtractionVersion,
+          metadataProcessingRevision: metadataReconciled ? SOURCE_METADATA_PROCESSING_REVISION : previous?.metadataProcessingRevision,
+          pendingMetadataProcessedRows: metadataReconciled ? undefined : processedRows,
+          pendingMetadataOmissions: metadataReconciled ? undefined : processedOmissionIds.map((externalId) => ({
+            externalId, extractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+            processingRevision: SOURCE_METADATA_PROCESSING_REVISION,
+          })),
           contentHash: batch.snapshotHash,
           activeExternalIds: [...batch.activeExternalIds],
+          pendingAdmissionConfigurationVersion: admissionMigrationPending ? admissionConfigurationVersion : undefined,
           ...(checkpointAdmissionConfigurationVersion ? { admissionConfigurationVersion: checkpointAdmissionConfigurationVersion } : {}),
         });
         for (const job of plan.newJobs) {
@@ -1169,6 +1698,9 @@ export class IngestionRunner {
             error,
           }),
           diagnosticCategory: category,
+          ...(trustedMetrics ?? previousHealth?.trustedCommunity
+            ? { trustedCommunity: trustedMetrics ?? previousHealth!.trustedCommunity }
+            : {}),
         };
         health.push(failureHealth);
         try { await this.store.putSourceHealth(failureHealth); }

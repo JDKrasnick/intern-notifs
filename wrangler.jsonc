@@ -34,7 +34,7 @@
       { "queue": "intern-notifs-ashby", "max_batch_size": 1, "max_retries": 2, "dead_letter_queue": "intern-notifs-ashby-dlq" },
       { "queue": "intern-notifs-github", "max_batch_size": 1, "max_retries": 2, "max_concurrency": 1, "dead_letter_queue": "intern-notifs-github-dlq" },
       { "queue": "intern-notifs-gmail", "max_batch_size": 1, "max_retries": 5, "dead_letter_queue": "intern-notifs-gmail-dlq" },
-      { "queue": "intern-notifs-destination-verification", "max_batch_size": 20, "max_batch_timeout": 60, "max_retries": 2, "dead_letter_queue": "intern-notifs-destination-verification-dlq" }
+      { "queue": "intern-notifs-destination-verification", "max_batch_size": 5, "max_batch_timeout": 60, "max_concurrency": 1, "max_retries": 2, "dead_letter_queue": "intern-notifs-destination-verification-dlq" }
     ]
   },
   "triggers": {
@@ -46,6 +46,7 @@
     "AUTH_DEV_MODE": "false",
     "EMPLOYER_PORTAL_ENABLED": "true",
     "IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED": "false",
+    "TRUSTED_COMMUNITY_CATALOG_ENABLED": "false",
     "IDENTITY_CONFIRMED_COVERAGE_FLOOR": "1",
     "GMAIL_ENABLED": "true",
     "ADMISSION_QUEUE_AGE_ALERT_HOURS": "120",

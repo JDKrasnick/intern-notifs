@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { decodeMetadataCursor, encodeMetadataCursor } from '../src/metadata-audit.js';
 import { createApiHandler, type DocumentStorage } from '../src/api.js';
 import { ashbyWorkMessages, isAshbySourceDue } from '../src/ashby-dispatch.js';
 import { processAshbyQueue } from '../src/ashby-worker.js';
@@ -23,7 +24,7 @@ import { queueHasBacklog } from './queue-backlog.js';
 import type { D1Database, MessageBatch, Queue, R2Bucket, ScheduledController } from './types.js';
 import { disconnectGmail, gmailApi, gmailCallback, GmailStore, processGmailWork, recordGmailFailure, type GmailWorkMessage } from './gmail.js';
 import { D1EmployerStore } from './employer-store.js';
-import { D1CatalogAdmissionStore } from './catalog-admission-store.js';
+import { D1CatalogAdmissionStore, ROLE_METADATA_REVALIDATION_MS } from './catalog-admission-store.js';
 import { handleCatalogAdmissionOperations } from './catalog-admission-api.js';
 import { handleEmployerApi } from './employer-api.js';
 import { closeEmployerOccurrence, handleEmployerOperations, runEmployerMaintenance } from './employer-operations-api.js';
@@ -31,11 +32,13 @@ import { assertPublicHttpsUrl, verifyDnsChallenge, verifyWellKnownChallenge } fr
 import type { EmployerVerificationChallenge } from '../src/employer-types.js';
 import { reviewedProviderRegistry, reviewedStructuredRegistry } from './employer-registry.js';
 import { StructuredCareerSourceConnector } from '../src/sources/structured/index.js';
-import { failedSourceHealth, successfulSourceHealth } from '../src/source-health.js';
+import { failedSourceHealth, safeDiagnostic, successfulSourceHealth } from '../src/source-health.js';
 import type { BrowserWorker } from '@cloudflare/puppeteer';
 import { destinationVerificationMessage, enqueueDueDestinationVerifications, processDestinationVerificationBatch,
   sendAdmissionOperationalAlert } from './destination-verification.js';
+import { cleanupDlqRecords, handleDlqOperations, recordQueueFailureBestEffort, resolveQueueFailures, type DlqDependencies, type DlqName, type PeekedMessage } from './dlq-operations.js';
 import type { CatalogAdmissionResolver } from '../src/destination-verification.js';
+import { ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
 import {
   catalogProviderDefinitions,
   catalogProviderIds,
@@ -72,6 +75,7 @@ export interface Environment extends AuthEnvironment {
   OPERATIONS_SHARED_SECRET: string;
   EMPLOYER_PORTAL_ENABLED?: string;
   IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED?: string;
+  TRUSTED_COMMUNITY_CATALOG_ENABLED?: string;
   IDENTITY_CONFIRMED_COVERAGE_FLOOR?: string;
   BILLING_WEBHOOK_SECRET?: string;
   CLOUDFLARE_SHUTDOWN_TOKEN?: string;
@@ -163,12 +167,17 @@ export function structuredSourceRunBlocked(health: SourceHealth | undefined, for
     || Boolean(health?.backoffUntil && Date.parse(health.backoffUntil) > Date.now());
 }
 
+export function githubSourceRunBlocked(health: SourceHealth | undefined, force: unknown): boolean {
+  return force !== true && (health?.sourceStatus === 'paused' || health?.state === 'quarantined'
+    || Boolean(health?.backoffUntil && Date.parse(health.backoffUntil) > Date.now()));
+}
+
 export function recoveredStructuredSourceHealth(health: SourceHealth): SourceHealth {
   const clean = { ...health };
   delete clean.backoffUntil;
   delete clean.quarantineReason;
   delete clean.quarantinedAt;
-  return { ...clean, state: 'healthy', sourceStatus: 'active', consecutiveFailures: 0, incidentState: 'resolved' };
+  return { ...clean, state: 'healthy', sourceStatus: 'paused', consecutiveFailures: 0, incidentState: 'resolved' };
 }
 
 export function failedStructuredRecoveryHealth(previous: SourceHealth | undefined, failed: SourceHealth): SourceHealth {
@@ -184,7 +193,7 @@ export function failedStructuredRecoveryHealth(previous: SourceHealth | undefine
   };
 }
 
-async function runStructuredSource(source: ReviewedStructuredSource, env: Environment, options: { forceRecovery?: boolean } = {}): Promise<void> {
+async function runStructuredSource(source: ReviewedStructuredSource, env: Environment, options: { forceRecovery?: boolean } = {}): Promise<boolean> {
   const store = new D1InternshipStore(env.DB); const userStore = new D1UserStore(env.DB);
   const priorHealth = await store.getSourceHealth(source.id);
   const recoveryProbe = options.forceRecovery === true && structuredSourceRunBlocked(priorHealth);
@@ -205,9 +214,9 @@ async function runStructuredSource(source: ReviewedStructuredSource, env: Enviro
       await store.putSourceHealth(failedStructuredRecoveryHealth(priorHealth, failed));
       throw error;
     }
-    return;
+    return true;
   }
-  if (structuredSourceRunBlocked(priorHealth)) return;
+  if (structuredSourceRunBlocked(priorHealth)) return false;
   if (source.status === 'shadow') {
     const startedAt = new Date().toISOString();
     const connector = new StructuredCareerSourceConnector({ source: { ...source, id: `shadow-${source.id}` }, resolver: publicHostResolver });
@@ -225,16 +234,18 @@ async function runStructuredSource(source: ReviewedStructuredSource, env: Enviro
         provider: 'unknown', previous: priorHealth, startedAt, completedAt: new Date().toISOString(), error }));
       throw error;
     }
-    return;
+    return true;
   }
   const connector = new StructuredCareerSourceConnector({ source, resolver: publicHostResolver });
   const result = await runRuntimeCommand('poll', { store, userStore, sources: [connector], validateCatalogOnPoll: false,
     enqueueDestinationVerification: (request) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(request)),
     catalogAdmissionResolver: catalogAdmissionResolver(env),
     identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
+    trustedCommunityCatalogEnabled: env.TRUSTED_COMMUNITY_CATALOG_ENABLED === 'true',
     allowCompleteEmptySnapshot: true,
     config: { sesFrom: env.AUTH_FROM_EMAIL ?? '', sesTo: env.DIGEST_TO_EMAIL ?? '', ntfyTopic: env.NTFY_TOPIC, ntfyEndpoint: env.NTFY_ENDPOINT } });
   if ('poll' in result && result.poll?.failures.length) throw new Error(result.poll.failures.join('; '));
+  return true;
 }
 
 async function verifiedAccountEmail(env: Environment, userId: string): Promise<string | undefined> {
@@ -378,6 +389,48 @@ async function cloudflareApi(env: Environment, path: string, init: RequestInit =
   const result = await response.json() as { success?: boolean; result?: unknown; errors?: Array<{ message?: string }> };
   if (!response.ok || result.success === false) throw new Error(result.errors?.[0]?.message ?? `Cloudflare API returned HTTP ${response.status}`);
   return result.result;
+}
+
+export function dlqDependencies(env: Environment): DlqDependencies {
+  const workQueues: Record<DlqName, Queue> = {
+    greenhouse: env.GREENHOUSE_QUEUE,
+    lever: env.LEVER_QUEUE,
+    ashby: env.ASHBY_QUEUE,
+    github: env.GITHUB_QUEUE,
+    gmail: env.GMAIL_QUEUE,
+    'destination-verification': env.DESTINATION_VERIFICATION_QUEUE,
+  };
+  return {
+    db: env.DB,
+    workQueues,
+    sourceHealth: (sourceId) => new D1InternshipStore(env.DB).getSourceHealth(sourceId),
+    api: {
+      async resolveQueueId(exactName) {
+        const result = await cloudflareApi(env, '/queues?per_page=100') as Array<{
+          queue_id?: string; queue_name?: string; id?: string; name?: string;
+        }>;
+        const matches = result.filter((queue) => (queue.queue_name ?? queue.name) === exactName);
+        const id = matches.length === 1 ? matches[0]!.queue_id ?? matches[0]!.id : undefined;
+        if (!id) throw new Error(`Exact queue ${exactName} could not be resolved`);
+        return id;
+      },
+      async peek(queueId, limit) {
+        const result = await cloudflareApi(env, `/queues/${encodeURIComponent(queueId)}/messages/peek`, {
+          method: 'POST', body: JSON.stringify({ batch_size: limit }),
+        }) as { messages?: Array<{ id?: string; attempts?: number; body?: unknown; ref?: string; timestamp_ms?: number }> };
+        return (result.messages ?? []).flatMap((message): PeekedMessage[] => message.id && message.ref ? [{
+          id: message.id, attempts: message.attempts ?? 0, body: message.body, ref: message.ref,
+          ...(message.timestamp_ms ? { timestampMs: message.timestamp_ms } : {}),
+        }] : []);
+      },
+      async purge(queueId, refs) {
+        const result = await cloudflareApi(env, `/queues/${encodeURIComponent(queueId)}/messages/purge`, {
+          method: 'POST', body: JSON.stringify({ refs: refs.map((ref) => ({ ref })) }),
+        }) as { errors?: Array<{ message?: string }>; warnings?: Record<string, string> };
+        return { failedRefs: result.errors?.length ? refs : Object.keys(result.warnings ?? {}) };
+      },
+    },
+  };
 }
 
 async function billingShutdown(request: Request, env: Environment): Promise<Response> {
@@ -548,6 +601,88 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
       return withCors(Response.json({ message: error instanceof Error ? error.message : 'Notification recovery failed' }, { status: 409 }));
     }
   }
+  if (url.pathname === '/internal/role-metadata/audit' && request.method === 'GET') {
+    if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
+    return withCors(Response.json(await new D1CatalogAdmissionStore(env.DB).roleMetadataAudit(), { headers: { 'Cache-Control': 'no-store' } }));
+  }
+  if (url.pathname === '/internal/role-metadata/review' && request.method === 'POST') {
+    if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
+    const input = await request.json().catch(() => ({})) as { action?: string; jobId?: string; reviewToken?: string; expectedDecisions?: number };
+    const operations = new D1CatalogAdmissionStore(env.DB);
+    try {
+      if (input.action === 'preview-omission') {
+        if (typeof input.jobId !== 'string' || !input.jobId || input.jobId.length > 512) throw new Error('jobId is invalid');
+        return withCors(Response.json(await operations.stageRoleMetadataOmission(input.jobId, new Date().toISOString()), { headers: { 'Cache-Control': 'no-store' } }));
+      }
+      if (input.action === 'approve-omission') {
+        if (typeof input.reviewToken !== 'string' || !/^[a-f0-9]{64}$/u.test(input.reviewToken) || input.expectedDecisions !== 1) {
+          throw new Error('reviewToken and expectedDecisions must exactly match the review preview');
+        }
+        return withCors(Response.json(await operations.approveRoleMetadataOmission(input.reviewToken, input.expectedDecisions, new Date().toISOString())));
+      }
+      throw new Error('action must be preview-omission or approve-omission');
+    } catch (error) {
+      return withCors(Response.json({ message: error instanceof Error ? error.message : 'Metadata review failed' }, { status: 409 }));
+    }
+  }
+  if (url.pathname === '/internal/role-metadata/backfill' && request.method === 'POST') {
+    if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
+    const input = await request.json().catch(() => ({})) as {
+      action?: 'collect' | 'dry-run' | 'apply'; limit?: number; collectionToken?: string; cursor?: string;
+      repairToken?: string; expectedJobs?: number; expectedOccurrences?: number;
+    };
+    const operations = new D1CatalogAdmissionStore(env.DB);
+    try {
+      if (input.action === 'collect') {
+        const limit = input.limit ?? 100;
+        if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error('limit must be an integer from 1 to 500');
+        const collectionToken = input.collectionToken?.trim() || crypto.randomUUID();
+        const candidates = await operations.metadataVerificationCandidates(limit, {
+          observedBefore: new Date(Date.now() - ROLE_METADATA_REVALIDATION_MS).toISOString(),
+          after: decodeMetadataCursor(input.cursor),
+          reserveAt: new Date().toISOString(),
+        });
+        await sendQueueMessages(env.DESTINATION_VERIFICATION_QUEUE, candidates.map((candidate) => destinationVerificationMessage({
+          ...candidate,
+          reason: 'historical-backfill',
+          metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+          metadataBackfillToken: collectionToken,
+        })));
+        const last = candidates.at(-1);
+        return withCors(Response.json({ collectionToken, queued: candidates.length,
+          nextCursor: last ? encodeMetadataCursor(last.jobId, last.sourceId) : null,
+          // Exhausted is not collection-complete: reservations may still be in flight.
+          exhausted: candidates.length < limit, extractionVersion: ROLE_METADATA_EXTRACTION_VERSION }));
+      }
+      if (input.action === 'apply') {
+        if (typeof input.repairToken !== 'string' || !/^[a-f0-9]{64}$/u.test(input.repairToken)) throw new Error('repairToken is invalid');
+        if (!Number.isInteger(input.expectedJobs) || (input.expectedJobs ?? -1) < 0 || !Number.isInteger(input.expectedOccurrences) || input.expectedOccurrences !== 0) {
+          throw new Error('expectedJobs and expectedOccurrences must exactly match the dry-run');
+        }
+        const result = await operations.applyRoleMetadataRepair(input.repairToken, input.expectedJobs!, input.expectedOccurrences!, new Date().toISOString());
+        if (result.projectionRefreshRequired) await refreshCatalogProjection(new D1InternshipStore(env.DB));
+        // Full verification is a separate read-only request. Repeating the
+        // paged whole-cohort audit after the guarded transaction and grouped
+        // projection refresh can exceed D1's per-invocation query budget.
+        return withCors(Response.json({ ...result, applied: true, verificationRequired: true,
+          verificationPath: '/internal/role-metadata/audit' }));
+      }
+      if (input.action && input.action !== 'dry-run') throw new Error('action must be collect, dry-run, or apply');
+      const report = await operations.stageRoleMetadataRepair(new Date().toISOString());
+      const audit = await operations.roleMetadataAudit();
+      return withCors(Response.json({
+        ...report,
+        verificationOutcomes: audit.verificationOutcomes,
+        collectionCoverage: audit.collectionCoverage,
+        projectionOnlyOmissions: audit.projectionOnlyOmissions,
+        deferredProjections: audit.deferredProjections,
+        supportedRoleSpecificDisclosedMetadataMisses: audit.supportedRoleSpecificDisclosedMetadataMisses,
+        applied: false,
+      }, { status: report.conflicts.length || audit.deferredProjections.length || !audit.collectionCoverage.complete ? 409 : 200 }));
+    } catch (error) {
+      return withCors(Response.json({ message: error instanceof Error ? error.message : 'Role metadata backfill failed' }, { status: 409 }));
+    }
+  }
   if (request.method === 'POST' && url.pathname === '/internal/catalog-quality-backfill') {
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
     const input = await request.json().catch(() => ({})) as { apply?: boolean; repairToken?: string; expectedChanged?: number };
@@ -595,6 +730,10 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
     } catch (error) {
       return withCors(Response.json({ message: error instanceof Error ? error.message : 'Posting identity repair failed' }, { status: 409 }));
     }
+  }
+  if (url.pathname === '/internal/operations/dlq') {
+    if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
+    return withCors(await handleDlqOperations(request, dlqDependencies(env)));
   }
   if (request.method === 'POST' && url.pathname === '/internal/poll-source') {
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
@@ -975,8 +1114,14 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
       if (health?.lastAttemptAt && Date.parse(health.lastAttemptAt) > Date.now() - 30 * 60_000) return undefined;
       return source;
     }))).filter((source): source is ReviewedStructuredSource => Boolean(source));
+    const dueGithub = (await Promise.all(defaultSources.map(async (source) => {
+      const health = await store.getSourceHealth(source.id);
+      if (health?.sourceStatus === 'paused' || health?.state === 'quarantined') return undefined;
+      if (health?.backoffUntil && Date.parse(health.backoffUntil) > Date.now()) return undefined;
+      return source;
+    }))).filter((source): source is typeof defaultSources[number] => Boolean(source));
     await sendQueueMessages(env.GITHUB_QUEUE, [
-      ...defaultSources.map((source) => ({ sourceId: source.id })),
+      ...dueGithub.map((source) => ({ sourceId: source.id })),
       ...dueStructured.map((source) => ({ sourceId: source.id, sourceKind: 'structured' })),
     ]);
     return;
@@ -1036,6 +1181,7 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
     await cleanupExpiredAuth(env);
     await cleanupExpiredUserData(env.DB);
     await new GmailStore(env.DB).cleanup(new Date(event.scheduledTime));
+    await cleanupDlqRecords(env.DB, new Date(event.scheduledTime));
     const employerMaintenance = await runEmployerMaintenance(new D1EmployerStore(env.DB), store, new Date(event.scheduledTime));
     const admissionVerificationRetries = await enqueueDueDestinationVerifications(env, new Date(event.scheduledTime));
     const admissionAudit = await new D1CatalogAdmissionStore(env.DB).audit();
@@ -1096,18 +1242,53 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
     const failed = new Set<string>();
     const employerStore = new D1EmployerStore(env.DB);
     const admissionResolver = catalogAdmissionResolver(env);
-    const structured = await reviewedStructuredRegistry(employerStore);
-    for (const record of records) {
+    let structured: Awaited<ReturnType<typeof reviewedStructuredRegistry>>;
+    try {
+      structured = await reviewedStructuredRegistry(employerStore);
+    } catch (error) {
+      for (const queued of batch.messages) {
+        const parsed = (() => {
+          try { return JSON.parse(typeof queued.body === 'string' ? queued.body : JSON.stringify(queued.body)) as { sourceId?: string; sourceKind?: string }; }
+          catch { return undefined; }
+        })();
+        await recordQueueFailureBestEffort({
+          db: env.DB, queueName: batch.queue, messageId: queued.id, attempts: queued.attempts,
+          timestamp: queued.timestamp, sourceId: parsed?.sourceId, sourceKind: parsed?.sourceKind,
+          body: queued.body, error,
+        });
+        console.error(JSON.stringify({ command: 'github-poll-setup', messageId: queued.id, error: safeDiagnostic(error) }));
+        queued.retry();
+      }
+      return;
+    }
+    const resolveFailures = async (messageId: string) => {
+      try { await resolveQueueFailures(env.DB, batch.queue, messageId); }
+      catch (error) {
+        console.error(JSON.stringify({ command: 'github-failure-ledger-resolution', messageId,
+          error: safeDiagnostic(error) }));
+      }
+    };
+    for (const queued of batch.messages) {
+      const record = { messageId: queued.id, body: typeof queued.body === 'string' ? queued.body : JSON.stringify(queued.body) };
+      let parsedMessage: { sourceId?: string; sourceKind?: string; force?: boolean } | undefined;
       try {
-        const message = JSON.parse(record.body) as { sourceId?: string; sourceKind?: string };
+        const message = JSON.parse(record.body) as { sourceId?: string; sourceKind?: string; force?: boolean };
+        parsedMessage = message;
         const sourceId = message.sourceId;
         const reviewedStructured = message.sourceKind === 'structured' ? structured.find((candidate) => candidate.id === sourceId) : undefined;
         const source = defaultSources.find((candidate) => candidate.id === sourceId);
         if (reviewedStructured) {
-          await runStructuredSource(reviewedStructured, env);
+          const ran = await runStructuredSource(reviewedStructured, env, { forceRecovery: message.force === true });
+          if (ran) await resolveFailures(queued.id);
           continue;
         }
         if (!source) throw new Error(`Unknown reviewed source ${JSON.stringify(sourceId)}`);
+        const priorHealth = await new D1InternshipStore(env.DB).getSourceHealth(source.id);
+        if (githubSourceRunBlocked(priorHealth, message.force)) {
+          console.log(JSON.stringify({ event: 'source_poll_skipped', command: 'github-poll', sourceId: source.id,
+            reason: priorHealth?.state === 'quarantined' ? 'quarantined' : priorHealth?.sourceStatus === 'paused' ? 'paused' : 'backoff' }));
+          continue;
+        }
         const result = await runRuntimeCommand('poll', {
           store: new D1InternshipStore(env.DB),
           userStore: new D1UserStore(env.DB),
@@ -1116,6 +1297,7 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
           enqueueDestinationVerification: (request) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(request)),
           catalogAdmissionResolver: admissionResolver,
           identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
+          trustedCommunityCatalogEnabled: env.TRUSTED_COMMUNITY_CATALOG_ENABLED === 'true',
           // One row can perform several bounded HTTP probes. Keep migration
           // slices small enough to make durable progress even when the tail is
           // dominated by destinations that consume the six connection slots.
@@ -1131,12 +1313,19 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
             failures: result.poll.failures.slice(0, 20),
           }));
         }
+        if (result.poll?.failures.length) throw new Error(result.poll.failures.join('; '));
         if (result.poll?.continuationSources.includes(source.id)) {
           await sendQueueMessageWithin(env.GITHUB_QUEUE, { sourceId: source.id });
         }
+        await resolveFailures(queued.id);
       } catch (error) {
         failed.add(record.messageId);
-        console.error(JSON.stringify({ command: 'github-poll', messageId: record.messageId, error: error instanceof Error ? error.message : String(error) }));
+        await recordQueueFailureBestEffort({
+          db: env.DB, queueName: batch.queue, messageId: queued.id, attempts: queued.attempts,
+          timestamp: queued.timestamp, sourceId: parsedMessage?.sourceId, sourceKind: parsedMessage?.sourceKind,
+          body: queued.body, error,
+        });
+        console.error(JSON.stringify({ command: 'github-poll', messageId: record.messageId, error: safeDiagnostic(error) }));
       }
     }
     for (const message of batch.messages) {

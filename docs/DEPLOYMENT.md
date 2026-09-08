@@ -7,7 +7,8 @@
 
 ## Architecture
 
-InternNotifs is an Expo mobile app with a serverless AWS backend.
+InternNotifs is an Expo mobile app with a Cloudflare Worker backend. Retained
+AWS resources are rollback/export infrastructure, not active application targets.
 
 | Area | Service / implementation |
 | --- | --- |
@@ -74,7 +75,7 @@ export TF_VAR_identity_confirmed_coverage_floor='0.7130649137222679'
 Build the Worker before the final plan. Save that plan outside the repository,
 review its complete machine-readable and human-readable output, and apply the
 exact saved plan rather than planning again. A final pre-#120 plan may contain
-only the reviewed destination queue/DLQ, seven-day retention, 20-message and
+only the reviewed destination queue/DLQ, seven-day retention, 5-message and
 60-second consumer settings, Browser binding, queue ID, admission-alert
 bindings, and the intentional Worker artifact.
 
@@ -143,6 +144,10 @@ The export includes Cloudflare Pages security headers plus the public policy pag
 
 `https://internnotifs.app` is the canonical public web address. It is registered, delegated to Cloudflare, and attached to the `internnotifs` Pages project through a proxied apex CNAME to `internnotifs.pages.dev`; the Pages custom-domain validation, verification, and HTTPS certificate must remain active. The customer catalog owns `/`, while the employer workspace is isolated to `/employer/*`. The similarly spelled `internotifs.app` is not the project domain. The web bundle calls the API Worker at `https://intern-notifs.jdkrasnick.workers.dev`; set `EXPO_PUBLIC_API_URL` explicitly on the build command only when deploying against another approved API origin. Local `.env` files cannot silently replace the production default.
 
+### Trusted-catalog regression probes
+
+`npm run probes:trusted-catalog` performs a read-only recheck of the three documented exact-role regressions. It fetches their official ATS API records and the corresponding public `GET /jobs/{id}` records, then prints field-level discrepancies. It writes no files or data and uses no credentials. Requests are limited to the fixed three probes, run concurrently, and time out after 10 seconds (override with `-- --timeout-ms 10000`, maximum 30 seconds). A 401/403 is reported as `blocked`; other HTTP, transport, timeout, and invalid-JSON failures are `unavailable`, never a closure or a passing check. Use `-- --api-url <approved API origin>` only for a non-production comparison.
+
 Keep `EMPLOYER_PORTAL_ENABLED=false` while deploying the persistence layer. Apply D1 migrations before the Worker so employer routes can never observe a partial schema:
 
 ```bash
@@ -189,12 +194,139 @@ summaries, structured `locations`, bounded compensation, and unchanged
 notification flags. Never store the operations secret in shell history, Git, or
 documentation.
 
+## Employer metadata enrichment (#134)
+
+Apply `0015_role_metadata_enrichment.sql`, `0016_role_metadata_repair_plans.sql`
+and `0017_metadata_acquisition.sql` before deploying the enrichment Worker.
+Extraction v8 and later additionally require `0018_metadata_review.sql` and
+`0019_metadata_job_review_revision.sql` before deployment.
+The migrations are additive: they store compact versioned field evidence,
+historical artifact versions, extraction outcomes, conflicts, and guarded repair
+staging, acquisition leases and host backoff. Full job descriptions are never
+written to these tables. Preserve the active production publication flags:
+`IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED=true` and
+`IDENTITY_CONFIRMED_COVERAGE_FLOOR=0.70`; local defaults differ.
+
+After deployment, use the existing destination-verification queue to collect
+historical exact-posting evidence. Identity-checked public APIs run first;
+Browser Rendering covers unsupported or unsuccessful API routes. Collection is
+staging-only and does not rewrite public jobs:
+
+```bash
+export CATALOG_API_URL=https://intern-notifs.jdkrasnick.workers.dev
+export OPERATIONS_SHARED_SECRET='use-the-deployed-operations-secret'
+npm run migrate:role-metadata -- collect --limit 100
+npm run migrate:role-metadata -- audit
+npm run migrate:role-metadata -- dry-run
+```
+
+After each queued batch drains, repeat collection with
+`--collection-token TOKEN_FROM_FIRST_RESPONSE` and
+`--cursor NEXT_CURSOR_FROM_PREVIOUS_RESPONSE` until the audit reports
+`collectionCoverage.complete: true`, with both `pendingOrUnobserved` and
+`stale` at zero. Queued or in-flight verifications remain pending until their
+extraction attempt is recorded. The dry run returns HTTP 409 and apply refuses
+to run while collection is incomplete. Cursor exhaustion only means no more
+eligible rows in this pass, not that queued work completed. Restart without a
+cursor after pending leases (30 minutes) or retry backoffs expire when needed.
+
+Archive the complete collection and dry-run reports. Review fills and
+corrections by field/source class, every conflict, unsupported currencies/pay periods, and
+blocked/inconclusive/aggregate outcomes. Unknown values must remain unknown.
+Apply only after owner approval, copying all three guards from the same dry run:
+
+`deferredProjections` must also be empty. These jobs retain accepted metadata
+whose contributing source evidence predates the current parser. Source
+checkpoints require a full successful refresh after extraction/preprocessing
+upgrades, without treating HTTP 304s or admission migration slices as completion.
+Do not clear evidence or bypass the deferral guard to make the audit pass.
+
+Existing GitHub sources refresh stale parser/preprocessing versions through the
+Worker's 20-row continuation limit. A versioned per-row material ledger resumes
+successful work, including explicit negative decisions; occurrence stamps alone
+do not certify completion because evidence writes can fail after the job commit.
+Missing-occurrence work uses separate bounded progress, and reappearing rows
+must reconcile before completion. Partial runs retain the previous successful
+source timestamp and fetch count. Verify all seven published GitHub checkpoints
+reach the current extraction/processing versions and a new complete success;
+destination collection is independent and cannot supply that proof. Do not
+clear source checkpoints, replay DLQs or bypass backoffs to force completion.
+
+Each dry run stages at most 250 jobs and 8 MiB of original/proposed UTF-8 JSON
+in stable job-ID order and reports
+`remainingJobs` separately. Field fill/correction counts describe only that batch;
+conflicts, evidence freshness and collection completeness still cover the entire
+cohort. After an approved batch applies, run a new dry run and obtain approval of
+its new token/counts. Repeat until `remainingJobs` and `expectedJobs` are zero;
+never increase the atomic limit or reuse approval across batches.
+
+```bash
+npm run migrate:role-metadata -- apply \
+  --repair-token EXACT_TOKEN \
+  --expected-jobs EXACT_JOB_COUNT \
+  --expected-occurrences EXACT_OCCURRENCE_COUNT
+```
+
+The transaction compares every original job JSON value, emits no outbox event,
+and refuses stale counts or any unreviewed metadata conflict. Migration 0018 adds
+an atomic revision guard covering evidence, extraction attempts, conflicts,
+reviews and catalog mutations, including changes outside the selected batch.
+A conflict-free apply refreshes grouped projections and returns an apply receipt
+with `verificationRequired: true`. Full verification runs in a separate request
+to stay within the Worker memory and D1 query budgets. Run `audit` and
+`dry-run` again; `projectionOnlyOmissions` must be empty.
+`supportedRoleSpecificDisclosedMetadataMisses` and `disclosureRecall` remain null
+until an independent disclosure benchmark exists; do not interpret them as zero.
+Sample `/jobs`, `/catalog`, and
+group detail results to confirm unchanged job IDs, occurrences, saves,
+applications, receipts, notification flags/tombstones, visibility timestamps,
+and lifecycle state. Roll back exposure with a new reviewed repair; retain the
+evidence and conflict history.
+
+### Reviewed omission of disputed pay
+
+When exact employer evidence genuinely contradicts itself, an operator can
+propose leaving compensation blank while preserving separately verified fields
+such as housing. This does not authorize choosing a salary or rewriting evidence:
+
+```bash
+npm run migrate:role-metadata -- preview-omission --job-id EXACT_JOB_ID
+```
+
+Inspect the returned evidence conflicts and obtain owner approval for its exact
+`reviewToken` and `expectedDecisions: 1`. Only then run:
+
+```bash
+npm run migrate:role-metadata -- approve-omission \
+  --review-token EXACT_REVIEW_TOKEN --expected-decisions 1
+```
+
+Approval records an auditable decision but changes **zero public jobs**. Run a
+fresh repair dry-run and obtain separate approval of its repair token/counts.
+Migration 0019 binds review approval to the exact posting's catalog/evidence
+revision, so unrelated collection does not expire the preview. Same-posting
+changes still reject approval atomically; the separate repair remains guarded
+by the catalog-wide revision. Pre-0019 previews must be regenerated.
+`reviewedOmissions` lists the exact decisions used by that plan. Every other
+field/job conflict and the full collection-completeness gate remain blocking.
+Conflict rows remain in history, not silently marked resolved. The activated
+receipt keeps pay blank during ordinary projection only while its versioned
+evidence fingerprint matches; changed evidence expires the omission and reopens
+review. A concurrent evidence, review or catalog change rejects the whole repair.
+Stale previews must be regenerated, not force-applied.
+
+After projection, the daily destination-verification scheduler rechecks up to
+100 eligible destinations, including never-inspected roles and old extraction
+versions, then the oldest observations beyond the revalidation cutoff. Host
+rotation and reservations prevent repeated selection of the same batch. The queued
+artifact hash prevents an older extraction from satisfying that revalidation.
+
 ## Catalog admission rollout (#120)
 
 Create the `intern-notifs-destination-verification` queue and its
 `-dlq`, enable the `DESTINATION_BROWSER` Browser Rendering binding, and set
 `RESEND_API_KEY` plus `ADMISSION_SUPPORT_RECIPIENT` as Worker secrets. The
-checked-in consumer processes at most 20 URLs per batch, retries twice before
+checked-in consumer processes at most 5 URLs per batch with concurrency 1, retries twice before
 the DLQ, leases due rechecks every ten minutes, synchronizes the schedule daily,
 and samples reviewed host rules weekly.
 Apply `0007_catalog_admission.sql` through
@@ -253,7 +385,7 @@ threshold bindings are managed consistently in Wrangler and OpenTofu.
 Open `GET /internal/admission/health` after deployment to verify the live work
 queue and DLQ backlog, stale-evidence coverage, active incidents, scheduled
 leases, and backfill/repair state in one response. Wrangler and OpenTofu both
-manage the destination queue, DLQ, 20-message/60-second consumer, two retries,
+manage the destination queue, DLQ, 5-message/60-second consumer, two retries,
 and `DESTINATION_BROWSER` binding. OpenTofu retains destination work for seven
 days so a one-day delayed transient retry cannot expire before delivery, and supplies
 `DESTINATION_VERIFICATION_QUEUE_ID` to the billing-shutdown path. A non-empty
@@ -261,9 +393,9 @@ DLQ, an oldest work item approaching the evidence deadline, any unexpectedly
 stale eligible record, or an active quarantine is an admission incident.
 
 Destination evidence expires after seven days and is scheduled for recheck one
-day before expiry. A transient early recheck retains the current alert standing
-until expiry; after expiry alerts pause and the existing seven-day catalog grace
-begins. HTTP 404/410, explicit posting closure language, past structured
+day before expiry. A transient failed recheck pauses alerts immediately; catalog
+visibility lasts only until seven days after the last successful verification.
+Retries never restart this window. HTTP 404/410, explicit posting closure language, past structured
 `JobPosting.validThrough`, and reviewed aggregate-board decisions bypass grace.
 Authoritative closure clears URL validation and closes only the canonical role;
 source occurrences and user history remain intact for a later verified reopen.
@@ -326,12 +458,76 @@ The final gate requires physical iOS, physical Android, and production web
 acceptance for browse, detail, Saved/unavailable behavior, grouped results, and
 official handoff at accessibility text sizes and both device appearance
 settings. It also requires a real eligible custom-route role to cross freshness
-expiry: alerts stop at `freshUntil`, catalog visibility remains for the actual
-seven-day grace period, and unresolved verification removes the role after
-grace. Do not fabricate a production role or waive this observation. Close
+expiry: a failed recheck pauses alerts, catalog visibility remains only through
+the seventh day since the last successful verification, and unresolved
+verification removes the role at that deadline. Do not fabricate a production role or waive this observation. Close
 #120 only after that transition, three-client acceptance, an empty DLQ,
 acceptable queue age, verified alert delivery, passing identity enforcement,
 and no unexpected stale-eligible or quarantined incidents are recorded.
+
+### Trusted community source rollout
+
+`simplify-summer-2026` is the only trusted-community source. The source ID stays
+unchanged so checkpoints, occurrences, job IDs, saves, discovery times, and
+delivery history continue in place. Checked-in runtime defaults keep
+`TRUSTED_COMMUNITY_CATALOG_ENABLED=false`; do not add an alert environment flag.
+Alert behavior lives in the versioned policy in `src/sources/trust-policy.ts`.
+
+The sanitized baseline report is
+[`trusted-community/simplify-summer-2026-baseline.json`](trusted-community/simplify-summer-2026-baseline.json).
+Regenerate it from a complete current source fetch before activation:
+
+```bash
+npm run source:trusted-community:dry-run -- --record
+git diff -- docs/trusted-community/simplify-summer-2026-baseline.json
+```
+
+The 2026-09-04 run observed 2,079 raw rows, 1,737 technically eligible rows,
+1,091 exact route shapes, 646 browser-inspection candidates, zero surviving
+aggregators, and zero duplicate occurrence IDs. Review every candidate route
+family and every failure class; require zero identity conflicts, duplicate
+alerts, and outbox writes. The dry run calculates the numeric circuit thresholds
+from those counts—operators must not hand-edit them.
+
+Roll out in this order:
+
+1. Deploy the Worker, queues, and infrastructure with
+   `trusted_community_catalog_enabled=false`. Confirm Simplify policy reports
+   `alertMode: disabled` and the existing catalog/outbox counts do not change.
+2. Run the current dry run, drain destination-verification work, and inspect all
+   646 browser candidates plus aggregate, gone, blocked/unresolved, malformed,
+   mismatch, and conflict results. Require zero surviving aggregators and
+   duplicate occurrence IDs.
+3. Obtain owner approval for the recorded report and reviewed infrastructure
+   plan. Set `trusted_community_catalog_enabled=true`; leave the source alert
+   mode disabled. The admission-version change performs bounded re-evaluation,
+   holds publication until a complete healthy evaluation, marks the admitted
+   backlog `baseline`, and permanently suppresses its alerts.
+   Evidence collection and subsequent publication both run in bounded slices.
+   Publication reuses current-policy evidence for unchanged source facts; the
+   policy checkpoint advances only after the remaining publication slices drain.
+   Re-admission preserves a role's existing first-visibility timestamp.
+4. Verify one complete healthy snapshot and inspect the count-only
+   `trusted_community_source_evaluated` metrics. A breach must leave the trusted
+   checkpoint unchanged and recover after one complete healthy snapshot.
+5. In a separate reviewed configuration change, set Simplify's alert mode to
+   `exact-identity-or-two-complete-snapshots` and bump its policy version. Do not
+   change the catalog gate for this step.
+6. After activation, require stable job IDs, `firstSeenAt`, saves, and delivery
+   history; one-time `catalogVisibleAt`; baseline ranking for the activation set;
+   no identity conflicts or fuzzy merges; correct pending indexes; and exactly
+   one deterministic `new-job` outbox event for each newly qualified role.
+
+Roll back exposure by setting `trusted_community_catalog_enabled=false`. Roll
+back alert eligibility by restoring a reviewed disabled source-policy version.
+Catalog rollback first drains durable trusted admissions in bounded slices,
+including absent and closed occurrences, without depending on an upstream
+fetch. Wait for continuation work to finish before declaring rollback complete.
+Independently eligible official references remain published. An interrupted
+rollback retains its pending checkpoint so either rollback or reactivation can
+resume safely; source and delivery history remain intact.
+Never delete qualification evidence, source occurrences, identity decisions,
+notification tombstones, outbox rows, saves, or delivery history.
 
 Greenhouse, Lever, and Ashby use dedicated half-hour EventBridge schedules,
 dispatcher Lambdas, FIFO work queues, two-minute workers, and dead-letter
@@ -349,6 +545,36 @@ minutes from an upstream publication to its next published-board poll. The
 GitHub-feed objective is ten minutes, and shadow discovery is intentionally
 bounded at three hours. Queue delay, retries, provider backoff, and upstream
 timestamp semantics are measured separately from these scheduler objectives.
+
+## DLQ inspection and disposition
+
+Apply additive migration `0015_dlq_recovery.sql` before deploying the Worker.
+The protected `POST /internal/operations/dlq` endpoint uses the existing Worker-held
+Cloudflare credential to resolve exact allowlisted queue names; never expose that
+credential to an operator client. Configure the CLI locally and inspect without
+consuming messages:
+
+```bash
+export OPERATIONS_API_URL=https://intern-notifs.jdkrasnick.workers.dev
+export OPERATIONS_API_KEY='use-the-deployed-operations-secret'
+npm run dlq -- inspect lever 25
+```
+
+Stage a selective replay or irreversible discard with `DLQ_ACTION=replay` or
+`DLQ_ACTION=discard`, a comma-separated list of message IDs, and a reason. Apply
+the returned one-use plan within 15 minutes by passing its plan ID, repair token,
+and exact expected count. Catalog replay produces one fresh message per source;
+destination-verification replay stays disabled until issue #120 lands.
+
+```bash
+DLQ_ACTION=replay npm run dlq -- plan lever message-id-1,message-id-2 'Upstream fix verified'
+npm run dlq -- apply PLAN_ID REPAIR_TOKEN 2
+```
+
+After deployment, compare all six DLQ depths before and after `inspect` to confirm
+it is non-consuming. Recover quarantined catalog sources through source controls,
+verify healthy-but-paused state, resume them explicitly, and only then discard
+superseded DLQ messages. Retain disposition and queue-failure metadata for 30 days.
 
 ## Safe operational identifiers
 
@@ -478,12 +704,14 @@ from deployment and this code change.
 
 ### Posting identity D1 repair
 
-Deploy migrations `0010_posting_identity.sql` and
-`0011_issue_50_reviewed_employer_identity.sql` and the runtime identity support
-first, with `IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED=false`. Greenhouse, Lever,
+Deploy migrations `0010_posting_identity.sql`,
+`0011_issue_50_reviewed_employer_identity.sql`, and
+`0012_official_career_provider_identity.sql` and the runtime identity support first,
+with `IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED=false`. Greenhouse, Lever,
 and Ashby workers then retain contract-versioned immutable posting evidence;
-reviewed Workday/ByteDance routes, authoritative employer requisitions, and
-checked-in canonical-URL approvals use the same provider-neutral registry.
+reviewed Workday, ByteDance, Tesla, Meta, Jane Street, Goldman Sachs, and IMC
+routes, authoritative employer requisitions, and checked-in canonical-URL
+approvals use the same provider-neutral registry.
 Unrecognized URL families remain source-local and enter the sanitized review
 queue; they do not mint cross-source aliases. Legacy IDs can resolve through
 permanent one-hop aliases only after guarded consolidation. The operational
@@ -505,6 +733,13 @@ title, location, destination URL, and the future #120 admission state/reasons.
 Provider identity does not choose any of those fields. Do not apply while
 `presentationDisagreements` is non-empty; the endpoint also refuses that apply.
 Keep the production dry run for the combined #50/#120 review.
+
+When an employer-owned posting page is the only authoritative presentation
+source, record its exact provider tenant, posting ID, company, title, location,
+and application URL in `posting_identity_presentation_reviews`. The ledger is
+append-only, validates its evidence hash and both official URLs at runtime, and
+can resolve only the matching exact identity. A route-level provider match alone
+never authorizes a title, location, employer name, or destination choice.
 
 Run the deterministic integrity audit against the same snapshot before any
 apply and archive its legacy/classified counts. Exit status `2` is expected
@@ -558,8 +793,13 @@ legacy-occurrence, projection, and duplicate-reference counts. Its
 `IDENTITY_CONFIRMED_COVERAGE_FLOOR` is an owner-reviewed decimal from zero to
 one; a missing/invalid floor, unavailable coverage, or coverage below that
 floor is not passing evidence. The checked-in floor is `1` as a fail-safe.
-While
-`IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED=false`, a failed gate is logged but
+Treat the production value as a policy threshold with explicit headroom, not
+the exact coverage from one audit. Normal growth from reviewed community
+sources changes the confirmed/unconfirmed source mix without indicating
+identity corruption. Record both the activation snapshot and the lower policy
+floor, and review the floor separately whenever the expected source mix
+changes. While `IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED=false`, a failed gate
+is logged but
 does not fail the invocation. Once publication enforcement is active, a failed
 or unavailable audit fails the invocation. Broader dashboards and source
 discovery-latency metrics remain part of issue #40.
@@ -595,8 +835,9 @@ Git. Do not close issue #50 or its product-roadmap checkbox until the final
    conflicts or presentation disagreements.
 7. Preview the occurrence scope, obtain its independent token/count guards,
    apply it, then run the final all-scope audit. Require a passing gate and every
-   mutation count at zero. Record its exact `confirmedCoverage` as the proposed
-   production coverage floor.
+   mutation count at zero. Record its exact `confirmedCoverage` as the
+   activation baseline, then propose a lower owner-reviewed production floor
+   with enough headroom for expected source-mix changes.
 8. Confirm notification-event, notification-tombstone, pending-notification,
    and outbox counts match the baseline. Test all eight affected legacy job IDs
    and their canonical aliases, representative catalog/group endpoints, saved
@@ -631,7 +872,19 @@ canonical role behavior matched, and the outbox remained at 384 rows. Production
 set the coverage floor to that exact value before enabling unconfirmed
 publication. The owner explicitly waived step 12 as an acceptance gate; the
 post-activation scheduled audit passed with enforcement active, and non-gating
-follow-up issue #151 remains due at or after `2026-09-01T16:18:01Z`.
+follow-up issue #151 was initially scheduled for `2026-09-02T04:18:01Z` before
+the owner requested the analysis early.
+
+Early follow-up (2026-09-01): normal reviewed-community ingestion moved exact
+coverage below the snapshot-pinned floor even though every structural blocker
+remained zero. Publication was disabled first. PR #153 made immutable decisions,
+durable attachment facts, and presentation ownership converge, then a guarded
+repair applied one identity normalization and 360 occurrence normalizations.
+The final audit reported 4,480 confirmed and 1,873 unconfirmed occurrences,
+coverage `0.7051786557531875`, zero planned changes, and every structural blocker
+at zero. Worker version `588233d1-5230-4af7-b8f3-70d725ba9392` runs at 100% with
+publication enabled and a buffered `0.70` policy floor; the enforced scheduled
+audit passed. Checked-in Wrangler and Terraform defaults remain `false` and `1`.
 
 For eligible groups whose presentation already agrees, the repair preserves the
 oldest catalog job, merges source references,
@@ -914,17 +1167,31 @@ After Apple processing:
 3. The tester must accept their App Store Connect invitation and use TestFlight with that same Apple Account. Internal testers do not use redeem codes.
 4. Follow [`testflight-checklist.md`](testflight-checklist.md) on a physical iPhone.
 
-## Current release context (2026-08-26)
+## Current release context (2026-09-08)
 
-- Build `1.0.0 (22)` was built from `a838fa4` with the issue #41 trust surface,
-  final app icon, policy/support links, signup consent, retention enforcement,
-  and production EAS URLs. It was uploaded to and accepted by App Store Connect.
-- Production D1 migration `0005_auth_consent.sql` and Worker version
-  `29e40ce2-bab7-4276-b196-41d1116d808d` were deployed on 2026-08-26 after a
-  successful 10% canary.
-- Before the public App Store release, finish physical TestFlight acceptance,
-  reconcile the final archive, complete the App Store listing/privacy
-  disclosures, and submit the selected build for App Review.
+- Build `1.0.0 (25)` was built from `a8a00af` (merge of #170: tap-to-apply
+  sheet filters, fade modal with dim backdrop, stacked Show roles over Clear).
+  EAS build `2968602c-abc6-4029-97bb-9c160f1c7ba2`, auto-submitted to App Store
+  Connect (submission `efef6340-0fb1-41b9-b432-f4c85d54878b`). No Worker change:
+  production Worker `8ce99030` already serves the merged server code.
+- Build `1.0.0 (24)` was built from `beeae3c` (merge of #168: Filter roles
+  bottom sheet with working Role focus/season/work-mode/education/pay filters,
+  white Save pill with tap-to-unsave, inline pay, collapsed identity row).
+  EAS build `1006ec45-ad48-4d34-afa9-1d396ee474bc`, auto-submitted to App Store
+  Connect (submission `5ff86328-e5ed-4501-9dec-fe60c1f72733`).
+- Production Worker version `8ce99030-a2b2-43e9-874d-f3cd4f203eb7` was deployed
+  from `beeae3c` on 2026-09-07 (D1 already at migration `0015_dlq_recovery.sql`,
+  nothing to apply). This was required: the previous Worker predated #168 and
+  silently ignored `hasCompensation` and discipline aliases.
+- Simulator parity verified against production on 2026-09-07 from the same
+  source: Role-focus AI/ML chip filters the feed, pay filter returns paid-only
+  roles, cards render `Los Gatos, CA · winter-2027 · $63/hour` inline with no
+  tofu glyphs, detail sheet stacks Save for web below Apply with collapsed
+  identity. Saved-state unsave toggle still needs a signed-in account check.
+- Remaining owner steps: add build 24 to Internal Testing, run
+  [`testflight-checklist.md`](testflight-checklist.md) on a physical iPhone
+  (push permission, real push delivery, deep links cannot be verified on the
+  simulator), then submit for App Review.
 
 ## Physical-device checks agents cannot fake
 

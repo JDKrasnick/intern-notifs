@@ -8,6 +8,7 @@ locals {
       { name = "AUTH_DEV_MODE", type = "plain_text", text = tostring(var.auth_dev_mode) },
       { name = "GMAIL_ENABLED", type = "plain_text", text = tostring(var.gmail_enabled) },
       { name = "IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED", type = "plain_text", text = tostring(var.identity_unconfirmed_publication_enabled) },
+      { name = "TRUSTED_COMMUNITY_CATALOG_ENABLED", type = "plain_text", text = tostring(var.trusted_community_catalog_enabled) },
       { name = "IDENTITY_CONFIRMED_COVERAGE_FLOOR", type = "plain_text", text = tostring(var.identity_confirmed_coverage_floor) },
       { name = "ADMISSION_QUEUE_AGE_ALERT_HOURS", type = "plain_text", text = tostring(var.admission_queue_age_alert_hours) },
       { name = "ADMISSION_STALE_ALERT_THRESHOLD", type = "plain_text", text = tostring(var.admission_stale_alert_threshold) },
@@ -129,7 +130,7 @@ resource "cloudflare_queue_consumer" "application" {
   script_name       = cloudflare_workers_script.application.script_name
   dead_letter_queue = cloudflare_queue.dead_letter[each.key].queue_name
   settings = {
-    batch_size = each.key == "destination-verification" ? 20 : 1
+    batch_size = each.key == "destination-verification" ? 5 : 1
     # The high-volume ingestion fleets get two consumers. Gmail stays at one
     # because per-account leases serialize sync work.
     max_concurrency  = each.key == "greenhouse" ? 2 : 1

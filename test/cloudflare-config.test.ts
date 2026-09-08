@@ -51,7 +51,8 @@ describe('Cloudflare deployment configuration', () => {
     expect(wrangler.vars.DESTINATION_VERIFICATION_QUEUE_ID).toBeTruthy();
     expect(consumer).toEqual({
       queue: 'intern-notifs-destination-verification',
-      max_batch_size: 20,
+      max_batch_size: 5,
+      max_concurrency: 1,
       max_batch_timeout: 60,
       max_retries: 2,
       dead_letter_queue: 'intern-notifs-destination-verification-dlq',
@@ -62,7 +63,7 @@ describe('Cloudflare deployment configuration', () => {
     expect(terraform).toContain('{ name = "DESTINATION_VERIFICATION_DLQ", type = "queue"');
     expect(terraform).toContain('{ name = "DESTINATION_BROWSER", type = "browser" }');
     expect(terraform).toContain('{ name = "DESTINATION_VERIFICATION_QUEUE_ID", type = "plain_text"');
-    expect(terraform).toContain('batch_size = each.key == "destination-verification" ? 20 : 1');
+    expect(terraform).toContain('batch_size = each.key == "destination-verification" ? 5 : 1');
     expect(terraform).toContain('max_retries      = each.key == "gmail" ? 5 : 2');
     expect(terraform).toContain('max_wait_time_ms = each.key == "destination-verification" ? 60000 : 5000');
   });

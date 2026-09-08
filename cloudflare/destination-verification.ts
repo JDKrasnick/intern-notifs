@@ -6,10 +6,15 @@ import type { DestinationVerificationRequest } from '../src/destination-verifica
 import type { ApplicationPageEvidence } from '../src/core/application-url.js';
 import { reachabilityFromFailure, type Reachability } from '../src/core/application-verification.js';
 import { normalizeUrl } from '../src/core/normalize.js';
-import { combineRenderedFrameEvidence, type RenderedFrameSnapshot } from '../src/rendered-destination-evidence.js';
+import { combineRenderedFrameEvidence, exactPostingRecoveryUrl, renderedDescriptionReady, type RenderedFrameSnapshot } from '../src/rendered-destination-evidence.js';
+import { newJobNotificationEvent, shouldPromoteDelayedNotification } from '../src/ingestion/catalog-reconciler.js';
+import { activeTrustedCommunityPolicy, advanceTrustedCommunityQualification } from '../src/sources/trust-policy.js';
 import type { CatalogAdmissionReason, Internship, ProcessedListing, ProviderIdentity, SourceOccurrence } from '../src/types.js';
-import { D1CatalogAdmissionStore, destinationVerificationMatchesReference } from './catalog-admission-store.js';
+import { D1CatalogAdmissionStore, destinationVerificationMatchesReference, ROLE_METADATA_REVALIDATION_MS } from './catalog-admission-store.js';
 import { D1InternshipStore } from './d1-store.js';
+import { extractPostingMetadataEvidence, extractVerifiedPageMetadataEvidence, projectRoleMetadata, replaceVerifiedPageMetadataEvidence, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION, VERIFIED_PAGE_METADATA_SOURCES } from '../src/role-metadata.js';
+import { createMetadataAcquirer, metadataApiRoute, type MetadataAcquisition } from '../src/metadata-acquisition.js';
+import { metadataFieldOutcomes } from '../src/metadata-audit.js';
 import type { D1Database, MessageBatch, Queue } from './types.js';
 
 export interface DestinationVerificationMessage {
@@ -25,6 +30,9 @@ export interface DestinationVerificationMessage {
   leaseToken?: string;
   idempotencyKey?: string;
   generationId?: string;
+  metadataExtractionVersion?: number;
+  metadataArtifactHash?: string;
+  metadataBackfillToken?: string;
 }
 
 export interface DestinationVerificationEnvironment {
@@ -34,6 +42,8 @@ export interface DestinationVerificationEnvironment {
   RESEND_API_KEY?: string;
   ADMISSION_SUPPORT_RECIPIENT?: string;
   AUTH_FROM_EMAIL?: string;
+  TRUSTED_COMMUNITY_CATALOG_ENABLED?: string;
+  IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED?: string;
 }
 
 const DESTINATION_RETRY_DELAY_SECONDS = 86_400;
@@ -53,6 +63,12 @@ function parseMessage(value: unknown): DestinationVerificationMessage {
     || typeof message.externalId !== 'string' || typeof message.candidateUrl !== 'string'
     || !message.providerIdentity || typeof message.providerIdentity !== 'object') throw new Error('Destination verification message is invalid');
   return message as DestinationVerificationMessage;
+}
+
+function metadataExtractionCurrent(reference: SourceOccurrence, message: DestinationVerificationMessage): boolean {
+  if (!message.metadataExtractionVersion) return true;
+  return reference.metadataExtraction?.version === message.metadataExtractionVersion
+    && (!message.metadataArtifactHash || reference.metadataExtraction.artifactHash === message.metadataArtifactHash);
 }
 
 export function reachabilityFromHttpStatus(status: number | undefined): Reachability {
@@ -109,24 +125,112 @@ export async function persistDestinationAdmission(input: {
   reachability: Reachability;
   inspectedAt: string;
   evidence?: ApplicationPageEvidence;
+  apiAcquisition?: MetadataAcquisition;
+  durationMs?: number;
   browserVisible?: boolean;
+  trustedCommunityCatalogEnabled?: boolean;
+  identityUnconfirmedPublicationEnabled?: boolean;
 }): Promise<{
   destination: ReturnType<typeof classifyDestination>;
   obsolete?: true;
   incident?: { sourceId: string; host: string; reason: string; incidentId: string; messageType: 'incident-opened' | 'quarantine' };
 }> {
   const { jobs, operations, message, job, reference, reachability, inspectedAt, evidence, browserVisible } = input;
+  const occurrence = (await jobs.getSourceOccurrences(message.sourceId)).find((item) => item.externalId === message.externalId);
   const { listing, destination } = await classifyReferenceDestination({ operations, message, job, reference, reachability,
     inspectedAt, ...(evidence ? { evidence } : {}), ...(browserVisible !== undefined ? { browserVisible } : {}) });
+  const trustedCommunityPolicy = activeTrustedCommunityPolicy(message.sourceId, input.trustedCommunityCatalogEnabled ?? false);
+  const trustedCommunityAlertQualification = trustedCommunityPolicy
+    ? advanceTrustedCommunityQualification({
+      previous: occurrence?.occurrence.trustedCommunityAlertQualification
+        ?? reference.trustedCommunityAlertQualification,
+      destination,
+      postingIdentityDecision: reference.postingIdentityDecision,
+      alertMode: trustedCommunityPolicy.alertMode,
+    })
+    : undefined;
   const admission = evaluateCatalogAdmission({
     listing, destination,
     postingAttributed: reference.provenance !== 'reviewed-community'
       || reference.admission?.postingAttribution === 'attributed'
       || (browserVisible === true && ['posting-detail', 'application-form'].includes(destination.classification)),
     evaluatedAt: inspectedAt, previous: reference.admission ?? job.admission,
+    ...(trustedCommunityPolicy && trustedCommunityAlertQualification
+      ? { trustedCommunity: { policy: trustedCommunityPolicy, qualification: trustedCommunityAlertQualification } }
+      : {}),
   });
-  const sourceReferences = job.sourceReferences.map((item) => item === reference ? { ...item, admission } : item);
-  const occurrence = (await jobs.getSourceOccurrences(message.sourceId)).find((item) => item.externalId === message.externalId);
+  const pageComplete = evidence && !evidence.inspectionTruncated && !evidence.failedFrameCount && !evidence.loadingShell
+    && !evidence.metadataArtifacts?.some((artifact) => artifact.inspectionTruncated);
+  const pageExtracted = evidence && ['posting-detail', 'application-form'].includes(destination.classification)
+    ? extractVerifiedPageMetadataEvidence({
+      expectedTitle: reference.title,
+      expectedPostingId: message.providerIdentity.postingId,
+      page: { title: evidence.title ?? reference.title,
+        text: evidence.contentSource === 'json-ld' ? undefined : evidence.contentExcerpt,
+        compensationSections: evidence.compensationSections },
+      jsonLdArtifacts: evidence.metadataArtifacts,
+      sourceId: message.sourceId,
+      sourceUrl: evidence.url,
+      observedAt: inspectedAt,
+      exactPosting: true,
+    }) : [];
+  // Partial snapshots cannot withdraw previously supported fields. Retain
+  // their diagnostic excerpts but wait for complete acquisition before replay.
+  const extracted = pageComplete ? pageExtracted : [];
+  const apiEvidence = input.apiAcquisition?.artifact ? extractPostingMetadataEvidence({
+    artifact: input.apiAcquisition.artifact, sourceClass: 'official-api', sourceId: message.sourceId,
+    sourceUrl: input.apiAcquisition.sourceUrl, observedAt: inspectedAt, exactPosting: true,
+  }) : [];
+  extracted.push(...apiEvidence);
+  const metadataEvidence = pageComplete
+    ? replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, extracted, message.sourceId)
+    : replaceVerifiedPageMetadataEvidence(reference.metadataEvidence, [
+      ...(reference.metadataEvidence ?? []).filter((item) => VERIFIED_PAGE_METADATA_SOURCES.some((source) => source === item.sourceClass)),
+      ...extracted,
+    ], message.sourceId);
+  const enrichedReference = { ...reference, admission,
+    ...(trustedCommunityAlertQualification ? { trustedCommunityAlertQualification } : {}),
+    metadataEvidence,
+    ...(pageComplete || apiEvidence.length ? { metadataExtraction: {
+      version: ROLE_METADATA_EXTRACTION_VERSION,
+      artifactHash: apiEvidence[0]?.artifactHash ?? evidence?.contentHash ?? evidence?.renderedEvidenceHash ?? createHash('sha256').update(JSON.stringify({ url: evidence?.url, title: evidence?.title, description: evidence?.description })).digest('hex'),
+      observedAt: inspectedAt,
+      outcome: extracted.some(roleMetadataEvidenceHasFields) ? 'extracted' as const : 'no-explicit-metadata' as const,
+    } } : {}),
+  };
+  const sourceReferences = job.sourceReferences.map((item) => item === reference ? enrichedReference : item);
+  const projected = projectRoleMetadata({ ...job, sourceReferences, admission: deriveCanonicalAdmission(sourceReferences, inspectedAt) });
+  const complete = Boolean(apiEvidence.length || (pageComplete && ['posting-detail', 'application-form'].includes(destination.classification)));
+  const retryAfter = new Date(Date.parse(inspectedAt) + (complete ? ROLE_METADATA_REVALIDATION_MS : 24 * 60 * 60_000)).toISOString();
+  await operations.recordMetadataAcquisition(job.jobId, message.sourceId, inspectedAt, {
+    provider: message.providerIdentity.provider, postingId: message.providerIdentity.postingId ?? message.externalId,
+    sourceUrl: input.apiAcquisition?.artifact ? input.apiAcquisition.sourceUrl : evidence?.url ?? message.candidateUrl,
+    method: input.apiAcquisition?.artifact ? input.apiAcquisition.method : 'browser',
+    apiOutcome: input.apiAcquisition?.outcome, apiStatus: input.apiAcquisition?.status,
+    durationMs: input.durationMs, apiRouteAttempts: input.apiAcquisition ? 1 : 0, browserEvidenceSnapshots: browserVisible ? 1 : 0,
+    artifactHash: apiEvidence[0]?.artifactHash ?? evidence?.contentHash ?? evidence?.renderedEvidenceHash,
+    extractionVersion: ROLE_METADATA_EXTRACTION_VERSION, observedAt: inspectedAt, complete,
+    inspectionTruncated: Boolean(evidence?.inspectionTruncated), failedFrames: evidence?.failedFrameCount ?? 0,
+    destination: destination.classification, retryAfter,
+    fields: metadataFieldOutcomes({ evidence: complete ? extracted : [], conflicts: projected.conflicts,
+      acquired: Boolean(apiEvidence.length || (evidence && ['posting-detail', 'application-form'].includes(destination.classification))), complete }),
+    excerpts: [...pageExtracted, ...apiEvidence].flatMap((item) => item.compensationRanges?.map((range) => range.sourceText) ?? []).slice(0, 8),
+  }, retryAfter);
+  if ((pageComplete || apiEvidence.length) && enrichedReference.metadataExtraction) await operations.recordRoleMetadataExtraction({
+    jobId: job.jobId, sourceId: message.sourceId, sourceUrl: input.apiAcquisition?.artifact ? input.apiAcquisition.sourceUrl : evidence!.url,
+    artifactHash: enrichedReference.metadataExtraction.artifactHash,
+    extractionVersion: enrichedReference.metadataExtraction.version,
+    outcome: enrichedReference.metadataExtraction.outcome,
+    observedAt: inspectedAt,
+    ...(message.metadataBackfillToken ? { backfillToken: message.metadataBackfillToken } : {}),
+  });
+  if (evidence || apiEvidence.length) await operations.recordRoleMetadataEvidence(job.jobId, extracted, projected.conflicts, inspectedAt, {
+    sourceId: message.sourceId,
+    sourceClasses: [...(pageComplete ? VERIFIED_PAGE_METADATA_SOURCES : []), ...(apiEvidence.length ? ['official-api' as const] : [])],
+  });
+  // Historical collection is deliberately staging-only. The guarded repair
+  // endpoint performs the public job write after exact token/count checks.
+  if (message.metadataBackfillToken) return { destination };
   const canonicalAdmission = deriveCanonicalAdmission(sourceReferences, inspectedAt);
   const authoritativeClosure = destination.classification === 'gone';
   const verifiedOpen = ['posting-detail', 'application-form'].includes(destination.classification)
@@ -134,23 +238,39 @@ export async function persistDestinationAdmission(input: {
   let normalizedCandidate = message.candidateUrl;
   try { normalizedCandidate = normalizeUrl(message.candidateUrl); } catch { /* Preserve the reviewed candidate verbatim if normalization fails. */ }
   const reopeningFromClosure = verifiedOpen && Boolean(job.invalidApplicationUrl);
-  const proposedJob = { ...job, sourceReferences, admission: canonicalAdmission,
-      ...(authoritativeClosure ? {
-        open: false,
-        applicationUrlValidatedAt: undefined,
-        invalidApplicationUrl: normalizedCandidate,
-        notification: { ...job.notification, smsPending: false, digestPending: false },
-      } : reopeningFromClosure ? {
-        open: true,
-        applicationUrlValidatedAt: inspectedAt,
-        invalidApplicationUrl: undefined,
-      } : verifiedOpen ? { applicationUrlValidatedAt: inspectedAt }
-        : canonicalAdmission?.alertEligible ? { applicationUrlValidatedAt: job.applicationUrlValidatedAt }
-          : { applicationUrlValidatedAt: undefined }) };
-  const proposedOccurrence = occurrence
-    ? { ...occurrence, occurrence: { ...occurrence.occurrence, admission }, changedAt: inspectedAt }
-    : undefined;
-  const persisted = await jobs.putAdmissionState(proposedJob, reference, proposedOccurrence, occurrence);
+  const becomingCatalogVisible = !job.catalogVisibleAt && job.admission?.catalogEligible === false && canonicalAdmission?.catalogEligible === true;
+  // Only the trusted policy supplies durable baseline/qualification evidence.
+  // Preserve standard-source behavior when this rollout is inactive.
+  const delayedPromotion = Boolean(trustedCommunityPolicy && trustedCommunityAlertQualification
+    && job.open && job.technical !== false
+    && (job.postingIdentityStatus !== 'unconfirmed' || input.identityUnconfirmedPublicationEnabled === true)
+    && shouldPromoteDelayedNotification({
+      previousOccurrenceAlertEligible: reference.admission?.alertEligible,
+      occurrenceAlertEligible: admission.alertEligible,
+      canonicalAlertEligible: canonicalAdmission?.alertEligible,
+      baselineSuppressed: trustedCommunityAlertQualification?.baselineSuppressed,
+    }));
+  const nextJob: Internship = {
+    ...projected.job,
+    ...(authoritativeClosure ? { open: false, applicationUrlValidatedAt: undefined, invalidApplicationUrl: normalizedCandidate,
+      notification: { ...job.notification, smsPending: false, digestPending: false } }
+      : reopeningFromClosure ? { open: true, applicationUrlValidatedAt: inspectedAt, invalidApplicationUrl: undefined }
+      : verifiedOpen ? { applicationUrlValidatedAt: inspectedAt } : { applicationUrlValidatedAt: undefined }),
+    sourceReferences,
+    ...(canonicalAdmission ? { admission: canonicalAdmission } : {}),
+    ...(becomingCatalogVisible ? { catalogVisibleAt: inspectedAt,
+      catalogRecency: trustedCommunityAlertQualification?.baselineSuppressed ? 'baseline' : 'normal' } : {}),
+    ...(delayedPromotion ? { notification: { ...job.notification, smsPending: true, digestPending: true } } : {}),
+  };
+  const nextOccurrence = occurrence ? {
+    ...occurrence,
+    occurrence: { ...occurrence.occurrence, ...enrichedReference },
+    changedAt: inspectedAt,
+  } : undefined;
+  // Verification updates an existing identity, never re-resolves it. Keep the
+  // generation guard and any delayed notification in the same transaction.
+  const persisted = await jobs.putAdmissionState(nextJob, reference, nextOccurrence, occurrence,
+    delayedPromotion ? newJobNotificationEvent(message.sourceId, message.externalId, nextJob, inspectedAt) : undefined);
   if (!persisted) return { destination, obsolete: true };
 
   const reason = admission.reasonCodes[0];
@@ -256,21 +376,21 @@ export async function processDestinationVerificationBatch(
       if (!job) { queued.ack(); continue; }
       const reference = job.sourceReferences.find((item) => item.sourceId === message.sourceId && item.externalId === message.externalId);
       if (!reference) { queued.ack(); continue; }
-      const candidateOnly = message.reason === 'historical-backfill';
+      const candidateOnly = message.reason === 'historical-backfill' && !message.metadataBackfillToken;
       if (!candidateOnly && !destinationVerificationMatchesReference(reference, message)) {
         await settleWithoutVerification(queued, message, now().toISOString(), 'obsolete');
         continue;
       }
-      const existing = candidateOnly ? undefined : matchingBrowserDestination(job, message, message.queuedAt);
+      const existing = candidateOnly || message.metadataBackfillToken || !metadataExtractionCurrent(reference, message) ? undefined : matchingBrowserDestination(job, message, message.queuedAt);
       if (existing) {
         await settleWithoutVerification(queued, message, now().toISOString(), existing.classification, existing.nextCheckAt);
         continue;
       }
-      const attemptKey = `${candidateOnly ? `backfill:${message.generationId ?? ''}:${message.occurrenceKey ?? ''}` : 'live'}\0${message.jobId}\0${message.sourceId}\0${message.candidateUrl}`;
+      const attemptKey = `${candidateOnly ? `backfill:${message.generationId ?? ''}:${message.occurrenceKey ?? ''}` : message.metadataBackfillToken ? `metadata:${message.metadataBackfillToken}` : 'live'}\0${message.jobId}\0${message.sourceId}\0${message.externalId}\0${message.candidateUrl}`;
       if (pendingAttemptKeys.has(attemptKey)) {
         queued.ack(); continue;
       }
-      if (!candidateOnly
+      if (!candidateOnly && !message.metadataBackfillToken && metadataExtractionCurrent(reference, message)
         && await operations.hasVerificationAttemptSince(message.jobId, message.sourceId, message.candidateUrl, recentAttemptCutoff)) {
         await settleWithoutVerification(queued, message, now().toISOString(),
           reference.admission?.destination.classification ?? 'recent-attempt', nextAttemptAfterRecentDuplicate);
@@ -283,9 +403,12 @@ export async function processDestinationVerificationBatch(
     }
   }
   if (!pending.length) return;
+  const acquireMetadata = createMetadataAcquirer(fetch, {
+    canRequest: (host) => operations.metadataHostAvailable(host),
+    deferHost: (host, until) => operations.deferMetadataHost(host, until),
+  });
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
   try {
-    browser = await puppeteer.launch(env.DESTINATION_BROWSER);
     for (const { queued, message } of pending) {
       const attemptedAt = now().toISOString();
       try {
@@ -297,34 +420,64 @@ export async function processDestinationVerificationBatch(
         if (!job) { queued.ack(); continue; }
         const reference = job.sourceReferences.find((item) => item.sourceId === message.sourceId && item.externalId === message.externalId);
         if (!reference) { queued.ack(); continue; }
-        const candidateOnly = message.reason === 'historical-backfill';
+        const candidateOnly = message.reason === 'historical-backfill' && !message.metadataBackfillToken;
         if (!candidateOnly && !destinationVerificationMatchesReference(reference, message)) {
           await settleWithoutVerification(queued, message, attemptedAt, 'obsolete');
           continue;
         }
-        const existing = candidateOnly ? undefined : matchingBrowserDestination(job, message, message.queuedAt);
+        const existing = candidateOnly || message.metadataBackfillToken || !metadataExtractionCurrent(reference, message) ? undefined : matchingBrowserDestination(job, message, message.queuedAt);
         if (existing) {
           await settleWithoutVerification(queued, message, attemptedAt, existing.classification, existing.nextCheckAt);
           continue;
         }
+        let apiAcquisition = candidateOnly ? undefined : await acquireMetadata(message.providerIdentity, message.candidateUrl);
+        // Historical collection cannot change admission, URL or notifications.
+        // An identity-checked full API artifact needs no browser for that task.
+        if (message.metadataBackfillToken && apiAcquisition?.artifact) {
+          await persistDestinationAdmission({ jobs, operations, message, job, reference,
+            reachability: 'live', inspectedAt: now().toISOString(), apiAcquisition, durationMs: now().getTime() - Date.parse(attemptedAt) });
+          queued.ack(); continue;
+        }
+        browser ??= await puppeteer.launch(env.DESTINATION_BROWSER);
         const page = await browser.newPage();
         let reachability: Reachability = 'live';
         let evidence: ApplicationPageEvidence | undefined;
         let collisionJobIds: string[] = [];
         let browserError: unknown;
         try {
-          const response = await page.goto(message.candidateUrl, { waitUntil: 'networkidle0', timeout: 20_000 });
+          let response = await page.goto(message.candidateUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 });
           reachability = reachabilityFromHttpStatus(response?.status());
           if (reachability === 'live') {
+            const readyFrames = new Set<ReturnType<typeof page.frames>[number]>();
+            // Analytics need not settle before the client-side description is ready.
+            const awaitDescription = async () => {
+              await Promise.all(page.frames().slice(0, 8).map(async (frame) => {
+                try {
+                  const ready = await frame.waitForFunction(renderedDescriptionReady, { timeout: 6_000, polling: 250 }, reference.title);
+                  readyFrames.add(frame); await ready.dispose();
+                } catch { /* A shell is reported explicitly below, never a negative disclosure. */ }
+              }));
+            };
+            await awaitDescription();
+            const recovery = exactPostingRecoveryUrl(page.url(), message.providerIdentity.postingId,
+              await page.evaluate(() => [...document.querySelectorAll<HTMLAnchorElement>('a[href]')].slice(0, 1000).map((link) => link.href)));
+            if (recovery) {
+              readyFrames.clear();
+              response = await page.goto(recovery, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+              reachability = reachabilityFromHttpStatus(response?.status());
+              if (reachability === 'live') await awaitDescription();
+            }
             const renderedFrames: RenderedFrameSnapshot[] = [];
-            let failedFrameCount = 0;
-            for (const frame of page.frames()) {
+            const frames = page.frames();
+            let failedFrameCount = Math.max(0, frames.length - 16);
+            for (const frame of frames.slice(0, 16)) {
               try {
                 const snapshot = await frame.evaluate((requestedPostingId) => {
                   const visible = (element: Element) => element.getClientRects().length > 0;
                   const structuredPostings: Record<string, unknown>[] = [];
                   let jobPostingCount = 0;
-                  for (const node of document.querySelectorAll('script[type="application/ld+json"]')) {
+                  const structuredNodes = [...document.querySelectorAll('script[type="application/ld+json"]')];
+                  for (const node of structuredNodes.slice(0, 20)) {
                     const text = node.textContent ?? '';
                     const matches = text.match(/["']@type["']\s*:\s*["']JobPosting["']/gi) ?? [];
                     jobPostingCount += matches.length;
@@ -360,7 +513,6 @@ export async function processDestinationVerificationBatch(
                     } catch { return false; }
                   });
                   const description = document.querySelector('meta[name="description"],meta[property="og:description"]')?.getAttribute('content') ?? undefined;
-                  const main = (document.querySelector('main')?.innerText ?? document.body?.innerText ?? '').replace(/\s+/g, ' ').trim().slice(0, 12_000);
                   const escapedPostingId = requestedPostingId?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                   const matching = escapedPostingId ? structuredPostings.filter((record) => new RegExp(
                     `(?:^|[^a-z0-9])${escapedPostingId}(?:$|[^a-z0-9])`, 'i',
@@ -374,18 +526,30 @@ export async function processDestinationVerificationBatch(
                   const selectedValidThrough = typeof selectedPosting?.validThrough === 'string'
                     && !Number.isNaN(Date.parse(selectedPosting.validThrough))
                     ? new Date(selectedPosting.validThrough).toISOString() : undefined;
+                  const compensationRows = [...document.querySelectorAll<HTMLElement>('h2,h3')]
+                    .filter((heading) => visible(heading) && /^(?:compensation|salary|pay range)$/iu.test(heading.innerText.trim()))
+                    .flatMap((heading) => [...(heading.nextElementSibling?.matches('ul,ol') ? heading.nextElementSibling.children : [])])
+                    .filter(visible).map((row) => (row as HTMLElement).innerText.trim());
+                  const fullText = (document.querySelector('main')?.innerText ?? document.body?.innerText ?? '').split(/[\r\n]+/)
+                    .map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n');
+                  const main = fullText.slice(0, 40_000);
                   return {
                     url: location.href, title: document.title || undefined, description,
-                    visibleText: main || undefined,
-                    structuredJobText: selectedPosting ? JSON.stringify(selectedPosting).slice(0, 40_000) : undefined,
+                    visibleText: main || undefined, structuredJobText: selectedPosting ? JSON.stringify(selectedPosting).slice(0, 40_000) : undefined,
                     validThrough: selectedValidThrough,
+                    structuredJobDocuments: structuredNodes.slice(0, 20).map((node) => (node.textContent ?? '').slice(0, 20_000)),
+                    compensationRows: compensationRows.slice(0, 20).map((row) => row.slice(0, 1000)),
+                    inspectionTruncated: fullText.length > 40_000 || structuredNodes.length > 20 || structuredNodes.some((node) => (node.textContent?.length ?? 0) > 20_000)
+                      || compensationRows.length > 20 || compensationRows.some((row) => row.length > 1000),
+                    loadingShell: fullText.length < 500 || /^(?:loading[.…\s]*)$/i.test(fullText),
                     jobPostingCount, distinctJobLinkCount: distinctJobLinks.size,
                     applicationFormPresent: actionableApply || [...document.querySelectorAll<Element>(
                       'form[action*="apply" i],form[id*="apply" i],input[type="file"],input[name="resume" i],input[name="cv" i]',
                     )].some(visible),
                   };
                 }, message.providerIdentity.postingId);
-                renderedFrames.push({ ...snapshot, ...(frame.parentFrame() ? { parentUrl: frame.parentFrame()!.url() } : {}) });
+                renderedFrames.push({ ...snapshot, loadingShell: snapshot.loadingShell || !readyFrames.has(frame),
+                  ...(frame.parentFrame() ? { parentUrl: frame.parentFrame()!.url() } : {}) });
               } catch {
                 failedFrameCount += 1;
               }
@@ -405,6 +569,15 @@ export async function processDestinationVerificationBatch(
         } finally {
           await page.close();
         }
+        // An employer-hosted page may reveal its Greenhouse board only in a
+        // rendered embed. Historical collection gets one fixed-host API attempt
+        // using that observed URL; the route still requires the known posting
+        // ID and rejects conflicting tenants/duplicate identity parameters.
+        if (message.metadataBackfillToken && !apiAcquisition && reachability === 'live'
+          && evidence && !evidence.identicalEvidenceForDifferentPosting
+          && metadataApiRoute(message.providerIdentity, evidence.url)?.method === 'greenhouse-api') {
+          apiAcquisition = await acquireMetadata(message.providerIdentity, evidence.url);
+        }
         const inspectedAt = now().toISOString();
         let currentJob = job;
         let currentReference = reference;
@@ -419,7 +592,7 @@ export async function processDestinationVerificationBatch(
           currentJob = refreshedJob;
           currentReference = refreshedReference;
         }
-        for (const collisionJobId of message.reason === 'historical-backfill' ? [] : collisionJobIds) {
+        for (const collisionJobId of (candidateOnly || message.metadataBackfillToken) ? [] : collisionJobIds) {
           const collisionJob = await jobs.getJob(collisionJobId);
           const collisionReference = collisionJob?.sourceReferences.find((item) => item.externalId
             && item.admission?.destination.renderedEvidenceHash === evidence?.renderedEvidenceHash);
@@ -428,11 +601,14 @@ export async function processDestinationVerificationBatch(
           const collisionMessage: DestinationVerificationMessage = {
             version: 1, jobId: collisionJob.jobId, sourceId: collisionReference.sourceId,
             externalId: collisionReference.externalId, candidateUrl: prior.candidateUrl, reason: 'weekly-sample', queuedAt: attemptedAt,
+            metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
             providerIdentity: { provider: prior.provider, sourceId: collisionReference.sourceId, sourceUrl: collisionReference.sourceUrl,
               ...(prior.tenant ? { tenant: prior.tenant } : {}), postingId: prior.expectedPostingId },
           };
           const collisionResult = await persistDestinationAdmission({ jobs, operations, message: collisionMessage,
             job: collisionJob, reference: collisionReference, reachability: 'live', inspectedAt, browserVisible: true,
+            trustedCommunityCatalogEnabled: env.TRUSTED_COMMUNITY_CATALOG_ENABLED === 'true',
+            identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
             evidence: { url: prior.finalUrl ?? prior.candidateUrl, expectedPostingId: prior.expectedPostingId,
               renderedEvidenceHash: prior.renderedEvidenceHash, identicalEvidenceForDifferentPosting: true,
               confidence: { score: 0, level: 'low', recommendation: 'review', signals: ['identical rendered evidence for different posting IDs'] } } });
@@ -442,6 +618,9 @@ export async function processDestinationVerificationBatch(
           ? await classifyReferenceDestination({ operations, message, job: currentJob, reference: currentReference, reachability, inspectedAt,
             ...(evidence ? { evidence, browserVisible: true } : {}) })
           : await persistDestinationAdmission({ jobs, operations, message, job: currentJob, reference: currentReference, reachability, inspectedAt,
+            apiAcquisition, durationMs: Date.parse(inspectedAt) - Date.parse(attemptedAt),
+            trustedCommunityCatalogEnabled: env.TRUSTED_COMMUNITY_CATALOG_ENABLED === 'true',
+            identityUnconfirmedPublicationEnabled: env.IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED === 'true',
             ...(evidence ? { evidence, browserVisible: true } : {}) });
         if ('obsolete' in result && result.obsolete) {
           await settleWithoutVerification(queued, message, inspectedAt, 'obsolete');
@@ -535,6 +714,7 @@ export async function enqueueDueDestinationVerifications(
         providerIdentity: { provider: rule.provider, sourceId: candidate.sourceId, sourceUrl: candidate.sourceUrl,
           ...(rule.tenant ? { tenant: rule.tenant } : {}), ...(candidate.expectedPostingId ? { postingId: candidate.expectedPostingId } : {}) },
         candidateUrl: candidate.candidateUrl, reason: 'weekly-sample',
+        metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
       }, now.toISOString()));
       queued += 1;
     }
@@ -547,9 +727,24 @@ export async function enqueueDueDestinationVerifications(
     await env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage({
       jobId: candidate.jobId, sourceId: candidate.sourceId, externalId: candidate.externalId,
       providerIdentity: candidate.providerIdentity, candidateUrl: candidate.candidateUrl, reason: 'daily-retry',
+      metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
       occurrenceKey: candidate.occurrenceKey, leaseToken: candidate.leaseToken, idempotencyKey,
     }, scheduledAt));
     await operations.markVerificationEnqueued(candidate.occurrenceKey, candidate.leaseToken, scheduledAt);
+    queued += 1;
+  }
+  const metadataObservedBefore = new Date(now.getTime() - ROLE_METADATA_REVALIDATION_MS).toISOString();
+  for (const candidate of await operations.metadataVerificationCandidates(100, {
+    observedBefore: metadataObservedBefore,
+    includeUnobserved: true,
+    reserveAt: now.toISOString(),
+  })) {
+    await env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage({
+      jobId: candidate.jobId, sourceId: candidate.sourceId, externalId: candidate.externalId,
+      providerIdentity: candidate.providerIdentity, candidateUrl: candidate.candidateUrl, reason: 'content-change',
+      metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+      ...(candidate.metadataArtifactHash ? { metadataArtifactHash: candidate.metadataArtifactHash } : {}),
+    }, now.toISOString()));
     queued += 1;
   }
   return queued;

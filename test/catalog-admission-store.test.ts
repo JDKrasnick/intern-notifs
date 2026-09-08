@@ -1,10 +1,13 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import { persistDestinationAdmission, reachabilityFromHttpStatus, type DestinationVerificationMessage } from '../cloudflare/destination-verification.js';
-import { matchingBrowserDestination } from '../src/destination-verification.js';
+import { evaluateCatalogAdmission } from '../src/catalog-admission.js';
+import { classifyDestination, matchingBrowserDestination } from '../src/destination-verification.js';
+import { processPosting } from '../src/ingestion/processor.js';
+import { newJobNotificationEvent } from '../src/ingestion/catalog-reconciler.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 import type { CatalogAdmission, Internship } from '../src/types.js';
 
@@ -50,7 +53,8 @@ function subject() {
   const database = new DatabaseSync(':memory:');
   for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0008_catalog_admission_occurrence_repair.sql',
     '0010_posting_identity.sql',
-    '0012_destination_verification_schedule.sql']) {
+    '0012_destination_verification_schedule.sql',
+    '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql', '0017_metadata_acquisition.sql', '0018_metadata_review.sql', '0019_metadata_job_review_revision.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   const db = sqliteD1(database);
@@ -58,6 +62,66 @@ function subject() {
 }
 
 describe('D1 catalog admission operations', () => {
+  afterEach(() => vi.useRealTimers());
+  it('forwards verified-page replacement through the internship store adapter', async () => {
+    const { database, jobs } = subject();
+    const evidence = (sourceClass: 'official-json-ld' | 'official-page', artifactHash: string) => ({
+      schemaVersion: 1 as const,
+      extractionVersion: 1,
+      artifactHash,
+      sourceClass,
+      sourceId: 'community-list',
+      sourceUrl: 'https://careers.acme.test/role-1',
+      observedAt: '2026-09-04T00:00:00Z',
+      exactPosting: true as const,
+    });
+    await jobs.recordRoleMetadataEvidence('job-1', [evidence('official-json-ld', 'old-json-ld')], [], '2026-09-04T00:00:00Z');
+
+    await jobs.recordRoleMetadataEvidence('job-1', [evidence('official-page', 'current-page')], [], '2026-09-05T00:00:00Z', {
+      sourceId: 'community-list',
+      sourceClasses: ['official-json-ld', 'official-page'],
+    });
+
+    expect(database.prepare('SELECT source_class, artifact_hash FROM role_metadata_evidence WHERE is_current = 1').all())
+      .toEqual([{ source_class: 'official-page', artifact_hash: 'current-page' }]);
+  });
+
+  it.each([
+    ['Tesla', 'tesla', 'tesla', 'https://www.tesla.com/careers/search/job/software-engineer-intern-275558'],
+    ['Meta', 'meta', 'meta', 'https://www.metacareers.com/jobs/1027438186737957'],
+    ['Jane Street', 'janestreet', 'jane-street', 'https://www.janestreet.com/join-jane-street/position/8599644002'],
+    ['Goldman Sachs', 'goldman-sachs', 'goldman-sachs', 'https://higher.gs.com/roles/171567'],
+    ['IMC', 'imc', 'imc', 'https://www.imc.com/us/careers/jobs/4823924101'],
+  ] as const)('admits a new reviewed-community %s role through its official provider mapping', async (
+    company, provider, canonicalEmployerId, applyUrl,
+  ) => {
+    const current = subject();
+    const migration = readFileSync(new URL('../cloudflare/migrations/0012_official_career_provider_identity.sql', import.meta.url), 'utf8');
+    current.database.exec(migration);
+    current.database.exec(migration);
+    const listing = processPosting({
+      sourceId: 'community-list', provenance: 'reviewed-community', externalId: `${provider}-role`,
+      sourceUrl: 'https://github.com/example/jobs', fetchedAt: '2026-09-01T12:00:00Z',
+      employer: { name: company, authority: 'source-row' }, title: 'Software Engineering Intern',
+      content: [{ kind: 'description', format: 'plain', value: 'Build production software.' }],
+      locations: ['New York, NY'], applyUrl, sourceState: 'open', lifecycleAuthority: 'source',
+    }).listing!;
+    expect(listing.providerIdentity).toMatchObject({ provider, tenant: provider });
+    const canonicalEmployer = await current.admission.resolveCanonicalEmployer(listing.providerIdentity!);
+    expect(canonicalEmployer).toEqual({ id: canonicalEmployerId, displayName: company });
+    const reviewed = {
+      ...listing,
+      employerEvidence: { authority: 'reviewed-registry' as const, canonicalEmployer: canonicalEmployer! },
+    };
+    const destination = classifyDestination({
+      listing: reviewed, reachability: 'implied', inspectedAt: '2026-09-01T12:00:00Z',
+    });
+    expect(destination.classification).toBe('posting-detail');
+    expect(evaluateCatalogAdmission({
+      listing: reviewed, destination, postingAttributed: true, evaluatedAt: '2026-09-01T12:00:00Z',
+    })).toMatchObject({ employerResolution: 'resolved', catalogEligible: true, alertEligible: true, reasonCodes: [] });
+  });
+
   it('requires explicit mapping supersession', async () => {
     const { admission: store } = subject();
     await store.putCanonicalEmployer({ id: 'acme', displayName: 'Acme', reviewedAt: '2026-08-26T00:00:00Z', reviewedBy: 'reviewer' }, '2026-08-26T00:00:00Z');
@@ -263,7 +327,7 @@ describe('D1 catalog admission operations', () => {
   });
 
   it('atomically rejects an admission write after its exact occurrence generation drifts', async () => {
-    const { jobs } = subject();
+    const { jobs, database } = subject();
     const current = job();
     const expectedReference = { sourceId: 'greenhouse-acme', provenance: 'official-ats' as const, externalId: '7654321',
       document: '7654321', sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs', row: 1,
@@ -278,10 +342,30 @@ describe('D1 catalog admission operations', () => {
 
     const proposedAdmission = admission(true);
     const persisted = await jobs.putAdmissionState({ ...expected, admission: proposedAdmission,
-      sourceReferences: [{ ...expectedReference, admission: proposedAdmission }] }, expectedReference);
+      sourceReferences: [{ ...expectedReference, admission: proposedAdmission }] }, expectedReference, undefined, undefined,
+      newJobNotificationEvent(expectedReference.sourceId, expectedReference.externalId, expected, '2026-08-26T12:00:00Z'));
     expect(persisted).toBe(false);
+    expect(database.prepare("SELECT count(*) AS count FROM catalog_items WHERE kind = 'notification-event'").get()).toEqual({ count: 0 });
     expect(await jobs.getJob(current.jobId)).toMatchObject({ title: changedReference.title, applyUrl: changedReference.applyUrl,
       sourceReferences: [{ title: changedReference.title, applyUrl: changedReference.applyUrl }] });
+  });
+
+  it('commits a delayed notification with an exact admission write and deduplicates retries', async () => {
+    const { jobs, database } = subject();
+    const current = job();
+    const reference = { sourceId: 'greenhouse-acme', provenance: 'official-ats' as const, externalId: '7654321',
+      document: '7654321', sourceUrl: current.applyUrl, row: 1, company: current.company,
+      title: current.title, location: current.location, season: current.season,
+      applyUrl: current.applyUrl, compensation: current.compensation, state: 'open' as const };
+    const expected = { ...current, sourceReferences: [reference] };
+    await jobs.putInternship(expected);
+    const proposedAdmission = admission(true);
+    const next = { ...expected, admission: proposedAdmission,
+      sourceReferences: [{ ...reference, admission: proposedAdmission }] };
+    const event = newJobNotificationEvent(reference.sourceId, reference.externalId, next, '2026-08-26T12:00:00Z');
+    expect(await jobs.putAdmissionState(next, reference, undefined, undefined, event)).toBe(true);
+    expect(await jobs.putAdmissionState(next, reference, undefined, undefined, event)).toBe(false);
+    expect(database.prepare("SELECT count(*) AS count FROM catalog_items WHERE kind = 'notification-event'").get()).toEqual({ count: 1 });
   });
 
   it('resolves tenant-specific review rules ahead of host-wide rules', async () => {
@@ -450,6 +534,72 @@ describe('D1 catalog admission operations', () => {
       } });
     expect(await jobs.getJob(current.jobId)).toMatchObject({ admission: { postingAttribution: 'attributed',
       catalogEligible: true, alertEligible: true }, sourceReferences: [{ admission: { postingAttribution: 'attributed' } }] });
+    expect(await jobs.getJob(current.jobId)).toMatchObject({ catalogVisibleAt: current.catalogVisibleAt,
+      notification: { smsPending: false, digestPending: false } });
+  });
+
+  it('retires JSON-LD metadata that disappears from a refreshed exact page', async () => {
+    const { admission: operations, jobs, database } = subject();
+    await operations.putCanonicalEmployer({ id: 'acme', displayName: 'Acme', reviewedAt: '2026-08-28T00:00:00Z',
+      reviewedBy: 'reviewer' }, '2026-08-28T00:00:00Z');
+    await operations.supersedeEmployerMapping({ id: 'community-acme', provider: 'greenhouse', scope: 'employer:acme',
+      canonicalEmployerId: 'acme', reviewedAt: '2026-08-28T00:00:00Z', reviewedBy: 'reviewer' });
+    const reference = {
+      sourceId: 'community-list', provenance: 'reviewed-community' as const, externalId: 'row-1', document: 'README.md',
+      sourceUrl: 'https://github.com/example/jobs', row: 1, company: 'Acme', title: 'Software Engineering Intern',
+      location: 'Remote', locations: ['Remote'], season: 'summer-2027',
+      applyUrl: 'https://careers.acme.test/openings?gh_jid=1234567', compensation: { raw: '' }, state: 'open' as const,
+    };
+    const current = { ...job(), sourceReferences: [reference] };
+    await jobs.putInternship(current);
+    await jobs.putSourceOccurrence({ sourceId: reference.sourceId, externalId: reference.externalId, jobId: current.jobId,
+      occurrence: reference, present: true, consecutiveOmissions: 0, changedSnapshotHash: 'snapshot',
+      changedAt: '2026-08-28T00:00:00Z', firstObservedAt: '2026-08-28T00:00:00Z', firstObservedAtPrecision: 'exact' });
+    const message: DestinationVerificationMessage = { version: 1, jobId: current.jobId, sourceId: reference.sourceId,
+      externalId: reference.externalId, providerIdentity: { provider: 'greenhouse', sourceId: reference.sourceId,
+        sourceUrl: reference.sourceUrl, employerScope: 'employer:acme', postingId: '1234567' },
+      candidateUrl: reference.applyUrl, reason: 'first-sight', queuedAt: '2026-08-28T00:00:00Z', metadataExtractionVersion: 1 };
+    const pageEvidence = {
+      url: reference.applyUrl, title: reference.title, contentExcerpt: `${reference.title} ${'Role details. '.repeat(30)}`,
+      postingIdPresent: true, applicationFormPresent: true,
+      confidence: { score: 100, level: 'high' as const, recommendation: 'alert-eligible' as const, signals: ['browser-visible evidence'] },
+    };
+    await persistDestinationAdmission({ jobs, operations, message, job: current, reference, reachability: 'live',
+      inspectedAt: '2026-08-28T00:00:30Z', browserVisible: true, evidence: { ...pageEvidence,
+        contentSource: 'json-ld', contentExcerpt: `${reference.title}. Salary is USD $99/hour.`,
+        metadataArtifacts: [{ title: reference.title, identifier: '9999999', compensationText: 'USD $99/hour' }] } });
+    expect((await jobs.getJob(current.jobId))?.compensation).toEqual({ raw: '' });
+    expect(database.prepare('SELECT count(*) AS count FROM role_metadata_evidence WHERE evidence LIKE ?')
+      .get('%compensationRanges%')).toEqual({ count: 0 });
+    const beforeEnrichment = (await jobs.getJob(current.jobId))!;
+    await persistDestinationAdmission({ jobs, operations, message, job: beforeEnrichment, reference: beforeEnrichment.sourceReferences[0]!, reachability: 'live',
+      inspectedAt: '2026-08-28T00:01:00Z', browserVisible: true, evidence: { ...pageEvidence,
+        metadataArtifacts: [{ title: reference.title, identifier: '1234567', compensationText: 'USD $40-$50/hour' }] } });
+    const enriched = (await jobs.getJob(current.jobId))!;
+    expect(enriched.compensation).toMatchObject({ minHourlyUSD: 40, maxHourlyUSD: 50 });
+
+    const enrichedReference = enriched.sourceReferences[0]!;
+    await persistDestinationAdmission({ jobs, operations, message: { ...message, metadataBackfillToken: 'partial-collection' },
+      job: enriched, reference: enrichedReference, reachability: 'live',
+      inspectedAt: '2026-08-28T12:00:00Z', browserVisible: true,
+      evidence: { ...pageEvidence, inspectionTruncated: true } });
+    expect(database.prepare("SELECT count(*) AS count FROM role_metadata_evidence WHERE source_class = 'official-json-ld' AND is_current = 1").get())
+      .toEqual({ count: 1 });
+    expect((await operations.stageRoleMetadataRepair('2026-08-28T12:01:00Z')).expectedJobs).toBe(0);
+    await persistDestinationAdmission({ jobs, operations, message: { ...message, metadataBackfillToken: 'collection-1' },
+      job: enriched, reference: enrichedReference, reachability: 'live',
+      inspectedAt: '2026-08-29T00:01:00Z', browserVisible: true, evidence: pageEvidence });
+
+    expect((await jobs.getJob(current.jobId))?.compensation).toMatchObject({ minHourlyUSD: 40, maxHourlyUSD: 50 });
+    expect(database.prepare("SELECT count(*) AS count FROM role_metadata_evidence WHERE source_class = 'official-json-ld' AND is_current = 1").get())
+      .toEqual({ count: 0 });
+    const plan = await operations.stageRoleMetadataRepair('2026-08-29T00:02:00Z');
+    expect(plan.expectedJobs).toBe(1);
+    await operations.applyRoleMetadataRepair(plan.repairToken, plan.expectedJobs, plan.expectedOccurrences, '2026-08-29T00:03:00Z');
+    const refreshed = (await jobs.getJob(current.jobId))!;
+    expect(refreshed.compensation).toEqual({ raw: '' });
+    expect(refreshed.sourceReferences[0]?.metadataEvidence?.some((item) => item.sourceClass === 'official-json-ld')).toBe(false);
+    expect((await operations.roleMetadataAudit()).projectionOnlyOmissions).toEqual([]);
   });
 
   it('detects identical rendered artifacts observed for different posting IDs', async () => {
@@ -481,6 +631,8 @@ describe('D1 catalog admission operations', () => {
   });
 
   it('applies an exact staged repair silently and rolls back on a changed source row', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-26T12:00:00Z'));
     const { database, admission: store, jobs } = subject();
     await jobs.putInternship(job());
     const preview = await store.stageRepair([{ jobId: 'job-1', admission: admission(true), company: 'Acme, Inc.' }], '2026-08-26T12:00:00Z');

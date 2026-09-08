@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { boundedCatalogText, compactLocations, presentCatalogRole, seasonLabel } from "../src/catalog-quality.js";
 
 describe("catalog presentation hardening", () => {
+  it("uses explicit currency, period and applicability on every role surface", () => {
+    const role = { compensation: { raw: "legacy", ranges: [
+      { minAmount: 2000, maxAmount: 4000, currency: "JPY", period: "hourly", applicableLocations: ["Tokyo"] },
+      { minAmount: 123500, maxAmount: 170000, currency: "USD", period: "unknown", applicableLocations: ["New York"] },
+      { minAmount: 3500, maxAmount: 5700, currency: "USD", period: "weekly" },
+    ] } };
+    expect(presentCatalogRole(role).compensation).toBe("JPY 2,000–4,000/hour (Tokyo) · USD 123,500–170,000 · period not stated (New York) · USD 3,500–5,700/week");
+    expect(presentCatalogRole({ compensation: { raw: "" } }).compensation).toBe("");
+  });
   it("bounds legacy API and cache values without splitting emoji", () => {
     const value = `👩🏽‍💻 ${"engineer ".repeat(80)}`;
     expect([...boundedCatalogText(value, 40)].length).toBeLessThanOrEqual(40);
@@ -20,5 +29,15 @@ describe("catalog presentation hardening", () => {
     expect([...role.compensation].length).toBeLessThanOrEqual(160);
     expect(role.season).toBe("Season not specified");
     expect(seasonLabel("")).toBe("Season not specified");
+  });
+
+  it("removes stale unknown-currency copy from raw compensation", () => {
+    const role = presentCatalogRole({ compensation: { raw: "Currency not stated 54/hour" } });
+    expect(role.compensation).toBe("54/hour");
+  });
+
+  it("formats structured compensation with explicit and source currencies", () => {
+    expect(presentCatalogRole({ compensation: { ranges: [{ minAmount: 40, maxAmount: 50, currency: "USD", period: "hourly", sourceText: "$40-$50/hour" }] } }).compensation).toBe("USD 40–50/hour");
+    expect(presentCatalogRole({ compensation: { ranges: [{ minAmount: 20, maxAmount: 20, currency: "XXX", period: "hourly", sourceText: "£20/hour" }] } }).compensation).toBe("£20/hour");
   });
 });

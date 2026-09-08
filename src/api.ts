@@ -41,6 +41,7 @@ function catalogFilter(parameters: Record<string, string> | undefined): CatalogG
     ...(list('employerCategory', 'employerCategories')?.length ? { employerCategories: list('employerCategory', 'employerCategories') as CatalogGroupFilter['employerCategories'] } : {}),
     ...(parameters?.hideUsCitizenshipRequired === 'true' ? { hideUsCitizenshipRequired: true } : {}),
     ...(parameters?.hideAdvancedDegreeRequired === 'true' ? { hideAdvancedDegreeRequired: true } : {}),
+    ...(parameters?.hasCompensation === 'true' ? { hasCompensation: true } : {}),
     ...(list('discipline', 'disciplines')?.length ? { disciplines: list('discipline', 'disciplines') } : {}),
     ...(list('season', 'seasons')?.length ? { seasons: list('season', 'seasons') } : {}),
     ...(list('education', 'educationLevel', 'educationLevels')?.length ? { educationLevels: list('education', 'educationLevel', 'educationLevels') } : {}),
@@ -580,6 +581,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
       }
       const appMatch = path.match(/^\/me\/applications\/([^/]+)$/);
       if (method === 'PATCH' && appMatch) { const current = await dependencies.users.getApplication(userId, decodeURIComponent(appMatch[1])); if (!current) return reply(404, { message: 'Application not found' }); const body = parseBody(event); if (body.status !== undefined && !statuses.includes(body.status as ApplicationStatus)) return reply(400, { message: `status must be one of ${statuses.join(', ')}` }); const timestamp = now(); const updated: ApplicationRecord = { ...current, ...(body.status ? { status: body.status as ApplicationStatus } : {}), ...(!current.appliedAt && body.status === 'applied' ? { appliedAt: timestamp } : {}), ...(typeof body.notes === 'string' ? { notes: body.notes.slice(0, 5000) } : {}), updatedAt: timestamp }; await dependencies.users.putApplication(userId, updated); return reply(200, updated); }
+      if (method === 'DELETE' && appMatch) { const current = await dependencies.users.getApplication(userId, decodeURIComponent(appMatch[1]!)); if (!current) return reply(404, { message: 'Application not found' }); await dependencies.users.deleteApplication(userId, current.applicationId); return reply(204, {}); }
       const applicationSessionMatch = path.match(/^\/me\/applications\/([^/]+)\/assistance-sessions$/);
       if (method === 'POST' && applicationSessionMatch) {
         const application = await dependencies.users.getApplication(userId, decodeURIComponent(applicationSessionMatch[1]));

@@ -48,7 +48,7 @@ function sqliteD1(database: DatabaseSync, metrics?: QueryMetrics): D1Database {
 
 function database() {
   const value = new DatabaseSync(':memory:');
-  for (const name of ['0001_initial.sql', '0002_cost_guards.sql', '0003_billing_shutdown.sql', '0004_auth_rate_limits.sql', '0005_auth_consent.sql', '0006_employer_channel.sql', '0007_catalog_admission.sql']) {
+  for (const name of ['0001_initial.sql', '0002_cost_guards.sql', '0003_billing_shutdown.sql', '0004_auth_rate_limits.sql', '0005_auth_consent.sql', '0006_employer_channel.sql', '0007_catalog_admission.sql', '0013_posting_presentation_reviews.sql']) {
     value.exec(readFileSync(new URL(`../cloudflare/migrations/${name}`, import.meta.url), 'utf8'));
   }
   return value;
@@ -290,6 +290,125 @@ describe('D1 posting identity repair', () => {
       applyUrl: 'https://job-boards.greenhouse.io/drweng/jobs/3413670',
       sourceReferences: expect.arrayContaining([expect.objectContaining({ sourceId: 'greenhouse-drweng' })]),
     });
+  });
+
+  it('uses an immutable official-page review to resolve an exact provider collision', async () => {
+    const sqlite = database(); const db = sqliteD1(sqlite); const store = new D1InternshipStore(db);
+    const url = 'https://www.metacareers.com/jobs/1027438186737957';
+    const older = job('meta-older', url, '2026-08-25T00:00:00.000Z', [
+      { ...occurrence('speedyapply-2027-ai', 'meta-a', url), company: 'Meta',
+        title: 'Research Scientist Intern - AI - Cyber Security', location: 'Menlo Park, CA' },
+    ], { company: 'Meta', title: 'Research Scientist Intern - AI - Cyber Security', location: 'Menlo Park, CA' });
+    const newer = job('meta-newer', `${url}?utm_source=Simplify`, '2026-09-03T00:00:00.000Z', [
+      { ...occurrence('simplify-summer-2026', 'meta-b', `${url}?utm_source=Simplify`), company: '🔥 Meta',
+        title: 'Research Scientist Intern - Multiple Teams', location: 'Menlo Park, CA' },
+    ], { company: '🔥 Meta', title: 'Research Scientist Intern - Multiple Teams', location: 'Menlo Park, CA' });
+    await store.putInternship(older);
+    await store.putInternship(newer);
+
+    const dry = await runPostingIdentityRepair(db, { scope: 'identity' });
+    expect(dry).toMatchObject({
+      duplicateGroups: 1,
+      eligibleDuplicateGroups: 1,
+      unresolvedDuplicateGroups: 0,
+      presentationDisagreements: [],
+      conflicts: [],
+    });
+    await runPostingIdentityRepair(db, {
+      apply: true,
+      repairToken: dry.repairToken,
+      expectedChanges: dry.expectedChanges,
+      expectedDuplicateJobs: dry.duplicateJobs,
+      scope: 'identity',
+    });
+    expect(await store.getJob('meta-older')).toMatchObject({
+      company: 'Meta',
+      title: 'Research Scientist Intern, AI, Cyber Security, Safety — MSL Trust & Safety (PhD)',
+      location: 'Menlo Park, CA',
+      locations: ['Menlo Park, CA'],
+      applyUrl: url,
+      season: 'summer-2027',
+      postingIdentity: { provider: 'meta', tenant: 'meta', providerPostingId: '1027438186737957' },
+    });
+    expect(await store.getJob('meta-newer')).toMatchObject({ jobId: 'meta-older' });
+    sqlite.close();
+  });
+
+  it('uses a confirmed employer-owned provider mapping for reviewed community presentation', async () => {
+    const sqlite = database(); const db = sqliteD1(sqlite); const store = new D1InternshipStore(db);
+    sqlite.prepare(`INSERT INTO canonical_employers
+      (id, display_name, reviewed_at, reviewed_by, created_at, updated_at)
+      VALUES ('goldman-sachs', 'Goldman Sachs', '2026-09-01', 'official-route-review', '2026-09-01', '2026-09-01')`).run();
+    sqlite.prepare(`INSERT INTO employer_mappings
+      (id, provider, scope, canonical_employer_id, reviewed_at, reviewed_by, created_at)
+      VALUES ('goldman-provider', 'goldman-sachs', 'goldman-sachs', 'goldman-sachs',
+        '2026-09-01', 'official-route-review', '2026-09-01')`).run();
+    const url = 'https://higher.gs.com/roles/171567';
+    const older = job('goldman-older', url, '2026-08-25T00:00:00.000Z', [
+      { ...occurrence('canadian-tech-2027', 'goldman-a', url), provenance: 'reviewed-community',
+        company: 'Goldman Sachs', title: 'Summer Analyst, Engineering', location: 'Toronto, ON' },
+    ], {
+      company: 'Goldman Sachs', title: 'Summer Analyst, Engineering', location: 'Toronto, ON',
+      admission: { canonicalEmployer: { id: 'goldman-sachs', displayName: 'Goldman Sachs' } },
+      internshipIdentity: { company: { canonicalId: 'goldman sachs' } },
+    });
+    const newer = job('goldman-newer', `${url}?type=students&utm_source=Simplify`, '2026-09-03T00:00:00.000Z', [
+      { ...occurrence('simplify-summer-2026', 'goldman-b', `${url}?type=students&utm_source=Simplify`),
+        provenance: 'reviewed-community', company: 'Goldman Sachs',
+        title: 'Summer Analyst Intern - Americas - Engineering', location: 'Toronto, ON, Canada' },
+    ], {
+      company: 'Goldman Sachs', title: 'Summer Analyst Intern - Americas - Engineering',
+      location: 'Toronto, ON, Canada', internshipIdentity: { company: { canonicalId: 'goldman sachs' } },
+    });
+    await store.putInternship(older);
+    await store.putInternship(newer);
+
+    const dry = await runPostingIdentityRepair(db, { scope: 'identity' });
+    expect(dry).toMatchObject({
+      duplicateGroups: 1,
+      eligibleDuplicateGroups: 1,
+      unresolvedDuplicateGroups: 0,
+      presentationDisagreements: [],
+      conflicts: [],
+    });
+    await runPostingIdentityRepair(db, {
+      apply: true,
+      repairToken: dry.repairToken,
+      expectedChanges: dry.expectedChanges,
+      expectedDuplicateJobs: dry.duplicateJobs,
+      scope: 'identity',
+    });
+    expect(await store.getJob('goldman-older')).toMatchObject({
+      company: 'Goldman Sachs',
+      title: '2027 | Americas | Toronto | Engineering | Summer Analyst',
+      location: 'Toronto, ON, Canada',
+      locations: ['Toronto, ON, Canada'],
+      applyUrl: url,
+      postingIdentity: { provider: 'goldman-sachs', tenant: 'goldman-sachs', providerPostingId: '171567' },
+    });
+    expect(await store.getJob('goldman-newer')).toMatchObject({ jobId: 'goldman-older' });
+    sqlite.close();
+  });
+
+  it('fails closed when an official-page review evidence hash is invalid', async () => {
+    const sqlite = database(); const db = sqliteD1(sqlite);
+    sqlite.prepare(`INSERT INTO posting_identity_presentation_reviews
+      (id, provider, tenant, posting_id, company, title, location, locations_json,
+       apply_url, evidence_url, evidence_hash, reviewed_at, reviewed_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      'tampered-tesla', 'tesla', 'tesla', '275558', 'Tesla', 'Tampered title', 'Palo Alto, CA',
+      '["Palo Alto, CA"]', 'https://www.tesla.com/careers/search/job/software-engineer-275558',
+      'https://www.tesla.com/careers/search/job/software-engineer-275558', '0'.repeat(64),
+      '2026-09-04T15:40:00Z', 'test-reviewer',
+    );
+
+    const dry = await runPostingIdentityRepair(db, { scope: 'identity' });
+    expect(dry.conflicts).toEqual(['tampered-tesla: reviewed presentation evidence hash does not match']);
+    await expect(runPostingIdentityRepair(db, {
+      apply: true, repairToken: dry.repairToken, expectedChanges: dry.expectedChanges,
+      expectedDuplicateJobs: dry.duplicateJobs, scope: 'identity',
+    })).rejects.toThrow('posting identity conflicts remain');
+    sqlite.close();
   });
 
   it('reconciles Aquatic, Jump, and Squarepoint spellings through the same reviewed employer decision', async () => {
@@ -554,6 +673,52 @@ describe('D1 posting identity repair', () => {
     expect(verification).toMatchObject({ duplicateJobs: 0, expectedChanges: 0, conflicts: [] });
   });
 
+  it('keeps repaired jobs out of browse and delivery indexes when admission is ineligible', async () => {
+    const { sqlite, db, store } = await historicalDatabase({ presentationAgrees: true });
+    const rejectedAdmission = {
+      employerResolution: 'unresolved' as const,
+      postingAttribution: 'attributed' as const,
+      destination: {
+        candidateUrl: `https://jobs.lever.co/plus-2/${plusId}`,
+        provider: 'lever' as const,
+        classification: 'aggregate-board' as const,
+        inspectedAt: '2026-08-03T00:00:00.000Z',
+      },
+      metadata: { complete: true, title: 'complete' as const, location: 'complete' as const },
+      catalogEligible: false,
+      alertEligible: false,
+      reasonCodes: ['employer-unresolved' as const, 'destination-aggregate-board' as const],
+      evaluatedAt: '2026-08-03T00:00:00.000Z',
+      evidenceObservedAt: '2026-08-03T00:00:00.000Z',
+    };
+    for (const jobId of ['plus-old', 'plus-duplicate']) {
+      const current = await store.getJob(jobId);
+      expect(current).toBeDefined();
+      await store.putInternship({
+        ...current!,
+        admission: rejectedAdmission,
+        notification: { ...current!.notification, smsPending: true, digestPending: true },
+        sourceReferences: current!.sourceReferences.map((reference) => ({ ...reference, admission: rejectedAdmission })),
+      });
+    }
+
+    const preview = await runPostingIdentityRepair(db, { scope: 'identity' });
+    await runPostingIdentityRepair(db, {
+      scope: 'identity', apply: true, repairToken: preview.repairToken,
+      expectedChanges: preview.expectedChanges, expectedDuplicateJobs: preview.duplicateJobs,
+    });
+
+    expect(sqlite.prepare(`SELECT catalog_state, catalog_sort_key, search_text, source_classes, sms_pending, digest_pending
+      FROM catalog_items WHERE pk = 'JOB#plus-old' AND sk = 'META'`).get()).toEqual({
+      catalog_state: null,
+      catalog_sort_key: null,
+      search_text: null,
+      source_classes: null,
+      sms_pending: 0,
+      digest_pending: 0,
+    });
+  });
+
   it('refuses stale guards and existing alias conflicts', async () => {
     const stale = await historicalDatabase({ presentationAgrees: true }); const dry = await runPostingIdentityRepair(stale.db);
     await expect(runPostingIdentityRepair(stale.db, { apply: true, repairToken: dry.repairToken, expectedChanges: dry.expectedChanges + 1, expectedDuplicateJobs: dry.duplicateJobs })).rejects.toThrow('Catalog changed after dry run');
@@ -655,9 +820,9 @@ describe('D1 posting identity repair', () => {
     const verification = await runPostingIdentityRepair(db, { scope: 'identity' });
     expect(applied).toMatchObject({ applied: true, projectionRefreshRequired: true });
     expect(verification).toMatchObject({ expectedChanges: 0, conflicts: [] });
-    expect(postingIdentityRepairQueryCount(dry.expectedChanges)).toBe(123);
-    expect(postingIdentityRepairQueryCount(4_250 * 2)).toBe(438);
-    expect(metrics.statements).toBe(128);
+    expect(postingIdentityRepairQueryCount(dry.expectedChanges)).toBe(124);
+    expect(postingIdentityRepairQueryCount(4_250 * 2)).toBe(439);
+    expect(metrics.statements).toBe(130);
     expect(metrics.statements).toBeLessThanOrEqual(900);
     expect(metrics.maxBoundParameters).toBeLessThanOrEqual(100);
     expect(metrics.maxBatchStatements).toBeLessThanOrEqual(25);

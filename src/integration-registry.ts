@@ -184,7 +184,7 @@ export const integrationRegistry = {
       awsSchedule: 'cron(7/10 * * * ? *)', cloudflareCron: '7-57/10 * * * *',
       awsMainStackAlarm: { evaluationPeriods: 6, freshnessDescription: 'A github source has gone 30 minutes without a trusted snapshot.' },
     },
-    sourceActions: ['replay'],
+    sourceActions: commonSourceActions,
     workflows: [],
     // The general Markdown fleet historically owns every non-ATS source ID;
     // exact checked-in IDs are exposed in operations, while test and future
@@ -201,7 +201,7 @@ export const integrationRegistry = {
       evidenceStatus: 'reviewed-community',
       checkpointId: source.id,
     })),
-    replayMessage: (sourceId: string) => ({ sourceId }),
+    replayMessage: (sourceId: string) => ({ sourceId, force: true }),
   },
 } as const satisfies Record<string, CatalogSourceProviderDefinition>;
 

@@ -5,7 +5,7 @@ import { isPastSeason } from './core/early-career.js';
 import { employerCategory } from './core/employers.js';
 import { canonicalCatalogRecency, catalogRecency, catalogVisibleAt, compareCatalogRecency, openCatalogSortKey } from './catalog-recency.js';
 import { catalogSearchText, catalogSourceClasses, type CatalogSource } from './catalog-fields.js';
-import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, Internship, MonitoringChecklist, NotificationEvent, PostingIdentity, PostingIdentityDecision, PostingIdentityIncident, SourceCheckpoint, SourceHealth, SourceOccurrence, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
+import type { ApplicantProfile, ApplicationRecord, DeliveryReceipt, DeviceToken, EvidenceSource, Internship, MetadataConflict, MonitoringChecklist, NotificationEvent, PostingIdentity, PostingIdentityDecision, PostingIdentityIncident, RoleMetadataEvidence, SourceCheckpoint, SourceHealth, SourceOccurrence, SourceOccurrenceState, UserDocument, UserPreferences } from './types.js';
 import { preferredJobIdentityConflicts, resolvePostingAliases, type AliasResolution } from './identity/posting.js';
 import type { ApplicationSession } from './application-automation.js';
 import type { ReviewedLeverSource } from './sources/lever-config.js';
@@ -13,7 +13,7 @@ import type { LeverOwnershipEvidence } from './sources/lever-evidence.js';
 import type { LeverCandidateProbeResult } from './sources/lever-probe.js';
 import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from './catalog-groups.js';
 import { alertEligible, catalogEligible } from './catalog-admission.js';
-import { postingObservationProjection } from './identity/projection.js';
+import { postingObservationNotificationProjection, postingObservationProjection } from './identity/projection.js';
 
 export interface LeverAdmission {
   source: ReviewedLeverSource;
@@ -81,6 +81,9 @@ export interface InternshipStore {
   getJob(jobId: string): Promise<Internship | undefined>;
   getSourceOccurrences(sourceId: string): Promise<SourceOccurrenceState[]>;
   putSourceOccurrence(occurrence: SourceOccurrenceState): Promise<void>;
+  /** Append-only audit history; current evidence is selected by source/artifact slot. */
+  recordRoleMetadataEvidence?(jobId: string, evidence: readonly RoleMetadataEvidence[], conflicts: readonly MetadataConflict[], recordedAt: string,
+    replace?: { sourceId: string; sourceClasses: readonly EvidenceSource[] }): Promise<void>;
   /** Atomically exposes a notification-pending job and records its deterministic outbox event. */
   putInternshipWithNotificationEvent(job: Internship, event: NotificationEvent): Promise<boolean>;
   pendingSms(): Promise<Internship[]>;
@@ -114,6 +117,8 @@ export class MemoryInternshipStore implements InternshipStore {
   readonly postingIdentityReviewCandidates = new Map<string, {
     reviewFamilyKey: string; occurrenceKeys: Set<string>; firstObservedAt: string; lastObservedAt: string;
   }>();
+  readonly roleMetadataEvidence = new Map<string, RoleMetadataEvidence>();
+  readonly roleMetadataConflicts = new Map<string, MetadataConflict[]>();
   catalogProjection?: { generatedAt: string; groups: CatalogGroupDetails[] };
   async getCheckpoint(sourceId: string) { return this.checkpoints.get(sourceId); }
   async getCheckpointsMany(sourceIds: string[]) { return sourceIds.map((id) => this.checkpoints.get(id)).filter((value): value is SourceCheckpoint => Boolean(value)); }
@@ -174,8 +179,10 @@ export class MemoryInternshipStore implements InternshipStore {
       return this.commitPostingObservation({ decision, sourceId: input.occurrence.sourceId, externalId: input.occurrence.externalId, occurrence: input.occurrence.occurrence });
     }
     for (const alias of resolution.aliases) this.postingAliases.set(alias, resolution.canonicalJobId);
-    const projected = postingObservationProjection(this.jobs.get(input.job.jobId), input.job, input.occurrence);
-    this.jobs.set(input.job.jobId, structuredClone(projected));
+    const storedJob = this.jobs.get(input.job.jobId);
+    const projected = postingObservationProjection(storedJob, input.job, input.occurrence);
+    const finalized = postingObservationNotificationProjection(storedJob, projected, input.notificationEvent);
+    this.jobs.set(input.job.jobId, structuredClone(finalized.job));
     this.occurrences.set(`${input.occurrence.sourceId}#${input.occurrence.externalId}`, structuredClone(input.occurrence));
     if (input.decision.status === 'unconfirmed') {
       const candidateId = createHash('sha256').update(`posting-review-family-v1:${input.decision.reviewFamilyKey}`).digest('hex');
@@ -189,13 +196,28 @@ export class MemoryInternshipStore implements InternshipStore {
           ? prior.lastObservedAt : input.decision.observedAt,
       });
     }
-    const notificationInserted = Boolean(input.notificationEvent && !this.notificationEvents.has(input.notificationEvent.eventId));
-    if (notificationInserted) this.notificationEvents.set(input.notificationEvent!.eventId, structuredClone(input.notificationEvent!));
+    const notificationInserted = Boolean(finalized.notificationEvent && !this.notificationEvents.has(finalized.notificationEvent.eventId));
+    if (notificationInserted) {
+      this.notificationEvents.set(finalized.notificationEvent!.eventId, structuredClone(finalized.notificationEvent!));
+    }
     return { outcome: 'committed', canonicalJobId: input.job.jobId, notificationInserted };
   }
   async putInternship(job: Internship) { const canonical = canonicalCatalogRecency(job); this.jobs.set(canonical.jobId, structuredClone(canonical)); }
   async getSourceOccurrences(sourceId: string) { return [...this.occurrences.values()].filter((value) => value.sourceId === sourceId).map((value) => structuredClone(value)); }
   async putSourceOccurrence(occurrence: SourceOccurrenceState) { this.occurrences.set(`${occurrence.sourceId}#${occurrence.externalId}`, structuredClone(occurrence)); }
+  async recordRoleMetadataEvidence(jobId: string, evidence: readonly RoleMetadataEvidence[], conflicts: readonly MetadataConflict[], _recordedAt: string,
+    replace?: { sourceId: string; sourceClasses: readonly EvidenceSource[] }) {
+    if (replace) {
+      const sourceClasses = new Set(replace.sourceClasses);
+      for (const [key, item] of this.roleMetadataEvidence) {
+        if (key.startsWith(`${jobId}\0`) && item.sourceId === replace.sourceId && sourceClasses.has(item.sourceClass)) {
+          this.roleMetadataEvidence.delete(key);
+        }
+      }
+    }
+    for (const item of evidence) this.roleMetadataEvidence.set(`${jobId}\0${item.sourceClass}\0${item.sourceId}\0${item.sourceUrl}\0${item.artifactHash}`, structuredClone(item));
+    this.roleMetadataConflicts.set(jobId, structuredClone([...conflicts]));
+  }
   async putInternshipWithNotificationEvent(job: Internship, event: NotificationEvent) {
     if (this.notificationEvents.has(event.eventId)) return false;
     const canonical = canonicalCatalogRecency(job);
@@ -495,9 +517,6 @@ export class DynamoInternshipStore implements InternshipStore {
         };
         return this.commitPostingObservation({ decision, sourceId: input.occurrence.sourceId, externalId: input.occurrence.externalId, occurrence: input.occurrence.occurrence });
       }
-      const eventExists = input.notificationEvent ? Boolean((await this.client.send(new GetCommand({
-        TableName: this.tableName, Key: { pk: `OUTBOX#${input.notificationEvent.eventId}`, sk: 'EVENT' }, ConsistentRead: true,
-      }))).Item) : false;
       const storedJobResult = await this.client.send(new GetCommand({
         TableName: this.tableName, Key: { pk: `JOB#${input.job.jobId}`, sk: 'META' }, ConsistentRead: true,
       }));
@@ -512,6 +531,10 @@ export class DynamoInternshipStore implements InternshipStore {
         return this.commitPostingObservation({ decision, sourceId: input.occurrence.sourceId, externalId: input.occurrence.externalId, occurrence: input.occurrence.occurrence });
       }
       const projectedJob = postingObservationProjection(storedJob, input.job, input.occurrence);
+      const finalized = postingObservationNotificationProjection(storedJob, projectedJob, input.notificationEvent);
+      const eventExists = finalized.notificationEvent ? Boolean((await this.client.send(new GetCommand({
+        TableName: this.tableName, Key: { pk: `OUTBOX#${finalized.notificationEvent.eventId}`, sk: 'EVENT' }, ConsistentRead: true,
+      }))).Item) : false;
       const reviewCandidate = input.decision.status === 'unconfirmed' ? {
         candidateId: createHash('sha256').update(`posting-review-family-v1:${input.decision.reviewFamilyKey}`).digest('hex'),
         reviewFamilyKey: input.decision.reviewFamilyKey,
@@ -531,7 +554,7 @@ export class DynamoInternshipStore implements InternshipStore {
               ConditionExpression: 'attribute_not_exists(pk)',
             } }),
         { Put: {
-          TableName: this.tableName, Item: internshipItem(projectedJob),
+          TableName: this.tableName, Item: internshipItem(finalized.job),
           ConditionExpression: storedJob ? 'job = :expectedJob' : 'attribute_not_exists(pk)',
           ...(storedJob ? { ExpressionAttributeValues: { ':expectedJob': storedJob } } : {}),
         } },
@@ -549,15 +572,15 @@ export class DynamoInternshipStore implements InternshipStore {
             ':occurrenceKeys': new Set([`${input.occurrence.sourceId}\0${input.occurrence.externalId}`]),
           },
         } }] : []),
-        ...(input.notificationEvent && !eventExists ? [{ Put: {
-          TableName: this.tableName, Item: { pk: `OUTBOX#${input.notificationEvent.eventId}`, sk: 'EVENT', event: input.notificationEvent },
+        ...(finalized.notificationEvent && !eventExists ? [{ Put: {
+          TableName: this.tableName, Item: { pk: `OUTBOX#${finalized.notificationEvent.eventId}`, sk: 'EVENT', event: finalized.notificationEvent },
           ConditionExpression: 'attribute_not_exists(pk)',
         } }] : []),
       ];
       if (transaction.length > 100) throw new Error('Posting observation exceeds the DynamoDB transaction limit');
       try {
         await this.client.send(new TransactWriteCommand({ TransactItems: transaction }));
-        return { outcome: 'committed', canonicalJobId: input.job.jobId, notificationInserted: Boolean(input.notificationEvent && !eventExists) };
+        return { outcome: 'committed', canonicalJobId: input.job.jobId, notificationInserted: Boolean(finalized.notificationEvent && !eventExists) };
       } catch (error) {
         if ((error as { name?: string }).name !== 'TransactionCanceledException' || attempt === 3) throw error;
       }
@@ -764,6 +787,7 @@ export interface UserStore {
   listApplications(userId: string): Promise<ApplicationRecord[]>;
   getApplication(userId: string, applicationId: string): Promise<ApplicationRecord | undefined>;
   putApplication(userId: string, value: ApplicationRecord): Promise<void>;
+  deleteApplication(userId: string, applicationId: string): Promise<void>;
   getApplicationSession(userId: string, sessionId: string): Promise<ApplicationSession | undefined>;
   getApplicationSessionById(sessionId: string): Promise<ApplicationSession | undefined>;
   putApplicationSession(userId: string, value: ApplicationSession, expectedVersion?: number): Promise<boolean>;
@@ -833,8 +857,7 @@ export class MemoryUserStore implements UserStore {
   async activeDevices() { return [...this.devices.values()].filter((d) => d.active).map((d) => structuredClone(d)); }
   async putDevice(value: DeviceToken) { this.writable(value.userId); this.devices.set(`${value.userId}#${value.token}`, structuredClone(value)); } async deleteDevice(userId: string, token: string) { this.devices.delete(`${userId}#${token}`); }
   async getProfile(userId: string) { return this.profiles.get(userId); } async putProfile(value: ApplicantProfile) { this.writable(value.userId); this.profiles.set(value.userId, structuredClone(value)); }
-  async listApplications(userId: string) { return [...this.applications.entries()].filter(([key]) => key.startsWith(`${userId}#`)).map(([, value]) => value).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((a) => structuredClone(a)); }
-  async getApplication(userId: string, applicationId: string) { const value = this.applications.get(`${userId}#${applicationId}`); return value && structuredClone(value); } async putApplication(userId: string, value: ApplicationRecord) { this.writable(userId); this.applications.set(`${userId}#${value.applicationId}`, structuredClone(value)); }
+  async listApplications(userId: string) { return [...this.applications.entries()].filter(([key]) => key.startsWith(`${userId}#`)).map(([, value]) => value).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((a) => structuredClone(a)); } async getApplication(userId: string, applicationId: string) { const value = this.applications.get(`${userId}#${applicationId}`); return value && structuredClone(value); } async putApplication(userId: string, value: ApplicationRecord) { this.writable(userId); this.applications.set(`${userId}#${value.applicationId}`, structuredClone(value)); } async deleteApplication(userId: string, applicationId: string) { this.applications.delete(`${userId}#${applicationId}`); }
   async getApplicationSession(userId: string, sessionId: string) { const value = this.sessions.get(`${userId}#${sessionId}`); return value && structuredClone(value); }
   async getApplicationSessionById(sessionId: string) { const value = [...this.sessions.values()].find((session) => session.sessionId === sessionId); return value && structuredClone(value); }
   async putApplicationSession(userId: string, value: ApplicationSession, expectedVersion?: number) { if (await this.isUserDeletionPending(userId)) return false; const key = `${userId}#${value.sessionId}`; const current = this.sessions.get(key); if (expectedVersion !== undefined && current?.version !== expectedVersion) return false; if (expectedVersion === undefined && current) return false; this.sessions.set(key, structuredClone(value)); return true; }
@@ -879,7 +902,7 @@ export class DynamoUserStore implements UserStore {
   putDevice(value: DeviceToken) { return this.put(value.userId, `DEVICE#${value.token}`, 'device', value, value.active ? { activePk: 'ACTIVE', tokenPk: `TOKEN#${value.token}` } : { tokenPk: `TOKEN#${value.token}` }); } async deleteDevice(userId: string, token: string) { await this.client.send(new DeleteCommand({ TableName: this.tableName, Key: { pk: `USER#${userId}`, sk: `DEVICE#${token}` } })); }
   getProfile(userId: string) { return this.get<ApplicantProfile>(userId, 'PROFILE'); } putProfile(value: ApplicantProfile) { return this.put(value.userId, 'PROFILE', 'profile', value); }
   async listApplications(userId: string) { return (await this.queryAll({ TableName: this.tableName, KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)', ExpressionAttributeValues: { ':pk': `USER#${userId}`, ':prefix': 'APPLICATION#' } })).map((item) => item.value as ApplicationRecord).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
-  getApplication(userId: string, applicationId: string) { return this.get<ApplicationRecord>(userId, `APPLICATION#${applicationId}`); } putApplication(userId: string, value: ApplicationRecord) { return this.put(userId, `APPLICATION#${value.applicationId}`, 'application', value); }
+  getApplication(userId: string, applicationId: string) { return this.get<ApplicationRecord>(userId, `APPLICATION#${applicationId}`); } putApplication(userId: string, value: ApplicationRecord) { return this.put(userId, `APPLICATION#${value.applicationId}`, 'application', value); } async deleteApplication(userId: string, applicationId: string) { await this.client.send(new DeleteCommand({ TableName: this.tableName, Key: { pk: `USER#${userId}`, sk: `APPLICATION#${applicationId}` } })); }
   getApplicationSession(userId: string, sessionId: string) { return this.get<ApplicationSession>(userId, `APPLICATION_SESSION#${sessionId}`); }
   async getApplicationSessionById(sessionId: string) {
     const response = await this.client.send(new QueryCommand({ TableName: this.tableName, IndexName: 'activeSessionsIndex', KeyConditionExpression: 'activeSessionPk = :pk', ExpressionAttributeValues: { ':pk': `SESSION#${sessionId}` }, Limit: 1 }));

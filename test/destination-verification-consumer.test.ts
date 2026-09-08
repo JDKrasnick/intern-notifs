@@ -1,6 +1,6 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import { enqueueDueDestinationVerifications, processDestinationVerificationBatch, sendAdmissionOperationalAlert,
@@ -33,7 +33,8 @@ function subject() {
   const database = new DatabaseSync(':memory:');
   for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0008_catalog_admission_occurrence_repair.sql',
     '0010_posting_identity.sql',
-    '0012_destination_verification_schedule.sql']) {
+    '0012_destination_verification_schedule.sql', '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql',
+    '0017_metadata_acquisition.sql', '0018_metadata_review.sql', '0019_metadata_job_review_revision.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   const db = sqliteD1(database);
@@ -68,7 +69,11 @@ function environment(db: D1Database): DestinationVerificationEnvironment {
 }
 
 describe('destination verification queue consumer', () => {
-  beforeEach(() => launch.mockReset());
+  beforeEach(() => {
+    launch.mockReset();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 503 })));
+  });
+  afterEach(() => vi.unstubAllGlobals());
 
   it('acknowledges a duplicate completion without opening a page or mutating state', async () => {
     const { db, operations } = subject();
@@ -149,7 +154,7 @@ describe('destination verification queue consumer', () => {
     const { job, reference } = role();
     await jobs.putInternship(job);
     const changedReference = { ...reference, applyUrl: 'https://job-boards.greenhouse.io/acme/jobs/8765432' };
-    const frame = { evaluate: vi.fn().mockResolvedValue({ url: reference.applyUrl, title: reference.title,
+    const frame = { waitForFunction: vi.fn().mockResolvedValue({ dispose: vi.fn() }), evaluate: vi.fn().mockResolvedValue({ url: reference.applyUrl, title: reference.title,
       visibleText: `${reference.title} ${reference.externalId} Apply`,
       structuredJobText: JSON.stringify({ '@type': 'JobPosting', identifier: reference.externalId, title: reference.title }),
       jobPostingCount: 1, distinctJobLinkCount: 0, applicationFormPresent: true }), parentFrame: () => null };
@@ -193,7 +198,8 @@ describe('destination verification queue consumer', () => {
       structuredJobText: JSON.stringify({ '@type': 'JobPosting', identifier: reference.externalId, description: reference.title }),
       jobPostingCount: 1, distinctJobLinkCount: 0, applicationFormPresent: true }), parentFrame: () => null };
     launch.mockResolvedValue({ newPage: vi.fn().mockResolvedValue({
-      goto: vi.fn().mockResolvedValue({ status: () => 200 }), frames: () => [frame], close: vi.fn(),
+      goto: vi.fn().mockResolvedValue({ status: () => 200 }), url: () => reference.applyUrl,
+      evaluate: vi.fn().mockResolvedValue([]), frames: () => [frame], close: vi.fn(),
     }), close: vi.fn() });
     const queued = queueMessage({ version: 1, jobId: job.jobId, sourceId: reference.sourceId,
       externalId: reference.externalId!, candidateUrl: reference.applyUrl, providerIdentity: candidate!.providerIdentity,

@@ -117,6 +117,40 @@ describe('application URL validation', () => {
     }
   });
 
+  it('inspects and cancels the first 512 KiB of an oversized declared page', async () => {
+    const cancel = vi.fn();
+    const prefix = '<title>Software Engineer Intern</title><main>Responsibilities and qualifications. 123456 ';
+    const bytes = new TextEncoder().encode(prefix + 'x'.repeat(700 * 1024));
+    const evidence = await inspectApplicationPage('https://jobs.lever.co/acme/123456', async () =>
+      new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(bytes); },
+        cancel,
+      }), { status: 200, headers: { 'content-type': 'text/html', 'content-length': String(bytes.byteLength) } }));
+    expect(evidence).toMatchObject({ inspectionTruncated: true, inspectedBytes: 512 * 1024,
+      title: 'Software Engineer Intern', postingIdPresent: true });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it('treats an absent posting ID as unknown in a truncated streamed page', async () => {
+    const prefix = '<title>Software Engineer Intern</title><script type="application/ld+json">{"@type":"JobPosting"}</script>';
+    const evidence = await inspectApplicationPage('https://careers.example.com/jobs/123456', async () =>
+      new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(new TextEncoder().encode(prefix + 'x'.repeat(700 * 1024))); },
+      }), { status: 200, headers: { 'content-type': 'text/html' } }));
+    expect(evidence).toMatchObject({ inspectionTruncated: true, inspectedBytes: 512 * 1024, jobPostingCount: 1 });
+    expect(evidence).not.toHaveProperty('postingIdPresent');
+  });
+
+  it('includes truncation state in otherwise identical evidence hashes', async () => {
+    const body = '<title>Software Engineer Intern</title><main>Responsibilities and qualifications.</main>';
+    const complete = await inspectApplicationPage('https://jobs.example.com/123456', async () =>
+      new Response(body, { headers: { 'content-type': 'text/html' } }));
+    const truncated = await inspectApplicationPage('https://jobs.example.com/123456', async () =>
+      new Response(body, { headers: { 'content-type': 'text/html', 'content-length': String(700 * 1024) } }));
+    expect(truncated.inspectionTruncated).toBe(true);
+    expect(truncated.contentHash).not.toBe(complete.contentHash);
+  });
+
   it("reads a rendered job page instead of accepting a generic 200 shell", async () => {
     const id = '7623166667125508357';
     const methods: string[] = [];
