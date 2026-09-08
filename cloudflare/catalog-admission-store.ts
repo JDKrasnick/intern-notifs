@@ -27,6 +27,15 @@ export const ATOMIC_REPAIR_RECORD_LIMIT = 900;
 // Metadata apply performs bounded preflight scans before its atomic batch.
 // Leave headroom under D1's 1,000-query invocation limit for those guards.
 export const METADATA_REPAIR_RECORD_LIMIT = 250;
+// Recurring admission work shares one D1 invocation. Keep each component
+// bounded so scheduling, leasing, queue bookkeeping, and metadata reservation
+// remain comfortably below the paid Workers 1,000-query ceiling.
+export const DESTINATION_SCHEDULE_SYNC_LIMIT = 250;
+export const DESTINATION_VERIFICATION_LEASE_LIMIT = 100;
+// One completed occurrence can require four reviewed-mapping lookups before
+// stageRepair performs its guarded reads and writes. Bound the composed stage
+// request, not just the eventual atomic apply batch.
+export const BACKFILL_REPAIR_RECORD_LIMIT = 120;
 export const ATOMIC_REPAIR_BYTE_LIMIT = 8 * 1024 * 1024;
 export const ROLE_METADATA_REVALIDATION_MS = 30 * 24 * 60 * 60_000;
 
@@ -1210,28 +1219,61 @@ export class D1CatalogAdmissionStore {
     return candidates;
   }
 
-  async syncVerificationSchedule(now: string): Promise<number> {
-    const rows = await this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'internship' ORDER BY pk").all<JsonRow>();
+  async syncVerificationSchedule(now: string, limit = DESTINATION_SCHEDULE_SYNC_LIMIT): Promise<number> {
+    const boundedLimit = Math.max(1, Math.min(limit, DESTINATION_SCHEDULE_SYNC_LIMIT));
+    let state = await this.db.prepare('SELECT * FROM destination_verification_schedule_sync WHERE id = 1')
+      .first<Record<string, unknown>>();
+    if (!state) {
+      const generationId = crypto.randomUUID();
+      await this.db.prepare(`INSERT INTO destination_verification_schedule_sync
+        (id, generation_id, after_pk, after_sk, reference_offset, updated_at) VALUES (1, ?, '', '', 0, ?)
+        ON CONFLICT(id) DO NOTHING`).bind(generationId, now).run();
+      state = await this.db.prepare('SELECT * FROM destination_verification_schedule_sync WHERE id = 1')
+        .first<Record<string, unknown>>();
+      if (!state) throw new Error('Destination schedule synchronization could not initialize');
+    }
+    const generationId = state.generation_id as string;
+    const afterPk = state.after_pk as string;
+    const afterSk = state.after_sk as string;
+    const initialReferenceOffset = state.reference_offset as number;
+    const rows = await this.db.prepare(`SELECT pk, sk, value FROM catalog_items
+      WHERE kind = 'internship' AND (pk, sk) >= (?, ?)
+        AND ((pk, sk) > (?, ?) OR ? > 0) ORDER BY pk, sk LIMIT 100`)
+      .bind(afterPk, afterSk, afterPk, afterSk, initialReferenceOffset)
+      .all<{ pk: string; sk: string; value: string }>();
     const statements: D1PreparedStatement[] = [];
-    const activeKeys = new Set<string>();
-    for (const row of rows.results) {
+    let lastCompletePk = afterPk;
+    let lastCompleteSk = afterSk;
+    let nextReferenceOffset = initialReferenceOffset;
+    let pageComplete = true;
+    for (let rowIndex = 0; rowIndex < rows.results.length; rowIndex += 1) {
+      const row = rows.results[rowIndex]!;
       const job = JSON.parse(row.value) as Internship;
-      for (const reference of job.sourceReferences) {
+      const startAt = rowIndex === 0 && row.pk === afterPk && row.sk === afterSk ? initialReferenceOffset : 0;
+      for (let referenceIndex = startAt; referenceIndex < job.sourceReferences.length; referenceIndex += 1) {
+        const reference = job.sourceReferences[referenceIndex]!;
         // Legacy rows are frozen through admission_backfill_generations. They
         // must never enter the mutating recurring schedule before guarded repair.
         if (!reference.externalId || reference.state !== 'open' || !reference.admission) continue;
+        if (statements.length === boundedLimit) {
+          lastCompletePk = row.pk;
+          lastCompleteSk = row.sk;
+          nextReferenceOffset = referenceIndex;
+          pageComplete = false;
+          break;
+        }
         const prior = reference.admission.destination;
         const providerIdentity = providerIdentityForReference(reference, prior);
         const nextCheckAt = prior?.nextCheckAt ?? (prior?.freshUntil
           ? new Date(Math.max(Date.parse(prior.inspectedAt), Date.parse(prior.freshUntil) - 86_400_000)).toISOString()
           : new Date(Date.parse(prior?.inspectedAt ?? reference.admission.evaluatedAt) + 6 * 86_400_000).toISOString());
         const occurrenceKey = destinationOccurrenceKey(reference.sourceId, reference.externalId);
-        activeKeys.add(occurrenceKey);
         statements.push(this.db.prepare(`INSERT INTO destination_verification_schedule
-          (occurrence_key, job_id, source_id, external_id, candidate_url, provider_identity, next_check_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          (occurrence_key, job_id, source_id, external_id, candidate_url, provider_identity, next_check_at, sync_generation, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(occurrence_key) DO UPDATE SET job_id=excluded.job_id, candidate_url=excluded.candidate_url,
             provider_identity=excluded.provider_identity,
+            sync_generation=excluded.sync_generation,
             next_check_at=CASE WHEN destination_verification_schedule.candidate_url <> excluded.candidate_url
                 OR destination_verification_schedule.provider_identity <> excluded.provider_identity
               THEN excluded.updated_at ELSE destination_verification_schedule.next_check_at END,
@@ -1246,21 +1288,35 @@ export class D1CatalogAdmissionStore {
               THEN NULL ELSE destination_verification_schedule.last_enqueued_at END,
             updated_at=excluded.updated_at`)
           .bind(occurrenceKey, job.jobId, reference.sourceId, reference.externalId, reference.applyUrl,
-            JSON.stringify(providerIdentity), nextCheckAt, now));
+            JSON.stringify(providerIdentity), nextCheckAt, generationId, now));
       }
+      if (!pageComplete) break;
+      lastCompletePk = row.pk;
+      lastCompleteSk = row.sk;
+      nextReferenceOffset = 0;
     }
     for (let offset = 0; offset < statements.length; offset += 50) await this.db.batch(statements.slice(offset, offset + 50));
-    const scheduled = await this.db.prepare('SELECT occurrence_key FROM destination_verification_schedule').all<{ occurrence_key: string }>();
-    const removals = scheduled.results.filter((row) => !activeKeys.has(row.occurrence_key))
-      .map((row) => this.db.prepare('DELETE FROM destination_verification_schedule WHERE occurrence_key = ?').bind(row.occurrence_key));
-    for (let offset = 0; offset < removals.length; offset += 50) await this.db.batch(removals.slice(offset, offset + 50));
+    const exhaustedCatalog = pageComplete && rows.results.length < 100;
+    if (exhaustedCatalog) {
+      await this.db.batch([
+        this.db.prepare('DELETE FROM destination_verification_schedule WHERE sync_generation IS NOT ?').bind(generationId),
+        this.db.prepare('DELETE FROM destination_verification_schedule_sync WHERE id = 1 AND generation_id = ?').bind(generationId),
+      ]);
+    } else {
+      await this.db.prepare(`UPDATE destination_verification_schedule_sync
+        SET after_pk = ?, after_sk = ?, reference_offset = ?, updated_at = ?
+        WHERE id = 1 AND generation_id = ? AND after_pk = ? AND after_sk = ? AND reference_offset = ?`)
+        .bind(lastCompletePk, lastCompleteSk, nextReferenceOffset, now, generationId,
+          afterPk, afterSk, initialReferenceOffset).run();
+    }
     return statements.length;
   }
 
-  async leaseDueVerifications(now: string, limit = 1_000, leaseMs = 15 * 60_000): Promise<ScheduledDestinationVerification[]> {
+  async leaseDueVerifications(now: string, limit = DESTINATION_VERIFICATION_LEASE_LIMIT, leaseMs = 15 * 60_000): Promise<ScheduledDestinationVerification[]> {
+    const boundedLimit = Math.max(1, Math.min(limit, DESTINATION_VERIFICATION_LEASE_LIMIT));
     const rows = await this.db.prepare(`SELECT * FROM destination_verification_schedule
       WHERE next_check_at <= ? AND (lease_until IS NULL OR lease_until <= ?)
-      ORDER BY next_check_at, occurrence_key LIMIT ?`).bind(now, now, limit).all<Record<string, unknown>>();
+      ORDER BY next_check_at, occurrence_key LIMIT ?`).bind(now, now, boundedLimit).all<Record<string, unknown>>();
     const leased: ScheduledDestinationVerification[] = [];
     for (const row of rows.results) {
       const leaseToken = crypto.randomUUID();
@@ -1314,21 +1370,29 @@ export class D1CatalogAdmissionStore {
   }
 
   async previewBackfill(frozenAt: string): Promise<AdmissionBackfillGeneration> {
-    const candidates = await this.legacyVerificationCandidates(Number.MAX_SAFE_INTEGER);
-    const stable = candidates.map((candidate) => ({ ...candidate,
-      occurrenceKey: destinationOccurrenceKey(candidate.sourceId, candidate.externalId) }))
-      .sort((left, right) => left.occurrenceKey.localeCompare(right.occurrenceKey));
-    const id = hash(JSON.stringify({ frozenAt, candidates: stable }));
-    const statements = [this.db.prepare(`INSERT INTO admission_backfill_generations
-      (id, state, total, queued, completed, created_at, frozen_at, updated_at) VALUES (?, 'previewed', ?, 0, 0, ?, ?, ?)
-      ON CONFLICT(id) DO NOTHING`).bind(id, stable.length, frozenAt, frozenAt, frozenAt)];
-    stable.forEach((candidate, ordinal) => statements.push(this.db.prepare(`INSERT INTO admission_backfill_items
-      (generation_id, ordinal, occurrence_key, job_id, source_id, external_id, candidate_url, provider_identity,
-       occurrence_snapshot_hash, state, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?) ON CONFLICT(generation_id, occurrence_key) DO NOTHING`)
-      .bind(id, ordinal, candidate.occurrenceKey, candidate.jobId, candidate.sourceId, candidate.externalId,
-        candidate.candidateUrl, JSON.stringify(candidate.providerIdentity), candidate.occurrenceSnapshotHash, frozenAt)));
-    for (let offset = 0; offset < statements.length; offset += 50) await this.db.batch(statements.slice(offset, offset + 50));
+    const id = hash(`${frozenAt}\0${crypto.randomUUID()}`);
+    await this.db.batch([
+      this.db.prepare(`INSERT INTO admission_backfill_generations
+        (id, state, total, queued, completed, created_at, frozen_at, updated_at)
+        VALUES (?, 'previewed', 0, 0, 0, ?, ?, ?)`).bind(id, frozenAt, frozenAt, frozenAt),
+      this.db.prepare(`INSERT INTO admission_backfill_items
+        (generation_id, ordinal, occurrence_key, job_id, source_id, external_id, candidate_url,
+         occurrence_snapshot, state, updated_at)
+        SELECT ?, row_number() OVER (ORDER BY json_array(
+            json_extract(reference.value, '$.sourceId'), json_extract(reference.value, '$.externalId'))) - 1,
+          json_array(json_extract(reference.value, '$.sourceId'), json_extract(reference.value, '$.externalId')),
+          json_extract(catalog.value, '$.jobId'), json_extract(reference.value, '$.sourceId'),
+          json_extract(reference.value, '$.externalId'), json_extract(reference.value, '$.applyUrl'),
+          json(reference.value), 'pending', ?
+        FROM catalog_items AS catalog, json_each(catalog.value, '$.sourceReferences') AS reference
+        WHERE catalog.kind = 'internship'
+          AND json_extract(reference.value, '$.externalId') IS NOT NULL
+          AND json_extract(reference.value, '$.externalId') <> ''
+          AND coalesce(json_type(reference.value, '$.admission'), 'null') = 'null'`).bind(id, frozenAt),
+      this.db.prepare(`UPDATE admission_backfill_generations SET
+        total = (SELECT count(*) FROM admission_backfill_items WHERE generation_id = ?)
+        WHERE id = ?`).bind(id, id),
+    ]);
     return (await this.backfillProgress(id))!;
   }
 
@@ -1340,9 +1404,12 @@ export class D1CatalogAdmissionStore {
       WHERE generation_id = ? AND ordinal >= ? AND state ${includeQueued ? "IN ('pending','queued')" : "= 'pending'"}
       ORDER BY ordinal LIMIT ?`)
       .bind(generationId, cursor, limit).all<Record<string, unknown>>();
-    return rows.results.map((row) => ({ ordinal: row.ordinal as number, occurrenceKey: row.occurrence_key as string,
-      jobId: row.job_id as string, sourceId: row.source_id as string, externalId: row.external_id as string,
-      candidateUrl: row.candidate_url as string, providerIdentity: JSON.parse(row.provider_identity as string) as ProviderIdentity }));
+    return rows.results.map((row) => {
+      const reference = JSON.parse(row.occurrence_snapshot as string) as SourceOccurrence;
+      return { ordinal: row.ordinal as number, occurrenceKey: row.occurrence_key as string,
+        jobId: row.job_id as string, sourceId: row.source_id as string, externalId: row.external_id as string,
+        candidateUrl: row.candidate_url as string, providerIdentity: providerIdentityForReference(reference) };
+    });
   }
 
   async markBackfillQueued(generationId: string, occurrenceKeys: string[], updatedAt: string): Promise<void> {
@@ -1387,16 +1454,18 @@ export class D1CatalogAdmissionStore {
       frozenAt: row.frozen_at as string, updatedAt: row.updated_at as string } : undefined;
   }
 
-  async deriveBackfillRepairBatch(generationId: string, sourceId: string, cursor = 0, recordLimit = 850): Promise<{
+  async deriveBackfillRepairBatch(generationId: string, sourceId: string, cursor = 0, recordLimit = BACKFILL_REPAIR_RECORD_LIMIT): Promise<{
     changes: RepairChange[]; records: number; nextCursor: number | null;
   }> {
-    if (recordLimit < 1 || recordLimit >= ATOMIC_REPAIR_RECORD_LIMIT) throw new Error('Backfill repair recordLimit must be between 1 and 899');
+    if (recordLimit < 1 || recordLimit > BACKFILL_REPAIR_RECORD_LIMIT) {
+      throw new Error(`Backfill repair recordLimit must be between 1 and ${BACKFILL_REPAIR_RECORD_LIMIT}`);
+    }
     const rows = await this.db.prepare(`SELECT item.*, evidence.value AS evidence_value, evidence.observed_at
       FROM admission_backfill_items AS item
       JOIN admission_backfill_evidence AS evidence
         ON evidence.generation_id = item.generation_id AND evidence.occurrence_key = item.occurrence_key
       WHERE item.generation_id = ? AND item.source_id = ? AND item.state = 'completed' AND item.ordinal >= ?
-      ORDER BY item.ordinal`).bind(generationId, sourceId, cursor).all<Record<string, unknown>>();
+      ORDER BY item.ordinal LIMIT ?`).bind(generationId, sourceId, cursor, recordLimit + 1).all<Record<string, unknown>>();
     const changes = new Map<string, { job: Internship; references: SourceOccurrence[]; maxOrdinal: number; changedOccurrences: number }>();
     let records = 0;
     let nextCursor: number | null = null;
@@ -1413,9 +1482,10 @@ export class D1CatalogAdmissionStore {
       if (records + proposedRecordCost > recordLimit) { nextCursor = ordinal; break; }
       const references = existing?.references ?? [...job.sourceReferences];
       const reference = references[referenceAt]!;
-      const providerIdentity = JSON.parse(row.provider_identity as string) as ProviderIdentity;
+      const frozenReference = JSON.parse(row.occurrence_snapshot as string) as SourceOccurrence;
+      const providerIdentity = providerIdentityForReference(frozenReference);
       const currentIdentity = providerIdentityForReference(reference, reference.admission?.destination);
-      if (occurrenceSnapshotHash(reference) !== row.occurrence_snapshot_hash
+      if (occurrenceSnapshotHash(reference) !== occurrenceSnapshotHash(frozenReference)
         || reference.applyUrl !== row.candidate_url || !sameProviderIdentity(providerIdentity, currentIdentity)) {
         throw new Error(`Backfill generation ${generationId} drifted at ${row.source_id as string}:${row.external_id as string}; preview again`);
       }

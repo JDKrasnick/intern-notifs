@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS destination_verification_schedule (
   last_enqueued_at TEXT,
   last_completed_at TEXT,
   last_classification TEXT,
+  sync_generation TEXT,
   updated_at TEXT NOT NULL,
   UNIQUE(source_id, external_id)
 );
@@ -20,6 +21,15 @@ CREATE INDEX IF NOT EXISTS destination_verification_schedule_due
 CREATE TABLE IF NOT EXISTS destination_verification_completions (
   idempotency_key TEXT PRIMARY KEY,
   completed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS destination_verification_schedule_sync (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  generation_id TEXT NOT NULL,
+  after_pk TEXT NOT NULL,
+  after_sk TEXT NOT NULL,
+  reference_offset INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS admission_backfill_generations (
@@ -41,8 +51,7 @@ CREATE TABLE IF NOT EXISTS admission_backfill_items (
   source_id TEXT NOT NULL,
   external_id TEXT NOT NULL,
   candidate_url TEXT NOT NULL,
-  provider_identity TEXT NOT NULL,
-  occurrence_snapshot_hash TEXT NOT NULL,
+  occurrence_snapshot TEXT NOT NULL,
   state TEXT NOT NULL,
   evidence_hash TEXT,
   updated_at TEXT NOT NULL,

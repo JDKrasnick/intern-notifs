@@ -1,6 +1,6 @@
 import { POSTING_PROVIDERS, type CanonicalEmployer, type DestinationReviewRule, type EmployerMapping } from '../src/types.js';
 import type { DestinationVerificationRequest } from '../src/destination-verification.js';
-import { ATOMIC_REPAIR_RECORD_LIMIT } from './catalog-admission-store.js';
+import { ATOMIC_REPAIR_RECORD_LIMIT, BACKFILL_REPAIR_RECORD_LIMIT } from './catalog-admission-store.js';
 import type { D1CatalogAdmissionStore, RepairChange } from './catalog-admission-store.js';
 
 const json = (status: number, body: unknown) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -105,7 +105,7 @@ export async function handleCatalogAdmissionOperations(
         const sourceId = text(input.sourceId, 'sourceId', 300);
         const cursor = typeof input.cursor === 'number' && Number.isInteger(input.cursor) && input.cursor >= 0 ? input.cursor : 0;
         const recordLimit = typeof input.recordLimit === 'number' && Number.isInteger(input.recordLimit)
-          ? input.recordLimit : 850;
+          ? input.recordLimit : BACKFILL_REPAIR_RECORD_LIMIT;
         const derived = await store.deriveBackfillRepairBatch(generationId, sourceId, cursor, recordLimit);
         const stage = await store.stageRepair(derived.changes, timestamp);
         return json(200, { generationId, sourceId, cursor, nextCursor: derived.nextCursor,

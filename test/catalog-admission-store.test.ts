@@ -11,12 +11,19 @@ import { newJobNotificationEvent } from '../src/ingestion/catalog-reconciler.js'
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 import type { CatalogAdmission, Internship } from '../src/types.js';
 
-function sqliteD1(database: DatabaseSync): D1Database {
+type QueryBudget = { used: number; maximum: number };
+
+function sqliteD1(database: DatabaseSync, budget?: QueryBudget): D1Database {
+  const count = () => {
+    if (!budget) return;
+    budget.used += 1;
+    if (budget.used > budget.maximum) throw new Error(`D1 query budget exceeded: ${budget.used}/${budget.maximum}`);
+  };
   const prepared = (query: string, values: SQLInputValue[] = []): D1PreparedStatement => ({
     bind(...next: unknown[]) { return prepared(query, next as SQLInputValue[]); },
-    async first<T>() { return database.prepare(query).get(...values) as T | null; },
-    async all<T>() { return { results: database.prepare(query).all(...values) as T[] }; },
-    async run() { const result = database.prepare(query).run(...values); return { meta: { changes: Number(result.changes) } }; },
+    async first<T>() { count(); return database.prepare(query).get(...values) as T | null; },
+    async all<T>() { count(); return { results: database.prepare(query).all(...values) as T[] }; },
+    async run() { count(); const result = database.prepare(query).run(...values); return { meta: { changes: Number(result.changes) } }; },
   });
   return {
     prepare: (query) => prepared(query),
@@ -280,6 +287,62 @@ describe('D1 catalog admission operations', () => {
     const zero = await store.stageRepair((await store.deriveBackfillRepairBatch(generation.id, 'greenhouse-acme')).changes,
       '2026-08-30T00:05:00Z');
     expect(zero).toMatchObject({ changed: 0, occurrencesChanged: 0 });
+  });
+
+  it('freezes more than 1,000 legacy occurrences without exceeding the D1 invocation query budget', async () => {
+    const { database, jobs } = subject();
+    const current = job();
+    delete current.admission;
+    current.sourceReferences = Array.from({ length: 1_100 }, (_, index) => ({
+      sourceId: 'greenhouse-acme', provenance: 'official-ats' as const, externalId: `legacy-${index}`, document: `legacy-${index}`,
+      sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs', row: index + 1, company: current.company,
+      title: current.title, location: current.location, season: current.season,
+      applyUrl: `https://job-boards.greenhouse.io/acme/jobs/${1_000_000 + index}`,
+      compensation: current.compensation, state: 'open' as const,
+    }));
+    await jobs.putInternship(current);
+    const budget = { used: 0, maximum: 1_000 };
+    const store = new D1CatalogAdmissionStore(sqliteD1(database, budget));
+
+    const generation = await store.previewBackfill('2026-08-30T00:00:00Z');
+
+    expect(generation.total).toBe(1_100);
+    expect(budget.used).toBeLessThan(10);
+    await expect(store.deriveBackfillRepairBatch(generation.id, 'greenhouse-acme', 0, 121))
+      .rejects.toThrow('between 1 and 120');
+  });
+
+  it('resumes schedule synchronization and prunes stale rows only after a complete bounded pass', async () => {
+    const { database, jobs } = subject();
+    const current = job();
+    current.admission = admission(true);
+    current.sourceReferences = Array.from({ length: 1_100 }, (_, index) => ({
+      sourceId: 'greenhouse-acme', provenance: 'official-ats' as const, externalId: `role-${index}`, document: `role-${index}`,
+      sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs', row: index + 1, company: current.company,
+      title: current.title, location: current.location, season: current.season,
+      applyUrl: `https://job-boards.greenhouse.io/acme/jobs/${2_000_000 + index}`,
+      compensation: current.compensation, state: 'open' as const, admission: current.admission,
+    }));
+    await jobs.putInternship(current);
+    database.prepare(`INSERT INTO destination_verification_schedule
+      (occurrence_key, job_id, source_id, external_id, candidate_url, provider_identity, next_check_at, updated_at)
+      VALUES ('stale', 'removed-job', 'removed-source', 'removed-role', 'https://example.test/removed', '{}', ?, ?)`)
+      .run('2026-08-30T00:00:00Z', '2026-08-30T00:00:00Z');
+    const budget = { used: 0, maximum: 1_000 };
+    const store = new D1CatalogAdmissionStore(sqliteD1(database, budget));
+
+    for (let invocation = 0; invocation < 5; invocation += 1) {
+      budget.used = 0;
+      await store.syncVerificationSchedule(`2026-08-30T00:0${invocation}:00Z`);
+      expect(budget.used).toBeLessThan(1_000);
+      if (invocation < 4) expect(database.prepare("SELECT count(*) AS count FROM destination_verification_schedule WHERE occurrence_key = 'stale'").get())
+        .toEqual({ count: 1 });
+    }
+    expect(database.prepare('SELECT count(*) AS count FROM destination_verification_schedule').get()).toEqual({ count: 1_100 });
+    expect(database.prepare('SELECT count(*) AS count FROM destination_verification_schedule_sync').get()).toEqual({ count: 0 });
+    budget.used = 0;
+    await expect(store.leaseDueVerifications('2026-09-02T00:00:00Z', 1_000)).resolves.toHaveLength(100);
+    expect(budget.used).toBe(101);
   });
 
   it('leases due occurrence checks once and resumes after the lease expires', async () => {

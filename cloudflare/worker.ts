@@ -1128,7 +1128,7 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
   }
   if (event.cron === '9-59/10 * * * *') {
     const observedAt = new Date(event.scheduledTime);
-    const admissionVerificationRetries = await enqueueDueDestinationVerifications(env, observedAt, { syncSchedule: false });
+    const admissionVerificationRetries = await enqueueDueDestinationVerifications(env, observedAt);
     const queueMetrics = env.DESTINATION_VERIFICATION_QUEUE.metrics ? await env.DESTINATION_VERIFICATION_QUEUE.metrics() : undefined;
     const deadLetterMetrics = env.DESTINATION_VERIFICATION_DLQ.metrics ? await env.DESTINATION_VERIFICATION_DLQ.metrics() : undefined;
     const maximumQueueAgeMs = Number(env.ADMISSION_QUEUE_AGE_ALERT_HOURS ?? 120) * 60 * 60_000;

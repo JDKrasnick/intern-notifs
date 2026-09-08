@@ -411,8 +411,8 @@ Historical backfill is resumable and candidate-only:
    `retryQueued: true`; message idempotency prevents a completed candidate from
    being evaluated twice.
 3. Review completed candidate evidence, then call `action: "stage"` with the
-   generation ID, one `sourceId`, cursor, and a record limit below 900. Save the
-   returned repair token and exact job/occurrence counts.
+   generation ID, one `sourceId`, cursor, and a record limit no larger than 120.
+   Save the returned repair token and exact job/occurrence counts.
 4. Apply through `/internal/admission/repair` only after owner approval. The
    transaction rejects concurrent JSON changes and verifies every written job
    and occurrence at zero mismatches before refreshing projections. Re-run the
@@ -438,8 +438,8 @@ baseline.
 4. Freeze one historical generation. Enqueue pages of at most 500 until it is
    complete; retry only an exact failed cursor and require an empty DLQ.
 5. Review candidate evidence by source, host, employer, classification, and
-   notification history. Stage source-scoped batches below 900 records. Pause
-   for owner approval of every exact repair token and job/occurrence count.
+   notification history. Stage source-scoped batches of at most 120 records.
+   Pause for owner approval of every exact repair token and job/occurrence count.
 6. Apply only approved batches. Require zero verification mismatches, no new
    notification or outbox rows, and a zero-change restage after every source.
 7. Finish with zero legacy-unclassified occurrences and no unresolved employer,
