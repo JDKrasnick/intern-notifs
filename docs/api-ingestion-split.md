@@ -25,6 +25,22 @@ ingestion/email/Gmail/operations/billing secrets, and the same
 logs, shell arguments, or `EXPO_PUBLIC_*`; set it interactively from the
 approved secret manager for each Worker.
 
+## Local end-to-end harness
+
+Run the reusable two-Worker harness before a cutover or after changing the
+route boundary, service binding, authentication headers, or either entrypoint:
+
+```bash
+npm ci
+npm run test:e2e
+```
+
+The command builds the same API and ingestion bundles used by deployment, runs
+them as separate services in one ephemeral local `workerd` process, applies all
+checked-in D1 migrations, and sends requests through the real `INGESTION`
+service binding. It uses fixed test-only secrets, requires no Cloudflare account
+or credentials, and leaves no persistent database or Worker state behind.
+
 ## Secret inventory
 
 The two Workers intentionally share several secret values, but each secret is

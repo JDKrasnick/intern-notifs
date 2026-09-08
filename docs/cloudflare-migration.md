@@ -47,7 +47,8 @@ database, so storage growth must be monitored before public scale.
 npm ci
 npm run typecheck
 npm test
-npm run build:cloudflare
+npm run test:integration
+npm run test:e2e
 npm run cloudflare:migrate:local
 cp .dev.vars.example .dev.vars
 npx wrangler dev --local --config wrangler.api.jsonc
@@ -56,6 +57,11 @@ npx wrangler dev --local --config wrangler.api.jsonc
 Use throwaway local values in `.dev.vars`. The file is ignored. Wrangler can
 also read the repository `.env`; never place AWS credentials or production
 secrets in Worker variables.
+
+`npm run test:e2e` compiles both Worker entrypoints and starts them as separate
+services in an ephemeral local `workerd` process. The harness applies the
+checked-in D1 migrations, exercises the real `INGESTION` service binding, and
+uses test-only secrets. It does not contact or mutate Cloudflare resources.
 
 ## Provision infrastructure
 
