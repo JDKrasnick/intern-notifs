@@ -16,13 +16,14 @@ export function compensationLabels(value: DisplayCompensation | undefined): stri
     if (isKnownCurrency) {
       currencyPrefix = `${range.currency} `;
     } else {
-      // XXX or missing currency: infer symbol from sourceText for UX, never show "Currency not stated"
+      // XXX or missing currency: use only a symbol present in the bounded
+      // employer text. Otherwise keep the unit explicitly unknown.
       const src = range.sourceText ?? '';
       if (src.includes('€')) currencyPrefix = '€';
       else if (src.includes('£')) currencyPrefix = '£';
       else if (src.includes('$')) currencyPrefix = '$';
       else if (src.includes('¥')) currencyPrefix = '¥';
-      // otherwise no currency prefix, just amount
+      else currencyPrefix = 'Currency not stated ';
     }
     const period: Record<string, string> = { hourly: '/hour', daily: '/day', weekly: '/week', monthly: '/month', annual: '/year', unknown: ' · period not stated', other: ' · see employer pay terms' };
     const amount = `${number(range.minAmount)}${range.maxAmount !== range.minAmount ? `–${number(range.maxAmount)}` : ''}`;

@@ -19,7 +19,7 @@ export function housingLabels(details: readonly DisplayHousingDetail[] | undefin
     if (!Object.hasOwn(names, item.kind)) return [];
     const amount = item.minAmount !== undefined && item.maxAmount !== undefined ? compensationLabels({ ranges: [{
       minAmount: item.minAmount, maxAmount: item.maxAmount, currency: item.currency ?? 'XXX',
-      period: item.period ?? 'unknown', periodLabel: item.periodLabel,
+      period: item.period ?? 'unknown', periodLabel: item.periodLabel, sourceText: item.sourceText,
     }] })[0] : undefined;
     return [{ label: `${names[item.kind]}${amount ? `: ${amount}` : ''}${item.conditional ? ' · conditional' : ''}`,
       detail: typeof item.sourceText === 'string' ? [...item.sourceText.trim()].slice(0, 240).join('') : '' }];

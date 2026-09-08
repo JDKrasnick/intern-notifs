@@ -101,6 +101,55 @@ async function disputedPay(current: ReturnType<typeof subject>, jobId = 'job-1',
 }
 
 describe('staged browser-to-API collection', () => {
+  it('keeps a complete non-posting browser result pending for exact-role collection', async () => {
+    const current = subject();
+    const original = jobWithVerifiedDestination();
+    await current.jobs.putInternship(original);
+    const inspectedAt = '2026-09-06T19:00:00.000Z';
+
+    await persistDestinationAdmission({
+      jobs: current.jobs,
+      operations: current.operations,
+      job: original,
+      reference: original.sourceReferences[0]!,
+      message: {
+        version: 1,
+        jobId: original.jobId,
+        sourceId: 'community-acme',
+        externalId: 'row-1',
+        providerIdentity: { provider: 'github', sourceId: 'community-acme', sourceUrl: original.applyUrl },
+        candidateUrl: original.applyUrl,
+        queuedAt: inspectedAt,
+        reason: 'historical-backfill',
+        metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+        metadataBackfillToken: 'non-posting-collection',
+      },
+      reachability: 'live',
+      inspectedAt,
+      browserVisible: true,
+      evidence: {
+        url: original.applyUrl,
+        title: 'Acme careers',
+        contentExcerpt: 'Browse current openings. '.repeat(30),
+        jobPostingCount: 0,
+        distinctJobLinkCount: 12,
+        confidence: { score: 20, level: 'low', recommendation: 'review', signals: ['job listing page'] },
+      },
+    });
+
+    const audit = await current.operations.roleMetadataAudit(new Date(inspectedAt));
+    expect(audit.acquisitionReports[0]?.report).toMatchObject({ complete: false, destination: 'aggregate-board' });
+    expect(audit.collectionCoverage).toMatchObject({
+      eligible: 1,
+      current: 0,
+      pendingOrUnobserved: 1,
+      complete: false,
+    });
+    const plan = await current.operations.stageRoleMetadataRepair(inspectedAt);
+    await expect(current.operations.applyRoleMetadataRepair(plan.repairToken, plan.expectedJobs, 0, inspectedAt))
+      .rejects.toThrow('collection was incomplete during the dry-run');
+  });
+
   it('keeps production-sized metadata preflight and atomic writes within the D1 query budget', async () => {
     const current = subject(); const observedAt = '2026-09-06T19:00:00.000Z';
     const original = job();
