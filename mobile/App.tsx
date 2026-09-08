@@ -2768,9 +2768,7 @@ function AppContent() {
         }
         // Prevent double-dismiss from popstate
         wasVisible && (detailDismissalPending.current = true);
-        if (Platform.OS !== "ios") {
-          InteractionManager.runAfterInteractions(finishDetailDismissal);
-        }
+        InteractionManager.runAfterInteractions(finishDetailDismissal);
         return;
       }
     }
