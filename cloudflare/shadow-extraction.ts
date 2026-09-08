@@ -1,0 +1,231 @@
+import { createHash } from 'node:crypto';
+import {
+  SHADOW_EXTRACTION_MODEL_ID,
+  SHADOW_EXTRACTION_PREPROCESSING_VERSION,
+  SHADOW_EXTRACTION_PROMPT_VERSION,
+  SHADOW_EXTRACTION_SCHEMA_VERSION,
+  normalizeExactPostingDescription,
+  shadowExtractionCacheKey,
+  shadowExtractionPrompt,
+  validateShadowExtraction,
+  type NormalizedPostingInput,
+} from '../src/shadow-extraction.js';
+import type { ProviderIdentity } from '../src/types.js';
+import type { D1Database, MessageBatch, Queue, R2Bucket } from './types.js';
+
+export interface ShadowExtractionMessage {
+  version: 1;
+  runKey: string;
+  jobId: string;
+  sourceId: string;
+  externalId: string;
+  sourceUrl: string;
+  providerIdentity: ProviderIdentity;
+  contentHash: string;
+  inputKey: string;
+  queuedAt: string;
+}
+
+export interface ShadowInferenceResult {
+  response: unknown;
+  inputTokens: number;
+  outputTokens: number;
+  actualCostCents: number;
+}
+
+export interface ShadowExtractionEnvironment {
+  DB: D1Database;
+  SHADOW_EXTRACTION_QUEUE: Queue;
+  SHADOW_EXTRACTION_ARTIFACTS: R2Bucket;
+  /** Live execution remains false until pilot evaluation and cost headroom are approved. */
+  SHADOW_EXTRACTION_ENABLED?: string;
+  SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS?: string;
+  SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS?: string;
+}
+
+const leaseMs = 5 * 60_000;
+const retentionDays = 30;
+const maxInputBytes = 40_000;
+
+function safeKeyPart(value: string): string {
+  if (!/^[a-f0-9]{64}$/u.test(value)) throw new Error('Shadow extraction hash is invalid');
+  return value;
+}
+
+function messageValid(value: unknown): value is ShadowExtractionMessage {
+  if (!value || typeof value !== 'object') return false;
+  const message = value as Partial<ShadowExtractionMessage>;
+  return message.version === 1 && typeof message.runKey === 'string' && /^[a-f0-9]{64}$/u.test(message.runKey)
+    && typeof message.jobId === 'string' && typeof message.sourceId === 'string' && typeof message.externalId === 'string'
+    && typeof message.sourceUrl === 'string' && typeof message.contentHash === 'string' && /^[a-f0-9]{64}$/u.test(message.contentHash)
+    && typeof message.inputKey === 'string' && /^shadow-input\/[a-f0-9]{64}\.json$/u.test(message.inputKey)
+    && Boolean(message.providerIdentity);
+}
+
+function readJson(value: unknown): ShadowExtractionMessage {
+  const parsed = typeof value === 'string' ? JSON.parse(value) as unknown : value;
+  if (!messageValid(parsed)) throw new Error('Shadow extraction message is invalid');
+  return parsed;
+}
+
+function parseCents(value: string | undefined): number | undefined {
+  if (!value?.trim() || !/^\d+$/u.test(value.trim())) return undefined;
+  const cents = Number(value);
+  return Number.isSafeInteger(cents) ? cents : undefined;
+}
+
+function month(now: Date): string { return now.toISOString().slice(0, 7); }
+
+function r2Key(contentHash: string): string { return `shadow-input/${safeKeyPart(contentHash)}.json`; }
+
+async function r2Text(bucket: R2Bucket, key: string): Promise<string> {
+  const object = await bucket.get(key);
+  if (!object || object.size === undefined || object.size > maxInputBytes + 2_000) throw new Error('Shadow extraction input is unavailable or oversized');
+  return new Response(object.body).text();
+}
+
+/** The producer stores only immutable artifact references on Queue. It does not
+ * put descriptions, prompts, URLs to fetch, or model instructions in messages. */
+export async function enqueueShadowExtraction(env: Pick<ShadowExtractionEnvironment, 'DB' | 'SHADOW_EXTRACTION_QUEUE' | 'SHADOW_EXTRACTION_ARTIFACTS'>, input: {
+  jobId: string;
+  sourceId: string;
+  externalId: string;
+  sourceUrl: string;
+  providerIdentity: ProviderIdentity;
+  title: string;
+  description: string;
+  observedAt: string;
+  incomplete?: boolean;
+}): Promise<ShadowExtractionMessage | undefined> {
+  const normalized = normalizeExactPostingDescription(input.title, input.description, input.incomplete);
+  if (!normalized.title || !normalized.description) return undefined;
+  const runKey = shadowExtractionCacheKey(normalized);
+  const inputKey = r2Key(normalized.contentHash);
+  const stored = JSON.stringify({ version: 1, normalized, identity: {
+    jobId: input.jobId, sourceId: input.sourceId, externalId: input.externalId, sourceUrl: input.sourceUrl,
+    providerIdentity: input.providerIdentity, observedAt: input.observedAt,
+  }, retention: { expiresAt: new Date(Date.parse(input.observedAt) + retentionDays * 86_400_000).toISOString() } });
+  if (new TextEncoder().encode(stored).byteLength > maxInputBytes + 2_000) return undefined;
+  await env.SHADOW_EXTRACTION_ARTIFACTS.put(inputKey, new TextEncoder().encode(stored).buffer, { httpMetadata: { contentType: 'application/json' } });
+  const message: ShadowExtractionMessage = { version: 1, runKey, jobId: input.jobId, sourceId: input.sourceId,
+    externalId: input.externalId, sourceUrl: input.sourceUrl, providerIdentity: input.providerIdentity,
+    contentHash: normalized.contentHash, inputKey, queuedAt: input.observedAt };
+  await env.DB.prepare(`INSERT INTO shadow_extraction_posting_revisions (job_id, source_id, external_id, content_hash, observed_at)
+    VALUES (?, ?, ?, ?, ?) ON CONFLICT(job_id, source_id, external_id) DO UPDATE SET content_hash = excluded.content_hash, observed_at = excluded.observed_at
+    WHERE shadow_extraction_posting_revisions.observed_at <= excluded.observed_at`).bind(message.jobId, message.sourceId, message.externalId,
+    message.contentHash, message.queuedAt).run();
+  await env.SHADOW_EXTRACTION_QUEUE.send(message);
+  return message;
+}
+
+/** Atomic reservation checks the already-forecast app spend and the monthly
+ * shadow envelope before an inference call. A missing value fails closed. */
+export async function reserveShadowCost(db: D1Database, now: Date, runKey: string, reserveCents: number, env: Pick<ShadowExtractionEnvironment, 'SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS' | 'SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS'>): Promise<boolean> {
+  const forecast = parseCents(env.SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS);
+  const headroom = parseCents(env.SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS);
+  if (forecast === undefined || headroom === undefined || reserveCents <= 0 || forecast + reserveCents > 2_000 || reserveCents > headroom) return false;
+  const period = month(now);
+  const result = await db.prepare(`INSERT INTO shadow_extraction_cost_ledger (period, run_key, reserved_cents, actual_cents, state, created_at, updated_at)
+    SELECT ?, ?, ?, 0, 'reserved', ?, ?
+    WHERE NOT EXISTS (SELECT 1 FROM shadow_extraction_cost_ledger WHERE period = ? AND run_key = ?)
+      AND COALESCE((SELECT SUM(reserved_cents) FROM shadow_extraction_cost_ledger WHERE period = ? AND state IN ('reserved', 'reconciled')), 0) + ? <= ?`).bind(
+    period, runKey, reserveCents, now.toISOString(), now.toISOString(), period, runKey, period, reserveCents, headroom,
+  ).run();
+  return result.meta.changes === 1;
+}
+
+async function claimRun(db: D1Database, message: ShadowExtractionMessage, now: Date): Promise<boolean> {
+  const until = new Date(now.getTime() + leaseMs).toISOString();
+  const result = await db.prepare(`INSERT INTO shadow_extraction_runs (
+      run_key, job_id, source_id, external_id, source_url, posting_identity, content_hash, model_id, prompt_version, schema_version, preprocessing_version,
+      state, attempts, lease_until, input_key, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', 1, ?, ?, ?, ?)
+    ON CONFLICT(run_key) DO UPDATE SET state = 'running', attempts = shadow_extraction_runs.attempts + 1, lease_until = excluded.lease_until, updated_at = excluded.updated_at
+    WHERE shadow_extraction_runs.state IN ('queued', 'transient-failure') OR (shadow_extraction_runs.state = 'running' AND shadow_extraction_runs.lease_until < ?)`)
+    .bind(message.runKey, message.jobId, message.sourceId, message.externalId, message.sourceUrl, JSON.stringify(message.providerIdentity), message.contentHash,
+      SHADOW_EXTRACTION_MODEL_ID, SHADOW_EXTRACTION_PROMPT_VERSION, SHADOW_EXTRACTION_SCHEMA_VERSION, SHADOW_EXTRACTION_PREPROCESSING_VERSION,
+      until, message.inputKey, now.toISOString(), now.toISOString(), now.toISOString()).run();
+  return result.meta.changes === 1;
+}
+
+async function currentRevision(db: D1Database, message: ShadowExtractionMessage): Promise<boolean> {
+  const row = await db.prepare(`SELECT content_hash FROM shadow_extraction_posting_revisions
+    WHERE job_id = ? AND source_id = ? AND external_id = ?`).bind(message.jobId, message.sourceId, message.externalId).first<{ content_hash: string }>();
+  return row?.content_hash === message.contentHash;
+}
+
+async function finishRun(db: D1Database, message: ShadowExtractionMessage, state: 'disabled' | 'completed' | 'invalid-output' | 'transient-failure' | 'obsolete', now: Date, values: { responseKey?: string; validation?: unknown; error?: string; inputTokens?: number; outputTokens?: number; actualCostCents?: number } = {}): Promise<void> {
+  await db.prepare(`UPDATE shadow_extraction_runs SET state = ?, lease_until = '', response_key = ?, validation = ?, error = ?, input_tokens = ?, output_tokens = ?, actual_cost_cents = ?, completed_at = ?, updated_at = ?
+    WHERE run_key = ? AND content_hash = ?`).bind(state, values.responseKey ?? null, values.validation ? JSON.stringify(values.validation) : null,
+    values.error ?? null, values.inputTokens ?? null, values.outputTokens ?? null, values.actualCostCents ?? null, now.toISOString(), now.toISOString(), message.runKey, message.contentHash).run();
+}
+
+export async function shadowExtractionSummary(db: D1Database): Promise<Record<string, unknown>> {
+  const [runs, costs, versions, coverage, failures, baselineDifferences, usage] = await Promise.all([
+    db.prepare('SELECT state, COUNT(*) AS count, AVG(CASE WHEN completed_at IS NOT NULL THEN (julianday(completed_at) - julianday(created_at)) * 86400000 END) AS latency_ms FROM shadow_extraction_runs GROUP BY state').all(),
+    db.prepare('SELECT period, SUM(reserved_cents) AS reserved_cents, SUM(actual_cents) AS actual_cents, COUNT(*) AS runs FROM shadow_extraction_cost_ledger GROUP BY period ORDER BY period DESC LIMIT 2').all(),
+    db.prepare('SELECT model_id, prompt_version, schema_version, preprocessing_version, COUNT(*) AS count FROM shadow_extraction_runs GROUP BY model_id, prompt_version, schema_version, preprocessing_version').all(),
+    db.prepare(`SELECT field, status, SUM(accepted) AS accepted, COUNT(*) AS total
+      FROM shadow_extraction_field_outcomes GROUP BY field, status ORDER BY field, status`).all(),
+    db.prepare(`SELECT state, COUNT(*) AS count FROM shadow_extraction_runs
+      WHERE state IN ('invalid-output', 'transient-failure', 'obsolete') GROUP BY state`).all(),
+    db.prepare(`SELECT field, baseline_state, shadow_state, COUNT(*) AS count
+      FROM shadow_extraction_baseline_differences WHERE differs = 1 GROUP BY field, baseline_state, shadow_state`).all(),
+    db.prepare(`SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens,
+      COALESCE(SUM(actual_cost_cents), 0) AS actual_cost_cents FROM shadow_extraction_runs`).all(),
+  ]);
+  return { runs: runs.results, coverage: coverage.results, failures: failures.results, costs: costs.results,
+    usage: usage.results[0] ?? { input_tokens: 0, output_tokens: 0, actual_cost_cents: 0 }, versions: versions.results,
+    baselineDifferences: baselineDifferences.results };
+}
+
+/** No model client is bound in this PR. The handler records a visible disabled
+ * state until the pilot approves a model and the combined budget forecast is set. */
+export async function processShadowExtractionBatch(batch: MessageBatch<unknown>, env: ShadowExtractionEnvironment, now = () => new Date(), infer?: (input: NormalizedPostingInput, prompt: ReturnType<typeof shadowExtractionPrompt>) => Promise<ShadowInferenceResult>): Promise<void> {
+  for (const queued of batch.messages) {
+    let message: ShadowExtractionMessage;
+    try { message = readJson(queued.body); } catch { queued.ack(); continue; }
+    const startedAt = now();
+    try {
+      if (!await claimRun(env.DB, message, startedAt)) { queued.ack(); continue; }
+      if (!await currentRevision(env.DB, message)) {
+        await finishRun(env.DB, message, 'obsolete', now(), { error: 'a newer posting revision is current' }); queued.ack(); continue;
+      }
+      const parsed = JSON.parse(await r2Text(env.SHADOW_EXTRACTION_ARTIFACTS, message.inputKey)) as { normalized?: NormalizedPostingInput };
+      const normalized = parsed.normalized;
+      if (!normalized || normalized.contentHash !== message.contentHash || shadowExtractionCacheKey(normalized) !== message.runKey) {
+        await finishRun(env.DB, message, 'invalid-output', now(), { error: 'input identity or version mismatch' }); queued.ack(); continue;
+      }
+      if (env.SHADOW_EXTRACTION_ENABLED !== 'true' || !infer) {
+        await finishRun(env.DB, message, 'disabled', now(), { error: 'live model execution disabled pending pilot and budget approval' }); queued.ack(); continue;
+      }
+      // Conservative upper bound: 5 cents/request. Actual model cost is reconciled below.
+      if (!await reserveShadowCost(env.DB, startedAt, message.runKey, 5, env)) {
+        await finishRun(env.DB, message, 'disabled', now(), { error: 'cost headroom unavailable' }); queued.ack(); continue;
+      }
+      const response = await infer(normalized, shadowExtractionPrompt(normalized));
+      if (!await currentRevision(env.DB, message)) {
+        await finishRun(env.DB, message, 'obsolete', now(), { error: 'a newer posting revision arrived during inference' }); queued.ack(); continue;
+      }
+      const validation = validateShadowExtraction(response.response, normalized);
+      const responseKey = `shadow-response/${message.runKey}.json`;
+      await env.SHADOW_EXTRACTION_ARTIFACTS.put(responseKey, new TextEncoder().encode(JSON.stringify({ response: response.response, validation })).buffer, { httpMetadata: { contentType: 'application/json' } });
+      const state = validation.accepted ? 'completed' : 'invalid-output';
+      await finishRun(env.DB, message, state, now(), { responseKey, validation, inputTokens: response.inputTokens,
+        outputTokens: response.outputTokens, actualCostCents: response.actualCostCents });
+      await env.DB.batch(validation.fieldOutcomes.map((outcome) => env.DB.prepare(`INSERT INTO shadow_extraction_field_outcomes (run_key, field, status, accepted, failure)
+        VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_key, field) DO UPDATE SET status = excluded.status, accepted = excluded.accepted, failure = excluded.failure`)
+        .bind(message.runKey, outcome.field, outcome.status, outcome.accepted ? 1 : 0, outcome.failure ?? null)));
+      await env.DB.prepare(`UPDATE shadow_extraction_cost_ledger SET actual_cents = ?, state = 'reconciled', updated_at = ? WHERE period = ? AND run_key = ?`)
+        .bind(response.actualCostCents, now().toISOString(), month(startedAt), message.runKey).run();
+      queued.ack();
+    } catch (error) {
+      await finishRun(env.DB, message, 'transient-failure', now(), { error: error instanceof Error ? error.message.slice(0, 500) : 'unknown failure' });
+      if ((queued.attempts ?? 0) >= 1) queued.ack(); else queued.retry({ delaySeconds: 300 });
+    }
+  }
+}
+
+export function shadowReportFingerprint(message: Pick<ShadowExtractionMessage, 'jobId' | 'sourceId' | 'externalId' | 'contentHash'>): string {
+  return createHash('sha256').update(`${message.jobId}\0${message.sourceId}\0${message.externalId}\0${message.contentHash}`).digest('hex');
+}

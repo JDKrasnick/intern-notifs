@@ -15,7 +15,8 @@ import { D1InternshipStore } from './d1-store.js';
 import { extractPostingMetadataEvidence, extractVerifiedPageMetadataEvidence, projectRoleMetadata, replaceVerifiedPageMetadataEvidence, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION, VERIFIED_PAGE_METADATA_SOURCES } from '../src/role-metadata.js';
 import { createMetadataAcquirer, metadataApiRoute, type MetadataAcquisition } from '../src/metadata-acquisition.js';
 import { metadataFieldOutcomes } from '../src/metadata-audit.js';
-import type { D1Database, MessageBatch, Queue } from './types.js';
+import type { D1Database, MessageBatch, Queue, R2Bucket } from './types.js';
+import { enqueueShadowExtraction } from './shadow-extraction.js';
 
 export interface DestinationVerificationMessage {
   version: 1;
@@ -39,6 +40,8 @@ export interface DestinationVerificationEnvironment {
   DB: D1Database;
   DESTINATION_BROWSER: BrowserWorker;
   DESTINATION_VERIFICATION_QUEUE: Queue;
+  SHADOW_EXTRACTION_QUEUE?: Queue;
+  SHADOW_EXTRACTION_ARTIFACTS?: R2Bucket;
   RESEND_API_KEY?: string;
   ADMISSION_SUPPORT_RECIPIENT?: string;
   AUTH_FROM_EMAIL?: string;
@@ -627,6 +630,26 @@ export async function processDestinationVerificationBatch(
           continue;
         }
         if ('incident' in result && result.incident) opened.push(result.incident);
+        // The shadow path receives an exact artifact revision only after the
+        // canonical observation is durable. Its failures never block catalog
+        // admission, publication, or notifications.
+        const shadowArtifact = apiAcquisition?.artifact?.text
+          ? { title: apiAcquisition.artifact.title, description: apiAcquisition.artifact.text, sourceUrl: apiAcquisition.sourceUrl,
+            incomplete: false }
+          : evidence?.contentExcerpt && !evidence.identicalEvidenceForDifferentPosting
+            ? { title: evidence.title ?? currentReference.title, description: evidence.contentExcerpt, sourceUrl: evidence.url,
+              incomplete: evidence.inspectionTruncated === true || evidence.loadingShell === true }
+            : undefined;
+        if (!candidateOnly && shadowArtifact && env.SHADOW_EXTRACTION_QUEUE && env.SHADOW_EXTRACTION_ARTIFACTS) {
+          try {
+            await enqueueShadowExtraction({ DB: env.DB, SHADOW_EXTRACTION_QUEUE: env.SHADOW_EXTRACTION_QUEUE, SHADOW_EXTRACTION_ARTIFACTS: env.SHADOW_EXTRACTION_ARTIFACTS }, { jobId: currentJob.jobId, sourceId: message.sourceId, externalId: message.externalId,
+              sourceUrl: shadowArtifact.sourceUrl, providerIdentity: message.providerIdentity, title: shadowArtifact.title,
+              description: shadowArtifact.description, observedAt: inspectedAt, incomplete: shadowArtifact.incomplete });
+          } catch (error) {
+            console.error(JSON.stringify({ event: 'shadow_extraction_enqueue_failed', jobId: currentJob.jobId, sourceId: message.sourceId,
+              error: error instanceof Error ? error.message : String(error) }));
+          }
+        }
         const attemptId = candidateOnly
           ? `historical-backfill:${message.generationId ?? 'unknown'}:${crypto.randomUUID()}`
           : crypto.randomUUID();

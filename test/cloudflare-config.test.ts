@@ -20,6 +20,7 @@ type WorkerConfig = {
       queue: string;
       max_batch_size: number;
       max_batch_timeout?: number;
+      retry_delay?: number;
       max_retries: number;
       max_concurrency?: number;
       dead_letter_queue: string;

@@ -21,6 +21,7 @@ import { runCatalogQualityBackfill } from '../src/catalog-quality-backfill.js';
 import { runPostingIdentityRepair, type PostingIdentityRepairPlan } from '../src/posting-identity-repair.js';
 import { cleanupExpiredUserData, D1InternshipStore, D1ReleaseStore, D1UserStore } from './d1-store.js';
 import { queueHasBacklog } from './queue-backlog.js';
+import { processShadowExtractionBatch, shadowExtractionSummary } from './shadow-extraction.js';
 import type { D1Database, MessageBatch, Queue, R2Bucket, ScheduledController } from './types.js';
 import { disconnectGmail, gmailApi, gmailCallback, GmailStore, processGmailWork, recordGmailFailure, type GmailWorkMessage } from './gmail.js';
 import { D1EmployerStore } from './employer-store.js';
@@ -52,12 +53,14 @@ import {
 
 export interface Environment extends AuthEnvironment {
   DOCUMENTS: R2Bucket;
+  SHADOW_EXTRACTION_ARTIFACTS: R2Bucket;
   GREENHOUSE_QUEUE: Queue;
   LEVER_QUEUE: Queue;
   ASHBY_QUEUE: Queue;
   GITHUB_QUEUE: Queue;
   GMAIL_QUEUE: Queue;
   DESTINATION_VERIFICATION_QUEUE: Queue;
+  SHADOW_EXTRACTION_QUEUE: Queue;
   DESTINATION_BROWSER: BrowserWorker;
   GREENHOUSE_DLQ: Queue;
   LEVER_DLQ: Queue;
@@ -65,6 +68,7 @@ export interface Environment extends AuthEnvironment {
   GITHUB_DLQ: Queue;
   GMAIL_DLQ: Queue;
   DESTINATION_VERIFICATION_DLQ: Queue;
+  SHADOW_EXTRACTION_DLQ: Queue;
   PUBLIC_API_URL: string;
   RESEND_API_KEY?: string;
   ADMISSION_SUPPORT_RECIPIENT?: string;
@@ -90,6 +94,9 @@ export interface Environment extends AuthEnvironment {
   ADMISSION_QUEUE_AGE_ALERT_HOURS?: string;
   ADMISSION_STALE_ALERT_THRESHOLD?: string;
   GMAIL_ENABLED?: string;
+  SHADOW_EXTRACTION_ENABLED?: string;
+  SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS?: string;
+  SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS?: string;
   GMAIL_CLIENT_ID?: string;
   GMAIL_CLIENT_SECRET?: string;
   GMAIL_TOKEN_ENCRYPTION_KEY?: string;
@@ -739,6 +746,10 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
     return withCors(await handleDlqOperations(request, dlqDependencies(env)));
   }
+  if (request.method === 'GET' && url.pathname === '/internal/operations/shadow-extraction') {
+    if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
+    return withCors(Response.json(await shadowExtractionSummary(env.DB), { headers: { 'Cache-Control': 'no-store' } }));
+  }
   if (request.method === 'POST' && url.pathname === '/internal/poll-source') {
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
     const provider = url.searchParams.get('provider');
@@ -1213,6 +1224,10 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
   }
   if (batch.queue.includes('destination-verification')) {
     await processDestinationVerificationBatch(batch, env);
+    return;
+  }
+  if (batch.queue.includes('shadow-extraction')) {
+    await processShadowExtractionBatch(batch, env);
     return;
   }
   const records = batch.messages.map((message) => ({ messageId: message.id, body: typeof message.body === 'string' ? message.body : JSON.stringify(message.body) }));
