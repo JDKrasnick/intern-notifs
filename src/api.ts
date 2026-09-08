@@ -40,6 +40,7 @@ function catalogFilter(parameters: Record<string, string> | undefined): CatalogG
     ...(list('employerCategory', 'employerCategories')?.length ? { employerCategories: list('employerCategory', 'employerCategories') as CatalogGroupFilter['employerCategories'] } : {}),
     ...(parameters?.hideUsCitizenshipRequired === 'true' ? { hideUsCitizenshipRequired: true } : {}),
     ...(parameters?.hideAdvancedDegreeRequired === 'true' ? { hideAdvancedDegreeRequired: true } : {}),
+    ...(parameters?.hasCompensation === 'true' ? { hasCompensation: true } : {}),
     ...(list('discipline', 'disciplines')?.length ? { disciplines: list('discipline', 'disciplines') } : {}),
     ...(list('season', 'seasons')?.length ? { seasons: list('season', 'seasons') } : {}),
     ...(list('education', 'educationLevel', 'educationLevels')?.length ? { educationLevels: list('education', 'educationLevel', 'educationLevels') } : {}),
