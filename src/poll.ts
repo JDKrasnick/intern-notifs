@@ -99,6 +99,7 @@ function sourceOwnedMaterial(value: ProcessedListing | SourceOccurrence): string
     technical: value.technical ?? true,
     state: value.state,
     providerEvidence: value.providerEvidence,
+    shadowContentHash: value.shadowContentHash,
   });
 }
 
@@ -146,6 +147,7 @@ function quarantinedOccurrence(
     ...(listing.metadataExtraction ? { metadataExtraction: listing.metadataExtraction } : {}),
     ...(listing.admissionConfigurationVersion ? { admissionConfigurationVersion: listing.admissionConfigurationVersion } : {}),
     ...(listing.sourceMetadataProcessing ? { sourceMetadataProcessing: listing.sourceMetadataProcessing } : {}),
+    ...(listing.shadowContentHash ? { shadowContentHash: listing.shadowContentHash } : {}),
     postingIdentityDecision: decision,
     company: listing.company,
     title: listing.title,
@@ -1104,7 +1106,9 @@ export class IngestionRunner {
         } else if (providerShadowEligible && this.enqueueDestinationVerification && listing.providerIdentity
           && listing.postingIdentityDecision?.status === 'confirmed'
           && listing.technical !== false && listing.state === 'open' && admission.catalogEligible
-          && (!priorOccurrence || sourceOwnedMaterial(priorOccurrence.occurrence) !== sourceOwnedMaterial(listing))
+          && Boolean(listing.shadowContentHash)
+          && (!priorOccurrence || (Boolean(priorOccurrence.occurrence.shadowContentHash)
+            && priorOccurrence.occurrence.shadowContentHash !== listing.shadowContentHash))
           && ['greenhouse', 'lever', 'ashby'].includes(listing.providerIdentity.provider)) {
           const reason = existing?.normalizedUrl && existing.normalizedUrl !== normalizedUrl
             ? 'url-change' as const : priorOccurrence ? 'content-change' as const : 'first-sight' as const;
@@ -1113,7 +1117,7 @@ export class IngestionRunner {
             jobId, sourceId: listing.sourceId, externalId: id, providerIdentity: listing.providerIdentity,
             candidateUrl: listing.applyUrl, reason, metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
             shadowOrigin: 'provider-poll',
-            idempotencyKey: createHash('sha256').update(`provider-poll-shadow-v1\0${jobId}\0${listing.sourceId}\0${id}\0${materialHash}`).digest('hex'),
+            idempotencyKey: createHash('sha256').update(`provider-poll-shadow-v1\0${jobId}\0${listing.sourceId}\0${id}\0${listing.shadowContentHash}`).digest('hex'),
           });
         }
         if (admission.catalogEligible && ['posting-detail', 'application-form'].includes(destination.classification)) {

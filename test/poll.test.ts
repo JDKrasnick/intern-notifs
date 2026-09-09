@@ -48,11 +48,11 @@ describe('polling', () => {
   it('durably queues one natural shadow verification for a new exact provider posting', async () => {
     const store = new MemoryInternshipStore();
     const sourceId = 'greenhouse-acme';
-    const posting = (postingId: string, title: string) => ({
+    const posting = (postingId: string, title: string, description = 'Build production software with the platform team.') => ({
       sourceId, provenance: 'official-ats' as const, externalId: postingId,
       sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs', fetchedAt: '2026-09-09T22:00:00Z',
       employer: { id: 'acme', name: 'Acme', authority: 'reviewed-registry' as const }, title,
-      content: [{ kind: 'description' as const, format: 'html' as const, value: '<p>Build production software with the platform team.</p>' }],
+      content: [{ kind: 'description' as const, format: 'html' as const, value: `<p>${description}</p>` }],
       locations: ['New York, NY'], applyUrl: `https://job-boards.greenhouse.io/acme/jobs/${postingId}`,
       sourceState: 'open' as const, lifecycleAuthority: 'title' as const,
       providerIdentity: { provider: 'greenhouse' as const, tenant: 'acme' },
@@ -81,9 +81,16 @@ describe('polling', () => {
     expect(await store.listPendingProviderShadowVerifications()).toEqual([]);
     await run();
     expect(queued).toHaveLength(1);
+    rows = rows.map((row) => row.externalId === '101'
+      ? posting('101', 'Platform Engineering Intern', 'Build production software and distributed systems with the platform team.') : row);
+    hash = 'description-change';
+    await run();
+    expect(queued).toHaveLength(2);
+    expect(queued[1]).toMatchObject({ externalId: '101', reason: 'content-change', shadowOrigin: 'provider-poll' });
+    expect(queued[1]?.idempotencyKey).not.toBe(queued[0]?.idempotencyKey);
     rows = [...rows, posting('102', 'Security Engineering Intern')]; hash = 'forced-role';
     await run(false);
-    expect(queued).toHaveLength(1);
+    expect(queued).toHaveLength(2);
   });
 
   it('retries a failed provider shadow queue handoff from the durable source checkpoint', async () => {

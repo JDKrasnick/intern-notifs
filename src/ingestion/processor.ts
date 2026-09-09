@@ -10,6 +10,7 @@ import { applicationUrlRejection } from '../sources/quality.js';
 import { providerPostingReference } from '../identity/posting.js';
 import { extractPostingMetadataEvidence } from '../role-metadata.js';
 import { metadataDescriptionText } from '../core/metadata-text.js';
+import { normalizeExactPostingDescription } from '../shadow-extraction.js';
 import type {
   JobRequirements,
   PostingDecision,
@@ -73,6 +74,10 @@ export function processPosting(
   const sourceTitle = htmlToText(posting.title);
   const title = repairTitle(sourceTitle, employerTitles);
   const content = contentText(posting);
+  const shadowDescription = posting.content.map(part => metadataDescriptionText(part.format === 'markdown'
+    ? part.value.replace(/!\[[^\]]*\]\([^)]*\)/gu, ' ')
+      .replace(/\[([^\]]+)\]\([^)]*\)/gu, '$1').replace(/[*`>#]/gu, ' ')
+    : part.value)).join('\n');
   if (posting.lifecycleAuthority !== 'source' && posting.lifecycleAuthority !== 'posting' && !hasLifecycleTitleSignal(title)) {
     return { decision: { externalId: posting.externalId, outcome: 'filtered', reason: 'not-early-career' } };
   }
@@ -118,10 +123,7 @@ export function processPosting(
     metadataEvidence: extractPostingMetadataEvidence({
       artifact: {
         title,
-        text: posting.content.map(part => metadataDescriptionText(part.format === 'markdown'
-          ? part.value.replace(/!\[[^\]]*\]\([^)]*\)/gu, ' ')
-            .replace(/\[([^\]]+)\]\([^)]*\)/gu, '$1').replace(/[*`>#]/gu, ' ')
-          : part.value)).join('\n'),
+        text: shadowDescription,
         ...(posting.compensationText ? { compensationText: posting.compensationText } : {}),
         ...(posting.compensationBands?.length ? { compensationBands: posting.compensationBands } : {}),
         locations: sourceLocations,
@@ -153,6 +155,7 @@ export function processPosting(
       ...(workMode ? { workMode } : {}),
     }),
     fetchedAt: posting.fetchedAt,
+    shadowContentHash: normalizeExactPostingDescription(title, shadowDescription).contentHash,
     technical: assessment.technical,
     ...(title === sourceTitle ? {} : { titleRepaired: true }),
     providerIdentity: {
