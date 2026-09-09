@@ -99,6 +99,7 @@ function sourceOwnedMaterial(value: ProcessedListing | SourceOccurrence): string
     technical: value.technical ?? true,
     state: value.state,
     providerEvidence: value.providerEvidence,
+    shadowContentHash: value.shadowContentHash,
   });
 }
 
@@ -146,6 +147,7 @@ function quarantinedOccurrence(
     ...(listing.metadataExtraction ? { metadataExtraction: listing.metadataExtraction } : {}),
     ...(listing.admissionConfigurationVersion ? { admissionConfigurationVersion: listing.admissionConfigurationVersion } : {}),
     ...(listing.sourceMetadataProcessing ? { sourceMetadataProcessing: listing.sourceMetadataProcessing } : {}),
+    ...(listing.shadowContentHash ? { shadowContentHash: listing.shadowContentHash } : {}),
     postingIdentityDecision: decision,
     company: listing.company,
     title: listing.title,
@@ -500,6 +502,15 @@ export class IngestionRunner {
     } while (cursor);
   }
 
+  private async drainProviderShadowVerifications(): Promise<void> {
+    if (!this.enqueueDestinationVerification || !this.store.listPendingProviderShadowVerifications
+      || !this.store.markProviderShadowVerificationEnqueued) return;
+    for (const request of await this.store.listPendingProviderShadowVerifications()) {
+      await this.enqueueDestinationVerification(request);
+      await this.store.markProviderShadowVerificationEnqueued(request.idempotencyKey!);
+    }
+  }
+
   /** A source-level breaker blocks the batch, but a newly proven unsafe
    * destination must still disappear from the existing catalog immediately.
    * Reuse the normal projection and atomic occurrence write; never close or
@@ -673,6 +684,7 @@ export class IngestionRunner {
     reuseUnchangedOccurrences = false,
     completeFetchSequence?: number,
     stampSourceMetadata = false,
+    providerShadowEligible = false,
   ) {
     const resolved = new Map<string, Internship | undefined>();
     const validatedAt = new Map<string, string>();
@@ -680,6 +692,7 @@ export class IngestionRunner {
     const alertEligible = new Set<string>();
     const handledExternalIds = new Set<string>();
     const failedExternalIds = new Set<string>();
+    const providerShadowVerifications: DestinationVerificationRequest[] = [];
     // Slots keep the snapshot order stable so duplicate merging, alert order, and
     // reported failures do not depend on which worker finished first.
     const accepted = new Array<ProcessedListing | undefined>(listings.length);
@@ -1090,6 +1103,22 @@ export class IngestionRunner {
             reason: existing?.normalizedUrl && existing.normalizedUrl !== normalizedUrl ? 'url-change' : 'first-sight',
             metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
           });
+        } else if (providerShadowEligible && this.enqueueDestinationVerification && listing.providerIdentity
+          && listing.postingIdentityDecision?.status === 'confirmed'
+          && listing.technical !== false && listing.state === 'open' && admission.catalogEligible
+          && Boolean(listing.shadowContentHash)
+          && (!priorOccurrence || (Boolean(priorOccurrence.occurrence.shadowContentHash)
+            && priorOccurrence.occurrence.shadowContentHash !== listing.shadowContentHash))
+          && ['greenhouse', 'lever', 'ashby'].includes(listing.providerIdentity.provider)) {
+          const reason = existing?.normalizedUrl && existing.normalizedUrl !== normalizedUrl
+            ? 'url-change' as const : priorOccurrence ? 'content-change' as const : 'first-sight' as const;
+          const jobId = listing.postingIdentity?.canonicalJobId ?? stableSourceOccurrenceJobId(listing.sourceId, id);
+          providerShadowVerifications.push({
+            jobId, sourceId: listing.sourceId, externalId: id, providerIdentity: listing.providerIdentity,
+            candidateUrl: listing.applyUrl, reason, metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+            shadowOrigin: 'provider-poll',
+            idempotencyKey: createHash('sha256').update(`provider-poll-shadow-v1\0${jobId}\0${listing.sourceId}\0${id}\0${listing.shadowContentHash}`).digest('hex'),
+          });
         }
         if (admission.catalogEligible && ['posting-detail', 'application-form'].includes(destination.classification)) {
           validatedAt.set(id, this.now().toISOString());
@@ -1113,6 +1142,7 @@ export class IngestionRunner {
       alertEligible,
       handledExternalIds,
       failedExternalIds,
+      providerShadowVerifications,
     };
   }
 
@@ -1121,6 +1151,7 @@ export class IngestionRunner {
     runId?: string;
     allowCompleteEmptySnapshot?: boolean;
     maxAdmissionMigrationListingsPerSourceRun?: number;
+    naturalProviderPoll?: boolean;
   } = {}): Promise<PollReport> {
     const report: PollReport = {
       fetchedSources: 0,
@@ -1191,6 +1222,7 @@ export class IngestionRunner {
       let failureCategory: NonNullable<SourceHealth['diagnosticCategory']> = 'transport';
       let trustedMetrics: SourceHealth['trustedCommunity'];
       try {
+        await this.drainProviderShadowVerifications();
         const admissionConfigurationVersion = prefetched
           ? prefetched.admissionConfigurationVersion
           : effectiveAdmissionConfigurationVersion({
@@ -1342,6 +1374,7 @@ export class IngestionRunner {
             && admissionConfigurationVersion === previous?.admissionConfigurationVersion),
           result.unchangedReason === 'not_modified' ? undefined : result.checkpoint.successfulFetches,
           boundedMetadataRefresh,
+          !baseline && options.naturalProviderPoll === true,
         );
         // Existing catalog decisions are the durable migration obligation.
         // Rows with no prior occurrence are evaluated with spare slice capacity
@@ -1462,6 +1495,8 @@ export class IngestionRunner {
         });
         failureCategory = 'persistence';
         const notificationByJobId = new Map(plan.notifications.map((event) => [event.jobId, event]));
+        const shadowVerificationByOccurrence = new Map(resolution.providerShadowVerifications
+          .map((request) => [`${request.sourceId}\0${request.externalId}`, request]));
         const plannedJobs = new Map(plan.jobs.map((job) => [job.jobId, job]));
         const committedJobIds = new Set<string>();
         const blockedJobIds = new Set<string>();
@@ -1492,6 +1527,9 @@ export class IngestionRunner {
               job,
               occurrence,
               ...(includeEvent ? { notificationEvent: includeEvent } : {}),
+              ...(shadowVerificationByOccurrence.get(`${occurrence.sourceId}\0${occurrence.externalId}`)
+                ? { providerShadowVerification: shadowVerificationByOccurrence.get(`${occurrence.sourceId}\0${occurrence.externalId}`)! }
+                : {}),
             });
             if (result.outcome === 'quarantined') {
               blockedJobIds.add(job.jobId);
@@ -1649,7 +1687,7 @@ export class IngestionRunner {
           successfulFetches: previous?.successfulFetches ?? 0,
           lastSuccessAt: previous?.lastSuccessAt,
         } : {};
-        await this.store.putCheckpoint({
+        const nextCheckpoint: SourceCheckpoint = {
           ...result.checkpoint,
           ...checkpointSuccess,
           // A 304, migration slice or failed persistence cannot certify that
@@ -1665,7 +1703,9 @@ export class IngestionRunner {
           activeExternalIds: [...batch.activeExternalIds],
           pendingAdmissionConfigurationVersion: admissionMigrationPending ? admissionConfigurationVersion : undefined,
           ...(checkpointAdmissionConfigurationVersion ? { admissionConfigurationVersion: checkpointAdmissionConfigurationVersion } : {}),
-        });
+        };
+        await this.store.putCheckpoint(nextCheckpoint);
+        await this.drainProviderShadowVerifications();
         for (const job of plan.newJobs) {
           if (!alertedJobIds.has(job.jobId)) {
             console.log(JSON.stringify({ event: 'new_job_alert_suppressed', sourceId: connector.id, jobId: job.jobId }));
@@ -1729,6 +1769,7 @@ export class Poller extends IngestionRunner {
     runId?: string;
     allowCompleteEmptySnapshot?: boolean;
     maxAdmissionMigrationListingsPerSourceRun?: number;
+    naturalProviderPoll?: boolean;
   } = {}) {
     return this.run(options);
   }

@@ -823,6 +823,8 @@ export interface SourceOccurrence extends SourceReference {
     processingRevision: number;
     sourceMaterialHash: string;
   };
+  /** Hash of the exact normalized title and provider description used by shadow extraction. */
+  shadowContentHash?: string;
   /** Reviewed provider facts retained for identity repair and audit. */
   providerEvidence?: ProviderPostingEvidence;
   /** Durable identity decision for this occurrence. Missing means legacy-unclassified. */

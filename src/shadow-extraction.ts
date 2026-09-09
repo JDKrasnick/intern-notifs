@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 /** Versions are part of the cache key. Changing any one forces a new shadow run. */
-export const SHADOW_EXTRACTION_PROMPT_VERSION = 'shadow-extraction-prompt-v4';
+export const SHADOW_EXTRACTION_PROMPT_VERSION = 'shadow-extraction-prompt-v9';
 export const SHADOW_EXTRACTION_SCHEMA_VERSION = 'shadow-extraction-schema-v5';
 export const SHADOW_EXTRACTION_PREPROCESSING_VERSION = 'exact-posting-markdown-v1';
 export const SHADOW_EXTRACTION_MODEL_ID = 'gpt-4o-mini-2024-07-18';
@@ -11,6 +11,8 @@ export const shadowStatuses = ['present', 'not-stated', 'conflicting', 'incomple
 export type ShadowStatus = typeof shadowStatuses[number];
 export const classificationLabels = ['yes', 'no', 'unknown'] as const;
 export type ClassificationLabel = typeof classificationLabels[number];
+export const shadowExtractionOrigins = ['provider-poll', 'scheduled-verification', 'controlled', 'backfill', 'legacy-unknown'] as const;
+export type ShadowExtractionOrigin = typeof shadowExtractionOrigins[number];
 
 export interface NormalizedPostingInput {
   title: string;
@@ -90,19 +92,33 @@ export function shadowExtractionPrompt(input: NormalizedPostingInput): { system:
       + 'explicit pay rate only: exclude benefits, reimbursements, bonuses, housing/travel/meal/equipment/wellness allowances, and other '
       + 'stipends. Compensation value must be an array of {min, max, currency, period} objects, and each compensation evidence passage '
       + 'must itself contain the corresponding amount, currency, and pay period. Locations value must contain geographic places only; '
-      + 'remote, hybrid, onsite, and in-office are work modes, not locations. '
+      + 'remote, hybrid, onsite, in-office, a company office, and "our office" are work modes or workplace references, never locations. '
       + 'WorkMode value must be exactly remote, hybrid, or onsite. When the supplied posting is marked incomplete, use incomplete—not '
       + 'not-stated—for every field that is absent from the supplied excerpt. '
       + 'For each field return value or null, status, verbatim supporting passages, and qualifiers. '
-      + 'Use unknown for classifications without support. Do not turn clearance into citizenship, graduation dates into role season, '
-      + 'or generic office/remote prose into a role location or work mode.',
+      + 'Classify technical and earlyCareer from the supplied posting title together with the description: a title that names an '
+      + 'engineering, scientific, data, quantitative, or technical field (for example software engineer, machine learning, data '
+      + 'analyst, network engineer, site reliability engineer) supports technical=yes, and a title with Intern, Co-op, Apprentice, '
+      + 'or New Grad supports earlyCareer=yes, even when the body gives no further detail. Reserve unknown for classifications with '
+      + 'no title or body signal at all. Do not turn clearance into citizenship, graduation dates into role season, '
+      + 'or generic office/remote prose into a role location or work mode. '
+      + 'Do not invent disclosures. WorkMode requires the posting to state that this role is or works remote, hybrid, or '
+      + 'onsite; never infer a mode from benefits or their eligibility conditions (for example "interns not working fully '
+      + 'remote may receive housing support" describes a benefit, not the role), from dates, from office or city names, or '
+      + 'from silence — use not-stated. Those exclusions never suppress a real housing, relocation, or travel benefit '
+      + 'disclosed for this role, which remains a housing disclosure. Eligibility requires an explicit work authorization, '
+      + 'citizenship, visa, clearance, or sponsorship statement for this role — including that the role will or will not '
+      + 'sponsor or offer visas. Language skills, graduation timing, school or location attendance, and internship-count '
+      + 'constraints are not eligibility; quote any eligibility statement as one contiguous span. A statement that no '
+      + 'degree is required is not an education disclosure; return education only for actual degree requirements or '
+      + 'preferences stated for the role.',
     user: JSON.stringify({ title: input.title, completeness: input.completeness, description: input.description }),
   };
 }
 
 const fields = ['compensation', 'locations', 'workMode', 'housing', 'timing', 'education', 'eligibility'] as const;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
@@ -110,12 +126,23 @@ function stringArray(value: unknown): string[] | undefined {
   return Array.isArray(value) && value.every((item) => typeof item === 'string' && item.trim()) ? value.map((item) => item.trim()) : undefined;
 }
 
+/** Verbatim passage membership. A byte-exact substring is the strongest
+ * evidence, but captures with normalized whitespace, case, or punctuation
+ * (HTML/JSON residue, casing differences) reject the whole run otherwise. The
+ * tolerant check therefore requires the passage's words to appear in the
+ * source as one contiguous, in-order sequence — a paraphrase or reordering
+ * never matches. */
 function evidencePresent(evidence: readonly string[], source: string): boolean {
-  return evidence.every((passage) => passage.length <= 2_000 && source.includes(passage));
+  return evidence.every((passage) => passage.length <= 2_000
+    && (source.includes(passage) || words(source).join(' ').includes(words(passage).join(' '))));
+}
+
+function words(value: string): string[] {
+  return (value.toLowerCase().match(/[a-z0-9]+/gu) ?? []);
 }
 
 function compensationNumberPresent(passage: string, value: number): boolean {
-  return [...passage.matchAll(/(?:^|[^0-9.])([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)(?![0-9.])/gu)]
+  return [...passage.matchAll(/(?:^|[^0-9.])([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)(?![0-9])/gu)]
     .some((match) => Number(match[1]!.replace(/,/gu, '')) === value);
 }
 

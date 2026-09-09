@@ -9,6 +9,7 @@ cdk.out/
 *.tfvars
 cloudflare/dist/
 coverage/
+eval/
 !coverage/
 coverage/*
 !coverage/README.md

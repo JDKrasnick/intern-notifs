@@ -45,6 +45,109 @@ describe('polling', () => {
     expect([...store.jobs.values()].find((job) => job.title === 'Software Engineering Intern')).toMatchObject({ catalogRecency: 'baseline' });
     expect([...store.jobs.values()].find((job) => job.title === 'Systems Engineering Intern')).toMatchObject({ catalogRecency: 'normal' });
   });
+  it('durably queues one natural shadow verification for a new exact provider posting', async () => {
+    const store = new MemoryInternshipStore();
+    const sourceId = 'greenhouse-acme';
+    const posting = (postingId: string, title: string, description = 'Build production software with the platform team.') => ({
+      sourceId, provenance: 'official-ats' as const, externalId: postingId,
+      sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs', fetchedAt: '2026-09-09T22:00:00Z',
+      employer: { id: 'acme', name: 'Acme', authority: 'reviewed-registry' as const }, title,
+      content: [{ kind: 'description' as const, format: 'html' as const, value: `<p>${description}</p>` }],
+      locations: ['New York, NY'], applyUrl: `https://job-boards.greenhouse.io/acme/jobs/${postingId}`,
+      sourceState: 'open' as const, lifecycleAuthority: 'title' as const,
+      providerIdentity: { provider: 'greenhouse' as const, tenant: 'acme' },
+      providerEvidence: { provider: 'greenhouse' as const, tenant: 'acme', postingId, sourceId,
+        urls: [`https://job-boards.greenhouse.io/acme/jobs/${postingId}`] },
+    });
+    let rows = [posting('100', 'Software Engineering Intern')];
+    let hash = 'baseline';
+    const adapter: SourceAdapter = { id: sourceId, async fetch(previous): Promise<SourceFetchResult & SourceSnapshot> {
+      return { sourceId, outcome: previous?.contentHash === hash ? 'unchanged' : 'changed', complete: true,
+        rawCount: rows.length, contentHash: hash, checkpoint: { sourceId, successfulFetches: (previous?.successfulFetches ?? 0) + 1,
+          contentHash: hash, activeExternalIds: rows.map((row) => row.externalId) }, postings: rows,
+        listings: [], notModified: previous?.contentHash === hash };
+    } };
+    const resolver = { async configurationVersion() { return 'configuration-v1'; },
+      async resolveCanonicalEmployer() { return { id: 'acme', displayName: 'Acme' }; }, async resolveDestinationRule() { return undefined; } };
+    const queued: Array<{ externalId: string; reason: string; shadowOrigin?: string; idempotencyKey?: string }> = [];
+    const run = (naturalProviderPoll = true) => new Poller([adapter], store, () => new Date('2026-09-09T22:00:00Z'),
+      undefined, undefined, undefined, async (request) => { queued.push(request); }, resolver).poll({ naturalProviderPoll });
+    await run();
+    expect(queued).toEqual([]);
+    rows = [...rows, posting('101', 'Platform Engineering Intern')]; hash = 'new-role';
+    await run();
+    expect(queued).toEqual([expect.objectContaining({ externalId: '101', reason: 'first-sight',
+      shadowOrigin: 'provider-poll', idempotencyKey: expect.any(String) })]);
+    expect(await store.listPendingProviderShadowVerifications()).toEqual([]);
+    await run();
+    expect(queued).toHaveLength(1);
+    rows = rows.map((row) => row.externalId === '101'
+      ? posting('101', 'Platform Engineering Intern', 'Build production software and distributed systems with the platform team.') : row);
+    hash = 'description-change';
+    await run();
+    expect(queued).toHaveLength(2);
+    expect(queued[1]).toMatchObject({ externalId: '101', reason: 'content-change', shadowOrigin: 'provider-poll' });
+    expect(queued[1]?.idempotencyKey).not.toBe(queued[0]?.idempotencyKey);
+    rows = [...rows, posting('102', 'Security Engineering Intern')]; hash = 'forced-role';
+    await run(false);
+    expect(queued).toHaveLength(2);
+  });
+
+  it('retries a failed provider shadow queue handoff from the durable source checkpoint', async () => {
+    const store = new MemoryInternshipStore(); const sourceId = 'greenhouse-acme';
+    const makeSnapshot = (ids: string[], hash: string): SourceFetchResult & SourceSnapshot => ({ sourceId, outcome: 'changed', complete: true,
+      rawCount: ids.length, contentHash: hash, checkpoint: { sourceId, successfulFetches: 1, contentHash: hash, activeExternalIds: ids }, listings: [], notModified: false,
+      postings: ids.map((postingId) => ({ sourceId, provenance: 'official-ats', externalId: postingId,
+        sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs', fetchedAt: '2026-09-09T22:00:00Z',
+        employer: { id: 'acme', name: 'Acme', authority: 'reviewed-registry' }, title: 'Software Engineering Intern',
+        content: [{ kind: 'description', format: 'plain', value: 'Build production software.' }], locations: ['Remote'],
+        applyUrl: `https://job-boards.greenhouse.io/acme/jobs/${postingId}`, sourceState: 'open', lifecycleAuthority: 'title',
+        providerIdentity: { provider: 'greenhouse', tenant: 'acme' }, providerEvidence: { provider: 'greenhouse', tenant: 'acme',
+          postingId, sourceId, urls: [`https://job-boards.greenhouse.io/acme/jobs/${postingId}`] } })),
+    });
+    let snapshot = makeSnapshot(['100'], 'baseline');
+    const adapter: SourceAdapter = { id: sourceId, async fetch() { return snapshot; } };
+    const resolver = { async configurationVersion() { return 'configuration-v1'; },
+      async resolveCanonicalEmployer() { return { id: 'acme', displayName: 'Acme' }; }, async resolveDestinationRule() { return undefined; } };
+    let fail = false; const delivered: string[] = [];
+    const run = () => new Poller([adapter], store, undefined, undefined, undefined, undefined, async (request) => {
+      if (fail) throw new Error('queue unavailable'); delivered.push(request.externalId);
+    }, resolver).poll({ naturalProviderPoll: true });
+    await run(); snapshot = makeSnapshot(['100', '101'], 'new-role'); fail = true;
+    expect((await run()).failures).toEqual([expect.stringContaining('queue unavailable')]);
+    expect(await store.listPendingProviderShadowVerifications()).toEqual([expect.objectContaining({ externalId: '101', shadowOrigin: 'provider-poll' })]);
+    fail = false; await run();
+    expect(delivered).toEqual(['101']);
+    expect(await store.listPendingProviderShadowVerifications()).toEqual([]);
+  });
+  it.each([
+    { provider: 'lever' as const, sourceId: 'lever-acme', firstId: '11111111-1111-4111-8111-111111111111',
+      nextId: '22222222-2222-4222-8222-222222222222', sourceUrl: 'https://api.lever.co/v0/postings/acme?mode=json',
+      applyUrl: (id: string) => `https://jobs.lever.co/acme/${id}` },
+    { provider: 'ashby' as const, sourceId: 'ashby-acme', firstId: '33333333-3333-4333-8333-333333333333',
+      nextId: '44444444-4444-4444-8444-444444444444', sourceUrl: 'https://api.ashbyhq.com/posting-api/job-board/acme',
+      applyUrl: (id: string) => `https://jobs.ashbyhq.com/acme/${id}` },
+  ])('uses the natural shadow path for $provider postings', async ({ provider, sourceId, firstId, nextId, sourceUrl, applyUrl }) => {
+    const store = new MemoryInternshipStore(); let ids = [firstId]; let contentHash = 'baseline';
+    const adapter: SourceAdapter = { id: sourceId, async fetch(previous): Promise<SourceFetchResult & SourceSnapshot> {
+      const postings = ids.map((postingId) => ({ sourceId, provenance: 'official-ats' as const, externalId: postingId,
+        sourceUrl, fetchedAt: '2026-09-09T22:00:00Z', employer: { id: 'acme', name: 'Acme', authority: 'reviewed-registry' as const },
+        title: 'Software Engineering Intern', content: [{ kind: 'description' as const, format: 'plain' as const,
+          value: 'Build production software.' }], locations: ['Remote'], applyUrl: applyUrl(postingId),
+        sourceState: 'open' as const, lifecycleAuthority: 'title' as const, providerIdentity: { provider, tenant: 'acme' },
+        ...(provider === 'lever' ? { providerEvidence: { provider, tenant: 'acme', postingId, sourceId, urls: [applyUrl(postingId)] } } : {}) }));
+      return { sourceId, outcome: previous?.contentHash === contentHash ? 'unchanged' : 'changed', complete: true,
+        rawCount: postings.length, contentHash, checkpoint: { sourceId, successfulFetches: (previous?.successfulFetches ?? 0) + 1,
+          contentHash, activeExternalIds: ids }, postings, listings: [], notModified: previous?.contentHash === contentHash };
+    } };
+    const queued: Array<{ externalId: string; shadowOrigin?: string }> = [];
+    const resolver = { async configurationVersion() { return 'configuration-v1'; },
+      async resolveCanonicalEmployer() { return { id: 'acme', displayName: 'Acme' }; }, async resolveDestinationRule() { return undefined; } };
+    const run = () => new Poller([adapter], store, undefined, undefined, undefined, undefined,
+      async (request) => { queued.push(request); }, resolver).poll({ naturalProviderPoll: true });
+    await run(); ids = [firstId, nextId]; contentHash = 'new-role'; await run();
+    expect(queued).toEqual([expect.objectContaining({ externalId: nextId, shadowOrigin: 'provider-poll' })]);
+  });
   it('reuses unchanged source rows when another row changes the snapshot', async () => {
     const store = new MemoryInternshipStore();
     const firstSeen = '2026-08-09T12:00:00.000Z';

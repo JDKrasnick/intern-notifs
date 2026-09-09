@@ -1,0 +1,228 @@
+{
+  "version": 1,
+  "recordedAt": "2026-09-09T00:00:00.000Z",
+  "modelId": "gpt-4o-mini-2024-07-18",
+  "cases": [
+    {
+      "id": "cad-new-grad-hybrid",
+      "contentHash": "bfa45d5a03db94fed339cb180b0e67d9d4d75e1a726c2b5b7f7879f1d0cf3021",
+      "result": {
+        "response": {
+          "classification": {
+            "technical": "yes",
+            "earlyCareer": "yes",
+            "disciplines": [
+              "Software Engineering"
+            ]
+          },
+          "fields": {
+            "compensation": {
+              "value": [
+                {
+                  "min": 85000,
+                  "max": 85000,
+                  "currency": "CAD",
+                  "period": "year"
+                }
+              ],
+              "status": "present",
+              "evidence": [
+                "Compensation: $85,000 CAD per year."
+              ],
+              "qualifiers": []
+            },
+            "locations": {
+              "value": [
+                "Toronto, Ontario"
+              ],
+              "status": "present",
+              "evidence": [
+                "This is a hybrid role in Toronto, Ontario."
+              ],
+              "qualifiers": []
+            },
+            "workMode": {
+              "value": "hybrid",
+              "status": "present",
+              "evidence": [
+                "This is a hybrid role in Toronto, Ontario."
+              ],
+              "qualifiers": []
+            },
+            "housing": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "timing": {
+              "value": "January 2027",
+              "status": "present",
+              "evidence": [
+                "Start date: January 2027."
+              ],
+              "qualifiers": []
+            },
+            "education": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "eligibility": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            }
+          }
+        },
+        "inputTokens": 1200,
+        "outputTokens": 900,
+        "actualCostCents": 1
+      }
+    },
+    {
+      "id": "conflicting-work-mode",
+      "contentHash": "a2b7bdbcd288666396bf9c1504c8a6c2a3c5eae10115208fa1f5484385fb7e10",
+      "result": {
+        "response": {
+          "classification": {
+            "technical": "no",
+            "earlyCareer": "yes",
+            "disciplines": []
+          },
+          "fields": {
+            "compensation": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "locations": {
+              "value": [
+                "New York"
+              ],
+              "status": "present",
+              "evidence": [
+                "work from our New York office"
+              ],
+              "qualifiers": []
+            },
+            "workMode": {
+              "value": null,
+              "status": "conflicting",
+              "evidence": [
+                "This role is fully remote.",
+                "You must work from our New York office three days per week."
+              ],
+              "qualifiers": []
+            },
+            "housing": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "timing": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "education": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "eligibility": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            }
+          }
+        },
+        "inputTokens": 1200,
+        "outputTokens": 900,
+        "actualCostCents": 1
+      }
+    },
+    {
+      "id": "ml-intern-two-cities",
+      "contentHash": "817dd90b0cbb5f978b7b850a9137e626b5af7d20f0ae4ffe41c16c087d575238",
+      "result": {
+        "response": {
+          "classification": {
+            "technical": "yes",
+            "earlyCareer": "yes",
+            "disciplines": [
+              "Machine Learning"
+            ]
+          },
+          "fields": {
+            "compensation": {
+              "value": [
+                {
+                  "min": 70,
+                  "max": 85,
+                  "currency": "USD",
+                  "period": "hour"
+                }
+              ],
+              "status": "present",
+              "evidence": [
+                "Salary range: $70 - $85 per hour."
+              ],
+              "qualifiers": []
+            },
+            "locations": {
+              "value": [
+                "New York, NY"
+              ],
+              "status": "present",
+              "evidence": [
+                "New York, NY"
+              ],
+              "qualifiers": []
+            },
+            "workMode": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "housing": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "timing": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "education": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "eligibility": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            }
+          }
+        },
+        "inputTokens": 1200,
+        "outputTokens": 900,
+        "actualCostCents": 1
+      }
+    }
+  ]
+}

@@ -279,7 +279,8 @@ export async function runLeverBoard(
   }
 
   const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate, false,
-    dependencies.enqueueDestinationVerification, dependencies.catalogAdmissionResolver).poll({ runId: message.runId });
+    dependencies.enqueueDestinationVerification, dependencies.catalogAdmissionResolver).poll({ runId: message.runId,
+      naturalProviderPoll: !message.force });
   if (poll.failures.length) throw new Error(poll.failures.join('; '));
   const publishedHealth = await dependencies.store.getSourceHealth(source.id);
   if (publishedHealth) {

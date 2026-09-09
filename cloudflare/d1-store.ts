@@ -345,6 +345,14 @@ export class D1InternshipStore implements InternshipStore {
         JSON.stringify(occurrence), input.occurrence.sourceId, input.occurrence.externalId,
         ...guardValues, `JOB#${canonical.jobId}`, canonicalJson,
       ));
+      const shadowVerification = input.providerShadowVerification;
+      if (shadowVerification?.idempotencyKey) statements.push(this.db.prepare(`
+        INSERT INTO catalog_items (pk, sk, kind, value, source_id, external_id)
+        SELECT ?, 'PENDING', 'provider-shadow-verification', ?, ?, ? WHERE ${conflictGuard} AND ${projectionGuard}
+        ON CONFLICT(pk, sk) DO NOTHING
+      `).bind(`SHADOW_HANDOFF#${shadowVerification.idempotencyKey}`, JSON.stringify(shadowVerification),
+        shadowVerification.sourceId, shadowVerification.externalId,
+        ...guardValues, `JOB#${canonical.jobId}`, canonicalJson));
       if (input.decision.status === 'unconfirmed') {
         const candidateId = createHash('sha256').update(`posting-review-family-v1:${input.decision.reviewFamilyKey}`).digest('hex');
         const evidenceHash = createHash('sha256').update(JSON.stringify({
@@ -430,6 +438,15 @@ export class D1InternshipStore implements InternshipStore {
   }
   putSourceOccurrence(occurrence: SourceOccurrenceState) {
     return this.sourceOccurrenceStatement(occurrence).run().then(() => undefined);
+  }
+  async listPendingProviderShadowVerifications() {
+    const result = await this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'provider-shadow-verification' AND sk = 'PENDING' LIMIT 100")
+      .all<JsonRow>();
+    return result.results.map((row) => JSON.parse(row.value) as NonNullable<Extract<PostingObservationCommit, { job: Internship }>['providerShadowVerification']>);
+  }
+  async markProviderShadowVerificationEnqueued(idempotencyKey: string) {
+    await this.db.prepare("DELETE FROM catalog_items WHERE pk = ? AND sk = 'PENDING' AND kind = 'provider-shadow-verification'")
+      .bind(`SHADOW_HANDOFF#${idempotencyKey}`).run();
   }
   recordRoleMetadataEvidence(jobId: string, evidence: readonly RoleMetadataEvidence[], conflicts: readonly MetadataConflict[], recordedAt: string,
     replace?: { sourceId: string; sourceClasses: readonly EvidenceSource[] }) {

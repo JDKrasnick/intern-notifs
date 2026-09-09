@@ -4,8 +4,11 @@ import type { ShadowInferenceResult } from './shadow-extraction.js';
 const endpoint = 'https://api.openai.com/v1/chat/completions';
 const maxResponseBytes = 100_000;
 const requestTimeoutMs = 45_000;
-const inputCentsPerMillionTokens = 15;
-const outputCentsPerMillionTokens = 60;
+export const shadowDefaultModelId = 'gpt-4o-mini-2024-07-18';
+export const shadowModelPricingCents: Record<string, { input: number; output: number }> = {
+  'gpt-4o-mini-2024-07-18': { input: 15, output: 60 },
+  'gpt-4o-2024-08-06': { input: 250, output: 1000 },
+};
 
 const evidence = { type: 'array', items: { type: 'string' } } as const;
 const qualifiers = { type: 'array', items: { type: 'string' } } as const;
@@ -82,8 +85,13 @@ function integer(value: unknown): number | undefined {
   return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : undefined;
 }
 
-function billedCents(inputTokens: number, outputTokens: number): number {
-  return Math.ceil((inputTokens * inputCentsPerMillionTokens + outputTokens * outputCentsPerMillionTokens) / 1_000_000);
+export interface ShadowInferenceOptions {
+  model?: string;
+  pricing?: { inputCentsPerMillionTokens: number; outputCentsPerMillionTokens: number };
+}
+
+function billedCents(inputTokens: number, outputTokens: number, pricing: NonNullable<ShadowInferenceOptions['pricing']>): number {
+  return Math.ceil((inputTokens * pricing.inputCentsPerMillionTokens + outputTokens * pricing.outputCentsPerMillionTokens) / 1_000_000);
 }
 
 async function boundedJson(response: Response): Promise<OpenAIChatCompletion> {
@@ -99,13 +107,17 @@ export async function inferOpenAIShadowExtraction(
   input: NormalizedPostingInput,
   prompt: { system: string; user: string },
   request: typeof fetch = fetch,
+  options: ShadowInferenceOptions = {},
 ): Promise<ShadowInferenceResult> {
   if (!apiKey.trim()) throw new Error('OpenAI API key is unavailable');
+  const model = options.model ?? shadowDefaultModelId;
+  const listed = shadowModelPricingCents[model] ?? shadowModelPricingCents[shadowDefaultModelId]!;
+  const pricing = options.pricing ?? { inputCentsPerMillionTokens: listed.input, outputCentsPerMillionTokens: listed.output };
   const response = await request(endpoint, {
     method: 'POST',
     headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({
-      model: 'gpt-4o-mini-2024-07-18',
+      model,
       temperature: 0,
       max_tokens: 2_500,
       response_format: {
@@ -133,5 +145,5 @@ export async function inferOpenAIShadowExtraction(
   // The model only sees this bounded artifact and the versioned extraction
   // prompt. Preserve input in the signature to make that boundary explicit.
   void input;
-  return { response: parsed, inputTokens, outputTokens, actualCostCents: billedCents(inputTokens, outputTokens) };
+  return { response: parsed, inputTokens, outputTokens, actualCostCents: billedCents(inputTokens, outputTokens, pricing) };
 }

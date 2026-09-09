@@ -14,6 +14,7 @@ import type { LeverCandidateProbeResult } from './sources/lever-probe.js';
 import { filterCatalogGroupDetails, type CatalogGroupDetails, type CatalogGroupFilter, type CatalogProjectionPage, type CatalogRelease } from './catalog-groups.js';
 import { alertEligible, catalogEligible } from './catalog-admission.js';
 import { postingObservationNotificationProjection, postingObservationProjection } from './identity/projection.js';
+import type { DestinationVerificationRequest } from './destination-verification.js';
 
 export interface LeverAdmission {
   source: ReviewedLeverSource;
@@ -48,6 +49,7 @@ export type PostingObservationCommit =
       job: Internship;
       occurrence: SourceOccurrenceState;
       notificationEvent?: NotificationEvent;
+      providerShadowVerification?: DestinationVerificationRequest;
     }
   | {
       decision: Extract<PostingIdentityDecision, { status: 'quarantined' }>;
@@ -77,6 +79,8 @@ export interface InternshipStore {
   resolvePostingIdentity(identity: PostingIdentity, preferredJobId?: string): Promise<AliasResolution>;
   /** Atomically claims aliases and writes the occurrence projection plus deterministic outbox event. */
   commitPostingObservation(input: PostingObservationCommit): Promise<PostingObservationCommitResult>;
+  listPendingProviderShadowVerifications?(): Promise<DestinationVerificationRequest[]>;
+  markProviderShadowVerificationEnqueued?(idempotencyKey: string): Promise<void>;
   putInternship(job: Internship): Promise<void>;
   getJob(jobId: string): Promise<Internship | undefined>;
   getSourceOccurrences(sourceId: string): Promise<SourceOccurrenceState[]>;
@@ -119,6 +123,7 @@ export class MemoryInternshipStore implements InternshipStore {
   }>();
   readonly roleMetadataEvidence = new Map<string, RoleMetadataEvidence>();
   readonly roleMetadataConflicts = new Map<string, MetadataConflict[]>();
+  readonly providerShadowVerifications = new Map<string, DestinationVerificationRequest>();
   catalogProjection?: { generatedAt: string; groups: CatalogGroupDetails[] };
   async getCheckpoint(sourceId: string) { return this.checkpoints.get(sourceId); }
   async getCheckpointsMany(sourceIds: string[]) { return sourceIds.map((id) => this.checkpoints.get(id)).filter((value): value is SourceCheckpoint => Boolean(value)); }
@@ -200,8 +205,14 @@ export class MemoryInternshipStore implements InternshipStore {
     if (notificationInserted) {
       this.notificationEvents.set(finalized.notificationEvent!.eventId, structuredClone(finalized.notificationEvent!));
     }
+    if (input.providerShadowVerification?.idempotencyKey) {
+      this.providerShadowVerifications.set(input.providerShadowVerification.idempotencyKey,
+        structuredClone(input.providerShadowVerification));
+    }
     return { outcome: 'committed', canonicalJobId: input.job.jobId, notificationInserted };
   }
+  async listPendingProviderShadowVerifications() { return [...this.providerShadowVerifications.values()].map((value) => structuredClone(value)); }
+  async markProviderShadowVerificationEnqueued(idempotencyKey: string) { this.providerShadowVerifications.delete(idempotencyKey); }
   async putInternship(job: Internship) { const canonical = canonicalCatalogRecency(job); this.jobs.set(canonical.jobId, structuredClone(canonical)); }
   async getSourceOccurrences(sourceId: string) { return [...this.occurrences.values()].filter((value) => value.sourceId === sourceId).map((value) => structuredClone(value)); }
   async putSourceOccurrence(occurrence: SourceOccurrenceState) { this.occurrences.set(`${occurrence.sourceId}#${occurrence.externalId}`, structuredClone(occurrence)); }
