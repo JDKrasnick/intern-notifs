@@ -120,6 +120,34 @@ describe('polling', () => {
     expect(delivered).toEqual(['101']);
     expect(await store.listPendingProviderShadowVerifications()).toEqual([]);
   });
+  it.each([
+    { provider: 'lever' as const, sourceId: 'lever-acme', firstId: '11111111-1111-4111-8111-111111111111',
+      nextId: '22222222-2222-4222-8222-222222222222', sourceUrl: 'https://api.lever.co/v0/postings/acme?mode=json',
+      applyUrl: (id: string) => `https://jobs.lever.co/acme/${id}` },
+    { provider: 'ashby' as const, sourceId: 'ashby-acme', firstId: '33333333-3333-4333-8333-333333333333',
+      nextId: '44444444-4444-4444-8444-444444444444', sourceUrl: 'https://api.ashbyhq.com/posting-api/job-board/acme',
+      applyUrl: (id: string) => `https://jobs.ashbyhq.com/acme/${id}` },
+  ])('uses the natural shadow path for $provider postings', async ({ provider, sourceId, firstId, nextId, sourceUrl, applyUrl }) => {
+    const store = new MemoryInternshipStore(); let ids = [firstId]; let contentHash = 'baseline';
+    const adapter: SourceAdapter = { id: sourceId, async fetch(previous): Promise<SourceFetchResult & SourceSnapshot> {
+      const postings = ids.map((postingId) => ({ sourceId, provenance: 'official-ats' as const, externalId: postingId,
+        sourceUrl, fetchedAt: '2026-09-09T22:00:00Z', employer: { id: 'acme', name: 'Acme', authority: 'reviewed-registry' as const },
+        title: 'Software Engineering Intern', content: [{ kind: 'description' as const, format: 'plain' as const,
+          value: 'Build production software.' }], locations: ['Remote'], applyUrl: applyUrl(postingId),
+        sourceState: 'open' as const, lifecycleAuthority: 'title' as const, providerIdentity: { provider, tenant: 'acme' },
+        ...(provider === 'lever' ? { providerEvidence: { provider, tenant: 'acme', postingId, sourceId, urls: [applyUrl(postingId)] } } : {}) }));
+      return { sourceId, outcome: previous?.contentHash === contentHash ? 'unchanged' : 'changed', complete: true,
+        rawCount: postings.length, contentHash, checkpoint: { sourceId, successfulFetches: (previous?.successfulFetches ?? 0) + 1,
+          contentHash, activeExternalIds: ids }, postings, listings: [], notModified: previous?.contentHash === contentHash };
+    } };
+    const queued: Array<{ externalId: string; shadowOrigin?: string }> = [];
+    const resolver = { async configurationVersion() { return 'configuration-v1'; },
+      async resolveCanonicalEmployer() { return { id: 'acme', displayName: 'Acme' }; }, async resolveDestinationRule() { return undefined; } };
+    const run = () => new Poller([adapter], store, undefined, undefined, undefined, undefined,
+      async (request) => { queued.push(request); }, resolver).poll({ naturalProviderPoll: true });
+    await run(); ids = [firstId, nextId]; contentHash = 'new-role'; await run();
+    expect(queued).toEqual([expect.objectContaining({ externalId: nextId, shadowOrigin: 'provider-poll' })]);
+  });
   it('reuses unchanged source rows when another row changes the snapshot', async () => {
     const store = new MemoryInternshipStore();
     const firstSeen = '2026-08-09T12:00:00.000Z';
