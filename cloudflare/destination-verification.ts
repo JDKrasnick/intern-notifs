@@ -70,6 +70,53 @@ function shadowBaseline(fields: ReturnType<typeof metadataFieldOutcomes>): Shado
   };
 }
 
+async function handoffShadowExtraction(input: {
+  env: DestinationVerificationEnvironment;
+  operations: D1CatalogAdmissionStore;
+  message: DestinationVerificationMessage;
+  title: string;
+  description?: string;
+  sourceUrl: string;
+  observedAt: string;
+  incomplete: boolean;
+  baseline?: ShadowBaseline;
+  method: string;
+}): Promise<void> {
+  const description = input.description?.trim() ?? '';
+  const descriptionBytes = new TextEncoder().encode(description).byteLength;
+  let outcome: 'enqueued' | 'skipped-no-text' | 'skipped-no-binding' | 'failed';
+  try {
+    if (!description) outcome = 'skipped-no-text';
+    else if (!input.env.SHADOW_EXTRACTION_QUEUE || !input.env.SHADOW_EXTRACTION_ARTIFACTS) outcome = 'skipped-no-binding';
+    else {
+      await enqueueShadowExtraction({ DB: input.env.DB, SHADOW_EXTRACTION_QUEUE: input.env.SHADOW_EXTRACTION_QUEUE,
+        SHADOW_EXTRACTION_ARTIFACTS: input.env.SHADOW_EXTRACTION_ARTIFACTS }, {
+        jobId: input.message.jobId, sourceId: input.message.sourceId, externalId: input.message.externalId,
+        sourceUrl: input.sourceUrl, providerIdentity: input.message.providerIdentity, title: input.title,
+        description, observedAt: input.observedAt, incomplete: input.incomplete,
+        ...(input.baseline ? { baseline: input.baseline } : {}),
+      });
+      outcome = 'enqueued';
+    }
+  } catch {
+    outcome = 'failed';
+  }
+  try {
+    await input.operations.recordShadowExtractionHandoff(input.message.jobId, input.message.sourceId, input.observedAt, {
+      outcome, method: input.method, descriptionBytes, observedAt: new Date().toISOString(),
+    });
+  } catch { /* Handoff telemetry must not change admission or queue settlement. */ }
+  const event = JSON.stringify({ event: 'shadow_extraction_handoff', provider: input.message.providerIdentity.provider,
+    method: input.method, outcome, descriptionBytes: descriptionBytes <= 0 ? 0 : descriptionBytes <= 4_096 ? 4_096
+      : descriptionBytes <= 16_384 ? 16_384 : descriptionBytes <= 40_000 ? 40_000 : 40_001 });
+  if (outcome === 'failed') console.error(event);
+  else console.log(event);
+  // Admission/evidence is already durable. Keep the destination message alive
+  // when the downstream handoff is unavailable so a transient R2/D1/Queue
+  // failure cannot silently lose the only immutable extraction input.
+  if (outcome === 'failed' || outcome === 'skipped-no-binding') throw new Error('Shadow extraction handoff is unavailable');
+}
+
 export function destinationVerificationMessage(request: DestinationVerificationRequest, queuedAt = new Date().toISOString()): DestinationVerificationMessage {
   return { version: 1, ...request, queuedAt };
 }
@@ -458,22 +505,12 @@ export async function processDestinationVerificationBatch(
         // Historical collection cannot change admission, URL or notifications.
         // An identity-checked full API artifact needs no browser for that task.
         if (message.metadataBackfillToken && apiAcquisition?.artifact) {
+          const inspectedAt = now().toISOString();
           const result = await persistDestinationAdmission({ jobs, operations, message, job, reference,
-            reachability: 'live', inspectedAt: now().toISOString(), apiAcquisition, durationMs: now().getTime() - Date.parse(attemptedAt) });
-          if (apiAcquisition.artifact.text && env.SHADOW_EXTRACTION_QUEUE && env.SHADOW_EXTRACTION_ARTIFACTS) {
-            try {
-              await enqueueShadowExtraction({ DB: env.DB, SHADOW_EXTRACTION_QUEUE: env.SHADOW_EXTRACTION_QUEUE,
-                SHADOW_EXTRACTION_ARTIFACTS: env.SHADOW_EXTRACTION_ARTIFACTS }, {
-                jobId: job.jobId, sourceId: message.sourceId, externalId: message.externalId,
-                sourceUrl: apiAcquisition.sourceUrl, providerIdentity: message.providerIdentity,
-                title: apiAcquisition.artifact.title ?? reference.title, description: apiAcquisition.artifact.text,
-                observedAt: now().toISOString(), incomplete: false, baseline: result.shadowBaseline,
-              });
-            } catch (error) {
-              console.error(JSON.stringify({ event: 'shadow_extraction_enqueue_failed', jobId: job.jobId,
-                sourceId: message.sourceId, error: error instanceof Error ? error.message : String(error) }));
-            }
-          }
+            reachability: 'live', inspectedAt, apiAcquisition, durationMs: now().getTime() - Date.parse(attemptedAt) });
+          await handoffShadowExtraction({ env, operations, message, title: apiAcquisition.artifact.title ?? reference.title,
+            description: apiAcquisition.artifact.text, sourceUrl: apiAcquisition.sourceUrl, observedAt: inspectedAt,
+            incomplete: false, baseline: result.shadowBaseline, method: apiAcquisition.method });
           queued.ack(); continue;
         }
         browser ??= await puppeteer.launch(env.DESTINATION_BROWSER);
@@ -675,16 +712,12 @@ export async function processDestinationVerificationBatch(
             ? { title: evidence.title ?? currentReference.title, description: evidence.contentExcerpt, sourceUrl: evidence.url,
               incomplete: evidence.inspectionTruncated === true || evidence.loadingShell === true }
             : undefined;
-        if (!candidateOnly && shadowArtifact && env.SHADOW_EXTRACTION_QUEUE && env.SHADOW_EXTRACTION_ARTIFACTS) {
-          try {
-            await enqueueShadowExtraction({ DB: env.DB, SHADOW_EXTRACTION_QUEUE: env.SHADOW_EXTRACTION_QUEUE, SHADOW_EXTRACTION_ARTIFACTS: env.SHADOW_EXTRACTION_ARTIFACTS }, { jobId: currentJob.jobId, sourceId: message.sourceId, externalId: message.externalId,
-              sourceUrl: shadowArtifact.sourceUrl, providerIdentity: message.providerIdentity, title: shadowArtifact.title,
-              description: shadowArtifact.description, observedAt: inspectedAt, incomplete: shadowArtifact.incomplete,
-              ...('shadowBaseline' in result ? { baseline: result.shadowBaseline } : {}) });
-          } catch (error) {
-            console.error(JSON.stringify({ event: 'shadow_extraction_enqueue_failed', jobId: currentJob.jobId, sourceId: message.sourceId,
-              error: error instanceof Error ? error.message : String(error) }));
-          }
+        if (!candidateOnly) {
+          await handoffShadowExtraction({ env, operations, message, title: shadowArtifact?.title ?? currentReference.title,
+            description: shadowArtifact?.description, sourceUrl: shadowArtifact?.sourceUrl ?? message.candidateUrl,
+            observedAt: inspectedAt, incomplete: shadowArtifact?.incomplete ?? true,
+            ...('shadowBaseline' in result ? { baseline: result.shadowBaseline } : {}),
+            method: apiAcquisition?.method ?? 'browser' });
         }
         const attemptId = candidateOnly
           ? `historical-backfill:${message.generationId ?? 'unknown'}:${crypto.randomUUID()}`

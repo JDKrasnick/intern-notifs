@@ -1223,7 +1223,10 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
     await cleanupDlqRecords(env.DB, new Date(event.scheduledTime));
     const employerMaintenance = await runEmployerMaintenance(new D1EmployerStore(env.DB), store, new Date(event.scheduledTime));
     const admissionVerificationRetries = await enqueueDueDestinationVerifications(env, new Date(event.scheduledTime));
-    const admissionAudit = await new D1CatalogAdmissionStore(env.DB).audit();
+    const admissionAudit = await new D1CatalogAdmissionStore(env.DB).audit({
+      includeRecords: false,
+      includeUnresolvedEmployers: false,
+    });
     const activeAdmissionIncidents = (await new D1CatalogAdmissionStore(env.DB).listActiveIncidents()).length;
     const staleThreshold = Number(env.ADMISSION_STALE_ALERT_THRESHOLD ?? 1);
     await sendAdmissionOperationalAlert(new D1CatalogAdmissionStore(env.DB), env, {

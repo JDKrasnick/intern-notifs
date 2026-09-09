@@ -12,19 +12,20 @@ import { newJobNotificationEvent } from '../src/ingestion/catalog-reconciler.js'
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 import type { CatalogAdmission, Internship } from '../src/types.js';
 
-type QueryBudget = { used: number; maximum: number };
+type QueryBudget = { used: number; maximum: number; queries?: string[] };
 
 function sqliteD1(database: DatabaseSync, budget?: QueryBudget): D1Database {
-  const count = () => {
+  const count = (query: string) => {
     if (!budget) return;
+    budget.queries?.push(query);
     budget.used += 1;
     if (budget.used > budget.maximum) throw new Error(`D1 query budget exceeded: ${budget.used}/${budget.maximum}`);
   };
   const prepared = (query: string, values: SQLInputValue[] = []): D1PreparedStatement => ({
     bind(...next: unknown[]) { return prepared(query, next as SQLInputValue[]); },
-    async first<T>() { count(); return database.prepare(query).get(...values) as T | null; },
-    async all<T>() { count(); return { results: database.prepare(query).all(...values) as T[] }; },
-    async run() { count(); const result = database.prepare(query).run(...values); return { meta: { changes: Number(result.changes) } }; },
+    async first<T>() { count(query); return database.prepare(query).get(...values) as T | null; },
+    async all<T>() { count(query); return { results: database.prepare(query).all(...values) as T[] }; },
+    async run() { count(query); const result = database.prepare(query).run(...values); return { meta: { changes: Number(result.changes) } }; },
   });
   return {
     prepare: (query) => prepared(query),
@@ -57,7 +58,7 @@ function job(): Internship {
   };
 }
 
-function subject() {
+function subject(budget?: QueryBudget) {
   const database = new DatabaseSync(':memory:');
   for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0008_catalog_admission_occurrence_repair.sql',
     '0010_posting_identity.sql',
@@ -65,7 +66,7 @@ function subject() {
     '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql', '0017_metadata_acquisition.sql', '0018_metadata_review.sql', '0019_metadata_job_review_revision.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
-  const db = sqliteD1(database);
+  const db = sqliteD1(database, budget);
   return { database, db, admission: new D1CatalogAdmissionStore(db), jobs: new D1InternshipStore(db) };
 }
 
@@ -185,6 +186,18 @@ describe('D1 catalog admission operations', () => {
       withNotificationHistory: 1,
       records: [{ jobId: current.jobId, sourceIds: ['community-list'], destinationClassification: 'aggregate-board', smsSent: true }],
     });
+  });
+
+  it('omits bounded detail queries for health-only audits', async () => {
+    const budget: QueryBudget = { used: 0, maximum: 100, queries: [] };
+    const { admission: store, jobs } = subject(budget);
+    await jobs.putInternship(job());
+
+    const audit = await store.audit({ includeRecords: false, includeUnresolvedEmployers: false });
+
+    expect(audit).toMatchObject({ scanned: 1, review: 1, records: [], unresolvedEmployers: [] });
+    expect(budget.queries?.some((query) => query.includes('SELECT pk, value'))).toBe(false);
+    expect(budget.queries?.some((query) => query.includes('reference.value AS reference'))).toBe(false);
   });
 
   it('excludes roles at their publisher valid-through boundary', async () => {

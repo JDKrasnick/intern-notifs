@@ -658,6 +658,20 @@ export class D1CatalogAdmissionStore {
       .bind(jobId, sourceId, retryAfter, observedAt, JSON.stringify(report)).run();
   }
 
+  async recordShadowExtractionHandoff(jobId: string, sourceId: string, acquisitionObservedAt: string, input: {
+    outcome: 'enqueued' | 'skipped-no-text' | 'skipped-no-binding' | 'failed';
+    method: string;
+    descriptionBytes: number;
+    observedAt: string;
+  }): Promise<void> {
+    await this.db.prepare(`UPDATE role_metadata_acquisition SET report = json_set(report,
+      '$.shadowHandoff.outcome', ?, '$.shadowHandoff.method', ?, '$.shadowHandoff.descriptionBytes', ?,
+      '$.shadowHandoff.observedAt', ?)
+      WHERE job_id = ? AND source_id = ? AND observed_at = ?`)
+      .bind(input.outcome, input.method, input.descriptionBytes, input.observedAt,
+        jobId, sourceId, acquisitionObservedAt).run();
+  }
+
   async metadataHostAvailable(host: string, now = new Date().toISOString()): Promise<boolean> {
     const row = await this.db.prepare('SELECT retry_after FROM role_metadata_api_backoff WHERE host = ?').bind(host).first<{ retry_after: string }>();
     return !row || row.retry_after <= now;
@@ -938,7 +952,8 @@ export class D1CatalogAdmissionStore {
     return { changed: rows.results.length, occurrencesChanged: 0, projectionRefreshRequired: rows.results.length > 0 };
   }
 
-  async audit(options: { recordLimit?: number; afterJobId?: string; afterUnresolvedEmployer?: string; now?: Date } = {}): Promise<{
+  async audit(options: { recordLimit?: number; afterJobId?: string; afterUnresolvedEmployer?: string;
+    includeRecords?: boolean; includeUnresolvedEmployers?: boolean; now?: Date } = {}): Promise<{
     scanned: number;
     eligible: number;
     review: number;
@@ -965,6 +980,8 @@ export class D1CatalogAdmissionStore {
     // thousands of large JSON rows; these aggregates execute in D1 and samples
     // are explicitly bounded below.
     const limit = Math.min(Math.max(options.recordLimit ?? 100, 1), 250);
+    const includeRecords = options.includeRecords !== false;
+    const includeUnresolvedEmployers = options.includeUnresolvedEmployers !== false;
     const afterPk = options.afterJobId ? `JOB#${options.afterJobId}` : '';
     let unresolvedAfterPk = '';
     let unresolvedAfterReference = -1;
@@ -1028,7 +1045,7 @@ export class D1CatalogAdmissionStore {
         FROM catalog_items, json_each(catalog_items.value, '$.sourceReferences') AS reference WHERE catalog_items.kind = 'internship'
           AND (json_extract(reference.value, '$.admission.employerResolution') IS NULL OR json_extract(reference.value, '$.admission.employerResolution') <> 'resolved'
             OR json_extract(reference.value, '$.employerInheritance') = 'conflict')`).first<{ count: number; continuationConflicts: number | null }>(),
-      this.db.prepare(`SELECT catalog_items.pk, CAST(reference.key AS INTEGER) AS referenceIndex, reference.value AS reference,
+      includeUnresolvedEmployers ? this.db.prepare(`SELECT catalog_items.pk, CAST(reference.key AS INTEGER) AS referenceIndex, reference.value AS reference,
         CASE WHEN json_extract(catalog_items.value, '$.notification.smsSentAt') IS NOT NULL
           OR json_extract(catalog_items.value, '$.notification.digestedAt') IS NOT NULL THEN 1 ELSE 0 END AS notified
         FROM catalog_items, json_each(catalog_items.value, '$.sourceReferences') AS reference WHERE catalog_items.kind = 'internship'
@@ -1037,9 +1054,11 @@ export class D1CatalogAdmissionStore {
           AND (catalog_items.pk > ? OR (catalog_items.pk = ? AND CAST(reference.key AS INTEGER) > ?))
         ORDER BY catalog_items.pk, CAST(reference.key AS INTEGER) LIMIT ?`)
         .bind(unresolvedAfterPk, unresolvedAfterPk, unresolvedAfterReference, limit + 1)
-        .all<{ pk: string; referenceIndex: number; reference: string; notified: number }>(),
-      this.db.prepare(`SELECT pk, value FROM catalog_items WHERE kind = 'internship' AND json_extract(value, '$.admission.catalogEligible') = 0
-        AND pk > ? ORDER BY pk LIMIT ?`).bind(afterPk, limit + 1).all<{ pk: string; value: string }>(),
+        .all<{ pk: string; referenceIndex: number; reference: string; notified: number }>()
+        : Promise.resolve({ results: [] as Array<{ pk: string; referenceIndex: number; reference: string; notified: number }> }),
+      includeRecords ? this.db.prepare(`SELECT pk, value FROM catalog_items WHERE kind = 'internship' AND json_extract(value, '$.admission.catalogEligible') = 0
+        AND pk > ? ORDER BY pk LIMIT ?`).bind(afterPk, limit + 1).all<{ pk: string; value: string }>()
+        : Promise.resolve({ results: [] as Array<{ pk: string; value: string }> }),
     ]);
     const records = recordRows.results.slice(0, limit).map((row) => {
       const job = JSON.parse(row.value) as Internship;
