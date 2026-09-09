@@ -8,15 +8,18 @@ repair plans.
 
 ## Data flow and safety boundary
 
-`destination-verification` first validates the exact posting identity and
-persists its normal catalog observation. It then writes a bounded normalized
+Normal Greenhouse, Lever, and Ashby polls atomically persist a revision-keyed
+handoff with the catalog observation. `destination-verification` then validates
+the exact posting identity and writes a bounded normalized
 description to the private `intern-notifs-shadow-extraction` R2 bucket and
 enqueues only a compact reference: posting IDs, source identity, content hash,
 versioned cache key, and R2 object key. Queue messages never contain the source
 description, prompts, user data, credentials, or an arbitrary URL to fetch.
 The acquisition report records the handoff outcome (`enqueued`,
 `skipped-no-text`, `skipped-no-binding`, or `failed`), acquisition method, and a
-description byte count. Missing bindings and downstream write/queue failures
+description byte count. Each run records an immutable `provider-poll`,
+`scheduled-verification`, `controlled`, `backfill`, or `legacy-unknown` origin.
+Missing bindings and downstream write/queue failures
 retry the destination message after five minutes; an empty verified artifact is
 recorded but does not retry. The aggregate operations response groups these
 outcomes without exposing posting text, URLs, or identifiers.
@@ -84,8 +87,9 @@ Apply migrations `0020_shadow_extraction.sql`,
 `0021_shadow_extraction_fencing.sql`, and
 `0022_shadow_extraction_cache_expiry.sql`,
 `0023_shadow_extraction_attempt_costs.sql`,
-`0024_shadow_publication_receipts.sql`, and
-`0025_shadow_extraction_evaluations.sql` before deploying the queue consumer.
+`0024_shadow_publication_receipts.sql`,
+`0025_shadow_extraction_evaluations.sql`, and
+`0026_shadow_extraction_origin.sql` before deploying the queue consumer.
 Provision the private R2 bucket and the `shadow-extraction` work/DLQ
 queues from the infrastructure configuration. Configure this R2 lifecycle rule
 after the bucket exists, using credentials with only the documented R2 write
