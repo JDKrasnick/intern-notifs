@@ -29,11 +29,14 @@ export async function handleCatalogAdmissionOperations(
   enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>,
   destinationQueueHealth?: () => Promise<unknown>,
 ): Promise<Response> {
-  const path = new URL(request.url).pathname;
+  const url = new URL(request.url);
+  const path = url.pathname;
   const auditOptions = () => {
-    const limit = Number(new URL(request.url).searchParams.get('limit'));
-    const afterJobId = new URL(request.url).searchParams.get('afterJobId') ?? undefined;
-    return { ...(Number.isInteger(limit) && limit > 0 ? { recordLimit: Math.min(limit, 250) } : {}), ...(afterJobId ? { afterJobId } : {}) };
+    const limit = Number(url.searchParams.get('limit'));
+    const afterJobId = url.searchParams.get('afterJobId') ?? undefined;
+    const afterUnresolvedEmployer = url.searchParams.get('afterUnresolvedEmployer') ?? undefined;
+    return { ...(Number.isInteger(limit) && limit > 0 ? { recordLimit: Math.min(limit, 250) } : {}),
+      ...(afterJobId ? { afterJobId } : {}), ...(afterUnresolvedEmployer ? { afterUnresolvedEmployer } : {}) };
   };
   const timestamp = now().toISOString();
   try {

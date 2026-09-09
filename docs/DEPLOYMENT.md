@@ -418,6 +418,13 @@ days so a one-day delayed transient retry cannot expire before delivery, and sup
 DLQ, an oldest work item approaching the evidence deadline, any unexpectedly
 stale eligible record, or an active quarantine is an admission incident.
 
+Admission audit samples default to 100 records and accept `limit` up to 250.
+Continue catalog-review records with `afterJobId=<recordsNextCursor>` and
+unresolved-employer occurrences with
+`afterUnresolvedEmployer=<unresolvedEmployersNextCursor>`. The
+`unresolvedEmployers` groups summarize the current occurrence page;
+`unresolvedEmployerOccurrences` remains the exact total across all pages.
+
 Destination evidence expires after seven days and is scheduled for recheck one
 day before expiry. A transient failed recheck pauses alerts immediately; catalog
 visibility lasts only until seven days after the last successful verification.

@@ -938,7 +938,7 @@ export class D1CatalogAdmissionStore {
     return { changed: rows.results.length, occurrencesChanged: 0, projectionRefreshRequired: rows.results.length > 0 };
   }
 
-  async audit(options: { recordLimit?: number; afterJobId?: string; now?: Date } = {}): Promise<{
+  async audit(options: { recordLimit?: number; afterJobId?: string; afterUnresolvedEmployer?: string; now?: Date } = {}): Promise<{
     scanned: number;
     eligible: number;
     review: number;
@@ -955,6 +955,8 @@ export class D1CatalogAdmissionStore {
       repairStaged: number; repairApplied: number };
     unresolvedEmployers: Array<{ provider: string; tenant?: string; labels: string[]; evidenceUrls: string[];
       occurrenceCount: number; continuationConflicts: number; withNotificationHistory: number }>;
+    unresolvedEmployerOccurrences: number;
+    unresolvedEmployersNextCursor?: string;
     records: Array<{ jobId: string; company: string; title: string; open: boolean; catalogEligible: boolean;
       reasonCodes: string[]; sourceIds: string[]; destinationClassification?: string; smsSent: boolean }>;
     recordsNextCursor?: string;
@@ -964,26 +966,43 @@ export class D1CatalogAdmissionStore {
     // are explicitly bounded below.
     const limit = Math.min(Math.max(options.recordLimit ?? 100, 1), 250);
     const afterPk = options.afterJobId ? `JOB#${options.afterJobId}` : '';
+    let unresolvedAfterPk = '';
+    let unresolvedAfterReference = -1;
+    if (options.afterUnresolvedEmployer) {
+      try {
+        const decoded = options.afterUnresolvedEmployer.startsWith('[')
+          ? options.afterUnresolvedEmployer : decodeURIComponent(options.afterUnresolvedEmployer);
+        const cursor = JSON.parse(decoded) as unknown;
+        if (Array.isArray(cursor) && cursor.length === 2 && typeof cursor[0] === 'string' && typeof cursor[1] === 'number') {
+          [unresolvedAfterPk, unresolvedAfterReference] = cursor;
+        }
+      } catch { /* Rejected below. */ }
+      if (!unresolvedAfterPk.startsWith('JOB#') || !Number.isInteger(unresolvedAfterReference) || unresolvedAfterReference < 0) {
+        throw new Error('afterUnresolvedEmployer is invalid');
+      }
+    }
     const now = options.now?.getTime() ?? Date.now();
     type CountRow = { key: string; count: number };
     const counts = async (sql: string, ...bindings: unknown[]) => Object.fromEntries((await this.db.prepare(sql).bind(...bindings).all<CountRow>()).results
       .map((row) => [row.key, Number(row.count)]));
-    const [summary, byReason, bySource, byDestination, closureSignals, freshness, scheduled, leased, backfillQueued, backfillCompleted, repairStaged, repairApplied, continuationConflicts,
+    const [summary, byReason, bySource, byDestination, closureSignals, freshness, scheduled, leased, backfillQueued, backfillCompleted, repairStaged, repairApplied, unresolvedSummary,
       unresolvedRows, recordRows] = await Promise.all([
       this.db.prepare(`WITH jobs AS (SELECT value,
           unixepoch(coalesce(json_extract(value, '$.admission.lastVerifiedAt'), json_extract(value, '$.admission.destination.lastKnownGoodAt'), json_extract(value, '$.admission.destination.inspectedAt'), json_extract(value, '$.admission.evidenceObservedAt'))) AS observed_at,
           unixepoch(json_extract(value, '$.admission.destination.freshUntil')) AS stored_fresh_until,
-          unixepoch(json_extract(value, '$.admission.graceDeadline')) AS stored_grace_deadline
+          unixepoch(json_extract(value, '$.admission.graceDeadline')) AS stored_grace_deadline,
+          unixepoch(json_extract(value, '$.admission.destination.validThrough')) AS valid_through
           FROM catalog_items WHERE kind = 'internship'), deadlines AS (SELECT *, CASE WHEN observed_at IS NULL THEN 0
           WHEN stored_fresh_until IS NOT NULL AND stored_fresh_until < observed_at + 604800 THEN stored_fresh_until ELSE observed_at + 604800 END AS fresh_until FROM jobs)
         SELECT count(*) AS scanned,
         sum(CASE WHEN json_extract(value, '$.admission') IS NULL THEN 1 WHEN json_extract(value, '$.admission.catalogEligible') = 1
+          AND (valid_through IS NULL OR valid_through > ?)
           AND CASE WHEN stored_grace_deadline IS NOT NULL AND stored_grace_deadline < fresh_until THEN stored_grace_deadline ELSE fresh_until END > ? THEN 1 ELSE 0 END) AS eligible,
         sum(CASE WHEN json_extract(value, '$.admission.catalogEligible') = 0 THEN 1 ELSE 0 END) AS review,
         sum(CASE WHEN json_extract(value, '$.admission') IS NULL THEN 1 ELSE 0 END) AS legacyUnclassified,
         sum(CASE WHEN json_extract(value, '$.notification.smsSentAt') IS NOT NULL THEN 1 ELSE 0 END) AS withNotificationHistory,
         sum(CASE WHEN json_extract(value, '$.applicationUrlValidatedAt') IS NOT NULL THEN 1 ELSE 0 END) AS validated
-        FROM deadlines`).bind(Math.floor(now / 1000)).first<{ scanned: number; eligible: number; review: number; legacyUnclassified: number; withNotificationHistory: number; validated: number }>(),
+        FROM deadlines`).bind(Math.floor(now / 1000), Math.floor(now / 1000)).first<{ scanned: number; eligible: number; review: number; legacyUnclassified: number; withNotificationHistory: number; validated: number }>(),
       counts(`SELECT reason.value AS key, count(*) AS count FROM catalog_items, json_each(catalog_items.value, '$.admission.reasonCodes') AS reason
         WHERE catalog_items.kind = 'internship' GROUP BY reason.value`),
       counts(`SELECT json_extract(reference.value, '$.sourceId') AS key, count(DISTINCT catalog_items.pk) AS count FROM catalog_items,
@@ -1004,18 +1023,21 @@ export class D1CatalogAdmissionStore {
       this.db.prepare("SELECT count(*) AS count FROM admission_backfill_items WHERE state = 'completed'").first<{ count: number }>(),
       this.db.prepare('SELECT count(*) AS count FROM catalog_admission_repair_stage').first<{ count: number }>(),
       this.db.prepare('SELECT count(*) AS count FROM catalog_admission_repair_guards').first<{ count: number }>(),
-      this.db.prepare(`SELECT count(*) AS count FROM catalog_items, json_each(catalog_items.value, '$.sourceReferences') AS reference
-        WHERE catalog_items.kind = 'internship' AND json_extract(reference.value, '$.employerInheritance') = 'conflict'`).first<{ count: number }>(),
-      this.db.prepare(`SELECT coalesce(json_extract(reference.value, '$.admission.destination.provider'), 'unknown') AS provider,
-        json_extract(reference.value, '$.admission.destination.tenant') AS tenant,
-        json_group_array(DISTINCT json_extract(reference.value, '$.company')) AS labels,
-        json_group_array(DISTINCT json_extract(reference.value, '$.applyUrl')) AS evidenceUrls,
-        count(*) AS occurrenceCount,
-        sum(CASE WHEN json_extract(reference.value, '$.employerInheritance') = 'conflict' THEN 1 ELSE 0 END) AS continuationConflicts,
-        count(DISTINCT CASE WHEN json_extract(catalog_items.value, '$.notification.smsSentAt') IS NOT NULL OR json_extract(catalog_items.value, '$.notification.digestedAt') IS NOT NULL THEN catalog_items.pk END) AS withNotificationHistory
+      this.db.prepare(`SELECT count(*) AS count,
+        sum(CASE WHEN json_extract(reference.value, '$.employerInheritance') = 'conflict' THEN 1 ELSE 0 END) AS continuationConflicts
         FROM catalog_items, json_each(catalog_items.value, '$.sourceReferences') AS reference WHERE catalog_items.kind = 'internship'
-          AND (json_extract(reference.value, '$.admission.employerResolution') IS NULL OR json_extract(reference.value, '$.admission.employerResolution') <> 'resolved' OR json_extract(reference.value, '$.employerInheritance') = 'conflict')
-        GROUP BY provider, tenant ORDER BY occurrenceCount DESC, provider, tenant LIMIT 100`).all<{ provider: string; tenant: string | null; labels: string; evidenceUrls: string; occurrenceCount: number; continuationConflicts: number; withNotificationHistory: number }>(),
+          AND (json_extract(reference.value, '$.admission.employerResolution') IS NULL OR json_extract(reference.value, '$.admission.employerResolution') <> 'resolved'
+            OR json_extract(reference.value, '$.employerInheritance') = 'conflict')`).first<{ count: number; continuationConflicts: number | null }>(),
+      this.db.prepare(`SELECT catalog_items.pk, CAST(reference.key AS INTEGER) AS referenceIndex, reference.value AS reference,
+        CASE WHEN json_extract(catalog_items.value, '$.notification.smsSentAt') IS NOT NULL
+          OR json_extract(catalog_items.value, '$.notification.digestedAt') IS NOT NULL THEN 1 ELSE 0 END AS notified
+        FROM catalog_items, json_each(catalog_items.value, '$.sourceReferences') AS reference WHERE catalog_items.kind = 'internship'
+          AND (json_extract(reference.value, '$.admission.employerResolution') IS NULL OR json_extract(reference.value, '$.admission.employerResolution') <> 'resolved'
+            OR json_extract(reference.value, '$.employerInheritance') = 'conflict')
+          AND (catalog_items.pk > ? OR (catalog_items.pk = ? AND CAST(reference.key AS INTEGER) > ?))
+        ORDER BY catalog_items.pk, CAST(reference.key AS INTEGER) LIMIT ?`)
+        .bind(unresolvedAfterPk, unresolvedAfterPk, unresolvedAfterReference, limit + 1)
+        .all<{ pk: string; referenceIndex: number; reference: string; notified: number }>(),
       this.db.prepare(`SELECT pk, value FROM catalog_items WHERE kind = 'internship' AND json_extract(value, '$.admission.catalogEligible') = 0
         AND pk > ? ORDER BY pk LIMIT ?`).bind(afterPk, limit + 1).all<{ pk: string; value: string }>(),
     ]);
@@ -1025,6 +1047,24 @@ export class D1CatalogAdmissionStore {
         reasonCodes: job.admission?.reasonCodes ?? [], sourceIds: [...new Set(job.sourceReferences.map((reference) => reference.sourceId))].sort(),
         ...(job.admission ? { destinationClassification: job.admission.destination.classification } : {}), smsSent: Boolean(job.notification.smsSentAt) };
     });
+    const unresolved = new Map<string, { provider: string; tenant?: string; labels: Set<string>; evidenceUrls: Set<string>;
+      occurrenceCount: number; continuationConflicts: number; notifiedJobs: Set<string> }>();
+    const unresolvedPage = unresolvedRows.results.slice(0, limit);
+    for (const row of unresolvedPage) {
+      const reference = JSON.parse(row.reference) as SourceOccurrence;
+      const destination = reference.admission?.destination;
+      let route: ReturnType<typeof providerPostingReference> = { provider: 'unknown' };
+      try { route = providerPostingReference(reference.applyUrl); } catch { /* Preserve malformed candidate evidence. */ }
+      const provider = destination?.provider ?? route.provider;
+      const tenant = destination?.tenant ?? route.tenant;
+      const key = `${provider}\0${tenant ?? ''}`;
+      const group = unresolved.get(key) ?? { provider, ...(tenant ? { tenant } : {}), labels: new Set<string>(),
+        evidenceUrls: new Set<string>(), occurrenceCount: 0, continuationConflicts: 0, notifiedJobs: new Set<string>() };
+      group.labels.add(reference.company); group.evidenceUrls.add(reference.applyUrl); group.occurrenceCount += 1;
+      if (reference.employerInheritance === 'conflict') group.continuationConflicts += 1;
+      if (row.notified) group.notifiedJobs.add(row.pk);
+      unresolved.set(key, group);
+    }
     const total = summary ?? { scanned: 0, eligible: 0, review: 0, legacyUnclassified: 0, withNotificationHistory: 0, validated: 0 };
     const fresh = Number(total.scanned) - Number(freshness?.missing ?? 0) - Number(freshness?.stale ?? 0) - Number(freshness?.due ?? 0);
     return {
@@ -1035,13 +1075,20 @@ export class D1CatalogAdmissionStore {
       withNotificationHistory: Number(total.withNotificationHistory),
       freshness: { fresh, due: Number(freshness?.due ?? 0), stale: Number(freshness?.stale ?? 0), staleEligible: Number(freshness?.staleEligible ?? 0), missing: Number(freshness?.missing ?? 0) },
       validationCoverage: { validated: Number(total.validated), missing: Number(total.scanned) - Number(total.validated) },
-      continuationConflicts: Number(continuationConflicts?.count ?? 0),
+      continuationConflicts: Number(unresolvedSummary?.continuationConflicts ?? 0),
       closureSignals,
       operations: { scheduled: scheduled?.count ?? 0, leased: leased?.count ?? 0, backfillQueued: backfillQueued?.count ?? 0,
         backfillCompleted: backfillCompleted?.count ?? 0, repairStaged: repairStaged?.count ?? 0, repairApplied: repairApplied?.count ?? 0 },
-      unresolvedEmployers: unresolvedRows.results.map((row) => ({ provider: row.provider, ...(row.tenant ? { tenant: row.tenant } : {}),
-        labels: JSON.parse(row.labels).sort(), evidenceUrls: JSON.parse(row.evidenceUrls).sort(), occurrenceCount: Number(row.occurrenceCount),
-        continuationConflicts: Number(row.continuationConflicts), withNotificationHistory: Number(row.withNotificationHistory) })),
+      unresolvedEmployers: [...unresolved.values()].map((group) => ({ provider: group.provider, ...(group.tenant ? { tenant: group.tenant } : {}),
+        labels: [...group.labels].sort(), evidenceUrls: [...group.evidenceUrls].sort(), occurrenceCount: group.occurrenceCount,
+        continuationConflicts: group.continuationConflicts, withNotificationHistory: group.notifiedJobs.size }))
+        .sort((left, right) => left.provider.localeCompare(right.provider) || (left.tenant ?? '').localeCompare(right.tenant ?? '')),
+      unresolvedEmployerOccurrences: Number(unresolvedSummary?.count ?? 0),
+      ...(unresolvedRows.results.length > limit && unresolvedPage.length ? {
+        unresolvedEmployersNextCursor: encodeURIComponent(JSON.stringify([
+          unresolvedPage.at(-1)!.pk, unresolvedPage.at(-1)!.referenceIndex,
+        ])),
+      } : {}),
       records,
       ...(recordRows.results.length > limit ? { recordsNextCursor: records.at(-1)!.jobId } : {}),
     };
