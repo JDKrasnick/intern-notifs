@@ -1603,6 +1603,25 @@ function FilterBar({
     </View>
   );
 }
+function QueuePillButton({
+  count,
+  onPress,
+}: {
+  count: number;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel={count > 0 ? `Open apply queue, ${count} ${count === 1 ? "role" : "roles"}` : "Open apply queue"}
+      onPress={onPress}
+      style={styles.queuePill}
+    >
+      <Ionicons name="albums" size={14} color={colors.onDark} />
+      <Text style={styles.queuePillText}>{count > 0 ? `Queue · ${count}` : "Queue"}</Text>
+    </TouchableOpacity>
+  );
+}
 
 function FilterSheet({
   visible,
@@ -1809,8 +1828,8 @@ function TabNavigation({
 }) {
   const tabs = [
     { key: "feed", label: "Roles", icon: "briefcase-outline", activeIcon: "briefcase" },
-    { key: "queue", label: "Queue", accessibilityLabel: "Apply queue", icon: "bookmark-outline", activeIcon: "bookmark" },
-    { key: "saved", label: "Saved", accessibilityLabel: "Saved roles", icon: "albums-outline", activeIcon: "albums" },
+    { key: "queue", label: "Queue", accessibilityLabel: "Apply queue", icon: "albums-outline", activeIcon: "albums" },
+    { key: "saved", label: "Saved", accessibilityLabel: "Saved roles", icon: "bookmark-outline", activeIcon: "bookmark" },
     { key: "profile", label: "Profile", icon: "person-outline", activeIcon: "person" },
   ] as const;
   return (
@@ -2056,8 +2075,6 @@ function launchInterval(previousOpenedAt: string | null) {
   if (Number.isNaN(date.valueOf())) return "your last visit";
   return new Intl.DateTimeFormat(undefined, {
     weekday: "short",
-    month: "short",
-    day: "numeric",
   }).format(date);
 }
 
@@ -2076,6 +2093,8 @@ function LaunchInbox({
   hiddenFeedbackJob,
   onUndoHide,
   onOpenGroup,
+  queueCount,
+  onOpenQueue,
 }: {
   inbox: LaunchInbox;
   onOpen: (job: Job) => void;
@@ -2091,6 +2110,8 @@ function LaunchInbox({
   hiddenFeedbackJob?: Job;
   onUndoHide: () => void;
   onOpenGroup: (group: CatalogGroupRow, details?: CatalogGroupDetails) => void;
+  queueCount?: number;
+  onOpenQueue?: () => void;
 }) {
   const visibleJobs = inbox.jobs.filter(
     (job) => !hiddenJobIds.has(job.jobId) || hiddenFeedbackJob?.jobId === job.jobId,
@@ -2108,9 +2129,14 @@ function LaunchInbox({
           <Text accessibilityLabel={`${inbox.total} new matches`} style={styles.inboxCount}>{inbox.total}</Text>
           <Text style={styles.inboxTitle}>new matches</Text>
           <Text style={styles.inboxDescription}>Grouped by employer release and verified program details</Text>
-          <TouchableOpacity accessibilityRole="button" onPress={onViewAll} style={styles.inboxViewAll}>
-            <Text style={styles.inboxViewAllText}>View all internships</Text>
-          </TouchableOpacity>
+          <View style={styles.inboxActions}>
+            <TouchableOpacity accessibilityRole="button" onPress={onViewAll} style={[styles.inboxViewAll, styles.inboxViewAllInline]}>
+              <Text style={styles.inboxViewAllText}>View all internships</Text>
+            </TouchableOpacity>
+            {onOpenQueue && queueCount !== undefined ? (
+              <QueuePillButton count={queueCount} onPress={onOpenQueue} />
+            ) : null}
+          </View>
         </View>
       }
       renderItem={({ item, index }) => {
@@ -2179,13 +2205,18 @@ function LaunchInbox({
           {inbox.hasMore ? (
             <Text style={styles.inboxOverflow}>Showing the newest 50.</Text>
           ) : null}
-          <TouchableOpacity
-            accessibilityRole="button"
-            onPress={onViewAll}
-            style={styles.inboxViewAll}
-          >
-            <Text style={styles.inboxViewAllText}>View all internships</Text>
-          </TouchableOpacity>
+          <View style={styles.inboxActions}>
+            <TouchableOpacity
+              accessibilityRole="button"
+              onPress={onViewAll}
+              style={[styles.inboxViewAll, styles.inboxViewAllInline]}
+            >
+              <Text style={styles.inboxViewAllText}>View all internships</Text>
+            </TouchableOpacity>
+            {onOpenQueue && queueCount !== undefined ? (
+              <QueuePillButton count={queueCount} onPress={onOpenQueue} />
+            ) : null}
+          </View>
           <Text style={styles.inboxSectionLabel}>New matches</Text>
         </View>
       }
@@ -2344,6 +2375,7 @@ function GroupedCatalogFeed({
   return (
     <>
       <View style={styles.roleFeedControls}>
+      <View style={styles.feedSearchRow}>
         <PlainTextInput
           key="catalog-search"
           value={query}
@@ -2354,22 +2386,15 @@ function GroupedCatalogFeed({
           textContentType="none"
           placeholder="Search roles, companies, locations"
           placeholderTextColor={colors.placeholder}
-          style={styles.feedSearch}
+          style={[styles.feedSearch, styles.feedSearchFlex]}
         />
-        <View style={styles.queuePillRow}>
-          <FilterBar activeCount={countActiveCatalogFilters(filters)} onOpen={() => setSheetVisible(true)} />
-          {onOpenQueue && queueCount !== undefined && queueCount > 0 ? (
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityLabel={`Open apply queue, ${queueCount} ${queueCount === 1 ? "role" : "roles"}`}
-              onPress={onOpenQueue}
-              style={styles.queuePill}
-            >
-              <Ionicons name="bookmark" size={14} color={colors.onDark} />
-              <Text style={styles.queuePillText}>Queue · {queueCount}</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
+        {onOpenQueue && queueCount !== undefined ? (
+          <QueuePillButton count={queueCount} onPress={onOpenQueue} />
+        ) : null}
+      </View>
+      <View style={styles.queuePillRow}>
+        <FilterBar activeCount={countActiveCatalogFilters(filters)} onOpen={() => setSheetVisible(true)} />
+      </View>
         <FilterSheet
           visible={sheetVisible}
           filters={filters}
@@ -3444,6 +3469,8 @@ function AppContent() {
                 onUnsave={unsaveForWeb}
                 hiddenFeedbackJob={hiddenFeedbackJob}
                 onUndoHide={undoHideLocally}
+                queueCount={applyQueue.length}
+                onOpenQueue={() => setQueueSheetVisible(true)}
               />
             ) : (
               <GroupedCatalogFeed
@@ -4267,6 +4294,9 @@ function QueueSheet({
         <View style={styles.queueSheet}>
           <View style={styles.sheetHandle} />
           <Text style={styles.sheetTitle}>Apply queue · {queue.length}</Text>
+          {queue.length === 0 ? (
+            <Text style={styles.muted}>Mark roles as you browse and they will wait here.</Text>
+          ) : null}
           <ActionButton
             label={nextJob ? `Apply next: ${nextJob.title} at ${nextJob.company}` : "Apply next"}
             disabled={!next}
@@ -6151,6 +6181,8 @@ const styles = StyleSheet.create({
   },
   inboxViewAllText: { color: colors.signal, fontSize: 15, fontWeight: "700" },
   inboxViewAllFooter: { alignSelf: "center", marginBottom: 12, marginTop: 24 },
+  inboxActions: { alignItems: "center", flexDirection: "row", gap: 8, marginTop: 16 },
+  inboxViewAllInline: { alignSelf: "auto", marginTop: 0 },
   inboxSectionLabel: { color: colors.signal, fontSize: 12, fontWeight: "700", letterSpacing: 1, marginTop: 28 },
   newRolesLabel: { color: colors.signal, fontSize: 12, fontWeight: "700", letterSpacing: 1, marginTop: 8, marginBottom: 12 },
   caughtUpBlock: { marginTop: 20, marginBottom: 12 },
@@ -6512,6 +6544,8 @@ const styles = StyleSheet.create({
     marginTop: 12,
     marginBottom: 0,
   },
+  feedSearchRow: { alignItems: "center", flexDirection: "row", gap: 8, marginTop: 12 },
+  feedSearchFlex: { flex: 1, marginTop: 0 },
   roleFeedControls: {
     alignSelf: "center",
     maxWidth: 760,
