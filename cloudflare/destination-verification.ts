@@ -17,7 +17,7 @@ import { createMetadataAcquirer, metadataApiRoute, type MetadataAcquisition } fr
 import { metadataFieldOutcomes, type MetadataAuditOutcome } from '../src/metadata-audit.js';
 import type { D1Database, MessageBatch, Queue, R2Bucket } from './types.js';
 import { enqueueShadowExtraction, type ShadowBaseline } from './shadow-extraction.js';
-import type { ShadowExtractionOrigin } from '../src/shadow-extraction.js';
+import { normalizeExactPostingDescription, type ShadowExtractionOrigin } from '../src/shadow-extraction.js';
 
 export interface DestinationVerificationMessage {
   version: 1;
@@ -34,6 +34,7 @@ export interface DestinationVerificationMessage {
   generationId?: string;
   metadataExtractionVersion?: number;
   metadataArtifactHash?: string;
+  shadowContentHash?: string;
   metadataBackfillToken?: string;
   shadowOrigin?: ShadowExtractionOrigin;
 }
@@ -451,11 +452,13 @@ export async function processDestinationVerificationBatch(
       const reference = job.sourceReferences.find((item) => item.sourceId === message.sourceId && item.externalId === message.externalId);
       if (!reference) { queued.ack(); continue; }
       const candidateOnly = message.reason === 'historical-backfill' && !message.metadataBackfillToken;
+      const naturalProviderShadow = message.shadowOrigin === 'provider-poll' && Boolean(message.shadowContentHash);
       if (!candidateOnly && !destinationVerificationMatchesReference(reference, message)) {
         await settleWithoutVerification(queued, message, now().toISOString(), 'obsolete');
         continue;
       }
-      const existing = candidateOnly || message.metadataBackfillToken || !metadataExtractionCurrent(reference, message) ? undefined : matchingBrowserDestination(job, message, message.queuedAt);
+      const existing = candidateOnly || message.metadataBackfillToken || naturalProviderShadow || !metadataExtractionCurrent(reference, message)
+        ? undefined : matchingBrowserDestination(job, message, message.queuedAt);
       if (existing) {
         await settleWithoutVerification(queued, message, now().toISOString(), existing.classification, existing.nextCheckAt);
         continue;
@@ -464,7 +467,7 @@ export async function processDestinationVerificationBatch(
       if (pendingAttemptKeys.has(attemptKey)) {
         queued.ack(); continue;
       }
-      if (!candidateOnly && !message.metadataBackfillToken && metadataExtractionCurrent(reference, message)
+      if (!candidateOnly && !message.metadataBackfillToken && !naturalProviderShadow && metadataExtractionCurrent(reference, message)
         && await operations.hasVerificationAttemptSince(message.jobId, message.sourceId, message.candidateUrl, recentAttemptCutoff)) {
         await settleWithoutVerification(queued, message, now().toISOString(),
           reference.admission?.destination.classification ?? 'recent-attempt', nextAttemptAfterRecentDuplicate);
@@ -495,16 +498,34 @@ export async function processDestinationVerificationBatch(
         const reference = job.sourceReferences.find((item) => item.sourceId === message.sourceId && item.externalId === message.externalId);
         if (!reference) { queued.ack(); continue; }
         const candidateOnly = message.reason === 'historical-backfill' && !message.metadataBackfillToken;
+        const naturalProviderShadow = message.shadowOrigin === 'provider-poll' && Boolean(message.shadowContentHash);
         if (!candidateOnly && !destinationVerificationMatchesReference(reference, message)) {
           await settleWithoutVerification(queued, message, attemptedAt, 'obsolete');
           continue;
         }
-        const existing = candidateOnly || message.metadataBackfillToken || !metadataExtractionCurrent(reference, message) ? undefined : matchingBrowserDestination(job, message, message.queuedAt);
+        const existing = candidateOnly || message.metadataBackfillToken || naturalProviderShadow || !metadataExtractionCurrent(reference, message)
+          ? undefined : matchingBrowserDestination(job, message, message.queuedAt);
         if (existing) {
           await settleWithoutVerification(queued, message, attemptedAt, existing.classification, existing.nextCheckAt);
           continue;
         }
         let apiAcquisition = candidateOnly ? undefined : await acquireMetadata(message.providerIdentity, message.candidateUrl);
+        if (naturalProviderShadow) {
+          if (!apiAcquisition?.artifact?.text) throw new Error('Natural provider shadow artifact is unavailable');
+          // The producer hashes the canonical persisted title, which may be a
+          // reviewed repair of the provider's raw title.
+          const title = reference.title;
+          const normalized = normalizeExactPostingDescription(title, apiAcquisition.artifact.text, false);
+          if (normalized.contentHash !== message.shadowContentHash) {
+            await settleWithoutVerification(queued, message, now().toISOString(), 'obsolete');
+            continue;
+          }
+          const inspectedAt = now().toISOString();
+          await handoffShadowExtraction({ env, operations, message, title, description: apiAcquisition.artifact.text,
+            sourceUrl: apiAcquisition.sourceUrl, observedAt: inspectedAt, incomplete: false, method: apiAcquisition.method });
+          if (message.idempotencyKey) await operations.recordVerificationCompletion(message.idempotencyKey, inspectedAt);
+          queued.ack(); continue;
+        }
         // Historical collection cannot change admission, URL or notifications.
         // An identity-checked full API artifact needs no browser for that task.
         if (message.metadataBackfillToken && apiAcquisition?.artifact) {

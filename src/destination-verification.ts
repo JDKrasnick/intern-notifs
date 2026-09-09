@@ -23,6 +23,7 @@ export interface DestinationVerificationRequest {
   /** Optional additive fields keep already-queued v1 messages valid. */
   metadataExtractionVersion?: number;
   metadataArtifactHash?: string;
+  shadowContentHash?: string;
   metadataBackfillToken?: string;
   shadowOrigin?: ShadowExtractionOrigin;
 }

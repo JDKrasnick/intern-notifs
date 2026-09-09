@@ -8,6 +8,8 @@ import { enqueueDueDestinationVerifications, processDestinationVerificationBatch
   type DestinationVerificationMessage } from '../cloudflare/destination-verification.js';
 import type { D1Database, D1PreparedStatement, MessageBatch, QueueMessage, R2Bucket } from '../cloudflare/types.js';
 import type { Internship, SourceOccurrence } from '../src/types.js';
+import { normalizeExactPostingDescription } from '../src/shadow-extraction.js';
+import { metadataDescriptionText } from '../src/core/metadata-text.js';
 
 const launch = vi.hoisted(() => vi.fn());
 vi.mock('@cloudflare/puppeteer', () => ({ default: { launch } }));
@@ -256,6 +258,60 @@ describe('destination verification queue consumer', () => {
       sourceId: reference.sourceId, externalId: reference.externalId, origin: 'provider-poll' });
     expect(database.prepare('SELECT job_id, source_id, external_id FROM shadow_extraction_posting_revisions').get())
       .toEqual({ job_id: job.jobId, source_id: reference.sourceId, external_id: reference.externalId });
+  });
+
+  it('does not freshness-short-circuit a revision-bound natural provider shadow handoff', async () => {
+    const { database, db, jobs } = subject();
+    const { job, reference } = role();
+    const description = `${reference.title}\nAustin\n$50 - $60 per hour\n${'Build reliable systems. '.repeat(30)}`;
+    reference.admission = {
+      canonicalEmployer: { id: 'acme', displayName: 'Acme' }, employerResolution: 'resolved', postingAttribution: 'attributed',
+      destination: { classification: 'application-form', candidateUrl: reference.applyUrl, finalUrl: reference.applyUrl,
+        provider: 'greenhouse', tenant: 'acme', expectedPostingId: reference.externalId, inspectedAt: '2026-08-30T00:00:00Z',
+        freshUntil: '2026-09-06T00:00:00Z', nextCheckAt: '2026-09-05T00:00:00Z', browserVisible: true },
+      metadata: { complete: true, title: 'complete', location: 'complete' }, catalogEligible: true, alertEligible: true,
+      reasonCodes: [], evaluatedAt: '2026-08-30T00:00:00Z', evidenceObservedAt: '2026-08-30T00:00:00Z',
+    };
+    reference.metadataExtraction = { version: 15, artifactHash: 'current-artifact',
+      observedAt: '2026-08-30T00:00:00Z', outcome: 'extracted' };
+    await jobs.putInternship({ ...job, sourceReferences: [reference] });
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => Response.json({
+      id: Number(reference.externalId), title: reference.title, content: description,
+    })));
+    const shadowQueue = { send: vi.fn(), sendBatch: vi.fn() };
+    const artifactPut = vi.fn().mockResolvedValue(undefined);
+    const queued = queueMessage({ version: 1, jobId: job.jobId, sourceId: reference.sourceId,
+      externalId: reference.externalId!, candidateUrl: reference.applyUrl, providerIdentity: {
+        provider: 'greenhouse', sourceId: reference.sourceId, sourceUrl: reference.sourceUrl,
+        tenant: 'acme', postingId: reference.externalId,
+      }, reason: 'content-change', queuedAt: '2026-08-30T00:00:00Z', idempotencyKey: 'natural-shadow-handoff',
+      metadataExtractionVersion: 15,
+      shadowContentHash: normalizeExactPostingDescription(reference.title, metadataDescriptionText(description)).contentHash,
+      shadowOrigin: 'provider-poll' });
+
+    await processDestinationVerificationBatch({ queue: 'destination-verification', messages: [queued] }, {
+      ...environment(db), SHADOW_EXTRACTION_QUEUE: shadowQueue,
+      SHADOW_EXTRACTION_ARTIFACTS: { put: artifactPut } as unknown as R2Bucket,
+    }, () => new Date('2026-08-30T00:01:00Z'));
+
+    expect(queued.ack).toHaveBeenCalledOnce();
+    expect(queued.retry).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
+    expect(artifactPut).toHaveBeenCalledOnce();
+    expect(shadowQueue.send).toHaveBeenCalledOnce();
+    expect(shadowQueue.send.mock.calls[0]![0]).toMatchObject({ origin: 'provider-poll' });
+    expect(database.prepare('SELECT count(*) AS count FROM destination_verification_completions WHERE idempotency_key = ?')
+      .get('natural-shadow-handoff')).toEqual({ count: 1 });
+
+    const stale = queueMessage({ ...queued.body, idempotencyKey: 'stale-natural-shadow-handoff', shadowContentHash: '0'.repeat(64) });
+    await processDestinationVerificationBatch({ queue: 'destination-verification', messages: [stale] }, {
+      ...environment(db), SHADOW_EXTRACTION_QUEUE: shadowQueue,
+      SHADOW_EXTRACTION_ARTIFACTS: { put: artifactPut } as unknown as R2Bucket,
+    }, () => new Date('2026-08-30T00:02:00Z'));
+    expect(stale.ack).toHaveBeenCalledOnce();
+    expect(stale.retry).not.toHaveBeenCalled();
+    expect(artifactPut).toHaveBeenCalledOnce();
+    expect(shadowQueue.send).toHaveBeenCalledOnce();
   });
 
   it('hands a staging-only official API backfill off to shadow extraction', async () => {

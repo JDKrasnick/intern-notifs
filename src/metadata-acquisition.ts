@@ -184,7 +184,11 @@ export function parseMetadataApiResponse(identity: ProviderIdentity, method: Met
     if (url.origin !== 'https://jobs.ashbyhq.com' || url.pathname.replace(/\/$/u, '') !== `/${identity.tenant}/${expected}`) return undefined;
   } catch { return undefined; }
   if (!text(job.title) || ![job.descriptionPlain, job.descriptionHtml].some((value) => text(value))) return undefined;
-  return { title: text(job.title), text: [job.descriptionPlain, job.descriptionHtml].map(description).filter(Boolean).join('\n'),
+  // Match the source adapter's exact-posting choice: prefer the richer HTML
+  // representation and fall back to plain text, never concatenate duplicates.
+  const exactDescription = typeof job.descriptionHtml === 'string' && job.descriptionHtml.trim()
+    ? job.descriptionHtml : job.descriptionPlain;
+  return { title: text(job.title), text: description(String(exactDescription ?? '')),
     compensationText: record(job.compensation) ? [job.compensation.scrapeableCompensationSalarySummary, job.compensation.compensationTierSummary].map(description).filter(Boolean).join('\n') : undefined,
     locations: [text(job.location), ...(Array.isArray(job.secondaryLocations) ? job.secondaryLocations.flatMap((item) => record(item) ? [text(item.location)] : []) : [])].filter(Boolean),
     workMode: text(job.workplaceType) || undefined, publishedAt: text(job.publishedAt) || undefined };

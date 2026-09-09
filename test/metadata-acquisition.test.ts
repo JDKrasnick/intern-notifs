@@ -194,9 +194,11 @@ describe('identity-bound public metadata APIs', () => {
   it('selects exactly one Ashby posting without directory salary contamination', () => {
     const artifact = parseMetadataApiResponse(identity('ashby'), 'ashby-api', { jobs: [
       { id: 'other', title: 'Other role', compensation: { scrapeableCompensationSalarySummary: 'USD 900000/year' } },
-      { id: uuid, title: 'Software Intern', descriptionPlain: 'Build things', jobUrl: `https://jobs.ashbyhq.com/acme/${uuid}`,
+      { id: uuid, title: 'Software Intern', descriptionPlain: 'Duplicated plain text', descriptionHtml: '<p>Build things</p>',
+        jobUrl: `https://jobs.ashbyhq.com/acme/${uuid}`,
         compensation: { scrapeableCompensationSalarySummary: 'Salary EUR 2000 - 3000 per month' } },
     ] });
+    expect(artifact?.text).toBe('Build things');
     expect(extract(artifact!)[0]?.compensationRanges).toMatchObject([{ currency: 'EUR', minAmount: 2000, maxAmount: 3000, period: 'monthly' }]);
   });
   it('rejects unreviewed tenants and unsupported API families', () => {

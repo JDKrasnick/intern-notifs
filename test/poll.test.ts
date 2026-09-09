@@ -69,7 +69,7 @@ describe('polling', () => {
     } };
     const resolver = { async configurationVersion() { return 'configuration-v1'; },
       async resolveCanonicalEmployer() { return { id: 'acme', displayName: 'Acme' }; }, async resolveDestinationRule() { return undefined; } };
-    const queued: Array<{ externalId: string; reason: string; shadowOrigin?: string; idempotencyKey?: string }> = [];
+    const queued: Array<{ externalId: string; reason: string; shadowOrigin?: string; shadowContentHash?: string; idempotencyKey?: string }> = [];
     const run = (naturalProviderPoll = true) => new Poller([adapter], store, () => new Date('2026-09-09T22:00:00Z'),
       undefined, undefined, undefined, async (request) => { queued.push(request); }, resolver).poll({ naturalProviderPoll });
     await run();
@@ -77,7 +77,7 @@ describe('polling', () => {
     rows = [...rows, posting('101', 'Platform Engineering Intern')]; hash = 'new-role';
     await run();
     expect(queued).toEqual([expect.objectContaining({ externalId: '101', reason: 'first-sight',
-      shadowOrigin: 'provider-poll', idempotencyKey: expect.any(String) })]);
+      shadowOrigin: 'provider-poll', shadowContentHash: expect.stringMatching(/^[a-f0-9]{64}$/u), idempotencyKey: expect.any(String) })]);
     expect(await store.listPendingProviderShadowVerifications()).toEqual([]);
     await run();
     expect(queued).toHaveLength(1);

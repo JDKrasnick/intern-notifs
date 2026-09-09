@@ -1116,6 +1116,7 @@ export class IngestionRunner {
           providerShadowVerifications.push({
             jobId, sourceId: listing.sourceId, externalId: id, providerIdentity: listing.providerIdentity,
             candidateUrl: listing.applyUrl, reason, metadataExtractionVersion: ROLE_METADATA_EXTRACTION_VERSION,
+            shadowContentHash: listing.shadowContentHash,
             shadowOrigin: 'provider-poll',
             idempotencyKey: createHash('sha256').update(`provider-poll-shadow-v1\0${jobId}\0${listing.sourceId}\0${id}\0${listing.shadowContentHash}`).digest('hex'),
           });
