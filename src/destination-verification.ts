@@ -3,6 +3,7 @@ import { providerPostingReference } from './identity/posting.js';
 import type { CanonicalEmployer, DestinationEvidence, DestinationReviewRule, Internship, ProcessedListing, ProviderIdentity } from './types.js';
 import type { Reachability } from './core/application-verification.js';
 import { evidenceHash } from './catalog-admission.js';
+import type { ShadowExtractionOrigin } from './shadow-extraction.js';
 
 export const DESTINATION_EVIDENCE_TTL_MS = 7 * 86_400_000;
 export const DESTINATION_RECHECK_LEAD_MS = 24 * 60 * 60_000;
@@ -23,6 +24,7 @@ export interface DestinationVerificationRequest {
   metadataExtractionVersion?: number;
   metadataArtifactHash?: string;
   metadataBackfillToken?: string;
+  shadowOrigin?: ShadowExtractionOrigin;
 }
 
 export interface CatalogAdmissionResolver {

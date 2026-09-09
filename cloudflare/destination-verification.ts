@@ -17,6 +17,7 @@ import { createMetadataAcquirer, metadataApiRoute, type MetadataAcquisition } fr
 import { metadataFieldOutcomes, type MetadataAuditOutcome } from '../src/metadata-audit.js';
 import type { D1Database, MessageBatch, Queue, R2Bucket } from './types.js';
 import { enqueueShadowExtraction, type ShadowBaseline } from './shadow-extraction.js';
+import type { ShadowExtractionOrigin } from '../src/shadow-extraction.js';
 
 export interface DestinationVerificationMessage {
   version: 1;
@@ -34,6 +35,7 @@ export interface DestinationVerificationMessage {
   metadataExtractionVersion?: number;
   metadataArtifactHash?: string;
   metadataBackfillToken?: string;
+  shadowOrigin?: ShadowExtractionOrigin;
 }
 
 export interface DestinationVerificationEnvironment {
@@ -94,6 +96,7 @@ async function handoffShadowExtraction(input: {
         jobId: input.message.jobId, sourceId: input.message.sourceId, externalId: input.message.externalId,
         sourceUrl: input.sourceUrl, providerIdentity: input.message.providerIdentity, title: input.title,
         description, observedAt: input.observedAt, incomplete: input.incomplete,
+        origin: input.message.shadowOrigin ?? (input.message.reason === 'historical-backfill' ? 'backfill' : 'scheduled-verification'),
         ...(input.baseline ? { baseline: input.baseline } : {}),
       });
       outcome = 'enqueued';

@@ -128,7 +128,7 @@ export async function runGreenhouseBoard(
   }
 
   const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate, false,
-    dependencies.enqueueDestinationVerification, dependencies.catalogAdmissionResolver).poll();
+    dependencies.enqueueDestinationVerification, dependencies.catalogAdmissionResolver).poll({ naturalProviderPoll: !message.force });
   const sourceFailures = poll.failures.filter((failure) => failure.startsWith(`${source.id}:`));
   const widespreadLinkFailure = poll.processedListings > 0 && sourceFailures.length / poll.processedListings > SHADOW_LINK_FAILURE_THRESHOLD;
   if (sourceFailures.length && widespreadLinkFailure) {

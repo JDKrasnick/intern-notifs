@@ -316,6 +316,7 @@ export async function runAshbyBoard(
     dependencies.enqueueDestinationVerification, dependencies.catalogAdmissionResolver).poll({
     runId: message.runId,
     allowCompleteEmptySnapshot: true,
+    naturalProviderPoll: !message.force,
   });
   if (poll.failures.length) throw new Error(poll.failures.join('; '));
   const publishedHealth = await dependencies.store.getSourceHealth(source.id);
