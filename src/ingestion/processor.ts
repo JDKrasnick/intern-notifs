@@ -155,7 +155,9 @@ export function processPosting(
       ...(workMode ? { workMode } : {}),
     }),
     fetchedAt: posting.fetchedAt,
-    shadowContentHash: normalizeExactPostingDescription(title, shadowDescription).contentHash,
+    ...(posting.providerIdentity && ['greenhouse', 'lever', 'ashby'].includes(posting.providerIdentity.provider)
+      ? { shadowContentHash: normalizeExactPostingDescription(title, shadowDescription).contentHash }
+      : {}),
     technical: assessment.technical,
     ...(title === sourceTitle ? {} : { titleRepaired: true }),
     providerIdentity: {
