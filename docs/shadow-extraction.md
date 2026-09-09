@@ -1,8 +1,10 @@
 # Shadow extraction
 
-The shadow extraction queue evaluates exact official posting descriptions without
-changing catalog values, admission decisions, destination checks, notifications,
-or repair plans. It is intentionally disabled by default.
+The shadow extraction queue evaluates exact official posting descriptions.
+Extraction remains separate from publication: only a human-evaluated,
+exact-revision receipt can project an allowlisted field into catalog metadata.
+It never changes admission, destination checks, lifecycle, notifications, or
+repair plans.
 
 ## Data flow and safety boundary
 
@@ -57,9 +59,13 @@ GET /internal/operations/shadow-extraction
 secret. Its committed default is disabled and empty. A valid enabled policy has
 `version`, a non-empty supported `allowedFields` set, and unique exact cohort
 entries. The authenticated operations endpoint
-`/internal/operations/shadow-publication` reports its effective state and can
-create a receipt only for a completed, validator-accepted, current posting
-revision. Policy membership alone never authorizes publication.
+`/internal/operations/shadow-publication` reports policy state, versioned field
+evaluation metrics, and extraction scope. `record-evaluation` stores one of
+`correct-present`, `correct-absent`, `false-positive`, `false-negative`,
+`wrong-value`, or `wrong-status` for each reviewed run field. `create-receipt`
+requires `correct-present` for every selected field as well as a completed,
+validator-accepted, current posting revision. Policy membership alone never
+authorizes publication.
 
 Receipts bind the run key, posting identity and hash, policy version, accepted
 field subset, and deterministic evidence fingerprint in D1. A newer posting
@@ -70,9 +76,10 @@ it does not claim to repair any previously published metadata.
 
 Apply migrations `0020_shadow_extraction.sql`,
 `0021_shadow_extraction_fencing.sql`, and
-`0022_shadow_extraction_cache_expiry.sql`, and
-`0023_shadow_extraction_attempt_costs.sql`, and
-`0024_shadow_publication_receipts.sql` before deploying the queue consumer.
+`0022_shadow_extraction_cache_expiry.sql`,
+`0023_shadow_extraction_attempt_costs.sql`,
+`0024_shadow_publication_receipts.sql`, and
+`0025_shadow_extraction_evaluations.sql` before deploying the queue consumer.
 Provision the private R2 bucket and the `shadow-extraction` work/DLQ
 queues from the infrastructure configuration. Configure this R2 lifecycle rule
 after the bucket exists, using credentials with only the documented R2 write
@@ -92,11 +99,17 @@ the enablement variable to `false`; do not remove the migration or delete run
 records. The queue consumer then records no model calls and leaves the public
 catalog unchanged.
 
-## Field eligibility recommendation
+## Publication scope
 
-No LLM-derived field is eligible for publication from this PR. Keep all fields
-shadow-only until frozen-pilot results demonstrate the approved precision,
-recall, unsupported-claim, and combined-cost gates. The first possible future
-scope is a reviewed, limited field set with validated quoted evidence; identity,
-destination, availability, eligibility, pay, location, and housing remain
-non-authoritative until separately approved.
+The initial production canary allows `locations` and `workMode` only on exact
+reviewed revisions. Every published field needs a human `correct-present`
+evaluation, a validator-accepted quoted passage, a publishable normalized value,
+and an active receipt. Direct official evidence outranks reviewed shadow evidence.
+Compensation remains shadow-only until evaluated production examples include
+actual pay disclosures. Housing, timing, education, eligibility, and classification
+are evaluated but have no publication conversion.
+
+The v5 contract accepts only canonical `remote`, `hybrid`, or `onsite` work modes
+and forbids `not-stated` for missing fields when input is truncated. Evaluation
+metrics expose field precision and recall when their denominators are available;
+an empty denominator is reported as `null`, not as a passing score.

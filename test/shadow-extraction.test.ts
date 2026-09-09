@@ -7,6 +7,7 @@ import {
   shadowExtractionCacheKey,
   shadowExtractionPrompt,
   validateShadowExtraction,
+  type ShadowExtraction,
 } from '../src/shadow-extraction.js';
 import { enqueueShadowExtraction, processShadowExtractionBatch, reserveShadowCost, shadowReportFingerprint } from '../cloudflare/shadow-extraction.js';
 import type { D1Database, D1PreparedStatement, Queue, R2Bucket } from '../cloudflare/types.js';
@@ -118,12 +119,29 @@ describe('shadow extraction contract', () => {
     const input = normalizeExactPostingDescription('Intern', source, true);
     const value = output();
     value.classification.technical = 'unknown';
+    for (const field of ['workMode', 'timing', 'eligibility'] as const) {
+      value.fields[field] = { value: null, status: 'incomplete', evidence: [], qualifiers: [] };
+    }
     value.fields.housing = { value: null, status: 'incomplete', evidence: [], qualifiers: [] };
     value.fields.education = { value: null, status: 'conflicting', evidence: [], qualifiers: [] };
     const accepted = validateShadowExtraction(value, input).accepted!;
     expect(accepted.classification.technical).toBe('unknown');
     expect(accepted.fields.housing.status).toBe('incomplete');
     expect(accepted.fields.education.status).toBe('conflicting');
+  });
+
+  it('rejects noncanonical work modes and silence claims from incomplete excerpts', () => {
+    const workMode = output() as ShadowExtraction;
+    workMode.fields.workMode = { value: 'On-site', status: 'present', evidence: ['Austin'], qualifiers: [] };
+    expect(validateShadowExtraction(workMode, normalizeExactPostingDescription('Intern', source)).failures)
+      .toContain('workMode: unsupported work mode');
+    const incomplete = output();
+    expect(validateShadowExtraction(incomplete, normalizeExactPostingDescription('Intern', source, true)).failures)
+      .toContain('workMode: not-stated is invalid for incomplete input');
+    const location = output() as ShadowExtraction;
+    location.fields.locations = { value: ['remote'], status: 'present', evidence: ['Austin'], qualifiers: [] };
+    expect(validateShadowExtraction(location, normalizeExactPostingDescription('Intern', source)).failures)
+      .toContain('locations: location is not a geographic place');
   });
 });
 

@@ -57,6 +57,15 @@ function period(value: unknown): CompensationPeriod | undefined {
   return typeof value === 'string' ? map[value] : undefined;
 }
 
+function normalizedWorkMode(value: unknown): Exclude<WorkMode, 'unspecified'> | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/gu, '');
+  if (normalized === 'remote') return 'remote';
+  if (normalized === 'hybrid') return 'hybrid';
+  if (normalized === 'onsite' || normalized === 'inoffice') return 'onsite';
+  return undefined;
+}
+
 /** Conversion is deliberately narrower than shadow validation. Unsupported
  * shapes are omitted instead of being transformed into public metadata. */
 export function shadowExtractionEvidence(input: {
@@ -79,11 +88,20 @@ export function shadowExtractionEvidence(input: {
     ? normalizeLocations(locationsField.value.filter((item): item is string => typeof item === 'string')).map(name => ({ name,
       workMode: 'unspecified' as const,
       provenance: provenance('locations', locationsField.evidence[0] ?? name) })) : [];
-  const mode = allowed.has('workMode') && workModeField.status === 'present' && typeof workModeField.value === 'string'
-    && ['remote', 'hybrid', 'onsite'].includes(workModeField.value) && workModeField.evidence[0]
-    ? { value: workModeField.value as Exclude<WorkMode, 'unspecified'>, provenance: provenance('workMode', workModeField.evidence[0]) } : undefined;
+  const workMode = normalizedWorkMode(workModeField.value);
+  const mode = allowed.has('workMode') && workModeField.status === 'present' && workMode && workModeField.evidence[0]
+    ? { value: workMode, provenance: provenance('workMode', workModeField.evidence[0]) } : undefined;
   if (!compensation.length && !locations.length && !mode) return undefined;
   return { schemaVersion: 1, extractionVersion: input.extractionVersion, artifactHash: input.contentHash, sourceClass: 'reviewed-shadow', sourceId: input.sourceId,
     sourceUrl: input.sourceUrl, observedAt: input.observedAt, exactPosting: true,
     ...(compensation.length ? { compensationRanges: compensation } : {}), ...(locations.length ? { locations } : {}), ...(mode ? { workMode: mode } : {}) };
+}
+
+export function shadowPublishableFields(extraction: ShadowExtraction, allowedFields: readonly ShadowPublicationField[]): ShadowPublicationField[] {
+  return allowedFields.filter((field) => {
+    const evidence = shadowExtractionEvidence({ extraction, sourceId: 'evaluation', sourceUrl: 'https://example.invalid', contentHash: '0'.repeat(64),
+      observedAt: '1970-01-01T00:00:00.000Z', extractionVersion: 1, allowedFields: [field] });
+    return field === 'compensation' ? Boolean(evidence?.compensationRanges?.length)
+      : field === 'locations' ? Boolean(evidence?.locations?.length) : Boolean(evidence?.workMode);
+  });
 }
