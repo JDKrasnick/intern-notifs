@@ -1,0 +1,171 @@
+#!/usr/bin/env node
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { SHADOW_EXTRACTION_MODEL_ID, normalizeExactPostingDescription, shadowExtractionPrompt, validateShadowExtraction } from '../src/shadow-extraction.js';
+import { inferOpenAIShadowExtraction } from '../cloudflare/openai-shadow-inference.js';
+import {
+  evaluateShadowCase,
+  parseShadowEvalCases,
+  parseShadowRecordedRuns,
+  shadowEvalFields,
+  summarizeShadowEval,
+  type ShadowEvalCase,
+  type ShadowEvalCaseResult,
+  type ShadowEvalFieldName,
+  type ShadowRecordedRun,
+} from '../src/shadow-extraction-eval.js';
+
+const args = process.argv.slice(2);
+const option = (name: string) => { const index = args.indexOf(name); return index < 0 ? undefined : args[index + 1]; };
+const has = (name: string) => args.includes(name);
+
+const casesPath = option('--cases') ?? 'test/fixtures/shadow-extraction-eval.json';
+const offlinePath = option('--offline');
+const live = has('--live');
+const recordPath = option('--record');
+const reportBase = option('--report') ?? 'eval/shadow-extraction-results';
+const limitValue = Number(option('--limit') ?? 0);
+if (!Number.isInteger(limitValue) || limitValue < 0) {
+  console.error('--limit must be a positive integer or 0 for all cases'); process.exit(1);
+}
+const limit = limitValue;
+if ((offlinePath === undefined) !== live) {
+  console.error('Usage: tsx scripts/shadow-extraction-eval.ts (--offline <recorded.json> | --live) [--cases <dataset.json>] [--record <out.json>] [--report <base>] [--limit <n>]');
+  process.exit(1);
+}
+if (recordPath !== undefined && !live) {
+  console.error('--record is only valid with --live'); process.exit(1);
+}
+
+function apiKey(): string {
+  const direct = process.env.OPENAI_API_KEY;
+  if (direct) return direct;
+  const dotenv = readFileSync('.env', 'utf8').match(/^OPENAI_KEY=(.+)$/mu);
+  if (dotenv) return dotenv[1]!.trim();
+  console.error('OPENAI_API_KEY is required for live evaluation (or OPENAI_KEY in .env)'); process.exit(1);
+}
+
+const golden = parseShadowEvalCases(JSON.parse(await readFile(casesPath, 'utf8')) as unknown);
+
+function resultFor(goldenCase: ShadowEvalCase, validation: ReturnType<typeof validateShadowExtraction>,
+  inference?: { inputTokens: number; outputTokens: number; actualCostCents: number }): ShadowEvalCaseResult {
+  if (validation.accepted) {
+    const evaluation = evaluateShadowCase(validation.accepted, goldenCase.expected);
+    return { id: goldenCase.id, valid: true, failures: [], classification: evaluation.classification, fields: evaluation.fields,
+      ...(inference ? { cost: { inputTokens: inference.inputTokens, outputTokens: inference.outputTokens, actualCostCents: inference.actualCostCents } } : {}) };
+  }
+  return { id: goldenCase.id, valid: false, failures: validation.failures };
+}
+
+const results: ShadowEvalCaseResult[] = [];
+const recorded: ShadowRecordedRun[] = [];
+
+if (live) {
+  const key = apiKey();
+  for (const goldenCase of golden) {
+    if (limit > 0 && results.length >= limit) break;
+    const input = normalizeExactPostingDescription(goldenCase.title, goldenCase.description);
+    const prompt = shadowExtractionPrompt(input);
+    try {
+      const inference = await inferOpenAIShadowExtraction(key, input, prompt);
+      const validation = validateShadowExtraction(inference.response, input);
+      results.push(resultFor(goldenCase, validation, inference));
+      if (recordPath !== undefined) recorded.push({ id: goldenCase.id, contentHash: input.contentHash, result: inference });
+    } catch (error) {
+      results.push({ id: goldenCase.id, valid: false, failures: [], error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+} else {
+  const fixture = parseShadowRecordedRuns(JSON.parse(await readFile(offlinePath!, 'utf8')) as unknown);
+  const byId = new Map(fixture.cases.map((entry) => [entry.id, entry]));
+  for (const goldenCase of golden) {
+    const entry = byId.get(goldenCase.id);
+    if (!entry) continue;
+    const input = normalizeExactPostingDescription(goldenCase.title, goldenCase.description);
+    if (entry.contentHash !== input.contentHash) throw new Error(`recorded contentHash mismatch for ${goldenCase.id}`);
+    const validation = validateShadowExtraction(entry.result.response, input);
+    results.push(resultFor(goldenCase, validation, entry.result));
+  }
+  if (results.length === 0) {
+    console.error('No recorded cases matched the golden dataset'); process.exit(1);
+  }
+}
+
+const mode = live ? 'live' : 'offline';
+const recordedAt = new Date().toISOString();
+const summary = summarizeShadowEval(results);
+const reportJson = `${reportBase}.json`;
+const reportMd = `${reportBase}.md`;
+await mkdir(dirname(reportJson), { recursive: true });
+await writeFile(reportJson, `${JSON.stringify(summary, null, 2)}\n`);
+if (recordPath !== undefined && recorded.length > 0) {
+  const envelope = { version: 1, recordedAt, modelId: SHADOW_EXTRACTION_MODEL_ID, cases: recorded };
+  await mkdir(dirname(recordPath), { recursive: true });
+  await writeFile(recordPath, `${JSON.stringify(envelope, null, 2)}\n`);
+}
+
+const rate = (value: number | null) => value === null ? 'null' : value.toFixed(4);
+const verdictOf = (field: ShadowEvalFieldName, result: ShadowEvalCaseResult) => {
+  if (!result.valid) return '-';
+  const verdict = result.fields.find((item) => item.field === field);
+  return verdict ? { 'true-positive': 'TP', 'unsupported-claim': 'UC', 'value-mismatch': 'VM', 'false-negative': 'FN', 'true-negative': 'TN' }[verdict.verdict] : '-';
+};
+const classificationRow = (entry: { correct: number; total: number }) => `${entry.correct}/${entry.total}`;
+const caseRows = results.map((result) => {
+  const classification = result.classification ? `${result.classification.technical ? 'T' : 't'}/${result.classification.earlyCareer ? 'E' : 'e'}/${result.classification.disciplines ? 'D' : 'd'}`
+    : result.valid ? '?' : 'invalid';
+  const verdicts = result.valid ? shadowEvalFields.map((field) => `${field.slice(0, 4)}:${verdictOf(field, result)}`).join(' ') : (result.error ? `error: ${result.error.slice(0, 80)}` : result.failures.join('; ').slice(0, 120));
+  return [result.id, result.valid ? 'yes' : 'no', classification, result.valid ? verdicts : '', result.cost ? String(result.cost.actualCostCents) : '-'].join(' | ');
+}).join('\n');
+
+await writeFile(reportMd, `# Shadow extraction evaluation
+
+Mode: ${mode}
+Recorded at: ${recordedAt}
+Cases: ${summary.cases} | Valid: ${summary.validCases} | Invalid: ${summary.invalidCases}
+
+## Field gates
+
+| field | TP | UC | VM | FN | TN | precision | recall | unsupported-claim rate | value-mismatch rate |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+${shadowEvalFields.map((field) => {
+  const counts = summary.fieldCounts[field];
+  return `| ${field} | ${counts.truePositive} | ${counts.unsupportedClaim} | ${counts.valueMismatch} | ${counts.falseNegative} | ${counts.trueNegative} | ${rate(fieldRates(field, counts).precision)} | ${rate(fieldRates(field, counts).recall)} | ${rate(fieldRates(field, counts).unsupported)} | ${rate(fieldRates(field, counts).mismatch)} |`;
+}).join('\n')}
+
+## Classification
+
+| label | correct / total |
+| --- | --- |
+| technical | ${classificationRow(summary.classification.technical)} |
+| earlyCareer | ${classificationRow(summary.classification.earlyCareer)} |
+| disciplines | ${classificationRow(summary.classification.disciplines)} |
+
+## Cost
+
+Input tokens: ${summary.cost.inputTokens}
+Output tokens: ${summary.cost.outputTokens}
+Total cost: ${summary.cost.actualCostCents} cents
+Average cost per case: ${summary.cost.avgCostCentsPerCase === null ? 'null' : `${summary.cost.avgCostCentsPerCase.toFixed(3)} cents`}
+
+## Cases
+
+| id | valid | classification (T/E/D ok) | per-field verdicts | cost cents |
+| --- | --- | --- | --- | --- |
+${caseRows}
+
+Raw pilot counts; not a weighted estimate.
+`);
+console.log(JSON.stringify(summary, null, 2));
+
+function fieldRates(field: ShadowEvalFieldName, counts: { truePositive: number; unsupportedClaim: number; valueMismatch: number; falseNegative: number; trueNegative: number }) {
+  const presentDen = counts.truePositive + counts.unsupportedClaim + counts.valueMismatch;
+  const recallDen = counts.truePositive + counts.valueMismatch + counts.falseNegative;
+  return {
+    precision: presentDen > 0 ? counts.truePositive / presentDen : null,
+    recall: recallDen > 0 ? counts.truePositive / recallDen : null,
+    unsupported: presentDen > 0 ? counts.unsupportedClaim / presentDen : null,
+    mismatch: presentDen > 0 ? counts.valueMismatch / presentDen : null,
+  };
+}

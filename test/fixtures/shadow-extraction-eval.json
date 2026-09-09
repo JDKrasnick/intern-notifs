@@ -1,0 +1,195 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "sw-intern-pay-location-onsite",
+      "title": "Software Engineering Intern",
+      "description": "Location: Austin, Texas\nCompensation: $50 - $60 per hour\nThis is an on-site role.",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["software engineering"] },
+        "fields": {
+          "compensation": { "status": "present", "value": [{ "min": 50, "max": 60, "currency": "USD", "period": "hour" }] },
+          "locations": { "status": "present", "value": ["Austin, Texas"] },
+          "workMode": { "status": "present", "value": "onsite" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "data-science-intern-hybrid",
+      "title": "Data Science Intern",
+      "description": "Locations: New York, NY and San Francisco, CA\nThis role is hybrid.\nSummer 2027\nCompensation: $45 per hour",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["data science"] },
+        "fields": {
+          "compensation": { "status": "present", "value": [{ "min": 45, "max": 45, "currency": "USD", "period": "hour" }] },
+          "locations": { "status": "present", "value": ["New York, NY", "San Francisco, CA"] },
+          "workMode": { "status": "present", "value": "hybrid" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "present", "value": true },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "remote-no-pay",
+      "title": "Software Engineering Intern",
+      "description": "This is a fully remote position.\nCandidates must be currently pursuing a Bachelor's degree in Computer Science.",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["software engineering"] },
+        "fields": {
+          "compensation": { "status": "not-stated" },
+          "locations": { "status": "not-stated" },
+          "workMode": { "status": "present", "value": "remote" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "present", "value": true },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "conflicting-pay",
+      "title": "Software Engineer Intern",
+      "description": "Pay: $20 per hour. Salary: $25 per hour.",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["software engineering"] },
+        "fields": {
+          "compensation": { "status": "conflicting" },
+          "locations": { "status": "not-stated" },
+          "workMode": { "status": "not-stated" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "vague-no-facts",
+      "title": "Exciting Opportunity",
+      "description": "We are looking for motivated individuals to join our growing team. Great learning environment. Apply now!",
+      "expected": {
+        "classification": { "technical": "unknown", "earlyCareer": "unknown", "disciplines": [] },
+        "fields": {
+          "compensation": { "status": "not-stated" },
+          "locations": { "status": "not-stated" },
+          "workMode": { "status": "not-stated" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "eligibility-clearance",
+      "title": "Cybersecurity Intern",
+      "description": "Active security clearance is required.",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["cybersecurity"] },
+        "fields": {
+          "compensation": { "status": "not-stated" },
+          "locations": { "status": "not-stated" },
+          "workMode": { "status": "not-stated" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "present", "value": true }
+        }
+      }
+    },
+    {
+      "id": "housing-stipend",
+      "title": "Machine Learning Research Intern",
+      "description": "This role provides a $3,000 monthly housing stipend. Relocation support is available.",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["machine learning"] },
+        "fields": {
+          "compensation": { "status": "not-stated" },
+          "locations": { "status": "not-stated" },
+          "workMode": { "status": "not-stated" },
+          "housing": { "status": "present", "value": true },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "new-grad-fulltime",
+      "title": "New Graduate Software Engineer",
+      "description": "Full-time position starting August 2027. Location: Seattle, WA",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["software engineering"] },
+        "fields": {
+          "compensation": { "status": "not-stated" },
+          "locations": { "status": "present", "value": ["Seattle, WA"] },
+          "workMode": { "status": "not-stated" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "present", "value": true },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "marketing-intern-nontechnical",
+      "title": "Marketing Intern",
+      "description": "Responsibilities include social media, content creation, and brand campaigns.",
+      "expected": {
+        "classification": { "technical": "no", "earlyCareer": "yes", "disciplines": [] },
+        "fields": {
+          "compensation": { "status": "not-stated" },
+          "locations": { "status": "not-stated" },
+          "workMode": { "status": "not-stated" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "multi-band-pay",
+      "title": "Software Engineer Intern",
+      "description": "Undergraduate interns: $50 per hour. Graduate interns: $60 per hour.",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["software engineering"] },
+        "fields": {
+          "compensation": { "status": "present", "value": [
+            { "min": 50, "max": 50, "currency": "USD", "period": "hour" },
+            { "min": 60, "max": 60, "currency": "USD", "period": "hour" }
+          ] },
+          "locations": { "status": "not-stated" },
+          "workMode": { "status": "not-stated" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "tentative-remote",
+      "title": "Software Engineer Intern",
+      "description": "Applicants may work remotely on occasion. Location: Boston, MA",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["software engineering"] },
+        "fields": {
+          "compensation": { "status": "not-stated" },
+          "locations": { "status": "present", "value": ["Boston, MA"] },
+          "workMode": { "status": "not-stated" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    }
+  ]
+}

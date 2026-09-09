@@ -1,0 +1,231 @@
+{
+  "version": 1,
+  "recordedAt": "2026-09-09T00:00:00.000Z",
+  "modelId": "gpt-4o-mini-2024-07-18",
+  "cases": [
+    {
+      "id": "sw-intern-pay-location-onsite",
+      "contentHash": "426a92cff033811cd781c4d871041d2f534fdc3ea6d8b389d4241e7ad987c9ce",
+      "result": {
+        "response": {
+          "classification": {
+            "technical": "yes",
+            "earlyCareer": "yes",
+            "disciplines": [
+              "software engineering"
+            ]
+          },
+          "fields": {
+            "compensation": {
+              "value": [
+                {
+                  "min": 50,
+                  "max": 60,
+                  "currency": "USD",
+                  "period": "hour"
+                }
+              ],
+              "status": "present",
+              "evidence": [
+                "Compensation: $50 - $60 per hour"
+              ],
+              "qualifiers": []
+            },
+            "locations": {
+              "value": [
+                "Austin, Texas"
+              ],
+              "status": "present",
+              "evidence": [
+                "Location: Austin, Texas"
+              ],
+              "qualifiers": []
+            },
+            "workMode": {
+              "value": "onsite",
+              "status": "present",
+              "evidence": [
+                "This is an on-site role."
+              ],
+              "qualifiers": []
+            },
+            "housing": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "timing": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "education": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "eligibility": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            }
+          }
+        },
+        "inputTokens": 1200,
+        "outputTokens": 900,
+        "actualCostCents": 1
+      }
+    },
+    {
+      "id": "tentative-remote",
+      "contentHash": "d9a65d58c13d82a6f506e1ae9c00ecc1963b38c87d96c6ec501d0cd203ff3896",
+      "result": {
+        "response": {
+          "classification": {
+            "technical": "yes",
+            "earlyCareer": "yes",
+            "disciplines": [
+              "software engineering"
+            ]
+          },
+          "fields": {
+            "compensation": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "locations": {
+              "value": [
+                "Boston, MA"
+              ],
+              "status": "present",
+              "evidence": [
+                "Location: Boston, MA"
+              ],
+              "qualifiers": []
+            },
+            "workMode": {
+              "value": "remote",
+              "status": "present",
+              "evidence": [
+                "Applicants may work remotely on occasion."
+              ],
+              "qualifiers": []
+            },
+            "housing": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "timing": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "education": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "eligibility": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            }
+          }
+        },
+        "inputTokens": 1200,
+        "outputTokens": 900,
+        "actualCostCents": 1
+      }
+    },
+    {
+      "id": "data-science-intern-hybrid",
+      "contentHash": "f6a38de258eb3a2268e7f456d8b2a082a2e2b3fa2293409fff977f3f9e20a110",
+      "result": {
+        "response": {
+          "classification": {
+            "technical": "yes",
+            "earlyCareer": "yes",
+            "disciplines": [
+              "data science"
+            ]
+          },
+          "fields": {
+            "compensation": {
+              "value": [
+                {
+                  "min": 45,
+                  "max": 45,
+                  "currency": "USD",
+                  "period": "hour"
+                }
+              ],
+              "status": "present",
+              "evidence": [
+                "Compensation: $45 per hour"
+              ],
+              "qualifiers": []
+            },
+            "locations": {
+              "value": [
+                "New York, NY"
+              ],
+              "status": "present",
+              "evidence": [
+                "New York, NY"
+              ],
+              "qualifiers": []
+            },
+            "workMode": {
+              "value": "hybrid",
+              "status": "present",
+              "evidence": [
+                "This role is hybrid."
+              ],
+              "qualifiers": []
+            },
+            "housing": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "timing": {
+              "value": "Summer 2027",
+              "status": "present",
+              "evidence": [
+                "Summer 2027"
+              ],
+              "qualifiers": []
+            },
+            "education": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            },
+            "eligibility": {
+              "value": null,
+              "status": "not-stated",
+              "evidence": [],
+              "qualifiers": []
+            }
+          }
+        },
+        "inputTokens": 1200,
+        "outputTokens": 900,
+        "actualCostCents": 1
+      }
+    }
+  ]
+}
