@@ -136,6 +136,13 @@ describe('Cloudflare deployment configuration', () => {
     expect(runbook).not.toContain('wrangler triggers deploy --name intern-notifs \\');
   });
 
+  it('removes legacy consumers before deploying the handler-less API bundle', () => {
+    const runbook = read('docs/api-ingestion-split.md');
+    expect(runbook.indexOf('queues consumer remove intern-notifs-greenhouse')).toBeLessThan(
+      runbook.indexOf('wrangler deploy --config .context/wrangler.api-cutover.jsonc'),
+    );
+  });
+
   it('requires explicit Worker configuration rather than retaining a shared default', () => {
     expect(existsSync(new URL('../wrangler.jsonc', import.meta.url))).toBe(false);
     expect(api.services).toEqual([{ binding: 'INGESTION', service: 'intern-notifs-ingestion' }]);

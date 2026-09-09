@@ -19,7 +19,7 @@ AWS resources are rollback/export infrastructure, not active application targets
 | Job catalog | D1 indexed canonical records and grouped projections |
 | Personal data | D1 user records and releases |
 | Résumés | Private R2 objects behind authenticated Worker routes |
-| Ingestion, delivery, and Gmail sync | Cron Triggers, six Queues with DLQs, Worker consumers, Gmail read-only API, Expo Push Service |
+| Ingestion, delivery, and Gmail sync | Cron Triggers, seven Queues with DLQs, Worker consumers, Gmail read-only API, Expo Push Service |
 | Infrastructure | OpenTofu with Cloudflare provider v5 in `infra/cloudflare/` |
 | CI | GitHub Actions in `.github/workflows/ci.yml` |
 
