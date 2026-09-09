@@ -165,7 +165,9 @@ describe('Cloudflare deployment configuration', () => {
       queue: 'intern-notifs-shadow-extraction', max_batch_size: 1, max_concurrency: 1,
       max_batch_timeout: 60, max_retries: 2, retry_delay: 300, dead_letter_queue: 'intern-notifs-shadow-extraction-dlq',
     });
-    expect(ingestion.vars.SHADOW_EXTRACTION_ENABLED).toBe('false');
+    expect(ingestion.vars.SHADOW_EXTRACTION_ENABLED).toBe('true');
+    expect(ingestion.vars.SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS).toBe('1500');
+    expect(ingestion.vars.SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS).toBe('500');
     expect(ingestion.vars.SHADOW_EXTRACTION_QUEUE_NAME).toBe('intern-notifs-shadow-extraction');
     expect(terraform).toContain('cloudflare_r2_bucket" "shadow_extraction');
     expect(terraform).toContain('SHADOW_EXTRACTION_ARTIFACTS');

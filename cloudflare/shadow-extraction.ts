@@ -14,6 +14,7 @@ import {
 } from '../src/shadow-extraction.js';
 import type { ProviderIdentity } from '../src/types.js';
 import type { D1Database, D1PreparedStatement, MessageBatch, Queue, R2Bucket } from './types.js';
+import { inferOpenAIShadowExtraction } from './openai-shadow-inference.js';
 
 export interface ShadowExtractionMessage {
   version: 1;
@@ -46,6 +47,7 @@ export interface ShadowExtractionEnvironment {
   SHADOW_EXTRACTION_ENABLED?: string;
   SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS?: string;
   SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS?: string;
+  OPENAI_KEY?: string;
 }
 
 const leaseMs = 5 * 60_000;
@@ -254,9 +256,11 @@ export async function shadowExtractionSummary(db: D1Database): Promise<Record<st
     baselineDifferences: baselineDifferences.results };
 }
 
-/** No model client is bound in this PR. The handler records a visible disabled
- * state until the pilot approves a model and the combined budget forecast is set. */
 export async function processShadowExtractionBatch(batch: MessageBatch<unknown>, env: ShadowExtractionEnvironment, now = () => new Date(), infer?: (input: NormalizedPostingInput, prompt: ReturnType<typeof shadowExtractionPrompt>) => Promise<ShadowInferenceResult>): Promise<void> {
+  const apiKey = env.OPENAI_KEY;
+  const inference = infer ?? (apiKey
+    ? (input: NormalizedPostingInput, prompt: ReturnType<typeof shadowExtractionPrompt>) => inferOpenAIShadowExtraction(apiKey, input, prompt)
+    : undefined);
   for (const queued of batch.messages) {
     let message: ShadowExtractionMessage;
     try { message = readJson(queued.body); } catch { queued.ack(); continue; }
@@ -273,8 +277,8 @@ export async function processShadowExtractionBatch(batch: MessageBatch<unknown>,
       if (!normalized || normalized.contentHash !== message.contentHash || shadowExtractionCacheKey(normalized) !== message.cacheKey) {
         await finishRun(env.DB, message, leaseToken, 'invalid-output', now(), { error: 'input identity or version mismatch' }); queued.ack(); continue;
       }
-      if (env.SHADOW_EXTRACTION_ENABLED !== 'true' || !infer) {
-        await finishRun(env.DB, message, leaseToken, 'disabled', now(), { error: 'live model execution disabled pending pilot and budget approval' }); queued.ack(); continue;
+      if (env.SHADOW_EXTRACTION_ENABLED !== 'true' || !inference) {
+        await finishRun(env.DB, message, leaseToken, 'disabled', now(), { error: 'live model execution disabled or credential unavailable' }); queued.ack(); continue;
       }
       const cached = await env.DB.prepare('SELECT response_key, validation, expires_at FROM shadow_extraction_cache WHERE cache_key = ?')
         .bind(message.cacheKey).first<{ response_key: string; validation: string; expires_at: string }>();
@@ -299,7 +303,7 @@ export async function processShadowExtractionBatch(batch: MessageBatch<unknown>,
       if (!await reserveShadowCost(env.DB, startedAt, message.runKey, leaseToken, 5, env)) {
         await finishRun(env.DB, message, leaseToken, 'disabled', now(), { error: 'cost headroom unavailable' }); queued.ack(); continue;
       }
-      const response = await infer(normalized, shadowExtractionPrompt(normalized));
+      const response = await inference(normalized, shadowExtractionPrompt(normalized));
       if (!Number.isSafeInteger(response.inputTokens) || response.inputTokens < 0
         || !Number.isSafeInteger(response.outputTokens) || response.outputTokens < 0
         || !Number.isSafeInteger(response.actualCostCents) || response.actualCostCents < 0) {
