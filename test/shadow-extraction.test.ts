@@ -89,6 +89,31 @@ describe('shadow extraction contract', () => {
     expect(validateShadowExtraction(unsupportedPeriod, input).failures).toContain('compensation: numeric or unit inconsistency');
   });
 
+  it('accepts slash hourly units and numerically equivalent trailing zeroes', () => {
+    const input = normalizeExactPostingDescription('Intern', [
+      'Austin',
+      'Engineering Intern/Undergraduate: $30/hour',
+      'Engineering Intern/Masters: $32.50/hour',
+      'Engineering Intern/PhD: $35/hour',
+    ].join('\n'));
+    const value = output();
+    value.fields.compensation = {
+      value: [
+        { min: 30, max: 30, currency: 'USD', period: 'hour' },
+        { min: 32.5, max: 32.5, currency: 'USD', period: 'hour' },
+        { min: 35, max: 35, currency: 'USD', period: 'hour' },
+      ],
+      status: 'present',
+      evidence: [
+        'Engineering Intern/Undergraduate: $30/hour',
+        'Engineering Intern/Masters: $32.50/hour',
+        'Engineering Intern/PhD: $35/hour',
+      ],
+      qualifiers: [],
+    };
+    expect(validateShadowExtraction(value, input).accepted?.fields.compensation).toMatchObject({ status: 'present' });
+  });
+
   it('keeps unknown classifications and incomplete/conflicting fields distinct from silence', () => {
     const input = normalizeExactPostingDescription('Intern', source, true);
     const value = output();
