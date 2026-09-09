@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AccessibilityInfo,
   Alert,
@@ -183,6 +183,9 @@ type Application = {
   notes?: string;
   job?: ApplicationJobSummary;
 };
+function isPendingApplicationId(applicationId: string): boolean {
+  return applicationId.startsWith("pending-");
+}
 type GmailStatus = {
   connected: boolean;
   email?: string;
@@ -357,26 +360,28 @@ function useMotionAllowed() {
 
 function useSheetEntranceOffset(visible: boolean) {
   const motionAllowed = useContext(MotionAllowedContext);
-  const offset = useRef(new Animated.Value(96)).current;
-  useEffect(() => {
+  const entranceDistance = Platform.OS === "web" ? 40 : 72;
+  const entranceDuration = Platform.OS === "web" ? 180 : 240;
+  const offset = useRef(new Animated.Value(entranceDistance)).current;
+  useLayoutEffect(() => {
     if (!visible) {
-      offset.setValue(96);
+      offset.setValue(entranceDistance);
       return;
     }
     if (!motionAllowed) {
       offset.setValue(0);
       return;
     }
-    offset.setValue(96);
+    offset.setValue(entranceDistance);
     const animation = Animated.timing(offset, {
       toValue: 0,
-      duration: 320,
+      duration: entranceDuration,
       easing: Easing.bezier(0.16, 1, 0.3, 1),
       useNativeDriver: true,
     });
     animation.start();
     return () => animation.stop();
-  }, [motionAllowed, offset, visible]);
+  }, [entranceDistance, entranceDuration, motionAllowed, offset, visible]);
   return offset;
 }
 
@@ -542,7 +547,6 @@ function JobCard({
   const hideTranslateY = useRef(new Animated.Value(0)).current;
   const canSaveForWeb = Boolean(onSaveForWeb) && !isSavingForWeb && (!applicationStatus || (applicationStatus === "saved" && !(isQueued ?? true)));
   const [isHiding, setIsHiding] = useState(false);
-  const isSaved = applicationStatus === "saved";
   const isSavedForWeb = isQueued ?? applicationStatus === "saved";
   const saveProgressLabel = isSavedForWeb ? "Unsaving…" : "Saving…";
   const canHideLocally = Boolean(onHideLocally);
@@ -724,17 +728,6 @@ function JobCard({
                 <Text style={styles.jobCardActionArrow}>›</Text>
               </View>
               <View style={styles.jobCardBottomActions}>
-                {isSavingForWeb ? (
-                  <View style={styles.webSaveButtonCompact}>
-                    <Text style={styles.webSaveButtonText}>{saveProgressLabel}</Text>
-                  </View>
-                ) : null}
-                {!isSavingForWeb && isSaved ? (
-                  <View accessibilityLabel="Saved" style={styles.webSavedButtonCompact}>
-                    <Ionicons name="bookmark" size={14} color={colors.signal} />
-                    <Text style={styles.webSavedButtonText}>Saved</Text>
-                  </View>
-                ) : null}
                 {canHideLocally ? (
                   <TouchableOpacity accessibilityRole="button" accessibilityLabel="Hide on this device" onPress={handleHide} style={styles.webHideButtonCompact}>
                     <Ionicons name="eye-off-outline" size={14} color={colors.muted} />
@@ -746,6 +739,11 @@ function JobCard({
                     <Ionicons name="bookmark" size={14} color={colors.signal} />
                     <Text style={styles.webUnsaveButtonText}>In queue</Text>
                   </TouchableOpacity>
+                ) : null}
+                {isSavingForWeb ? (
+                  <View style={styles.webSaveButtonCompact}>
+                    <Text style={styles.webSaveButtonText}>{saveProgressLabel}</Text>
+                  </View>
                 ) : null}
                 {canSaveForWeb ? (
                   <TouchableOpacity accessibilityRole="button" accessibilityLabel="Add to apply queue" accessibilityHint="Saves this role and adds it to the apply queue" onPress={handleSave} style={styles.webSaveButtonCompact}>
@@ -822,7 +820,6 @@ function CatalogGroupCard({
   const [isHiding, setIsHiding] = useState(false);
   const translateX = useRef(new Animated.Value(0)).current;
   const isSaved = isQueued ?? applicationStatus === "saved";
-  const hasSaved = applicationStatus === "saved";
   const saveProgressLabel = isSaved ? "Unsaving…" : "Saving…";
   const canSaveForWeb = Boolean(onSaveForWeb) && !isSavingForWeb && (!applicationStatus || (applicationStatus === "saved" && !isSaved));
   const canHideLocally = Boolean(onHideLocally);
@@ -951,17 +948,6 @@ function CatalogGroupCard({
                 <Ionicons name="chevron-forward" size={17} color={colors.signal} />
               </View>
               <View style={styles.jobCardBottomActions}>
-                {isSavingForWeb ? (
-                  <View style={styles.webSaveButtonCompact}>
-                    <Text style={styles.webSaveButtonText}>{saveProgressLabel}</Text>
-                  </View>
-                ) : null}
-                {!isSavingForWeb && hasSaved ? (
-                  <View accessibilityLabel="Saved" style={styles.webSavedButtonCompact}>
-                    <Ionicons name="bookmark" size={14} color={colors.signal} />
-                    <Text style={styles.webSavedButtonText}>Saved</Text>
-                  </View>
-                ) : null}
                 {canHideLocally ? (
                   <TouchableOpacity accessibilityRole="button" accessibilityLabel="Hide on this device" onPress={handleHide} style={styles.webHideButtonCompact}>
                     <Ionicons name="eye-off-outline" size={14} color={colors.muted} />
@@ -973,6 +959,11 @@ function CatalogGroupCard({
                     <Ionicons name="bookmark" size={14} color={colors.signal} />
                     <Text style={styles.webUnsaveButtonText}>In queue</Text>
                   </TouchableOpacity>
+                ) : null}
+                {isSavingForWeb ? (
+                  <View style={styles.webSaveButtonCompact}>
+                    <Text style={styles.webSaveButtonText}>{saveProgressLabel}</Text>
+                  </View>
                 ) : null}
                 {canSaveForWeb ? (
                   <TouchableOpacity accessibilityRole="button" accessibilityLabel="Add to apply queue" accessibilityHint="Saves this role and adds it to the apply queue" onPress={handleSave} style={styles.webSaveButtonCompact}>
@@ -2862,6 +2853,8 @@ function AppContent() {
   const [catalogRefresh, setCatalogRefresh] = useState(0);
   const [applications, setApplications] = useState<Application[]>([]);
   const [savingJobIds, setSavingJobIds] = useState<Set<string>>(() => new Set());
+  const pendingSaveIds = useRef<Set<string>>(new Set());
+  const dequeueAfterSave = useRef<Set<string>>(new Set());
   const [hiddenJobIds, setHiddenJobIds] = useState<Set<string>>(() => new Set());
   const [hiddenFeedbackJob, setHiddenFeedbackJob] = useState<Job>();
   const [query, setQuery] = useState("");
@@ -3565,6 +3558,10 @@ function AppContent() {
       delete updated.queuedAt;
       return updated;
     }));
+    if (isPendingApplicationId(queued.applicationId)) {
+      dequeueAfterSave.current.add(jobId);
+      return;
+    }
     void api<Application>(`/me/applications/${encodeURIComponent(queued.applicationId)}`, token, {
       method: "PATCH",
       body: JSON.stringify({ queued: false }),
@@ -3614,12 +3611,45 @@ function AppContent() {
       );
     }
   };
+  const beginSaveTracking = (jobId: string): boolean => {
+    if (pendingSaveIds.current.has(jobId)) return false;
+    pendingSaveIds.current.add(jobId);
+    setSavingJobIds((current) => new Set(current).add(jobId));
+    return true;
+  };
+  const endSaveTracking = (jobId: string) => {
+    pendingSaveIds.current.delete(jobId);
+    setSavingJobIds((current) => {
+      if (!current.has(jobId)) return current;
+      const updated = new Set(current);
+      updated.delete(jobId);
+      return updated;
+    });
+  };
+  const reconcileApplications = async (): Promise<Application[] | undefined> => {
+    const requestId = privateRequestId.current;
+    try {
+      const apps = await authenticatedRead<{ applications: Application[] }>("/me/applications", { onToken: (value) => acceptRefreshedToken(requestId, value) });
+      if (privateRequestId.current !== requestId) return undefined;
+      setApplications(apps.applications);
+      return apps.applications;
+    } catch {
+      return undefined;
+    }
+  };
   const saveForWeb = (job: Job, options?: { silent?: boolean }) => {
     const existing = applications.find((item) => item.jobId === job.jobId);
     if (existing && existing.status !== "saved") return;
     if (existing?.status === "saved" && existing.queuedAt) return;
-    if (savingJobIds.has(job.jobId)) return;
-    setSavingJobIds((current) => new Set(current).add(job.jobId));
+    if (!beginSaveTracking(job.jobId)) return;
+    const timestamp = new Date().toISOString();
+    const pendingId = `pending-${job.jobId}`;
+    if (existing?.status === "saved") {
+      setApplications((current) => current.map((item) => item.applicationId === existing.applicationId ? { ...item, queuedAt: item.queuedAt ?? timestamp } : item));
+    } else {
+      const optimistic: Application = { applicationId: pendingId, jobId: job.jobId, status: "saved", queuedAt: timestamp, createdAt: timestamp };
+      setApplications((current) => (current.some((item) => item.jobId === job.jobId) ? current : [optimistic, ...current]));
+    }
     void (async () => {
       try {
         if (existing?.status === "saved") {
@@ -3632,12 +3662,20 @@ function AppContent() {
         }
         const created = await api<Application>("/me/applications", token, {
           method: "POST",
-          body: JSON.stringify({ jobId: job.jobId, status: "saved" }),
+          body: JSON.stringify({ jobId: job.jobId, status: "saved", queued: true }),
         });
         setApplications((current) => [
           created,
-          ...current.filter((item) => item.applicationId !== created.applicationId),
+          ...current.filter((item) => item.applicationId !== created.applicationId && item.applicationId !== pendingId && item.jobId !== created.jobId),
         ]);
+        if (dequeueAfterSave.current.has(job.jobId)) {
+          dequeueAfterSave.current.delete(job.jobId);
+          const dequeued = await api<Application>(`/me/applications/${encodeURIComponent(created.applicationId)}`, token, {
+            method: "PATCH",
+            body: JSON.stringify({ queued: false }),
+          });
+          setApplications((current) => current.map((item) => item.applicationId === dequeued.applicationId ? dequeued : item));
+        }
         const alertSettings = preferences.alertSettings ?? defaultAlertSettings;
         if (preferences.alertsEnabled && alertSettings.applicationReminders) {
           void scheduleApplicationFollowUp(
@@ -3647,24 +3685,36 @@ function AppContent() {
           ).catch(() => undefined);
         }
       } catch (error) {
-        Alert.alert(
-          "Could not save role",
-          error instanceof Error ? error.message : "Please try again.",
-        );
+        dequeueAfterSave.current.delete(job.jobId);
+        setApplications((current) => existing?.status === "saved"
+          ? current.map((item) => item.applicationId === existing.applicationId ? existing : item)
+          : current.filter((item) => item.applicationId !== pendingId));
+        const apps = await reconcileApplications();
+        const queued = apps?.some((item) => item.jobId === job.jobId && item.status === "saved" && item.queuedAt !== undefined) ?? false;
+        if (!queued && !options?.silent) {
+          Alert.alert(
+            "Could not save role",
+            error instanceof Error ? error.message : "Please try again.",
+          );
+        }
       } finally {
-        setSavingJobIds((current) => {
-          const updated = new Set(current);
-          updated.delete(job.jobId);
-          return updated;
-        });
+        endSaveTracking(job.jobId);
       }
     })();
   };
   const saveForLater = (job: Job) => {
     const existing = applications.find((item) => item.jobId === job.jobId);
     if (existing && existing.status !== "saved") return;
-    if (savingJobIds.has(job.jobId)) return;
-    setSavingJobIds((current) => new Set(current).add(job.jobId));
+    if (!beginSaveTracking(job.jobId)) return;
+    const timestamp = new Date().toISOString();
+    const pendingId = `pending-${job.jobId}`;
+    if (existing) {
+      const { queuedAt: _dropped, ...dequeuedOptimistic } = existing;
+      setApplications((current) => current.map((item) => item.applicationId === existing.applicationId ? dequeuedOptimistic : item));
+    } else {
+      const optimistic: Application = { applicationId: pendingId, jobId: job.jobId, status: "saved", createdAt: timestamp };
+      setApplications((current) => (current.some((item) => item.jobId === job.jobId) ? current : [optimistic, ...current]));
+    }
     void (async () => {
       try {
         if (existing) {
@@ -3675,17 +3725,13 @@ function AppContent() {
           setApplications((current) => current.map((item) => item.applicationId === dequeued.applicationId ? dequeued : item));
           return;
         }
-        const created = await api<Application>("/me/applications", token, {
+        const saved = await api<Application>("/me/applications", token, {
           method: "POST",
-          body: JSON.stringify({ jobId: job.jobId, status: "saved" }),
-        });
-        const saved = await api<Application>(`/me/applications/${encodeURIComponent(created.applicationId)}`, token, {
-          method: "PATCH",
-          body: JSON.stringify({ queued: false }),
+          body: JSON.stringify({ jobId: job.jobId, status: "saved", queued: false }),
         });
         setApplications((current) => [
           saved,
-          ...current.filter((item) => item.applicationId !== saved.applicationId),
+          ...current.filter((item) => item.applicationId !== saved.applicationId && item.applicationId !== pendingId && item.jobId !== saved.jobId),
         ]);
         const alertSettings = preferences.alertSettings ?? defaultAlertSettings;
         if (preferences.alertsEnabled && alertSettings.applicationReminders) {
@@ -3696,34 +3742,39 @@ function AppContent() {
           ).catch(() => undefined);
         }
       } catch (error) {
-        Alert.alert("Could not save role", error instanceof Error ? error.message : "Please try again.");
+        setApplications((current) => existing
+          ? current.map((item) => item.applicationId === existing.applicationId ? existing : item)
+          : current.filter((item) => item.applicationId !== pendingId));
+        const apps = await reconcileApplications();
+        const saved = apps?.some((item) => item.jobId === job.jobId && item.status === "saved" && item.queuedAt === undefined) ?? false;
+        if (!saved) Alert.alert("Could not save role", error instanceof Error ? error.message : "Please try again.");
       } finally {
-        setSavingJobIds((current) => {
-          const updated = new Set(current);
-          updated.delete(job.jobId);
-          return updated;
-        });
+        endSaveTracking(job.jobId);
       }
     })();
   };
   const unsaveForWeb = (job: Job) => {
     const app = applications.find((a) => a.jobId === job.jobId);
     if (!app || app.status !== "saved") return;
-    if (savingJobIds.has(job.jobId)) return;
-    setSavingJobIds((current) => new Set(current).add(job.jobId));
+    if (!beginSaveTracking(job.jobId)) return;
+    const previousIndex = applications.findIndex((a) => a.applicationId === app.applicationId);
+    setApplications((current) => current.filter((item) => item.applicationId !== app.applicationId));
     void (async () => {
       try {
         await api(`/me/applications/${encodeURIComponent(app.applicationId)}`, token, { method: "DELETE" });
-        setApplications((current) => current.filter((item) => item.applicationId !== app.applicationId));
         void clearApplicationFollowUp(app.applicationId).catch(() => undefined);
       } catch (error) {
-        Alert.alert("Could not unsave role", error instanceof Error ? error.message : "Please try again.");
-      } finally {
-        setSavingJobIds((current) => {
-          const updated = new Set(current);
-          updated.delete(job.jobId);
-          return updated;
+        setApplications((current) => {
+          if (current.some((item) => item.applicationId === app.applicationId)) return current;
+          const next = [...current];
+          next.splice(Math.min(Math.max(previousIndex, 0), next.length), 0, app);
+          return next;
         });
+        const apps = await reconcileApplications();
+        const stillSaved = apps?.some((item) => item.jobId === job.jobId && item.status === "saved") ?? true;
+        if (stillSaved) Alert.alert("Could not unsave role", error instanceof Error ? error.message : "Please try again.");
+      } finally {
+        endSaveTracking(job.jobId);
       }
     })();
   };
@@ -4703,6 +4754,7 @@ function Applications({
     setQueueIndex((current) => Math.min(current + 1, Math.max(queue.length - 1, 0)));
   };
   const removeFromQueue = (item: Application) => {
+    if (isPendingApplicationId(item.applicationId)) return;
     void (async () => {
       await api(`/me/applications/${encodeURIComponent(item.applicationId)}`, token, {
         method: "PATCH",
@@ -4714,6 +4766,7 @@ function Applications({
     );
   };
   const requeueInQueue = (item: Application) => {
+    if (isPendingApplicationId(item.applicationId)) return;
     void (async () => {
       await api(`/me/applications/${encodeURIComponent(item.applicationId)}`, token, {
         method: "PATCH",
@@ -4739,6 +4792,7 @@ function Applications({
     { key: "a", onPress: () => onBulkOpenQueue?.(selectBulkTargets(availableQueueTargets, "all")), enabled: mode === "queue" && availableQueueTargets.length >= 2 },
   ]);
   const advanceApplicationStatus = (item: Application, nextStatus: Application["status"], roleName: string) => {
+    if (isPendingApplicationId(item.applicationId)) return;
     void (async () => {
       const updated = await api<Application>(
         `/me/applications/${item.applicationId}`,
@@ -4871,14 +4925,18 @@ function Applications({
                   <Text style={styles.queueCompactCompany} numberOfLines={1}>{job?.company ?? "Saved role"}</Text>
                   <Text style={styles.queueCompactTitle} numberOfLines={2}>{job?.title ?? "Role details unavailable"}</Text>
                 </View>
-                <TouchableOpacity
-                  accessibilityRole="button"
-                  accessibilityLabel={`Remove ${roleName} from queue`}
-                  onPress={() => removeFromQueue(item)}
-                  style={styles.queueCompactRemove}
-                >
-                  <Ionicons name="remove-circle-outline" size={22} color={colors.muted} />
-                </TouchableOpacity>
+                {isPendingApplicationId(item.applicationId) ? (
+                  <Text style={styles.queuePendingText}>Saving…</Text>
+                ) : (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove ${roleName} from queue`}
+                    onPress={() => removeFromQueue(item)}
+                    style={styles.queueCompactRemove}
+                  >
+                    <Ionicons name="remove-circle-outline" size={22} color={colors.muted} />
+                  </TouchableOpacity>
+                )}
               </View>
               {availability === "catalog-review" ? (
                 <Text accessibilityRole="alert" style={styles.queueCompactUnavailable} numberOfLines={2}>
@@ -4899,9 +4957,9 @@ function Applications({
                 <TouchableOpacity
                   accessibilityRole="button"
                   accessibilityLabel={`Mark ${roleName} as ${nextStatus}`}
-                  disabled={nextStatus === item.status}
+                  disabled={nextStatus === item.status || isPendingApplicationId(item.applicationId)}
                   onPress={() => advanceApplicationStatus(item, nextStatus, roleName)}
-                  style={[styles.queueCompactProgress, nextStatus === item.status && styles.queueCompactActionDisabled]}
+                  style={[styles.queueCompactProgress, (nextStatus === item.status || isPendingApplicationId(item.applicationId)) && styles.queueCompactActionDisabled]}
                 >
                   <Ionicons name="checkmark-circle-outline" size={17} color={colors.signal} />
                   <Text style={styles.queueCompactProgressText}>{nextStatus === "applied" ? "Mark applied" : `Mark ${nextStatus}`}</Text>
@@ -4930,7 +4988,12 @@ function Applications({
                 </Text>
               </View>
             ) : null}
-            {item.status === "saved" && item.queuedAt ? (
+            {item.status === "saved" && isPendingApplicationId(item.applicationId) ? (
+              <View style={styles.applicationActionGap}>
+                <Text style={styles.queuePendingText}>Saving…</Text>
+              </View>
+            ) : null}
+            {item.status === "saved" && item.queuedAt && !isPendingApplicationId(item.applicationId) ? (
               <View style={styles.applicationActionGap}>
                 <ActionButton
                   label="Remove from queue"
@@ -4940,7 +5003,7 @@ function Applications({
                 />
               </View>
             ) : null}
-            {item.status === "saved" && !item.queuedAt ? (
+            {item.status === "saved" && !item.queuedAt && !isPendingApplicationId(item.applicationId) ? (
               <View style={styles.applicationActionGap}>
                 <ActionButton
                   label="Add to queue"
@@ -4967,7 +5030,7 @@ function Applications({
               }
               compact
               variant="secondary"
-              disabled={nextStatus === item.status}
+              disabled={nextStatus === item.status || isPendingApplicationId(item.applicationId)}
               onPress={() => advanceApplicationStatus(item, nextStatus, roleName)}
             />
           </View>
@@ -6749,8 +6812,6 @@ const styles = StyleSheet.create({
   webSaveButton: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
   webSaveButtonCompact: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
   webSaveButtonText: { color: colors.ink, fontSize: 13, fontWeight: "800" },
-  webSavedButtonCompact: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
-  webSavedButtonText: { color: colors.signal, fontSize: 13, fontWeight: "800" },
   webUnsaveButton: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
   webUnsaveButtonCompact: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
   webUnsaveButtonText: { color: colors.signal, fontSize: 13, fontWeight: "800" },
@@ -7261,6 +7322,7 @@ const styles = StyleSheet.create({
   queueCompactCompany: { color: colors.signal, fontSize: 12, fontWeight: "700", lineHeight: 17 },
   queueCompactTitle: { color: colors.ink, fontSize: 15, fontWeight: "700", lineHeight: 20, marginTop: 1 },
   queueCompactRemove: { alignItems: "center", justifyContent: "center", minHeight: 44, minWidth: 44 },
+  queuePendingText: { color: colors.ink, fontSize: 13, fontWeight: "700" },
   queueCompactUnavailable: { color: colors.muted, fontSize: 12, lineHeight: 18, marginLeft: 38, marginTop: 6 },
   queueCompactActions: { flexDirection: "row", gap: 8, marginTop: 10 },
   queueCompactOpen: {
@@ -7329,10 +7391,10 @@ const styles = StyleSheet.create({
   queueRowTitle: { color: colors.ink, fontSize: 15, fontWeight: "700", lineHeight: 20 },
   queueOpenButton: { alignItems: "center", borderRadius: 10, flexDirection: "row", gap: 5, justifyContent: "center", minHeight: 44, paddingHorizontal: 10 },
   queueOpenButtonText: { color: colors.signal, fontSize: 14, fontWeight: "800" },
-  queueBulkBlock: { marginTop: 16 },
+  queueBulkBlock: { marginBottom: 8, marginTop: 12 },
   queueBulkLabel: { color: colors.body, fontSize: 13, fontWeight: "700" },
-  queueBulkHint: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 8 },
-  queueBulkRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "flex-start", marginTop: 8 },
+  queueBulkHint: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 6 },
+  queueBulkRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "flex-start", marginTop: 6 },
   queueBulkButton: {
     alignItems: "center",
     backgroundColor: colors.surface,
@@ -7340,15 +7402,18 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     flexBasis: 44,
+    flexDirection: "row",
     flexGrow: 1,
+    gap: 6,
     justifyContent: "center",
     maxWidth: 72,
     minHeight: 44,
     minWidth: 44,
     paddingHorizontal: 6,
+    paddingVertical: 8,
   },
   queueBulkButtonLabel: { color: colors.ink, fontSize: 13, fontWeight: "700" },
-  keyboardShortcut: { color: colors.muted, fontSize: 11, fontWeight: "800", lineHeight: 14, marginTop: 1 },
+  keyboardShortcut: { color: colors.muted, fontSize: 11, fontWeight: "800", lineHeight: 14 },
   queuePanel: { backgroundColor: colors.surface, borderColor: colors.separator, borderRadius: 16, borderWidth: 1, marginTop: 12, padding: 16 },
   queuePanelHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
   queuePanelHeading: { alignItems: "center", flexDirection: "row", gap: 10 },

@@ -162,6 +162,20 @@ describe('public API ownership boundary', () => {
     expect(JSON.parse((await handler(event('user-a', 'GET', '/me/applications'))).body).applications)
       .toMatchObject([{ applicationId: saved.applicationId, status: 'applied', appliedAt: '2026-09-08T00:00:00.000Z' }]);
   });
+  it('saves for later in one call without queueing', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T00:00:00Z'));
+    const jobs = new MemoryInternshipStore(); await jobs.putInternship(job);
+    const users = new MemoryUserStore();
+    const handler = createApiHandler({ jobs, users });
+    const created = await handler(event('user-a', 'POST', '/me/applications', { jobId: job.jobId, status: 'saved', queued: false }));
+    expect(created.statusCode).toBe(201);
+    const saved = JSON.parse(created.body) as { applicationId: string };
+    expect(saved).toMatchObject({ status: 'saved' });
+    expect(saved).not.toHaveProperty('queuedAt');
+    expect(JSON.parse((await handler(event('user-a', 'GET', '/me/applications', undefined, { queued: 'true' }))).body)).toEqual({ applications: [] });
+    expect((await handler(event('user-a', 'POST', '/me/applications', { jobId: job.jobId, queued: 'yes' }))).statusCode).toBe(400);
+  });
   it('rejects invalid queue updates', async () => {
     const jobs = new MemoryInternshipStore(); await jobs.putInternship(job);
     const users = new MemoryUserStore();

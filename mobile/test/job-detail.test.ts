@@ -38,12 +38,13 @@ describe('mobile job routes', () => {
     expect(app).not.toContain('<Text style={styles.catalogPaginationText}>Loading roles…</Text>');
   });
 
-  it('uses one restrained entrance motion for single and grouped role sheets', () => {
+  it('starts one responsive entrance motion for single and grouped role sheets before paint', () => {
     const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 
     expect(app.match(/useSheetEntranceOffset\(/g)).toHaveLength(3);
-    expect(app).toContain('new Animated.Value(96)');
-    expect(app).toContain('duration: 320');
+    expect(app).toContain('Platform.OS === "web" ? 40 : 72');
+    expect(app).toContain('Platform.OS === "web" ? 180 : 240');
+    expect(app).toContain('useLayoutEffect(() => {');
     expect(app).toContain('easing: Easing.bezier(0.16, 1, 0.3, 1)');
     expect(app).not.toContain('new Animated.Value(windowHeight)');
   });
