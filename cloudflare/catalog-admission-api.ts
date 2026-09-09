@@ -30,12 +30,17 @@ export async function handleCatalogAdmissionOperations(
   destinationQueueHealth?: () => Promise<unknown>,
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
+  const auditOptions = () => {
+    const limit = Number(new URL(request.url).searchParams.get('limit'));
+    const afterJobId = new URL(request.url).searchParams.get('afterJobId') ?? undefined;
+    return { ...(Number.isInteger(limit) && limit > 0 ? { recordLimit: Math.min(limit, 250) } : {}), ...(afterJobId ? { afterJobId } : {}) };
+  };
   const timestamp = now().toISOString();
   try {
-    if (request.method === 'GET' && path === '/internal/admission/audit') return json(200, await store.audit());
+    if (request.method === 'GET' && path === '/internal/admission/audit') return json(200, await store.audit(auditOptions()));
     if (request.method === 'GET' && path === '/internal/admission/health') {
       const [audit, incidents, queues] = await Promise.all([
-        store.audit(), store.listActiveIncidents(), destinationQueueHealth?.() ?? Promise.resolve({ status: 'unavailable' }),
+        store.audit(auditOptions()), store.listActiveIncidents(), destinationQueueHealth?.() ?? Promise.resolve({ status: 'unavailable' }),
       ]);
       return json(200, { queues, freshness: audit.freshness, validationCoverage: audit.validationCoverage,
         activeIncidents: incidents.length, operations: audit.operations });

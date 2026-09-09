@@ -186,6 +186,24 @@ describe('D1 catalog admission operations', () => {
     });
   });
 
+  it('keeps production-scale admission audits in D1 and pages review samples', async () => {
+    const { database, admission: store } = subject();
+    const insert = database.prepare("INSERT INTO catalog_items (pk, sk, kind, value) VALUES (?, 'META', 'internship', ?)");
+    const template = job();
+    database.exec('BEGIN');
+    for (let index = 0; index < 8_000; index += 1) {
+      const value = { ...template, jobId: `scale-${index}`, admission: admission(false), notification: { smsPending: false, digestPending: false } };
+      insert.run(`JOB#scale-${index}`, JSON.stringify(value));
+    }
+    database.exec('COMMIT');
+
+    const audit = await store.audit({ recordLimit: 25 });
+    expect(audit.scanned).toBe(8_000);
+    expect(audit.records).toHaveLength(25);
+    expect(audit.recordsNextCursor).toBeDefined();
+    await expect(store.audit({ recordLimit: 25, afterJobId: audit.recordsNextCursor })).resolves.toMatchObject({ scanned: 8_000 });
+  });
+
   it('queues every unclassified occurrence with provider identity for historical verification', async () => {
     const { admission: store, jobs } = subject();
     const current = job();
