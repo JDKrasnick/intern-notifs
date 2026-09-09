@@ -121,6 +121,12 @@ describe('Cloudflare deployment configuration', () => {
     expect(terraform).toContain('to   = cloudflare_workers_cron_trigger.ingestion');
   });
 
+  it('protects the production D1 database from replacement', () => {
+    const terraform = read('infra/cloudflare/main.tf');
+    expect(terraform).toContain('prevent_destroy = true');
+    expect(terraform).toContain('ignore_changes  = [primary_location_hint]');
+  });
+
   it('restores billing-shutdown schedules only on ingestion', () => {
     const runbook = read('docs/cloudflare-migration.md');
 
