@@ -417,10 +417,18 @@ days so a one-day delayed transient retry cannot expire before delivery, and sup
 `DESTINATION_VERIFICATION_QUEUE_ID` to the billing-shutdown path. A non-empty
 DLQ, an oldest work item approaching the evidence deadline, any unexpectedly
 stale eligible record, or an active quarantine is an admission incident.
-The audit scans catalog rows in bounded keyset pages so both the detailed audit
-and summary health calculation stay within Worker memory. Health deliberately
-omits the review-record and unresolved-employer detail arrays; use the audit
-endpoint when those operator details are required.
+The audit computes catalog summaries in D1 and returns detail through bounded
+keyset pages so both the detailed audit and summary health calculation stay
+within Worker memory. Health deliberately omits the review-record and
+unresolved-employer detail queries; use the audit endpoint when those operator
+details are required.
+
+Admission audit samples default to 100 records and accept `limit` up to 250.
+Continue catalog-review records with `afterJobId=<recordsNextCursor>` and
+unresolved-employer occurrences with
+`afterUnresolvedEmployer=<unresolvedEmployersNextCursor>`. The
+`unresolvedEmployers` groups summarize the current occurrence page;
+`unresolvedEmployerOccurrences` remains the exact total across all pages.
 
 Destination evidence expires after seven days and is scheduled for recheck one
 day before expiry. A transient failed recheck pauses alerts immediately; catalog

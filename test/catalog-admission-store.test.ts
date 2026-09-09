@@ -1,6 +1,7 @@
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { handleCatalogAdmissionOperations } from '../cloudflare/catalog-admission-api.js';
 import { D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
 import { persistDestinationAdmission, reachabilityFromHttpStatus, type DestinationVerificationMessage } from '../cloudflare/destination-verification.js';
@@ -187,23 +188,62 @@ describe('D1 catalog admission operations', () => {
     });
   });
 
-  it('audits the catalog through bounded pages and can omit large detail lists for health checks', async () => {
+  it('omits bounded detail queries for health-only audits', async () => {
     const budget: QueryBudget = { used: 0, maximum: 100, queries: [] };
     const { admission: store, jobs } = subject(budget);
-    const current = job();
-    current.sourceReferences = [{
-      sourceId: 'community-list', provenance: 'reviewed-community', externalId: 'row-1', document: 'README.md',
-      sourceUrl: 'https://github.com/example/jobs', row: 1, company: current.company, title: current.title,
-      location: current.location, locations: [current.location], season: current.season, applyUrl: current.applyUrl,
-      compensation: current.compensation, state: 'open', admission: current.admission,
-    }];
-    await jobs.putInternship(current);
+    await jobs.putInternship(job());
 
     const audit = await store.audit({ includeRecords: false, includeUnresolvedEmployers: false });
 
     expect(audit).toMatchObject({ scanned: 1, review: 1, records: [], unresolvedEmployers: [] });
-    expect(budget.queries?.some((query) => query.includes("kind = 'internship'") && query.includes('LIMIT ?'))).toBe(true);
-    expect(budget.queries?.some((query) => query.trim() === "SELECT value FROM catalog_items WHERE kind = 'internship'")).toBe(false);
+    expect(budget.queries?.some((query) => query.includes('SELECT pk, value'))).toBe(false);
+    expect(budget.queries?.some((query) => query.includes('reference.value AS reference'))).toBe(false);
+  });
+
+  it('excludes roles at their publisher valid-through boundary', async () => {
+    const { admission: store, jobs } = subject();
+    const current = job();
+    current.admission = admission(true);
+    current.admission.destination.validThrough = '2026-09-01T12:00:00Z';
+    await jobs.putInternship(current);
+
+    await expect(store.audit({ now: new Date('2026-09-01T11:59:59Z') })).resolves.toMatchObject({ eligible: 1 });
+    await expect(store.audit({ now: new Date('2026-09-01T12:00:00Z') })).resolves.toMatchObject({ eligible: 0 });
+  });
+
+  it('keeps production-scale admission audits and unresolved employer samples bounded in D1', async () => {
+    const { database, admission: store } = subject();
+    const insert = database.prepare("INSERT INTO catalog_items (pk, sk, kind, value) VALUES (?, 'META', 'internship', ?)");
+    const template = job();
+    database.exec('BEGIN');
+    for (let index = 0; index < 8_000; index += 1) {
+      const value = { ...template, jobId: `scale-${index}`, admission: admission(false),
+        sourceReferences: [{ sourceId: 'community-list', provenance: 'reviewed-community', externalId: `scale-${index}`,
+          document: 'README.md', sourceUrl: 'https://github.com/example/jobs', row: index + 1, company: template.company,
+          title: template.title, location: template.location, season: template.season,
+          applyUrl: `https://job-boards.greenhouse.io/acme/jobs/${1_000_000 + index}`,
+          compensation: template.compensation, state: 'open' }],
+        notification: { smsPending: false, digestPending: false } };
+      insert.run(`JOB#scale-${index}`, JSON.stringify(value));
+    }
+    database.exec('COMMIT');
+
+    const audit = await store.audit({ recordLimit: 25 });
+    expect(audit.scanned).toBe(8_000);
+    expect(audit.records).toHaveLength(25);
+    expect(audit.recordsNextCursor).toBeDefined();
+    expect(audit.unresolvedEmployerOccurrences).toBe(8_000);
+    expect(audit.unresolvedEmployers).toMatchObject([{ provider: 'greenhouse', tenant: 'acme', labels: ['Acme'],
+      occurrenceCount: 25, continuationConflicts: 0, withNotificationHistory: 0 }]);
+    expect(audit.unresolvedEmployers[0]!.evidenceUrls).toHaveLength(25);
+    expect(audit.unresolvedEmployersNextCursor).toBeDefined();
+    await expect(store.audit({ recordLimit: 25, afterJobId: audit.recordsNextCursor })).resolves.toMatchObject({ scanned: 8_000 });
+    const nextUrl = new URL('https://api.test/internal/admission/audit');
+    nextUrl.searchParams.set('limit', '25');
+    nextUrl.searchParams.set('afterUnresolvedEmployer', audit.unresolvedEmployersNextCursor!);
+    const next = await handleCatalogAdmissionOperations(new Request(nextUrl), store, async () => undefined);
+    await expect(next.json()).resolves.toMatchObject({ unresolvedEmployerOccurrences: 8_000,
+      unresolvedEmployers: [{ provider: 'greenhouse', tenant: 'acme', occurrenceCount: 25 }] });
   });
 
   it('queues every unclassified occurrence with provider identity for historical verification', async () => {

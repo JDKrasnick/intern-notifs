@@ -29,10 +29,18 @@ export async function handleCatalogAdmissionOperations(
   enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>,
   destinationQueueHealth?: () => Promise<unknown>,
 ): Promise<Response> {
-  const path = new URL(request.url).pathname;
+  const url = new URL(request.url);
+  const path = url.pathname;
+  const auditOptions = () => {
+    const limit = Number(url.searchParams.get('limit'));
+    const afterJobId = url.searchParams.get('afterJobId') ?? undefined;
+    const afterUnresolvedEmployer = url.searchParams.get('afterUnresolvedEmployer') ?? undefined;
+    return { ...(Number.isInteger(limit) && limit > 0 ? { recordLimit: Math.min(limit, 250) } : {}),
+      ...(afterJobId ? { afterJobId } : {}), ...(afterUnresolvedEmployer ? { afterUnresolvedEmployer } : {}) };
+  };
   const timestamp = now().toISOString();
   try {
-    if (request.method === 'GET' && path === '/internal/admission/audit') return json(200, await store.audit());
+    if (request.method === 'GET' && path === '/internal/admission/audit') return json(200, await store.audit(auditOptions()));
     if (request.method === 'GET' && path === '/internal/admission/health') {
       const [audit, incidents, queues] = await Promise.all([
         store.audit({ includeRecords: false, includeUnresolvedEmployers: false }), store.listActiveIncidents(),
