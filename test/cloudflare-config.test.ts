@@ -127,6 +127,11 @@ describe('Cloudflare deployment configuration', () => {
     expect(terraform).toContain('ignore_changes  = [primary_location_hint]');
   });
 
+  it('declares Cloudflare trace defaults to prevent perpetual Worker drift', () => {
+    const terraform = read('infra/cloudflare/main.tf');
+    expect(terraform.match(/traces\s+= \{ enabled = false, head_sampling_rate = 1, persist = true \}/gu)).toHaveLength(2);
+  });
+
   it('restores billing-shutdown schedules only on ingestion', () => {
     const runbook = read('docs/cloudflare-migration.md');
 

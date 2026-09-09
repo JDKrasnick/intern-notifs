@@ -117,8 +117,13 @@ resource "cloudflare_workers_script" "ingestion" {
     local.ingestion_plain_bindings,
   )
 
-  limits        = { cpu_ms = 30000, subrequests = 10000 }
-  observability = { enabled = true, head_sampling_rate = 1, logs = { enabled = true, invocation_logs = true, head_sampling_rate = 1, persist = true } }
+  limits = { cpu_ms = 30000, subrequests = 10000 }
+  observability = {
+    enabled            = true
+    head_sampling_rate = 1
+    logs               = { enabled = true, invocation_logs = true, head_sampling_rate = 1, persist = true }
+    traces             = { enabled = false, head_sampling_rate = 1, persist = true }
+  }
 }
 
 resource "cloudflare_workers_script_subdomain" "ingestion" {
@@ -149,8 +154,13 @@ resource "cloudflare_workers_script" "application" {
     local.api_plain_bindings,
   )
 
-  limits        = { cpu_ms = 30000, subrequests = 10000 }
-  observability = { enabled = true, head_sampling_rate = 1, logs = { enabled = true, invocation_logs = true, head_sampling_rate = 1, persist = true } }
+  limits = { cpu_ms = 30000, subrequests = 10000 }
+  observability = {
+    enabled            = true
+    head_sampling_rate = 1
+    logs               = { enabled = true, invocation_logs = true, head_sampling_rate = 1, persist = true }
+    traces             = { enabled = false, head_sampling_rate = 1, persist = true }
+  }
 }
 
 resource "cloudflare_workers_script_subdomain" "application" {
