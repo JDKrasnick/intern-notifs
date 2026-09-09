@@ -11,6 +11,8 @@ export const shadowStatuses = ['present', 'not-stated', 'conflicting', 'incomple
 export type ShadowStatus = typeof shadowStatuses[number];
 export const classificationLabels = ['yes', 'no', 'unknown'] as const;
 export type ClassificationLabel = typeof classificationLabels[number];
+export const shadowExtractionOrigins = ['provider-poll', 'scheduled-verification', 'controlled', 'backfill', 'legacy-unknown'] as const;
+export type ShadowExtractionOrigin = typeof shadowExtractionOrigins[number];
 
 export interface NormalizedPostingInput {
   title: string;
@@ -110,8 +112,19 @@ function stringArray(value: unknown): string[] | undefined {
   return Array.isArray(value) && value.every((item) => typeof item === 'string' && item.trim()) ? value.map((item) => item.trim()) : undefined;
 }
 
+/** Verbatim passage membership. A byte-exact substring is the strongest
+ * evidence, but captures with normalized whitespace, case, or punctuation
+ * (HTML/JSON residue, casing differences) reject the whole run otherwise. The
+ * tolerant check therefore requires the passage's words to appear in the
+ * source as one contiguous, in-order sequence — a paraphrase or reordering
+ * never matches. */
 function evidencePresent(evidence: readonly string[], source: string): boolean {
-  return evidence.every((passage) => passage.length <= 2_000 && source.includes(passage));
+  return evidence.every((passage) => passage.length <= 2_000
+    && (source.includes(passage) || words(source).join(' ').includes(words(passage).join(' '))));
+}
+
+function words(value: string): string[] {
+  return (value.toLowerCase().match(/[a-z0-9]+/gu) ?? []);
 }
 
 function compensationNumberPresent(passage: string, value: number): boolean {
