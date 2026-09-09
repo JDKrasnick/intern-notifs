@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
 import { ATOMIC_REPAIR_BYTE_LIMIT, METADATA_REPAIR_RECORD_LIMIT, D1CatalogAdmissionStore } from '../cloudflare/catalog-admission-store.js';
 import { D1InternshipStore } from '../cloudflare/d1-store.js';
-import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
+import type { D1Database, D1PreparedStatement, R2Bucket } from '../cloudflare/types.js';
 import { extractPostingMetadataEvidence, projectRoleMetadata, reconcileRoleMetadata } from '../src/role-metadata.js';
 import { persistDestinationAdmission, processDestinationVerificationBatch } from '../cloudflare/destination-verification.js';
 import { parseMetadataApiResponse } from '../src/metadata-acquisition.js';
@@ -42,7 +42,8 @@ function sqliteD1(database: DatabaseSync, inspectRows?: (query: string, rows: un
 
 function subject() {
   const database = new DatabaseSync(':memory:');
-  for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql', '0017_metadata_acquisition.sql', '0018_metadata_review.sql', '0019_metadata_job_review_revision.sql']) {
+  for (const migration of ['0001_initial.sql', '0007_catalog_admission.sql', '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql', '0017_metadata_acquisition.sql', '0018_metadata_review.sql', '0019_metadata_job_review_revision.sql',
+    '0020_shadow_extraction.sql', '0021_shadow_extraction_fencing.sql', '0022_shadow_extraction_cache_expiry.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   const db = sqliteD1(database);
@@ -317,6 +318,8 @@ describe('staged browser-to-API collection', () => {
       metadataBackfillToken: 'staged-embed',
     }, ack, retry }] }, {
       DB: current.db, DESTINATION_BROWSER: { fetch: vi.fn() }, DESTINATION_VERIFICATION_QUEUE: { send: vi.fn(), sendBatch: vi.fn() },
+      SHADOW_EXTRACTION_QUEUE: { send: vi.fn(), sendBatch: vi.fn() },
+      SHADOW_EXTRACTION_ARTIFACTS: { put: vi.fn().mockResolvedValue(undefined) } as unknown as R2Bucket,
     }, () => new Date(inspectedAt));
     expect(ack).toHaveBeenCalledOnce(); expect(retry).not.toHaveBeenCalled();
     expect(apiFetch).toHaveBeenCalledTimes(requests);

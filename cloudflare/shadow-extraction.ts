@@ -236,7 +236,7 @@ async function finishRunWithAnalysis(db: D1Database, message: ShadowExtractionMe
 }
 
 export async function shadowExtractionSummary(db: D1Database): Promise<Record<string, unknown>> {
-  const [runs, costs, versions, coverage, failures, baselineDifferences, usage] = await Promise.all([
+  const [runs, costs, versions, coverage, failures, baselineDifferences, usage, handoffs] = await Promise.all([
     db.prepare('SELECT state, COUNT(*) AS count, AVG(CASE WHEN completed_at IS NOT NULL THEN (julianday(completed_at) - julianday(created_at)) * 86400000 END) AS latency_ms FROM shadow_extraction_runs GROUP BY state').all(),
     db.prepare(`SELECT period, SUM(CASE WHEN state = 'reserved' THEN reserved_cents ELSE 0 END) AS reserved_cents,
       SUM(actual_cents) AS actual_cents, COUNT(*) AS attempts FROM shadow_extraction_cost_ledger
@@ -250,10 +250,15 @@ export async function shadowExtractionSummary(db: D1Database): Promise<Record<st
       FROM shadow_extraction_baseline_differences WHERE differs = 1 GROUP BY field, baseline_state, shadow_state`).all(),
     db.prepare(`SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens,
       COALESCE(SUM(actual_cost_cents), 0) AS actual_cost_cents FROM shadow_extraction_usage`).all(),
+    db.prepare(`SELECT json_extract(report, '$.shadowHandoff.outcome') AS outcome,
+      json_extract(report, '$.shadowHandoff.method') AS method, COUNT(*) AS count,
+      MAX(json_extract(report, '$.shadowHandoff.observedAt')) AS latest
+      FROM role_metadata_acquisition WHERE json_extract(report, '$.shadowHandoff.outcome') IS NOT NULL
+      GROUP BY outcome, method ORDER BY outcome, method`).all(),
   ]);
   return { runs: runs.results, coverage: coverage.results, failures: failures.results, costs: costs.results,
     usage: usage.results[0] ?? { input_tokens: 0, output_tokens: 0, actual_cost_cents: 0 }, versions: versions.results,
-    baselineDifferences: baselineDifferences.results };
+    baselineDifferences: baselineDifferences.results, handoffs: handoffs.results };
 }
 
 export async function processShadowExtractionBatch(batch: MessageBatch<unknown>, env: ShadowExtractionEnvironment, now = () => new Date(), infer?: (input: NormalizedPostingInput, prompt: ReturnType<typeof shadowExtractionPrompt>) => Promise<ShadowInferenceResult>): Promise<void> {

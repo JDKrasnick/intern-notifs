@@ -184,7 +184,7 @@ describe('Ashby offline manifest and reverification', () => {
       'Circleback', 'Eragon', 'Modal', 'Yotta Labs', 'Anthelion Capital', 'Saronic', 'First Order Effects',
       'Junior', 'Airwallex', 'Netic', 'Retell AI', 'Quadrillion', 'Pylon', 'NationGraph',
     ]);
-    expect(reviewedAshbySources.filter(({ status }) => status === 'shadow')).toHaveLength(64);
+    expect(reviewedAshbySources.filter(({ status }) => status === 'shadow')).toHaveLength(63);
     expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-18T12:05:00Z') })).toEqual([]);
   });
 

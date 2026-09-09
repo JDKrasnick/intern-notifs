@@ -417,24 +417,6 @@ export const reviewedAshbyExpansionSources: ReviewedSourceRecord[] = [
     "status": "shadow"
   },
   {
-    "id": "ashby-odin-dynamics",
-    "company": "Odin Dynamics, Inc",
-    "identity": {
-      "provider": "ashby",
-      "boardKey": "odin-dynamics",
-      "apiRegion": "global"
-    },
-    "careersUrl": "https://odindynamics.ai/",
-    "admittedAt": "2026-08-18T01:40:08.842Z",
-    "evidenceState": "ownership-verified",
-    "allowedApplicationHosts": [
-      {
-        "host": "jobs.ashbyhq.com"
-      }
-    ],
-    "status": "shadow"
-  },
-  {
     "id": "ashby-phonic",
     "company": "Phonic",
     "identity": {

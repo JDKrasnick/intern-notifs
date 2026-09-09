@@ -14,6 +14,12 @@ description to the private `intern-notifs-shadow-extraction` R2 bucket and
 enqueues only a compact reference: posting IDs, source identity, content hash,
 versioned cache key, and R2 object key. Queue messages never contain the source
 description, prompts, user data, credentials, or an arbitrary URL to fetch.
+The acquisition report records the handoff outcome (`enqueued`,
+`skipped-no-text`, `skipped-no-binding`, or `failed`), acquisition method, and a
+description byte count. Missing bindings and downstream write/queue failures
+retry the destination message after five minutes; an empty verified artifact is
+recorded but does not retry. The aggregate operations response groups these
+outcomes without exposing posting text, URLs, or identifiers.
 
 The consumer validates the message and its artifact hash, deduplicates by
 content hash plus model/prompt/schema/preprocessing versions, and records run
