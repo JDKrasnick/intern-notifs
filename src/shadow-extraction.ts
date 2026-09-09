@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 /** Versions are part of the cache key. Changing any one forces a new shadow run. */
-export const SHADOW_EXTRACTION_PROMPT_VERSION = 'shadow-extraction-prompt-v5';
+export const SHADOW_EXTRACTION_PROMPT_VERSION = 'shadow-extraction-prompt-v9';
 export const SHADOW_EXTRACTION_SCHEMA_VERSION = 'shadow-extraction-schema-v5';
 export const SHADOW_EXTRACTION_PREPROCESSING_VERSION = 'exact-posting-markdown-v1';
 export const SHADOW_EXTRACTION_MODEL_ID = 'gpt-4o-mini-2024-07-18';
@@ -101,7 +101,17 @@ export function shadowExtractionPrompt(input: NormalizedPostingInput): { system:
       + 'analyst, network engineer, site reliability engineer) supports technical=yes, and a title with Intern, Co-op, Apprentice, '
       + 'or New Grad supports earlyCareer=yes, even when the body gives no further detail. Reserve unknown for classifications with '
       + 'no title or body signal at all. Do not turn clearance into citizenship, graduation dates into role season, '
-      + 'or generic office/remote prose into a role location or work mode.',
+      + 'or generic office/remote prose into a role location or work mode. '
+      + 'Do not invent disclosures. WorkMode requires the posting to state that this role is or works remote, hybrid, or '
+      + 'onsite; never infer a mode from benefits or their eligibility conditions (for example "interns not working fully '
+      + 'remote may receive housing support" describes a benefit, not the role), from dates, from office or city names, or '
+      + 'from silence — use not-stated. Those exclusions never suppress a real housing, relocation, or travel benefit '
+      + 'disclosed for this role, which remains a housing disclosure. Eligibility requires an explicit work authorization, '
+      + 'citizenship, visa, clearance, or sponsorship statement for this role — including that the role will or will not '
+      + 'sponsor or offer visas. Language skills, graduation timing, school or location attendance, and internship-count '
+      + 'constraints are not eligibility; quote any eligibility statement as one contiguous span. A statement that no '
+      + 'degree is required is not an education disclosure; return education only for actual degree requirements or '
+      + 'preferences stated for the role.',
     user: JSON.stringify({ title: input.title, completeness: input.completeness, description: input.description }),
   };
 }
