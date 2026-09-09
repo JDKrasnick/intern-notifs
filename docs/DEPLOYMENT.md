@@ -72,10 +72,12 @@ production resource at its current address. This includes
 `cloudflare_workers_script_subdomain.application` and
 `cloudflare_workers_script_subdomain.ingestion`,
 `cloudflare_workers_custom_domain.api[0]` when configured,
-`cloudflare_workers_cron_trigger.ingestion`, and all keys in each of
-`cloudflare_queue.work`, `cloudflare_queue.dead_letter`, and
-`cloudflare_queue_consumer.ingestion`: `greenhouse`, `lever`, `ashby`,
-`github`, `gmail`, and `destination-verification`. Resolve import IDs from the
+`cloudflare_workers_cron_trigger.ingestion`, and all keys in
+`cloudflare_queue.work` and `cloudflare_queue.dead_letter`: `greenhouse`,
+`lever`, `ashby`, `github`, `gmail`, `destination-verification`, and
+`shadow-extraction`. Queue consumers cannot be imported by provider v5; first
+confirm that no old Worker owns them, then let the reviewed plan create exactly
+one ingestion consumer per queue. Resolve every supported import ID from the
 live Cloudflare account and provider-v5 import contract; never guess an ID or
 allow a failed import to turn into a create. Import one address at a time and
 inspect it with `tofu state show ADDRESS` before continuing.
