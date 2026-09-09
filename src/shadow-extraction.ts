@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 /** Versions are part of the cache key. Changing any one forces a new shadow run. */
-export const SHADOW_EXTRACTION_PROMPT_VERSION = 'shadow-extraction-prompt-v4';
+export const SHADOW_EXTRACTION_PROMPT_VERSION = 'shadow-extraction-prompt-v5';
 export const SHADOW_EXTRACTION_SCHEMA_VERSION = 'shadow-extraction-schema-v5';
 export const SHADOW_EXTRACTION_PREPROCESSING_VERSION = 'exact-posting-markdown-v1';
 export const SHADOW_EXTRACTION_MODEL_ID = 'gpt-4o-mini-2024-07-18';
@@ -92,11 +92,15 @@ export function shadowExtractionPrompt(input: NormalizedPostingInput): { system:
       + 'explicit pay rate only: exclude benefits, reimbursements, bonuses, housing/travel/meal/equipment/wellness allowances, and other '
       + 'stipends. Compensation value must be an array of {min, max, currency, period} objects, and each compensation evidence passage '
       + 'must itself contain the corresponding amount, currency, and pay period. Locations value must contain geographic places only; '
-      + 'remote, hybrid, onsite, and in-office are work modes, not locations. '
+      + 'remote, hybrid, onsite, in-office, a company office, and "our office" are work modes or workplace references, never locations. '
       + 'WorkMode value must be exactly remote, hybrid, or onsite. When the supplied posting is marked incomplete, use incomplete—not '
       + 'not-stated—for every field that is absent from the supplied excerpt. '
       + 'For each field return value or null, status, verbatim supporting passages, and qualifiers. '
-      + 'Use unknown for classifications without support. Do not turn clearance into citizenship, graduation dates into role season, '
+      + 'Classify technical and earlyCareer from the supplied posting title together with the description: a title that names an '
+      + 'engineering, scientific, data, quantitative, or technical field (for example software engineer, machine learning, data '
+      + 'analyst, network engineer, site reliability engineer) supports technical=yes, and a title with Intern, Co-op, Apprentice, '
+      + 'or New Grad supports earlyCareer=yes, even when the body gives no further detail. Reserve unknown for classifications with '
+      + 'no title or body signal at all. Do not turn clearance into citizenship, graduation dates into role season, '
       + 'or generic office/remote prose into a role location or work mode.',
     user: JSON.stringify({ title: input.title, completeness: input.completeness, description: input.description }),
   };
