@@ -1637,15 +1637,15 @@ function QueueBulkButtons({
     <View>
       <Text style={styles.queueBulkLabel}>Open several at once</Text>
       <View style={styles.queueBulkRow}>
-        <ActionButton label="1" compact tight variant="secondary" onPress={onOpenFirst} />
+        <ActionButton label="1" compact tight grow variant="secondary" onPress={onOpenFirst} />
         {available.length >= 5 ? (
-          <ActionButton label="5" compact tight variant="secondary" onPress={() => onBulkOpen(selectBulkTargets(available, 5))} />
+          <ActionButton label="5" compact tight grow variant="secondary" onPress={() => onBulkOpen(selectBulkTargets(available, 5))} />
         ) : null}
         {available.length >= 10 ? (
-          <ActionButton label="10" compact tight variant="secondary" onPress={() => onBulkOpen(selectBulkTargets(available, 10))} />
+          <ActionButton label="10" compact tight grow variant="secondary" onPress={() => onBulkOpen(selectBulkTargets(available, 10))} />
         ) : null}
-        <ActionButton label="Half" compact tight variant="secondary" onPress={() => onBulkOpen(selectBulkTargets(available, "half"))} />
-        <ActionButton label="All" compact tight variant="secondary" onPress={() => onBulkOpen(selectBulkTargets(available, "all"))} />
+        <ActionButton label="Half" compact tight grow variant="secondary" onPress={() => onBulkOpen(selectBulkTargets(available, "half"))} />
+        <ActionButton label="All" compact tight grow variant="secondary" onPress={() => onBulkOpen(selectBulkTargets(available, "all"))} />
       </View>
       <Text style={styles.queueBulkHint}>Each role opens in its own tab{half < available.length ? ` · Half opens ${half}` : ""}.</Text>
     </View>
@@ -1977,6 +1977,7 @@ function ActionButton({
   variant = "primary",
   compact = false,
   tight = false,
+  grow = false,
 }: {
   label: string;
   onPress: () => void;
@@ -1984,6 +1985,7 @@ function ActionButton({
   variant?: "primary" | "secondary" | "danger";
   compact?: boolean;
   tight?: boolean;
+  grow?: boolean;
 }) {
   return (
     <TouchableOpacity
@@ -1994,9 +1996,9 @@ function ActionButton({
       style={[
         styles.actionButton,
         variant === "secondary" && styles.actionButtonSecondary,
-        variant === "danger" && styles.actionButtonDanger,
         compact && styles.actionButtonCompact,
         tight && styles.actionButtonTight,
+        grow && styles.actionButtonGrow,
         disabled && styles.actionButtonDisabled,
       ]}
     >
@@ -2484,7 +2486,7 @@ function GroupedCatalogFeed({
   onOpenQueuedRole?: (target: { jobId: string; applyUrl: string }) => void;
   onBulkOpenQueue?: (targets: Array<{ jobId: string; applyUrl: string }>) => void;
 }) {
-  const [queueOpen, setQueueOpen] = useState(false);
+  const [queueOpen, setQueueOpen] = useState(true);
   const [sheetVisible, setSheetVisible] = useState(false);
   return (
     <>
@@ -7144,6 +7146,7 @@ const styles = StyleSheet.create({
   actionButtonDanger: { backgroundColor: colors.danger },
   actionButtonCompact: { minHeight: 48, marginTop: 16 },
   actionButtonTight: { marginTop: 0 },
+  actionButtonGrow: { flex: 1 },
   actionButtonDisabled: { opacity: 0.55 },
   actionButtonText: { color: colors.onDark, fontSize: 16, fontWeight: "700" },
   actionButtonTextSecondary: { color: colors.body },
