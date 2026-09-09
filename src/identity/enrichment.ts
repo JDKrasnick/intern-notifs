@@ -17,6 +17,7 @@ const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   'official-ats': 0,
   'official-json-ld': 1,
   'official-page': 2,
+  'reviewed-shadow': 2.5,
   'reviewed-community': 3,
   'deterministic-inference': 4,
 };

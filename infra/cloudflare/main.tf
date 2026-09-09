@@ -27,6 +27,7 @@ locals {
       { name = "IDENTITY_UNCONFIRMED_PUBLICATION_ENABLED", type = "plain_text", text = tostring(var.identity_unconfirmed_publication_enabled) },
       { name = "TRUSTED_COMMUNITY_CATALOG_ENABLED", type = "plain_text", text = tostring(var.trusted_community_catalog_enabled) },
       { name = "IDENTITY_CONFIRMED_COVERAGE_FLOOR", type = "plain_text", text = tostring(var.identity_confirmed_coverage_floor) },
+      { name = "LLM_METADATA_PUBLICATION_POLICY_JSON", type = "plain_text", text = var.llm_metadata_publication_policy_json },
       { name = "CLOUDFLARE_ACCOUNT_ID", type = "plain_text", text = var.cloudflare_account_id },
       { name = "WORKER_NAME", type = "plain_text", text = local.ingestion_worker_name },
       { name = "GMAIL_QUEUE_ID", type = "plain_text", text = cloudflare_queue.work["gmail"].queue_id },

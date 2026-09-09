@@ -97,6 +97,12 @@ variable "identity_confirmed_coverage_floor" {
   }
 }
 
+variable "llm_metadata_publication_policy_json" {
+  description = "Default-disabled exact-cohort policy for reviewed shadow metadata publication. It contains no secrets."
+  type        = string
+  default     = "{\"enabled\":false,\"version\":\"disabled\",\"allowedFields\":[],\"cohort\":[]}"
+}
+
 variable "gmail_client_id" {
   description = "Google OAuth web client identifier. The client secret remains a Worker secret binding."
   type        = string

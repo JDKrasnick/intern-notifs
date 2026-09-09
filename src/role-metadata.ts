@@ -38,6 +38,9 @@ const SOURCE_PRIORITY: Record<EvidenceSource, number> = {
   'official-ats': 0,
   'official-json-ld': 1,
   'official-page': 2,
+  // A publication receipt binds this to the exact official description. It can
+  // fill omissions in an ATS response, while direct page evidence still wins.
+  'reviewed-shadow': 2.5,
   'reviewed-community': 3,
   'deterministic-inference': 4,
 };

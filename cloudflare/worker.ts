@@ -22,6 +22,7 @@ import { runPostingIdentityRepair, type PostingIdentityRepairPlan } from '../src
 import { cleanupExpiredUserData, D1InternshipStore, D1ReleaseStore, D1UserStore } from './d1-store.js';
 import { queueHasBacklog } from './queue-backlog.js';
 import { processShadowExtractionBatch, shadowExtractionSummary } from './shadow-extraction.js';
+import { parseShadowPublicationPolicy, policyAllows, shadowPublicationFingerprint, type ShadowPublicationField } from '../src/shadow-publication.js';
 import type { D1Database, MessageBatch, Queue, R2Bucket, ScheduledController } from './types.js';
 import { disconnectGmail, gmailApi, gmailCallback, GmailStore, processGmailWork, recordGmailFailure, type GmailWorkMessage } from './gmail.js';
 import { D1EmployerStore } from './employer-store.js';
@@ -99,6 +100,8 @@ export interface Environment extends AuthEnvironment {
   SHADOW_EXTRACTION_ENABLED?: string;
   SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS?: string;
   SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS?: string;
+  /** Default-disabled, exact-cohort policy for reviewer-receipted shadow data. */
+  LLM_METADATA_PUBLICATION_POLICY_JSON?: string;
   GMAIL_CLIENT_ID?: string;
   GMAIL_CLIENT_SECRET?: string;
   GMAIL_TOKEN_ENCRYPTION_KEY?: string;
@@ -765,6 +768,51 @@ async function fetchHandler(request: Request, env: Environment): Promise<Respons
   if (request.method === 'GET' && url.pathname === '/internal/operations/shadow-extraction') {
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
     return withCors(Response.json(await shadowExtractionSummary(env.DB), { headers: { 'Cache-Control': 'no-store' } }));
+  }
+  if (url.pathname === '/internal/operations/shadow-publication') {
+    if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
+    const policy = parseShadowPublicationPolicy(env.LLM_METADATA_PUBLICATION_POLICY_JSON);
+    if (request.method === 'GET') {
+      const receipts = await env.DB.prepare(`SELECT policy_version, count(*) AS count FROM shadow_publication_receipts
+        WHERE revoked_at IS NULL GROUP BY policy_version`).all<{ policy_version: string; count: number }>();
+      return withCors(Response.json({ enabled: policy.enabled, version: policy.version, allowedFields: policy.allowedFields,
+        cohortSize: policy.cohort.length, activeReceipts: receipts.results }, { headers: { 'Cache-Control': 'no-store' } }));
+    }
+    if (request.method !== 'POST') return withCors(Response.json({ message: 'Method not allowed' }, { status: 405 }));
+    const input = await request.json().catch(() => null) as { action?: unknown; runKey?: unknown; acceptedFields?: unknown } | null;
+    if (input?.action !== 'create-receipt' || typeof input.runKey !== 'string' || !/^[a-f0-9]{64}$/u.test(input.runKey)
+      || !Array.isArray(input.acceptedFields) || input.acceptedFields.length === 0
+      || input.acceptedFields.some(field => typeof field !== 'string' || !policy.allowedFields.includes(field as ShadowPublicationField))
+      || new Set(input.acceptedFields).size !== input.acceptedFields.length) {
+      return withCors(Response.json({ message: 'runKey and policy-allowed acceptedFields are required' }, { status: 400 }));
+    }
+    if (!policy.enabled) return withCors(Response.json({ message: 'Shadow publication policy is disabled' }, { status: 409 }));
+    try {
+      const run = await env.DB.prepare(`SELECT run_key, job_id, source_id, external_id, content_hash, model_id, prompt_version, schema_version, preprocessing_version
+        FROM shadow_extraction_runs WHERE run_key = ? AND state = 'completed'`).bind(input.runKey).first<{
+          run_key: string; job_id: string; source_id: string; external_id: string; content_hash: string; model_id: string; prompt_version: string; schema_version: string; preprocessing_version: string;
+        }>();
+      if (!run || !policyAllows(policy, { sourceId: run.source_id, externalId: run.external_id, contentHash: run.content_hash })) throw new Error('Run is not in the exact enabled cohort');
+      const revision = await env.DB.prepare(`SELECT content_hash FROM shadow_extraction_posting_revisions WHERE job_id = ? AND source_id = ? AND external_id = ?`)
+        .bind(run.job_id, run.source_id, run.external_id).first<{ content_hash: string }>();
+      if (revision?.content_hash !== run.content_hash) throw new Error('Posting revision is no longer current');
+      const outcomes = await env.DB.prepare(`SELECT field FROM shadow_extraction_field_outcomes WHERE run_key = ? AND accepted = 1`)
+        .bind(run.run_key).all<{ field: string }>();
+      if (input.acceptedFields.some(field => !outcomes.results.some(outcome => outcome.field === field))) throw new Error('Receipt fields are not validator-accepted');
+      const acceptedFields = [...input.acceptedFields] as ShadowPublicationField[];
+      const evidenceFingerprint = shadowPublicationFingerprint({ jobId: run.job_id, sourceId: run.source_id, externalId: run.external_id,
+        contentHash: run.content_hash, runKey: run.run_key, policyVersion: policy.version, allowedFields: acceptedFields });
+      const receiptId = createHash('sha256').update(`receipt\0${evidenceFingerprint}`).digest('hex');
+      await env.DB.prepare(`INSERT INTO shadow_publication_receipts
+        (receipt_id, job_id, source_id, external_id, content_hash, run_key, policy_version, accepted_fields, evidence_fingerprint, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(receipt_id) DO NOTHING`)
+        .bind(receiptId, run.job_id, run.source_id, run.external_id, run.content_hash, run.run_key, policy.version,
+          JSON.stringify(acceptedFields.sort()), evidenceFingerprint, new Date().toISOString()).run();
+      return withCors(Response.json({ receiptId, evidenceFingerprint, policyVersion: policy.version, acceptedFields }));
+    } catch (error) {
+      return withCors(Response.json({ message: error instanceof Error ? error.message : 'Receipt creation failed' }, { status: 409 }));
+    }
   }
   if (request.method === 'POST' && url.pathname === '/internal/poll-source') {
     if (!operationsAuthorized(request, env)) return withCors(Response.json({ message: 'Not found' }, { status: 404 }));
