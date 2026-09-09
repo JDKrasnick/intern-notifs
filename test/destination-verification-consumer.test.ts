@@ -36,7 +36,7 @@ function subject() {
     '0012_destination_verification_schedule.sql', '0015_role_metadata_enrichment.sql', '0016_role_metadata_repair_plans.sql',
     '0017_metadata_acquisition.sql', '0018_metadata_review.sql', '0019_metadata_job_review_revision.sql',
     '0020_shadow_extraction.sql', '0021_shadow_extraction_fencing.sql',
-    '0022_shadow_extraction_cache_expiry.sql']) {
+    '0022_shadow_extraction_cache_expiry.sql', '0026_shadow_extraction_origin.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   const db = sqliteD1(database);
@@ -243,7 +243,7 @@ describe('destination verification queue consumer', () => {
       externalId: reference.externalId!, candidateUrl: reference.applyUrl, providerIdentity: {
         provider: 'greenhouse', sourceId: reference.sourceId, sourceUrl: reference.sourceUrl,
         tenant: 'acme', postingId: reference.externalId,
-      }, reason: 'daily-retry', queuedAt: '2026-08-30T00:00:00Z', idempotencyKey: 'shadow-handoff' });
+      }, reason: 'content-change', queuedAt: '2026-08-30T00:00:00Z', idempotencyKey: 'shadow-handoff', shadowOrigin: 'provider-poll' });
 
     await processDestinationVerificationBatch({ queue: 'destination-verification', messages: [queued] }, {
       ...environment(db), SHADOW_EXTRACTION_QUEUE: shadowQueue, SHADOW_EXTRACTION_ARTIFACTS: shadowArtifacts,
@@ -253,7 +253,7 @@ describe('destination verification queue consumer', () => {
     expect(artifactPut).toHaveBeenCalledOnce();
     expect(shadowQueue.send).toHaveBeenCalledOnce();
     expect(shadowQueue.send.mock.calls[0]![0]).toMatchObject({ version: 1, jobId: job.jobId,
-      sourceId: reference.sourceId, externalId: reference.externalId });
+      sourceId: reference.sourceId, externalId: reference.externalId, origin: 'provider-poll' });
     expect(database.prepare('SELECT job_id, source_id, external_id FROM shadow_extraction_posting_revisions').get())
       .toEqual({ job_id: job.jobId, source_id: reference.sourceId, external_id: reference.externalId });
   });

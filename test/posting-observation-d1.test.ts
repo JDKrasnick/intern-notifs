@@ -113,6 +113,20 @@ describe('D1 atomic posting observation', () => {
     expect(sqlite.prepare("SELECT count(*) AS count FROM catalog_items WHERE kind = 'posting-alias'").get()).toMatchObject({ count: expect.any(Number) });
   });
 
+  it('atomically records and drains a provider shadow verification outbox item', async () => {
+    const { store } = subject(); const observation = input();
+    const providerShadowVerification = { jobId: observation.job.jobId, sourceId: observation.occurrence.sourceId,
+      externalId: observation.occurrence.externalId, providerIdentity: { provider: 'ashby' as const,
+        sourceId: observation.occurrence.sourceId, sourceUrl: observation.occurrence.occurrence.sourceUrl,
+        tenant: 'acme', postingId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }, candidateUrl: observation.job.applyUrl,
+      reason: 'first-sight' as const, idempotencyKey: 'provider-shadow-revision-a', metadataExtractionVersion: 4,
+      shadowOrigin: 'provider-poll' as const };
+    await store.commitPostingObservation({ ...observation, providerShadowVerification });
+    await expect(store.listPendingProviderShadowVerifications()).resolves.toEqual([providerShadowVerification]);
+    await store.markProviderShadowVerificationEnqueued(providerShadowVerification.idempotencyKey);
+    await expect(store.listPendingProviderShadowVerifications()).resolves.toEqual([]);
+  });
+
   it('loads the current job and occurrence in one D1 request', async () => {
     let stateReads = 0;
     const { store } = subject(undefined, (method, query) => {

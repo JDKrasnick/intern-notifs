@@ -47,6 +47,7 @@ function schema(): D1Database {
   database.exec(readFileSync(new URL('../cloudflare/migrations/0021_shadow_extraction_fencing.sql', import.meta.url), 'utf8'));
   database.exec(readFileSync(new URL('../cloudflare/migrations/0022_shadow_extraction_cache_expiry.sql', import.meta.url), 'utf8'));
   database.exec(readFileSync(new URL('../cloudflare/migrations/0023_shadow_extraction_attempt_costs.sql', import.meta.url), 'utf8'));
+  database.exec(readFileSync(new URL('../cloudflare/migrations/0026_shadow_extraction_origin.sql', import.meta.url), 'utf8'));
   return d1(database);
 }
 
@@ -165,6 +166,7 @@ describe('shadow extraction queue and cost ledger', () => {
       (period, run_key, reserved_cents, actual_cents, state, created_at, updated_at)
       VALUES ('2026-09', ?, 5, 2, 'reconciled', '2026-09-08T00:00:00.000Z', '2026-09-08T00:01:00.000Z')`).run(runKey);
     database.exec(readFileSync(new URL('../cloudflare/migrations/0023_shadow_extraction_attempt_costs.sql', import.meta.url), 'utf8'));
+    database.exec(readFileSync(new URL('../cloudflare/migrations/0026_shadow_extraction_origin.sql', import.meta.url), 'utf8'));
     expect(database.prepare('SELECT lease_token, run_key, reserved_cents, actual_cents, state FROM shadow_extraction_cost_ledger').get())
       .toEqual({ lease_token: 'active-lease', run_key: runKey, reserved_cents: 5, actual_cents: 2, state: 'reconciled' });
   });
@@ -174,14 +176,14 @@ describe('shadow extraction queue and cost ledger', () => {
     const queue: Queue = { async send(body) { messages.push(body); }, async sendBatch() {} };
     const message = await enqueueShadowExtraction({ DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts }, {
       jobId: 'job-1', sourceId: identity.sourceId, externalId: '123', sourceUrl: identity.sourceUrl, providerIdentity: identity,
-      title: 'Software Engineering Intern', description, observedAt: '2026-09-08T00:00:00.000Z',
+      title: 'Software Engineering Intern', description, observedAt: '2026-09-08T00:00:00.000Z', origin: 'provider-poll',
     });
     expect(message).toBeDefined();
     const delivered = { id: 'm1', body: message, ack() {}, retry() {} };
     await processShadowExtractionBatch({ queue: 'intern-notifs-shadow-extraction', messages: [delivered] }, { DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts });
     await processShadowExtractionBatch({ queue: 'intern-notifs-shadow-extraction', messages: [delivered] }, { DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts });
-    const row = await DB.prepare('SELECT state, attempts FROM shadow_extraction_runs').first<{ state: string; attempts: number }>();
-    expect(row).toEqual({ state: 'disabled', attempts: 1 });
+    const row = await DB.prepare('SELECT state, attempts, origin FROM shadow_extraction_runs').first<{ state: string; attempts: number; origin: string }>();
+    expect(row).toEqual({ state: 'disabled', attempts: 1, origin: 'provider-poll' });
   });
 
   it('serializes concurrent cost reservations and does not let a late revision run', async () => {
