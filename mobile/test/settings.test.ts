@@ -37,6 +37,7 @@ describe("profile settings navigation", () => {
     const appUpdate = appSettingsPayload({
       applicationReminders: false,
       followUpDays: 10,
+      applicationHandoff: "window",
       push: { titleTemplate: "{company}: {title}" },
     });
 
@@ -45,6 +46,7 @@ describe("profile settings navigation", () => {
     expect(jobUpdate.alertSettings).not.toHaveProperty("followUpDays");
     expect(appUpdate).not.toHaveProperty("filter");
     expect(appUpdate).not.toHaveProperty("alertsEnabled");
+    expect(appUpdate.applicationHandoff).toBe("window");
     expect(appUpdate.alertSettings).not.toHaveProperty("delivery");
     expect(appUpdate.alertSettings).not.toHaveProperty("quietHours");
   });

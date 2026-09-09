@@ -306,6 +306,17 @@ function alertSettings(
   };
 }
 
+function applicationHandoff(
+  value: unknown,
+  previous?: UserPreferences['applicationHandoff'],
+): NonNullable<UserPreferences['applicationHandoff']> {
+  const handoff = value ?? previous ?? 'window';
+  if (handoff !== 'window' && handoff !== 'tab') {
+    throw new Error('applicationHandoff must be window or tab');
+  }
+  return handoff;
+}
+
 function requireProfile(value: Record<string, unknown>, userId: string): ApplicantProfile {
   const contact = value.contact as ApplicantProfile['contact'];
   if (!contact?.name || !contact.email || typeof value.location !== 'string' || typeof value.workAuthorization !== 'string' || !Array.isArray(value.education) || !value.links || !value.reusableAnswers) throw new Error('Profile needs contact name/email, location, work authorization, education, links, and reusable answers');
@@ -498,7 +509,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
         });
       }
       if (method === 'GET' && path === '/me/preferences') return reply(200, (await dependencies.users.getPreferences(userId)) ?? { userId, filter: {}, alertsEnabled: false, onboardingComplete: false });
-      if (method === 'PUT' && path === '/me/preferences') { const body = parseBody(event); const previous = await dependencies.users.getPreferences(userId); const filter = parseJobFilter(body.filter ?? previous?.filter ?? {}); const push = pushPreferences(body.push); const value: UserPreferences = { userId, filter: filter ?? {}, alertsEnabled: typeof body.alertsEnabled === 'boolean' ? body.alertsEnabled : previous?.alertsEnabled ?? false, emailAlertsEnabled: typeof body.emailAlertsEnabled === 'boolean' ? body.emailAlertsEnabled : previous?.emailAlertsEnabled ?? false, onboardingComplete: typeof body.onboardingComplete === 'boolean' ? body.onboardingComplete : previous?.onboardingComplete ?? false, alertSettings: alertSettings(body.alertSettings, previous?.alertSettings), ...(push !== undefined ? { push } : previous?.push ? { push: previous.push } : {}), ...(previous?.lastCatalogOpenedAt ? { lastCatalogOpenedAt: previous.lastCatalogOpenedAt } : {}), updatedAt: now() }; await dependencies.users.putPreferences(value); return reply(200, value); }
+      if (method === 'PUT' && path === '/me/preferences') { const body = parseBody(event); const previous = await dependencies.users.getPreferences(userId); const filter = parseJobFilter(body.filter ?? previous?.filter ?? {}); const push = pushPreferences(body.push); const value: UserPreferences = { userId, filter: filter ?? {}, alertsEnabled: typeof body.alertsEnabled === 'boolean' ? body.alertsEnabled : previous?.alertsEnabled ?? false, emailAlertsEnabled: typeof body.emailAlertsEnabled === 'boolean' ? body.emailAlertsEnabled : previous?.emailAlertsEnabled ?? false, onboardingComplete: typeof body.onboardingComplete === 'boolean' ? body.onboardingComplete : previous?.onboardingComplete ?? false, applicationHandoff: applicationHandoff(body.applicationHandoff, previous?.applicationHandoff), alertSettings: alertSettings(body.alertSettings, previous?.alertSettings), ...(push !== undefined ? { push } : previous?.push ? { push: previous.push } : {}), ...(previous?.lastCatalogOpenedAt ? { lastCatalogOpenedAt: previous.lastCatalogOpenedAt } : {}), updatedAt: now() }; await dependencies.users.putPreferences(value); return reply(200, value); }
       if (method === 'POST' && path === '/me/opening') {
         const openedAt = dependencies.now?.() ?? now();
         const previous = await dependencies.users.getPreferences(userId);
@@ -509,6 +520,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
           alertsEnabled: previous?.alertsEnabled ?? false,
           emailAlertsEnabled: previous?.emailAlertsEnabled ?? false,
           onboardingComplete: previous?.onboardingComplete ?? false,
+          ...(previous?.applicationHandoff ? { applicationHandoff: previous.applicationHandoff } : {}),
           ...(previous?.alertSettings ? { alertSettings: previous.alertSettings } : {}),
           ...(previous?.push ? { push: previous.push } : {}),
           lastCatalogOpenedAt: openedAt,
@@ -584,7 +596,10 @@ export function createApiHandler(dependencies: ApiDependencies) {
           applyMode: integrations.applyMode(job), createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp,
         };
         await dependencies.users.putApplication(userId, application);
-        return reply(existing ? 200 : 201, { ...application, officialApplyUrl: application.applyMode === 'official-form' ? job.applyUrl : undefined });
+        return reply(existing ? 200 : 201, {
+          ...applicationSummary(application, job, identityUnconfirmedPublicationEnabled),
+          officialApplyUrl: application.applyMode === 'official-form' ? job.applyUrl : undefined,
+        });
       }
       const appMatch = path.match(/^\/me\/applications\/([^/]+)$/);
       if (method === 'PATCH' && appMatch) {
@@ -601,7 +616,8 @@ export function createApiHandler(dependencies: ApiDependencies) {
         else if (body.queued === true) updated.queuedAt = current.queuedAt ?? timestamp;
         else if (body.queued === false) delete updated.queuedAt;
         await dependencies.users.putApplication(userId, updated);
-        return reply(200, updated);
+        const job = await dependencies.jobs.getJob?.(updated.jobId);
+        return reply(200, applicationSummary(updated, job, identityUnconfirmedPublicationEnabled));
       }
       if (method === 'DELETE' && appMatch) { const current = await dependencies.users.getApplication(userId, decodeURIComponent(appMatch[1]!)); if (!current) return reply(404, { message: 'Application not found' }); if (current.status !== 'saved') return reply(409, { message: 'Only saved roles can be unsaved' }); await dependencies.users.deleteApplication(userId, current.applicationId); return reply(204, {}); }
       const applicationSessionMatch = path.match(/^\/me\/applications\/([^/]+)\/assistance-sessions$/);

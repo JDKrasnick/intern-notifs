@@ -98,6 +98,9 @@ describe('public API ownership boundary', () => {
     expect((await handler(event(undefined, 'GET', '/me/applications'))).statusCode).toBe(401);
     const created = await handler(event('user-a', 'POST', '/me/applications', { jobId: 'job-1', notes: 'Tailor résumé' }));
     expect(created.statusCode).toBe(201);
+    expect(JSON.parse(created.body)).toMatchObject({
+      job: { jobId: 'job-1', company: 'Acme', title: 'Software Intern', availability: 'available' },
+    });
     expect(JSON.parse((await handler(event('user-b', 'GET', '/me/applications'))).body)).toEqual({ applications: [] });
     const applicationId = JSON.parse(created.body).applicationId as string;
     expect((await handler(event('user-b', 'PATCH', `/me/applications/${applicationId}`, { status: 'offer' }))).statusCode).toBe(404);
@@ -147,8 +150,17 @@ describe('public API ownership boundary', () => {
     expect((await handler(event('user-a', 'PATCH', `/me/applications/${saved.applicationId}`, { queued: true }))).statusCode).toBe(200);
     expect(JSON.parse((await handler(event('user-a', 'GET', '/me/applications', undefined, { queued: 'true' }))).body).applications)
       .toMatchObject([{ applicationId: saved.applicationId }]);
-    expect((await handler(event('user-a', 'PATCH', `/me/applications/${saved.applicationId}`, { status: 'applied' }))).statusCode).toBe(200);
+    const applied = await handler(event('user-a', 'PATCH', `/me/applications/${saved.applicationId}`, { status: 'applied' }));
+    expect(applied.statusCode).toBe(200);
+    expect(JSON.parse(applied.body)).toMatchObject({
+      applicationId: saved.applicationId,
+      status: 'applied',
+      appliedAt: '2026-09-08T00:00:00.000Z',
+      job: { jobId: job.jobId, title: 'Software Intern' },
+    });
     expect(JSON.parse((await handler(event('user-a', 'GET', '/me/applications', undefined, { queued: 'true' }))).body)).toEqual({ applications: [] });
+    expect(JSON.parse((await handler(event('user-a', 'GET', '/me/applications'))).body).applications)
+      .toMatchObject([{ applicationId: saved.applicationId, status: 'applied', appliedAt: '2026-09-08T00:00:00.000Z' }]);
   });
   it('rejects invalid queue updates', async () => {
     const jobs = new MemoryInternshipStore(); await jobs.putInternship(job);
@@ -203,6 +215,7 @@ describe('public API ownership boundary', () => {
       applicationReminders: true,
       followUpDays: 7
     });
+    expect(preference?.applicationHandoff).toBe('window');
     expect(hasUndefined(preference)).toBe(false);
   });
   it('creates a versioned, no-submit Greenhouse assistance session while keeping unknown and LinkedIn destinations manual', async () => {

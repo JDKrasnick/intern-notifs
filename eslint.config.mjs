@@ -10,6 +10,7 @@ export default tseslint.config(
       'cdk.out/**',
       'coverage/**',
       'node_modules/**',
+      '.wrangler/**',
       'mobile/**',
       '.context/**',
       '**/.agents/**',

@@ -60,9 +60,11 @@ export function jobPreferencesPayload<TFilter>(draft: {
 export function appSettingsPayload<TPush>(draft: {
   applicationReminders: boolean;
   followUpDays: number;
+  applicationHandoff: 'window' | 'tab';
   push: TPush;
 }) {
   return {
+    applicationHandoff: draft.applicationHandoff,
     alertSettings: {
       applicationReminders: draft.applicationReminders,
       followUpDays: draft.followUpDays,
