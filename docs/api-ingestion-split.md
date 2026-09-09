@@ -14,7 +14,7 @@ change, not a catalog-policy or schema change.
 | `/operations/*`, `/internal/operations/*`, admission, DLQ, backfill, poll-source, catalog-quality, notification recovery, projection refresh, posting-identity repair | Ingestion Worker, forwarded by API Worker | The API checks nothing new for these routes; the existing operations key remains required by the destination handler. A second secret authenticates the API-to-ingestion hop. |
 | Billing shutdown webhook | Ingestion Worker, forwarded by API Worker | Existing webhook path and its separate webhook secret remain unchanged. |
 | All nine crons | Ingestion Worker only | `*/5`, GitHub, provider, hourly, daily maintenance, and identity-audit schedules are declared only in `wrangler.ingestion.jsonc`. |
-| All six queue consumers and DLQs | Ingestion Worker only | Greenhouse, Lever, Ashby, GitHub, Gmail, and destination verification. |
+| All seven queue consumers and DLQs | Ingestion Worker only | Greenhouse, Lever, Ashby, GitHub, Gmail, destination verification, and shadow extraction. |
 | Request-triggered Gmail checks | API Worker producer | The API retains only the Gmail producer because applying to a role can enqueue delayed checks. |
 
 The API config needs D1, private R2 documents, Gmail producer, auth/email and
@@ -125,10 +125,12 @@ purge, reset, or historical repair is part of it.
 4. Set the secrets from the inventory above. Generate one new
    `INTERNAL_SERVICE_SECRET` and enter the same value for both Workers.
 5. Create a temporary API cutover configuration with an explicit empty cron
-   list, then deploy it to preserve the public hostname, activate the service
-   binding, and clear all nine old schedules. Wrangler does not remove queue
-   consumers merely because they are absent from a deployment configuration,
-   so remove each old consumer explicitly:
+   list. Remove each old consumer explicitly before deploying it: Wrangler does
+   not remove consumers merely because they are absent from a deployment
+   configuration, and Cloudflare rejects the handler-less API bundle while an
+   old consumer still targets it. Then deploy the API configuration to preserve
+   the public hostname, activate the service binding, and clear all nine old
+   schedules:
 
    ```bash
    jq '.triggers = { "crons": [] }
@@ -136,13 +138,13 @@ purge, reset, or historical repair is part of it.
      | ."$schema" = "../node_modules/wrangler/config-schema.json"
      | .d1_databases[0].migrations_dir = "../cloudflare/migrations"' \
      wrangler.api.jsonc > .context/wrangler.api-cutover.jsonc
-   npx wrangler deploy --config .context/wrangler.api-cutover.jsonc
    npx wrangler queues consumer remove intern-notifs-greenhouse intern-notifs --config wrangler.api.jsonc
    npx wrangler queues consumer remove intern-notifs-lever intern-notifs --config wrangler.api.jsonc
    npx wrangler queues consumer remove intern-notifs-ashby intern-notifs --config wrangler.api.jsonc
    npx wrangler queues consumer remove intern-notifs-github intern-notifs --config wrangler.api.jsonc
    npx wrangler queues consumer remove intern-notifs-gmail intern-notifs --config wrangler.api.jsonc
    npx wrangler queues consumer remove intern-notifs-destination-verification intern-notifs --config wrangler.api.jsonc
+   npx wrangler deploy --config .context/wrangler.api-cutover.jsonc
    ```
 
    Confirm there are exactly zero active consumer and schedule owners before

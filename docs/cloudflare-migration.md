@@ -163,7 +163,7 @@ The $5 alert also targets a generic webhook at
 `/internal/billing-shutdown`. Cloudflare authenticates it with the
 `cf-webhook-auth` header. The API Worker forwards the authenticated webhook to
 the ingestion Worker, which latches `billing_shutdown=stopped` in D1, removes
-all six ingestion queue consumers, clears the ingestion Worker schedules, and
+all seven ingestion queue consumers, clears the ingestion Worker schedules, and
 keeps its workers.dev subdomain disabled. The public API Worker remains routed
 but returns the latched 503 response. The D1 latch makes scheduled, queued, and
 HTTP work fail closed even if a management API call is delayed. Test webhook
@@ -173,7 +173,7 @@ payload for the named $5 policy and account.
 To recover after reviewing the bill, reapply `infra/cloudflare` to restore the
 ingestion consumers. The provider does not currently detect an externally
 emptied cron list, so restore only the ingestion schedules explicitly. Confirm
-that all six queues and all nine schedules have exactly one owner and that the
+that all seven queues and all nine schedules have exactly one owner and that the
 API Worker owns none of them before clearing the latch:
 
 ```sh
