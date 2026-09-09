@@ -67,7 +67,7 @@ import {
   type FilterMatchReason,
   type JobRouteState,
 } from "./src/job-detail";
-import { nextAvailableQueueEntry, queueEntryTarget, resolveApplicationJob, sortApplyQueue, type ApplicationJobSummary } from "./src/application";
+import { nextAvailableQueueEntry, queueEntryTarget, resolveApplicationJob, selectBulkTargets, sortApplyQueue, type ApplicationJobSummary } from "./src/application";
 import {
   appSettingsPayload,
   jobPreferencesPayload,
@@ -1622,6 +1622,104 @@ function QueuePillButton({
     </TouchableOpacity>
   );
 }
+function QueueBulkButtons({
+  available,
+  onOpenFirst,
+  onBulkOpen,
+}: {
+  available: Array<{ jobId: string; applyUrl: string }>;
+  onOpenFirst: () => void;
+  onBulkOpen: (targets: Array<{ jobId: string; applyUrl: string }>) => void;
+}) {
+  if (Platform.OS !== "web" || available.length < 2) return null;
+  const half = Math.max(1, Math.ceil(available.length / 2));
+  return (
+    <View>
+      <Text style={styles.queueBulkLabel}>Open several at once</Text>
+      <View style={styles.queueBulkRow}>
+        <ActionButton label="1" compact tight variant="secondary" onPress={onOpenFirst} />
+        <ActionButton label="5" compact tight variant="secondary" disabled={available.length < 5} onPress={() => onBulkOpen(selectBulkTargets(available, 5))} />
+        <ActionButton label="10" compact tight variant="secondary" disabled={available.length < 10} onPress={() => onBulkOpen(selectBulkTargets(available, 10))} />
+        <ActionButton label="Half" compact tight variant="secondary" onPress={() => onBulkOpen(selectBulkTargets(available, "half"))} />
+        <ActionButton label="All" compact tight variant="secondary" onPress={() => onBulkOpen(selectBulkTargets(available, "all"))} />
+      </View>
+      <Text style={styles.queueBulkHint}>Each role opens in its own tab{half < available.length ? ` · Half opens ${half}` : ""}.</Text>
+    </View>
+  );
+}
+const QUEUE_PANEL_MAX_ROWS = 6;
+function QueuePanel({
+  queue,
+  jobs,
+  onOpenQueuedRole,
+  onBulkOpenQueue,
+  onViewAll,
+  onCollapse,
+}: {
+  queue: Application[];
+  jobs: Job[];
+  onOpenQueuedRole?: (target: { jobId: string; applyUrl: string }) => void;
+  onBulkOpenQueue?: (targets: Array<{ jobId: string; applyUrl: string }>) => void;
+  onViewAll?: () => void;
+  onCollapse: () => void;
+}) {
+  const availableTargets = queue
+    .map((item) => queueEntryTarget(item, jobs))
+    .filter((target): target is { jobId: string; applyUrl: string } => target !== undefined);
+  const visible = queue.slice(0, QUEUE_PANEL_MAX_ROWS);
+  const hidden = queue.length - visible.length;
+  return (
+    <View style={styles.queuePanel}>
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={`Collapse queue list, ${queue.length} ${queue.length === 1 ? "role" : "roles"}`}
+        onPress={onCollapse}
+        style={styles.queuePanelHeader}
+      >
+        <Text style={styles.queuePanelTitle}>In queue · {queue.length}</Text>
+        <Ionicons name="chevron-up" size={18} color={colors.muted} />
+      </TouchableOpacity>
+      {queue.length === 0 ? (
+        <Text style={styles.muted}>Mark roles as you browse and they will wait here.</Text>
+      ) : (
+        <View style={styles.queuePanelList}>
+          {onBulkOpenQueue ? (
+            <QueueBulkButtons
+              available={availableTargets}
+              onOpenFirst={() => { const [first] = availableTargets; if (first) onOpenQueuedRole?.(first); }}
+              onBulkOpen={onBulkOpenQueue}
+            />
+          ) : null}
+          {visible.map((item, index) => {
+            const job = resolveApplicationJob(item, jobs);
+            const target = queueEntryTarget(item, jobs);
+            return (
+              <View key={item.applicationId} style={styles.queueSheetRow}>
+                <View style={styles.queueSheetCopy}>
+                  <Text style={styles.queueSheetPosition}>{index + 1}</Text>
+                  <View style={styles.queueSheetText}>
+                    <Text style={styles.queueRowTitle} numberOfLines={1}>{job?.title ?? "Saved role"}</Text>
+                    <Text style={styles.muted} numberOfLines={1}>{job?.company ?? ""}</Text>
+                  </View>
+                </View>
+                {target && onOpenQueuedRole ? (
+                  <ActionButton label="Open" compact tight variant="secondary" onPress={() => onOpenQueuedRole(target)} />
+                ) : !target ? (
+                  <Text style={styles.muted}>Unavailable</Text>
+                ) : null}
+              </View>
+            );
+          })}
+          {hidden > 0 && onViewAll ? (
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={`View all ${queue.length} queued roles`} onPress={onViewAll}>
+              <Text style={styles.queuePanelMore}>View all {queue.length} in queue</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      )}
+    </View>
+  );
+}
 
 function FilterSheet({
   visible,
@@ -1874,12 +1972,14 @@ function ActionButton({
   disabled = false,
   variant = "primary",
   compact = false,
+  tight = false,
 }: {
   label: string;
   onPress: () => void;
   disabled?: boolean;
   variant?: "primary" | "secondary" | "danger";
   compact?: boolean;
+  tight?: boolean;
 }) {
   return (
     <TouchableOpacity
@@ -1892,6 +1992,7 @@ function ActionButton({
         variant === "secondary" && styles.actionButtonSecondary,
         variant === "danger" && styles.actionButtonDanger,
         compact && styles.actionButtonCompact,
+        tight && styles.actionButtonTight,
         disabled && styles.actionButtonDisabled,
       ]}
     >
@@ -2345,6 +2446,10 @@ function GroupedCatalogFeed({
   queuedJobIds,
   queueCount,
   onOpenQueue,
+  queue,
+  queueJobs,
+  onOpenQueuedRole,
+  onBulkOpenQueue,
 }: {
   groups: CatalogGroupRow[];
   query: string;
@@ -2370,7 +2475,12 @@ function GroupedCatalogFeed({
   queuedJobIds?: Set<string>;
   queueCount?: number;
   onOpenQueue?: () => void;
+  queue?: Application[];
+  queueJobs?: Job[];
+  onOpenQueuedRole?: (target: { jobId: string; applyUrl: string }) => void;
+  onBulkOpenQueue?: (targets: Array<{ jobId: string; applyUrl: string }>) => void;
 }) {
+  const [queueOpen, setQueueOpen] = useState(false);
   const [sheetVisible, setSheetVisible] = useState(false);
   return (
     <>
@@ -2388,10 +2498,20 @@ function GroupedCatalogFeed({
           placeholderTextColor={colors.placeholder}
           style={[styles.feedSearch, styles.feedSearchFlex]}
         />
-        {onOpenQueue && queueCount !== undefined ? (
-          <QueuePillButton count={queueCount} onPress={onOpenQueue} />
+        {queue !== undefined && queueCount !== undefined ? (
+          <QueuePillButton count={queueCount} onPress={() => setQueueOpen((open) => !open)} />
         ) : null}
       </View>
+      {queue !== undefined && queueOpen ? (
+        <QueuePanel
+          queue={queue}
+          jobs={queueJobs ?? []}
+          onOpenQueuedRole={onOpenQueuedRole}
+          onBulkOpenQueue={onBulkOpenQueue}
+          onViewAll={onOpenQueue}
+          onCollapse={() => setQueueOpen(false)}
+        />
+      ) : null}
       <View style={styles.queuePillRow}>
         <FilterBar activeCount={countActiveCatalogFilters(filters)} onOpen={() => setSheetVisible(true)} />
       </View>
@@ -3498,6 +3618,10 @@ function AppContent() {
                 queuedJobIds={queuedJobIds}
                 queueCount={applyQueue.length}
                 onOpenQueue={() => setQueueSheetVisible(true)}
+                queue={applyQueue}
+                queueJobs={catalogJobs}
+                onOpenQueuedRole={openApplicationAndScheduleCheck}
+                onBulkOpenQueue={openQueueBulk}
               />
             )
           ) : tab === "queue" ? (
@@ -3511,6 +3635,7 @@ function AppContent() {
               alertsEnabled={preferences.alertsEnabled}
               onChanged={() => void load()}
               onOpenOfficialApplication={openApplicationAndScheduleCheck}
+              onBulkOpenQueue={openQueueBulk}
             />
           ) : tab === "saved" ? (
             <Applications
@@ -4286,7 +4411,6 @@ function QueueSheet({
   const available = queue
     .map((item) => ({ item, target: queueEntryTarget(item, jobs) }))
     .filter((entry): entry is { item: Application; target: { jobId: string; applyUrl: string } } => entry.target !== undefined);
-  const bulk = (count?: number) => available.slice(0, count ?? available.length).map((entry) => entry.target);
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onDismiss}>
       <View style={styles.sheetOverlay}>
@@ -4302,13 +4426,11 @@ function QueueSheet({
             disabled={!next}
             onPress={() => { const target = next ? queueEntryTarget(next, jobs) : undefined; if (target) { onOpen(target); onDismiss(); } }}
           />
-          {Platform.OS === "web" && available.length > 1 ? (
-            <View style={styles.queueBulkRow}>
-              <ActionButton label={`Open 5`} compact variant="secondary" onPress={() => { onBulkOpen(bulk(5)); onDismiss(); }} />
-              <ActionButton label={`Open 10`} compact variant="secondary" onPress={() => { onBulkOpen(bulk(10)); onDismiss(); }} />
-              <ActionButton label={`Open all`} compact variant="secondary" onPress={() => { onBulkOpen(bulk()); onDismiss(); }} />
-            </View>
-          ) : null}
+          <QueueBulkButtons
+            available={available.map((entry) => entry.target)}
+            onOpenFirst={() => { const target = next ? queueEntryTarget(next, jobs) : undefined; if (target) { onOpen(target); onDismiss(); } }}
+            onBulkOpen={(targets) => { onBulkOpen(targets); onDismiss(); }}
+          />
           <ScrollView style={styles.queueSheetList}>
             {queue.map((item, index) => {
               const job = resolveApplicationJob(item, jobs);
@@ -4318,12 +4440,12 @@ function QueueSheet({
                   <View style={styles.queueSheetCopy}>
                     <Text style={styles.queueSheetPosition}>{index + 1}</Text>
                     <View style={styles.queueSheetText}>
-                      <Text style={styles.preferenceTitle} numberOfLines={1}>{job?.title ?? "Saved role"}</Text>
+                      <Text style={styles.queueRowTitle} numberOfLines={1}>{job?.title ?? "Saved role"}</Text>
                       <Text style={styles.muted} numberOfLines={1}>{job?.company ?? ""}</Text>
                     </View>
                   </View>
                   {target ? (
-                    <ActionButton label="Open" compact variant="secondary" onPress={() => { onOpen(target); onDismiss(); }} />
+                    <ActionButton label="Open" compact tight variant="secondary" onPress={() => { onOpen(target); onDismiss(); }} />
                   ) : (
                     <Text style={styles.muted}>Unavailable</Text>
                   )}
@@ -4347,6 +4469,7 @@ function Applications({
   alertsEnabled,
   onChanged,
   onOpenOfficialApplication,
+  onBulkOpenQueue,
 }: {
   mode: "queue" | "saved";
   applications: Application[];
@@ -4357,6 +4480,7 @@ function Applications({
   alertsEnabled: boolean;
   onChanged: () => void;
   onOpenOfficialApplication: (job: Pick<Job, "jobId" | "applyUrl">) => void;
+  onBulkOpenQueue?: (targets: Array<{ jobId: string; applyUrl: string }>) => void;
 }) {
   const [detections, setDetections] = useState<GmailDetection[]>([]);
   const [detectionError, setDetectionError] = useState<string>();
@@ -4429,6 +4553,9 @@ function Applications({
   const queuedIds = new Set(queue.map((entry) => entry.applicationId));
   const savedOnly = applications.filter((entry) => entry.status === "saved" && !queuedIds.has(entry.applicationId));
   const ordered = mode === "queue" ? [...queue] : [...queue, ...savedOnly, ...applications.filter((entry) => entry.status !== "saved" && !queuedIds.has(entry.applicationId))];
+  const availableQueueTargets = queue
+    .map((item) => queueEntryTarget(item, jobs))
+    .filter((target): target is { jobId: string; applyUrl: string } => target !== undefined);
   return (
     <View style={styles.queueScreen}>
     <FlatList
@@ -4444,6 +4571,13 @@ function Applications({
         />
         {mode === "queue" ? (
           <Text style={styles.queueCount}>{queue.length} {queue.length === 1 ? "role" : "roles"} in queue</Text>
+        ) : null}
+        {mode === "queue" && onBulkOpenQueue ? (
+          <QueueBulkButtons
+            available={availableQueueTargets}
+            onOpenFirst={() => { const [first] = availableQueueTargets; if (first) onOpenOfficialApplication(first); }}
+            onBulkOpen={onBulkOpenQueue}
+          />
         ) : null}
         {detections.length ? (
           <View style={styles.gmailReviewSection}>
@@ -4638,7 +4772,7 @@ function Applications({
         <View style={styles.queueActionBar}>
           <View style={styles.queueActionPrimary}>
             <ActionButton
-              label="Apply next"
+              label={nextQueuedJob ? `Apply next: ${nextQueuedJob.title} at ${nextQueuedJob.company}` : "Apply next"}
               disabled={!nextQueuedJob}
               onPress={applyNext}
             />
@@ -6848,11 +6982,19 @@ const styles = StyleSheet.create({
   queuePillText: { color: colors.onDark, fontSize: 13, fontWeight: "700" },
   queueSheet: { backgroundColor: colors.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: 560, padding: 20 },
   queueSheetList: { marginVertical: 12, maxHeight: 320 },
-  queueSheetRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", paddingVertical: 8 },
+  queueSheetRow: { alignItems: "center", borderTopColor: colors.separator, borderTopWidth: 1, flexDirection: "row", justifyContent: "space-between", paddingVertical: 10 },
   queueSheetCopy: { alignItems: "center", flex: 1, flexDirection: "row", gap: 10, marginRight: 12 },
   queueSheetPosition: { color: colors.muted, fontSize: 14, fontWeight: "700", width: 20 },
   queueSheetText: { flex: 1 },
-  queueBulkRow: { flexDirection: "row", gap: 8, marginTop: 10 },
+  queueRowTitle: { color: colors.ink, fontSize: 16, fontWeight: "700" },
+  queueBulkLabel: { color: colors.muted, fontSize: 13, fontWeight: "600", marginTop: 16 },
+  queueBulkHint: { color: colors.muted, fontSize: 13, marginTop: 8 },
+  queueBulkRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
+  queuePanel: { backgroundColor: colors.surface, borderColor: colors.separator, borderRadius: 16, borderWidth: 1, marginTop: 12, padding: 16 },
+  queuePanelHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
+  queuePanelTitle: { color: colors.ink, fontSize: 16, fontWeight: "700" },
+  queuePanelList: { marginTop: 4 },
+  queuePanelMore: { color: colors.signal, fontSize: 14, fontWeight: "700", marginTop: 8 },
   queueSectionHeader: { alignItems: "center", flexDirection: "row", gap: 8, marginBottom: 4, marginTop: 16 },
   queueSectionHeaderText: { color: colors.ink, fontSize: 15, fontWeight: "700" },
   catalogReviewNotice: {
@@ -6997,6 +7139,7 @@ const styles = StyleSheet.create({
   },
   actionButtonDanger: { backgroundColor: colors.danger },
   actionButtonCompact: { minHeight: 48, marginTop: 16 },
+  actionButtonTight: { marginTop: 0 },
   actionButtonDisabled: { opacity: 0.55 },
   actionButtonText: { color: colors.onDark, fontSize: 16, fontWeight: "700" },
   actionButtonTextSecondary: { color: colors.body },

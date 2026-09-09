@@ -50,3 +50,10 @@ export function nextAvailableQueueEntry<T extends QueueEntry>(
 ): T | undefined {
   return queue.slice(fromIndex).find((item) => queueEntryTarget(item, catalogJobs) !== undefined);
 }
+
+export type QueueBulkSpec = number | "half" | "all";
+export function selectBulkTargets<T>(targets: T[], spec: QueueBulkSpec): T[] {
+  if (spec === "all") return targets;
+  if (spec === "half") return targets.slice(0, Math.max(1, Math.ceil(targets.length / 2)));
+  return targets.slice(0, Math.max(0, spec));
+}

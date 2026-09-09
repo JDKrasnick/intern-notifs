@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextAvailableQueueEntry, queueEntryTarget, sortApplyQueue, type QueueEntry } from "../src/application";
+import { nextAvailableQueueEntry, queueEntryTarget, selectBulkTargets, sortApplyQueue, type QueueEntry } from "../src/application";
 
 const entry = (overrides: Partial<QueueEntry> & { jobId: string }): QueueEntry => ({
   applicationId: `app-${overrides.jobId}`,
@@ -59,5 +59,20 @@ describe("queueEntryTarget", () => {
   it("returns undefined for closed or url-less entries", () => {
     expect(queueEntryTarget(entry({ jobId: "closed" }), catalog)).toBeUndefined();
     expect(queueEntryTarget(entry({ jobId: "missing" }), catalog)).toBeUndefined();
+  });
+});
+
+describe("selectBulkTargets", () => {
+  const targets = ["a", "b", "c", "d", "e"];
+
+  it("caps fixed counts at the available targets", () => {
+    expect(selectBulkTargets(targets, 1)).toEqual(["a"]);
+    expect(selectBulkTargets(targets, 10)).toEqual(targets);
+  });
+
+  it("opens the first half rounded up, or everything for all", () => {
+    expect(selectBulkTargets(targets, "half")).toEqual(["a", "b", "c"]);
+    expect(selectBulkTargets(["a", "b", "c", "d"], "half")).toEqual(["a", "b"]);
+    expect(selectBulkTargets(targets, "all")).toEqual(targets);
   });
 });
