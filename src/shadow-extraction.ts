@@ -132,7 +132,7 @@ function words(value: string): string[] {
 }
 
 function compensationNumberPresent(passage: string, value: number): boolean {
-  return [...passage.matchAll(/(?:^|[^0-9.])([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)(?![0-9.])/gu)]
+  return [...passage.matchAll(/(?:^|[^0-9.])([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)(?![0-9])/gu)]
     .some((match) => Number(match[1]!.replace(/,/gu, '')) === value);
 }
 

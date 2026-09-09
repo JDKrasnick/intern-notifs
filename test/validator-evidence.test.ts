@@ -50,3 +50,27 @@ describe('validateShadowExtraction evidence membership', () => {
     expect(result.accepted).toBeUndefined();
   });
 });
+
+describe('validateShadowExtraction compensation amounts', () => {
+  it('accepts a sentence-terminal max amount ("$45- $60.") in the evidence passage', () => {
+    const posting = normalizeExactPostingDescription('Software Engineer Intern', 'The hourly rate range for this position in the selected city is $45- $60.');
+    const response: ShadowExtraction = {
+      classification: { technical: 'yes', earlyCareer: 'yes', disciplines: ['software engineering'] },
+      fields: {
+        compensation: {
+          value: [{ min: 45, max: 60, currency: 'USD', period: 'hour' }], status: 'present',
+          evidence: ['The hourly rate range for this position in the selected city is $45- $60.'], qualifiers: [],
+        },
+        locations: { value: null, status: 'not-stated', evidence: [], qualifiers: [] },
+        workMode: { value: null, status: 'not-stated', evidence: [], qualifiers: [] },
+        housing: { value: null, status: 'not-stated', evidence: [], qualifiers: [] },
+        timing: { value: null, status: 'not-stated', evidence: [], qualifiers: [] },
+        education: { value: null, status: 'not-stated', evidence: [], qualifiers: [] },
+        eligibility: { value: null, status: 'not-stated', evidence: [], qualifiers: [] },
+      },
+    };
+    const result = validateShadowExtraction(response, posting);
+    expect(result.failures, JSON.stringify(result.failures)).toEqual([]);
+    expect(result.accepted?.fields.compensation.value).toEqual([{ min: 45, max: 60, currency: 'USD', period: 'hour' }]);
+  });
+});
