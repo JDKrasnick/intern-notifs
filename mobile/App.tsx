@@ -1638,8 +1638,12 @@ function QueueBulkButtons({
       <Text style={styles.queueBulkLabel}>Open several at once</Text>
       <View style={styles.queueBulkRow}>
         <ActionButton label="1" compact tight variant="secondary" onPress={onOpenFirst} />
-        <ActionButton label="5" compact tight variant="secondary" disabled={available.length < 5} onPress={() => onBulkOpen(selectBulkTargets(available, 5))} />
-        <ActionButton label="10" compact tight variant="secondary" disabled={available.length < 10} onPress={() => onBulkOpen(selectBulkTargets(available, 10))} />
+        {available.length >= 5 ? (
+          <ActionButton label="5" compact tight variant="secondary" onPress={() => onBulkOpen(selectBulkTargets(available, 5))} />
+        ) : null}
+        {available.length >= 10 ? (
+          <ActionButton label="10" compact tight variant="secondary" onPress={() => onBulkOpen(selectBulkTargets(available, 10))} />
+        ) : null}
         <ActionButton label="Half" compact tight variant="secondary" onPress={() => onBulkOpen(selectBulkTargets(available, "half"))} />
         <ActionButton label="All" compact tight variant="secondary" onPress={() => onBulkOpen(selectBulkTargets(available, "all"))} />
       </View>
