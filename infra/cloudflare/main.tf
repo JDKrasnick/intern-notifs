@@ -53,6 +53,11 @@ resource "cloudflare_d1_database" "application" {
   name                  = "${var.worker_name}-db"
   primary_location_hint = "wnam"
   read_replication      = { mode = "disabled" }
+
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes  = [primary_location_hint]
+  }
 }
 
 resource "cloudflare_r2_bucket" "documents" {

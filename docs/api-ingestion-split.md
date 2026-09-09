@@ -106,6 +106,8 @@ purge, reset, or historical repair is part of it.
 
    ```bash
    jq 'del(.queues.consumers, .triggers)
+     | .queues.producers |= map(select(.queue != "intern-notifs-shadow-extraction" and .queue != "intern-notifs-shadow-extraction-dlq"))
+     | .r2_buckets |= map(select(.binding != "SHADOW_EXTRACTION_ARTIFACTS"))
      | .main = "../cloudflare/ingestion-worker.ts"
      | ."$schema" = "../node_modules/wrangler/config-schema.json"
      | .d1_databases[0].migrations_dir = "../cloudflare/migrations"' \
@@ -161,7 +163,7 @@ purge, reset, or historical repair is part of it.
    tofu -chdir=infra/cloudflare apply ../../.context/ingestion-cutover.tfplan
    ```
 
-   Confirm each of the six queues has exactly one ingestion consumer, all nine
+   Confirm each of the seven queues has exactly one ingestion consumer, all nine
    crons belong only to `intern-notifs-ingestion`, and the API service binding
    resolves. Run a second plan and require no changes before considering the
    state transition complete.
@@ -181,7 +183,7 @@ environment, verify:
 
 ```bash
 curl -fsS https://intern-notifs.jdkrasnick.workers.dev/jobs
-curl -fsS 'https://intern-notifs.jdkrasnick.workers.dev/jobs?disciplines=Software%20Engineering'
+curl -fsS 'https://intern-notifs.jdkrasnick.workers.dev/catalog?disciplines=Software%20Engineering'
 curl -fsS -H "X-Operations-Key: $OPERATIONS_SHARED_SECRET" \
   https://intern-notifs.jdkrasnick.workers.dev/operations/sources
 curl -fsS -H "X-Operations-Key: $OPERATIONS_SHARED_SECRET" \
