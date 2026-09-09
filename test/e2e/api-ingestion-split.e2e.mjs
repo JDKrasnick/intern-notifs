@@ -217,4 +217,5 @@ test('processes a compiled shadow queue event through R2 and exposes its disable
   assert.deepEqual(row, { state: 'disabled', attempts: 1, error: 'live model execution disabled or credential unavailable' });
   assert.equal(summary.status, 200);
   assert.ok(summaryBody.runs.some((item) => item.state === 'disabled' && item.count === 1));
+  assert.deepEqual(summaryBody.providerOutbox, { pending: 0 });
 });
