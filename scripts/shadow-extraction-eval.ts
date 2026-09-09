@@ -115,8 +115,8 @@ const classificationRow = (entry: { correct: number; total: number }) => `${entr
 const caseRows = results.map((result) => {
   const classification = result.classification ? `${result.classification.technical ? 'T' : 't'}/${result.classification.earlyCareer ? 'E' : 'e'}/${result.classification.disciplines ? 'D' : 'd'}`
     : result.valid ? '?' : 'invalid';
-  const verdicts = result.valid ? shadowEvalFields.map((field) => `${field.slice(0, 4)}:${verdictOf(field, result)}`).join(' ') : (result.error ? `error: ${result.error.slice(0, 80)}` : result.failures.join('; ').slice(0, 120));
-  return [result.id, result.valid ? 'yes' : 'no', classification, result.valid ? verdicts : '', result.cost ? String(result.cost.actualCostCents) : '-'].join(' | ');
+  const verdicts = result.valid ? shadowEvalFields.map((field) => `${field.slice(0, 4)}:${verdictOf(field, result)}`).join(' ') : (result.error ? `error: ${result.error.slice(0, 100)}` : result.failures.join('; ').slice(0, 200));
+  return [result.id, result.valid ? 'yes' : 'no', classification, verdicts, result.cost ? String(result.cost.actualCostCents) : '-'].join(' | ');
 }).join('\n');
 
 await writeFile(reportMd, `# Shadow extraction evaluation
