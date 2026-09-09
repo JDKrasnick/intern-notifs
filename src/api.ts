@@ -243,7 +243,7 @@ async function applySessionEvent(
   if (updated.status === 'submitted') {
     const application = await users.getApplication(session.userId, session.applicationId);
     if (application && application.status === 'saved') {
-      await users.putApplication(session.userId, { ...application, status: 'applied', updatedAt: timestamp });
+      const dequeued = { ...application }; delete dequeued.queuedAt; await users.putApplication(session.userId, { ...dequeued, status: 'applied', updatedAt: timestamp });
     }
   }
   return { statusCode: 200, body: { session: safeSession(updated) } };
@@ -304,6 +304,17 @@ function alertSettings(
     followUpDays,
     ...(quietHours ? { quietHours: quietHours as { start: string; end: string; timezone: string } } : {}),
   };
+}
+
+function applicationHandoff(
+  value: unknown,
+  previous?: UserPreferences['applicationHandoff'],
+): NonNullable<UserPreferences['applicationHandoff']> {
+  const handoff = value ?? previous ?? 'window';
+  if (handoff !== 'window' && handoff !== 'tab') {
+    throw new Error('applicationHandoff must be window or tab');
+  }
+  return handoff;
 }
 
 function requireProfile(value: Record<string, unknown>, userId: string): ApplicantProfile {
@@ -498,7 +509,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
         });
       }
       if (method === 'GET' && path === '/me/preferences') return reply(200, (await dependencies.users.getPreferences(userId)) ?? { userId, filter: {}, alertsEnabled: false, onboardingComplete: false });
-      if (method === 'PUT' && path === '/me/preferences') { const body = parseBody(event); const previous = await dependencies.users.getPreferences(userId); const filter = parseJobFilter(body.filter ?? previous?.filter ?? {}); const push = pushPreferences(body.push); const value: UserPreferences = { userId, filter: filter ?? {}, alertsEnabled: typeof body.alertsEnabled === 'boolean' ? body.alertsEnabled : previous?.alertsEnabled ?? false, emailAlertsEnabled: typeof body.emailAlertsEnabled === 'boolean' ? body.emailAlertsEnabled : previous?.emailAlertsEnabled ?? false, onboardingComplete: typeof body.onboardingComplete === 'boolean' ? body.onboardingComplete : previous?.onboardingComplete ?? false, alertSettings: alertSettings(body.alertSettings, previous?.alertSettings), ...(push !== undefined ? { push } : previous?.push ? { push: previous.push } : {}), ...(previous?.lastCatalogOpenedAt ? { lastCatalogOpenedAt: previous.lastCatalogOpenedAt } : {}), updatedAt: now() }; await dependencies.users.putPreferences(value); return reply(200, value); }
+      if (method === 'PUT' && path === '/me/preferences') { const body = parseBody(event); const previous = await dependencies.users.getPreferences(userId); const filter = parseJobFilter(body.filter ?? previous?.filter ?? {}); const push = pushPreferences(body.push); const value: UserPreferences = { userId, filter: filter ?? {}, alertsEnabled: typeof body.alertsEnabled === 'boolean' ? body.alertsEnabled : previous?.alertsEnabled ?? false, emailAlertsEnabled: typeof body.emailAlertsEnabled === 'boolean' ? body.emailAlertsEnabled : previous?.emailAlertsEnabled ?? false, onboardingComplete: typeof body.onboardingComplete === 'boolean' ? body.onboardingComplete : previous?.onboardingComplete ?? false, applicationHandoff: applicationHandoff(body.applicationHandoff, previous?.applicationHandoff), alertSettings: alertSettings(body.alertSettings, previous?.alertSettings), ...(push !== undefined ? { push } : previous?.push ? { push: previous.push } : {}), ...(previous?.lastCatalogOpenedAt ? { lastCatalogOpenedAt: previous.lastCatalogOpenedAt } : {}), updatedAt: now() }; await dependencies.users.putPreferences(value); return reply(200, value); }
       if (method === 'POST' && path === '/me/opening') {
         const openedAt = dependencies.now?.() ?? now();
         const previous = await dependencies.users.getPreferences(userId);
@@ -509,6 +520,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
           alertsEnabled: previous?.alertsEnabled ?? false,
           emailAlertsEnabled: previous?.emailAlertsEnabled ?? false,
           onboardingComplete: previous?.onboardingComplete ?? false,
+          ...(previous?.applicationHandoff ? { applicationHandoff: previous.applicationHandoff } : {}),
           ...(previous?.alertSettings ? { alertSettings: previous.alertSettings } : {}),
           ...(previous?.push ? { push: previous.push } : {}),
           lastCatalogOpenedAt: openedAt,
@@ -556,7 +568,13 @@ export function createApiHandler(dependencies: ApiDependencies) {
       if (method === 'GET' && path === '/me/applications') {
         const requestedStatus = event.queryStringParameters?.status;
         if (requestedStatus !== undefined && !statuses.includes(requestedStatus as ApplicationStatus)) return reply(400, { message: `status must be one of ${statuses.join(', ')}` });
-        const applications = (await dependencies.users.listApplications(userId)).filter((application) => !requestedStatus || application.status === requestedStatus);
+        const requestedQueued = event.queryStringParameters?.queued;
+        if (requestedQueued !== undefined && requestedQueued !== 'true' && requestedQueued !== 'false') return reply(400, { message: 'queued must be true or false' });
+        const applications = (await dependencies.users.listApplications(userId)).filter((application) =>
+          (!requestedStatus || application.status === requestedStatus) &&
+          (requestedQueued === undefined || (requestedQueued === 'true'
+            ? application.status === 'saved' && application.queuedAt !== undefined
+            : !(application.status === 'saved' && application.queuedAt !== undefined))));
         const summaries = await Promise.all(applications.map(async (application) => {
           const job = await dependencies.jobs.getJob?.(application.jobId);
           return applicationSummary(application, job, identityUnconfirmedPublicationEnabled);
@@ -573,14 +591,34 @@ export function createApiHandler(dependencies: ApiDependencies) {
           applicationId: existing?.applicationId ?? randomUUID(), jobId: job.jobId, status,
           ...(existing?.appliedAt ? { appliedAt: existing.appliedAt } : status === 'applied' ? { appliedAt: timestamp } : {}),
           ...(existing?.detection ? { detection: existing.detection } : {}),
+          ...(status === 'saved' ? { queuedAt: existing?.queuedAt ?? timestamp } : {}),
           notes: typeof body.notes === 'string' ? body.notes.slice(0, 5000) : existing?.notes,
           applyMode: integrations.applyMode(job), createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp,
         };
         await dependencies.users.putApplication(userId, application);
-        return reply(existing ? 200 : 201, { ...application, officialApplyUrl: application.applyMode === 'official-form' ? job.applyUrl : undefined });
+        return reply(existing ? 200 : 201, {
+          ...applicationSummary(application, job, identityUnconfirmedPublicationEnabled),
+          officialApplyUrl: application.applyMode === 'official-form' ? job.applyUrl : undefined,
+        });
       }
       const appMatch = path.match(/^\/me\/applications\/([^/]+)$/);
-      if (method === 'PATCH' && appMatch) { const current = await dependencies.users.getApplication(userId, decodeURIComponent(appMatch[1])); if (!current) return reply(404, { message: 'Application not found' }); const body = parseBody(event); if (body.status !== undefined && !statuses.includes(body.status as ApplicationStatus)) return reply(400, { message: `status must be one of ${statuses.join(', ')}` }); const timestamp = now(); const updated: ApplicationRecord = { ...current, ...(body.status ? { status: body.status as ApplicationStatus } : {}), ...(!current.appliedAt && body.status === 'applied' ? { appliedAt: timestamp } : {}), ...(typeof body.notes === 'string' ? { notes: body.notes.slice(0, 5000) } : {}), updatedAt: timestamp }; await dependencies.users.putApplication(userId, updated); return reply(200, updated); }
+      if (method === 'PATCH' && appMatch) {
+        const current = await dependencies.users.getApplication(userId, decodeURIComponent(appMatch[1]));
+        if (!current) return reply(404, { message: 'Application not found' });
+        const body = parseBody(event);
+        if (body.status !== undefined && !statuses.includes(body.status as ApplicationStatus)) return reply(400, { message: `status must be one of ${statuses.join(', ')}` });
+        if (body.queued !== undefined && typeof body.queued !== 'boolean') return reply(400, { message: 'queued must be a boolean' });
+        const timestamp = now();
+        const nextStatus = (body.status ? body.status as ApplicationStatus : current.status);
+        if (body.queued === true && (current.status !== 'saved' || nextStatus !== 'saved')) return reply(409, { message: 'Only roles to apply to can queue' });
+        const updated: ApplicationRecord = { ...current, ...(body.status ? { status: body.status as ApplicationStatus } : {}), ...(!current.appliedAt && body.status === 'applied' ? { appliedAt: timestamp } : {}), ...(typeof body.notes === 'string' ? { notes: body.notes.slice(0, 5000) } : {}), updatedAt: timestamp };
+        if (nextStatus !== 'saved') delete updated.queuedAt;
+        else if (body.queued === true) updated.queuedAt = current.queuedAt ?? timestamp;
+        else if (body.queued === false) delete updated.queuedAt;
+        await dependencies.users.putApplication(userId, updated);
+        const job = await dependencies.jobs.getJob?.(updated.jobId);
+        return reply(200, applicationSummary(updated, job, identityUnconfirmedPublicationEnabled));
+      }
       if (method === 'DELETE' && appMatch) { const current = await dependencies.users.getApplication(userId, decodeURIComponent(appMatch[1]!)); if (!current) return reply(404, { message: 'Application not found' }); if (current.status !== 'saved') return reply(409, { message: 'Only saved roles can be unsaved' }); await dependencies.users.deleteApplication(userId, current.applicationId); return reply(204, {}); }
       const applicationSessionMatch = path.match(/^\/me\/applications\/([^/]+)\/assistance-sessions$/);
       if (method === 'POST' && applicationSessionMatch) {

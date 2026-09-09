@@ -1,9 +1,12 @@
 import type { BatchGetCommand, BatchWriteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it, vi } from 'vitest';
+import { D1UserStore } from '../cloudflare/d1-store.js';
+import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 import { createDynamoDocumentClient, deletedUserTombstoneKey, DynamoInternshipStore, DynamoUserStore, MemoryUserStore } from '../src/store.js';
 import { buildPostingIdentity } from '../src/identity/posting.js';
 import { catalogGroupDetails, groupCatalogJobs } from '../src/catalog-groups.js';
-import type { CatalogAdmission, DeliveryReceipt, Internship, PostingIdentityDecision, SourceOccurrenceState } from '../src/types.js';
+import type { ApplicationRecord, CatalogAdmission, DeliveryReceipt, Internship, PostingIdentityDecision, SourceOccurrenceState } from '../src/types.js';
 
 const job = (title = 'Software Engineering Intern', overrides: Partial<Internship> = {}): Internship => ({
   jobId: 'job-1', company: 'Acme', title, location: 'Remote', season: 'summer-2027', applyUrl: 'https://careers.example.test/job-1',
@@ -360,6 +363,41 @@ describe('DynamoDB persistence contract', () => {
     send.mockResolvedValueOnce({ Items: [{ value: { applicationId: 'new', updatedAt: '2026-07-02T00:00:00.000Z' } }] });
     expect((await store.listApplications('student-a')).map((application) => application.applicationId)).toEqual(['new', 'old']);
     expect((send.mock.calls[1]?.[0] as QueryCommand).input.ExclusiveStartKey).toEqual({ pk: 'USER#student-a', sk: 'APPLICATION#old' });
+  });
+
+  it('round-trips queue membership on application records', async () => {
+    const queued: ApplicationRecord = { applicationId: 'app-1', jobId: 'job-1', status: 'saved', queuedAt: '2026-09-01T00:00:00.000Z', createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' };
+    const memory = new MemoryUserStore();
+    await memory.putApplication('student-a', queued);
+    expect(await memory.getApplication('student-a', 'app-1')).toEqual(queued);
+    const { send, client } = fakeClient(); const store = new DynamoUserStore('users-table', client);
+    send.mockResolvedValueOnce({});
+    await store.putApplication('student-a', queued);
+    expect((send.mock.calls[0]?.[0] as PutCommand).input).toMatchObject({
+      TableName: 'users-table',
+      Item: { pk: 'USER#student-a', sk: 'APPLICATION#app-1', value: queued },
+    });
+    send.mockResolvedValueOnce({ Item: { value: queued } });
+    expect(await store.getApplication('student-a', 'app-1')).toEqual(queued);
+    const sqlite = new DatabaseSync(':memory:');
+    sqlite.exec('CREATE TABLE user_items (user_id TEXT NOT NULL, item_key TEXT NOT NULL, kind TEXT NOT NULL, value TEXT NOT NULL, active_device INTEGER NOT NULL DEFAULT 0, device_token TEXT, receipt_state TEXT, session_id TEXT, expires_at INTEGER, PRIMARY KEY (user_id, item_key))');
+    const d1 = {
+      prepare: (query: string) => {
+        const statement = sqlite.prepare(query);
+        const prepared = (values: unknown[]): D1PreparedStatement => ({
+          bind: (...next: unknown[]) => prepared(next),
+          first: async <T,>() => (statement.get(...(values as [])) as T | undefined) ?? null,
+          all: async <T,>() => ({ results: statement.all(...(values as [])) as T[] }),
+          run: async () => ({ meta: { changes: Number(statement.run(...(values as [])).changes) } }),
+        });
+        return prepared([]);
+      },
+      batch: async (statements: D1PreparedStatement[]) => Promise.all(statements.map((item) => item.run())),
+    } as unknown as D1Database;
+    const d1Users = new D1UserStore(d1);
+    await d1Users.putApplication('student-a', queued);
+    expect(await d1Users.getApplication('student-a', 'app-1')).toEqual(queued);
+    sqlite.close();
   });
 
   it('removes notification receipts alongside every other memory-store record during account deletion', async () => {

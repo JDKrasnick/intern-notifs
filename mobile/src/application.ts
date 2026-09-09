@@ -16,3 +16,44 @@ export function resolveApplicationJob<T extends ApplicationJobSummary>(
 ): ApplicationJobSummary | T | undefined {
   return application.job ?? catalogJobs.find((job) => job.jobId === application.jobId);
 }
+
+export type QueueEntry = {
+  applicationId: string;
+  status: string;
+  queuedAt?: string;
+  createdAt?: string;
+  jobId: string;
+  job?: ApplicationJobSummary;
+};
+export function sortApplyQueue<T extends QueueEntry>(applications: T[]): T[] {
+  return applications
+    .filter((application) => application.status === 'saved' && application.queuedAt !== undefined)
+    .sort((a, b) => (a.queuedAt ?? a.createdAt ?? '').localeCompare(b.queuedAt ?? b.createdAt ?? ''));
+}
+
+export function queueEntryTarget<T extends QueueEntry>(
+  item: T,
+  catalogJobs: Array<ApplicationJobSummary>,
+): { jobId: string; applyUrl: string } | undefined {
+  const job = resolveApplicationJob(item, catalogJobs);
+  const availability = job && 'availability' in job && job.availability
+    ? job.availability
+    : job?.open ? 'available' : 'closed';
+  const applyUrl = job && 'applyUrl' in job ? job.applyUrl : undefined;
+  return availability === 'available' && applyUrl ? { jobId: job.jobId, applyUrl } : undefined;
+}
+
+export function nextAvailableQueueEntry<T extends QueueEntry>(
+  queue: T[],
+  catalogJobs: Array<ApplicationJobSummary>,
+  fromIndex = 0,
+): T | undefined {
+  return queue.slice(fromIndex).find((item) => queueEntryTarget(item, catalogJobs) !== undefined);
+}
+
+export type QueueBulkSpec = number | "half" | "all";
+export function selectBulkTargets<T>(targets: T[], spec: QueueBulkSpec): T[] {
+  if (spec === "all") return targets;
+  if (spec === "half") return targets.slice(0, Math.max(1, Math.ceil(targets.length / 2)));
+  return targets.slice(0, Math.max(0, spec));
+}

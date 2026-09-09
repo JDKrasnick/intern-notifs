@@ -12,6 +12,8 @@ export interface ApplicationRecord {
   createdAt: string;
   /** Submission timestamp, whether manually confirmed or detected from mail metadata. */
   appliedAt?: string;
+  /** Queue membership timestamp; only set while status is 'saved'. */
+  queuedAt?: string;
   /** Mail-derived provenance is removed on Gmail disconnect without changing status. */
   detection?: { source: 'gmail'; detectedAt: string };
   notes?: string;
@@ -20,6 +22,7 @@ export interface ApplicationRecord {
 }
 
 export type AlertDelivery = 'immediate' | 'daily-digest';
+export type ApplicationHandoff = 'window' | 'tab';
 
 /** Delivery preferences are stored separately from the role filter so they can evolve independently. */
 export interface AlertSettings {
@@ -36,6 +39,8 @@ export interface UserPreferences {
   /** Email is a separate channel and is never inferred from push opt-in. */
   emailAlertsEnabled?: boolean;
   onboardingComplete: boolean;
+  /** Web-only preference for opening the employer's official form. */
+  applicationHandoff?: ApplicationHandoff;
   /**
    * The bounded timestamp used by the signed-in launch inbox. A missing value
    * means this is the user's first launch after the feature was introduced.

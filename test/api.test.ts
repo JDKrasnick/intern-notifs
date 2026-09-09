@@ -98,6 +98,9 @@ describe('public API ownership boundary', () => {
     expect((await handler(event(undefined, 'GET', '/me/applications'))).statusCode).toBe(401);
     const created = await handler(event('user-a', 'POST', '/me/applications', { jobId: 'job-1', notes: 'Tailor résumé' }));
     expect(created.statusCode).toBe(201);
+    expect(JSON.parse(created.body)).toMatchObject({
+      job: { jobId: 'job-1', company: 'Acme', title: 'Software Intern', availability: 'available' },
+    });
     expect(JSON.parse((await handler(event('user-b', 'GET', '/me/applications'))).body)).toEqual({ applications: [] });
     const applicationId = JSON.parse(created.body).applicationId as string;
     expect((await handler(event('user-b', 'PATCH', `/me/applications/${applicationId}`, { status: 'offer' }))).statusCode).toBe(404);
@@ -127,6 +130,51 @@ describe('public API ownership boundary', () => {
     expect((await handler(event('owner', 'DELETE', `/me/applications/${secondId}`))).statusCode).toBe(409);
     expect(JSON.parse((await handler(event('owner', 'GET', '/me/applications'))).body).applications)
       .toMatchObject([{ applicationId: secondId, jobId: secondJob.jobId, status: 'applied' }]);
+  });
+  it('queues saved roles and clears queue membership on status advance', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T00:00:00Z'));
+    const jobs = new MemoryInternshipStore(); await jobs.putInternship(job);
+    const users = new MemoryUserStore();
+    const handler = createApiHandler({ jobs, users });
+    const created = await handler(event('user-a', 'POST', '/me/applications', { jobId: job.jobId }));
+    expect(created.statusCode).toBe(201);
+    const saved = JSON.parse(created.body) as { applicationId: string };
+    expect(saved).toMatchObject({ status: 'saved', queuedAt: '2026-09-08T00:00:00.000Z' });
+    expect(JSON.parse((await handler(event('user-a', 'GET', '/me/applications', undefined, { queued: 'true' }))).body).applications)
+      .toMatchObject([{ applicationId: saved.applicationId }]);
+    expect((await handler(event('user-a', 'PATCH', `/me/applications/${saved.applicationId}`, { queued: false }))).statusCode).toBe(200);
+    expect(JSON.parse((await handler(event('user-a', 'GET', '/me/applications', undefined, { queued: 'true' }))).body)).toEqual({ applications: [] });
+    expect(JSON.parse((await handler(event('user-a', 'GET', '/me/applications', undefined, { queued: 'false' }))).body).applications)
+      .toMatchObject([{ applicationId: saved.applicationId, status: 'saved' }]);
+    expect((await handler(event('user-a', 'PATCH', `/me/applications/${saved.applicationId}`, { queued: true }))).statusCode).toBe(200);
+    expect(JSON.parse((await handler(event('user-a', 'GET', '/me/applications', undefined, { queued: 'true' }))).body).applications)
+      .toMatchObject([{ applicationId: saved.applicationId }]);
+    const applied = await handler(event('user-a', 'PATCH', `/me/applications/${saved.applicationId}`, { status: 'applied' }));
+    expect(applied.statusCode).toBe(200);
+    expect(JSON.parse(applied.body)).toMatchObject({
+      applicationId: saved.applicationId,
+      status: 'applied',
+      appliedAt: '2026-09-08T00:00:00.000Z',
+      job: { jobId: job.jobId, title: 'Software Intern' },
+    });
+    expect(JSON.parse((await handler(event('user-a', 'GET', '/me/applications', undefined, { queued: 'true' }))).body)).toEqual({ applications: [] });
+    expect(JSON.parse((await handler(event('user-a', 'GET', '/me/applications'))).body).applications)
+      .toMatchObject([{ applicationId: saved.applicationId, status: 'applied', appliedAt: '2026-09-08T00:00:00.000Z' }]);
+  });
+  it('rejects invalid queue updates', async () => {
+    const jobs = new MemoryInternshipStore(); await jobs.putInternship(job);
+    const users = new MemoryUserStore();
+    const secondJob = { ...job, jobId: 'job-2', title: 'Data Intern', applyUrl: 'https://apply.example.test/role-2', normalizedUrl: 'https://apply.example.test/role-2' };
+    await jobs.putInternship(secondJob);
+    const handler = createApiHandler({ jobs, users });
+    const appliedBody = JSON.parse((await handler(event('user-a', 'POST', '/me/applications', { jobId: secondJob.jobId, status: 'applied' }))).body) as { applicationId: string };
+    const appliedId = appliedBody.applicationId;
+    expect(appliedBody).not.toHaveProperty('queuedAt');
+    const savedId = (JSON.parse((await handler(event('user-a', 'POST', '/me/applications', { jobId: job.jobId }))).body) as { applicationId: string }).applicationId;
+    expect((await handler(event('user-a', 'PATCH', `/me/applications/${savedId}`, { queued: 'yes' }))).statusCode).toBe(400);
+    expect((await handler(event('user-a', 'PATCH', `/me/applications/${appliedId}`, { queued: true }))).statusCode).toBe(409);
+    expect((await handler(event('user-a', 'GET', '/me/applications', undefined, { queued: 'maybe' }))).statusCode).toBe(400);
   });
   it('persists per-user alert templates without resetting existing alert preferences', async () => {
     const jobs = new MemoryInternshipStore(); const users = new MemoryUserStore(); const handler = createApiHandler({ jobs, users });
@@ -167,6 +215,7 @@ describe('public API ownership boundary', () => {
       applicationReminders: true,
       followUpDays: 7
     });
+    expect(preference?.applicationHandoff).toBe('window');
     expect(hasUndefined(preference)).toBe(false);
   });
   it('creates a versioned, no-submit Greenhouse assistance session while keeping unknown and LinkedIn destinations manual', async () => {

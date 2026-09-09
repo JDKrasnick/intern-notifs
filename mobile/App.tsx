@@ -67,7 +67,7 @@ import {
   type FilterMatchReason,
   type JobRouteState,
 } from "./src/job-detail";
-import { resolveApplicationJob, type ApplicationJobSummary } from "./src/application";
+import { nextAvailableQueueEntry, queueEntryTarget, resolveApplicationJob, selectBulkTargets, sortApplyQueue, type ApplicationJobSummary } from "./src/application";
 import {
   appSettingsPayload,
   jobPreferencesPayload,
@@ -176,6 +176,8 @@ type Application = {
   applicationId: string;
   jobId: string;
   status: string;
+  queuedAt?: string;
+  createdAt?: string;
   appliedAt?: string;
   detection?: { source: "gmail"; detectedAt: string };
   notes?: string;
@@ -249,11 +251,13 @@ type AlertSettings = {
   applicationReminders: boolean;
   followUpDays: number;
 };
+type ApplicationHandoff = "window" | "tab";
 type Preference = {
   filter: JobFilter;
   alertsEnabled: boolean;
   emailAlertsEnabled?: boolean;
   onboardingComplete: boolean;
+  applicationHandoff?: ApplicationHandoff;
   alertSettings?: AlertSettings;
   push?: PushPreferences;
 };
@@ -376,7 +380,18 @@ function useSheetEntranceOffset(visible: boolean) {
   return offset;
 }
 
-async function openOfficialApplication(url: string) {
+function openWebApplication(url: string, handoff: ApplicationHandoff) {
+  if (handoff === "tab") return window.open(url, "_blank");
+  const width = window.screen?.availWidth || window.innerWidth;
+  const height = window.screen?.availHeight || window.innerHeight;
+  return window.open(url, "_blank", `popup=yes,width=${width},height=${height},left=0,top=0`);
+}
+
+async function openOfficialApplication(
+  url: string,
+  handoff: ApplicationHandoff = "window",
+  onOpened?: () => void,
+) {
   if (!/^https:\/\//i.test(url)) {
     Alert.alert(
       "Application link unavailable",
@@ -385,7 +400,18 @@ async function openOfficialApplication(url: string) {
     return;
   }
 
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    const applicationWindow = openWebApplication(url, handoff);
+    if (applicationWindow) {
+      applicationWindow.opener = null;
+      onOpened?.();
+    }
+    else Alert.alert("Pop-up blocked", "Allow pop-ups for InternNotifs, then try opening the application again.");
+    return;
+  }
+
   try {
+    onOpened?.();
     await WebBrowser.openBrowserAsync(url);
   } catch {
     Alert.alert(
@@ -393,6 +419,29 @@ async function openOfficialApplication(url: string) {
       "Please try again or open the employer's site from another device.",
     );
   }
+}
+
+type WebShortcut = {
+  key: string;
+  onPress: () => void;
+  enabled?: boolean;
+};
+
+function useWebKeyboardShortcuts(shortcuts: WebShortcut[]) {
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "")) return;
+      const shortcut = shortcuts.find((candidate) => candidate.key === event.key.toLowerCase() && candidate.enabled !== false);
+      if (!shortcut) return;
+      event.preventDefault();
+      shortcut.onPress();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [shortcuts]);
 }
 
 function JobSource({ source, showIdentityUnconfirmed = false }: { source: ReturnType<typeof sourcePresentation>; showIdentityUnconfirmed?: boolean }) {
@@ -460,8 +509,10 @@ function JobCard({
   job,
   onOpen,
   applicationStatus,
+  isQueued,
   isNew = false,
   onSaveForWeb,
+  onSaveForLater,
   isSavingForWeb = false,
   onHideLocally,
   onUnsave,
@@ -469,9 +520,13 @@ function JobCard({
   job: Job;
   onOpen: () => void;
   applicationStatus?: string;
+  /** Explicit queue membership; defaults to saved status when omitted (guest). */
+  isQueued?: boolean;
   isNew?: boolean;
-  /** Saving is account-backed, so the same role is available in the web app. */
+  /** Adds an already-saved role to the apply queue. */
   onSaveForWeb?: () => void;
+  /** Save without queueing; only offered for roles with no application record. */
+  onSaveForLater?: () => void;
   isSavingForWeb?: boolean;
   onHideLocally?: () => void;
   onUnsave?: () => void;
@@ -485,9 +540,10 @@ function JobCard({
   const hideFade = useRef(new Animated.Value(1)).current;
   const hideScale = useRef(new Animated.Value(1)).current;
   const hideTranslateY = useRef(new Animated.Value(0)).current;
+  const canSaveForWeb = Boolean(onSaveForWeb) && !isSavingForWeb && (!applicationStatus || (applicationStatus === "saved" && !(isQueued ?? true)));
   const [isHiding, setIsHiding] = useState(false);
-  const canSaveForWeb = Boolean(onSaveForWeb) && !applicationStatus && !isSavingForWeb;
-  const isSavedForWeb = applicationStatus === "saved";
+  const isSaved = applicationStatus === "saved";
+  const isSavedForWeb = isQueued ?? applicationStatus === "saved";
   const saveProgressLabel = isSavedForWeb ? "Unsaving…" : "Saving…";
   const canHideLocally = Boolean(onHideLocally);
   const postingTiming = postingTimingPresentation(job.sourceReferences, job.firstSeenAt);
@@ -588,7 +644,7 @@ function JobCard({
             style={[styles.swipeSaveAction, { opacity: saveActionProgress }]}
           >
             <Ionicons name="bookmark" size={20} color="#FFFFFF" />
-            <Text style={styles.swipeSaveActionText}>{isSavingForWeb ? saveProgressLabel : "Save"}</Text>
+            <Text style={styles.swipeSaveActionText}>{isSavingForWeb ? saveProgressLabel : "Mark"}</Text>
           </Animated.View>
         ) : null}
         {canHideLocally ? (
@@ -609,17 +665,17 @@ function JobCard({
             accessibilityLabel={`${recencyBadge ? `${recencyBadge} role, ` : ""}${display.title} at ${display.company}, ${display.location}, ${postingTiming.summary}, ${source.primary}${source.corroboration ? ", corroborated by a community listing" : ""}${job.postingIdentityStatus === "unconfirmed" ? ", identity unconfirmed" : ""}${applicationStatus ? `, ${applicationStatus}` : ""}`}
             accessibilityHint={
               canSaveForWeb && canHideLocally
-                ? "Swipe left to save this role for the web app, or swipe right to hide it on this device."
+                ? "Swipe left to add this role to the apply queue, or swipe right to hide it on this device."
                 : canSaveForWeb
-                  ? "Swipe left to save this role and apply later in the web app."
+                  ? "Swipe left to add this role to the queue and apply later."
                   : canHideLocally
                     ? "Swipe right to hide this role on this device."
                     : undefined
             }
             accessibilityActions={
               [
-                ...(canSaveForWeb ? [{ name: "save", label: "Save for web" }] : []),
-                ...(isSavedForWeb && onUnsave ? [{ name: "unsave", label: "Unsave" }] : []),
+                ...(canSaveForWeb ? [{ name: "save", label: "Add to apply queue" }] : []),
+                ...(isSavedForWeb && onUnsave ? [{ name: "unsave", label: "Remove from queue" }] : []),
                 ...(canHideLocally ? [{ name: "hide", label: "Hide on this device" }] : []),
               ]
             }
@@ -673,22 +729,28 @@ function JobCard({
                     <Text style={styles.webSaveButtonText}>{saveProgressLabel}</Text>
                   </View>
                 ) : null}
-                {!isSavingForWeb && isSavedForWeb && onUnsave ? (
-                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Unsave" onPress={handleUnsave} style={styles.webUnsaveButtonCompact}>
+                {!isSavingForWeb && isSaved ? (
+                  <View accessibilityLabel="Saved" style={styles.webSavedButtonCompact}>
                     <Ionicons name="bookmark" size={14} color={colors.signal} />
-                    <Text style={styles.webUnsaveButtonText}>Saved</Text>
-                  </TouchableOpacity>
-                ) : null}
-                {!isSavingForWeb && !applicationStatus && canSaveForWeb ? (
-                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Save for web" onPress={handleSave} style={styles.webSaveButtonCompact}>
-                    <Ionicons name="bookmark" size={14} color={colors.ink} />
-                    <Text style={styles.webSaveButtonText}>Save</Text>
-                  </TouchableOpacity>
+                    <Text style={styles.webSavedButtonText}>Saved</Text>
+                  </View>
                 ) : null}
                 {canHideLocally ? (
                   <TouchableOpacity accessibilityRole="button" accessibilityLabel="Hide on this device" onPress={handleHide} style={styles.webHideButtonCompact}>
                     <Ionicons name="eye-off-outline" size={14} color={colors.muted} />
                     <Text style={styles.webHideButtonText}>Hide</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {!isSavingForWeb && isSavedForWeb && onUnsave ? (
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Remove from queue" onPress={handleUnsave} style={styles.webUnsaveButtonCompact}>
+                    <Ionicons name="bookmark" size={14} color={colors.signal} />
+                    <Text style={styles.webUnsaveButtonText}>In queue</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {canSaveForWeb ? (
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Add to apply queue" accessibilityHint="Saves this role and adds it to the apply queue" onPress={handleSave} style={styles.webSaveButtonCompact}>
+                    <Ionicons name="bookmark" size={14} color={colors.ink} />
+                    <Text style={styles.webSaveButtonText}>Apply</Text>
                   </TouchableOpacity>
                 ) : null}
               </View>
@@ -733,9 +795,11 @@ function CatalogGroupCard({
   onOpenRole,
   status = "open",
   onSaveForWeb,
+  onSaveForLater,
   isSavingForWeb = false,
   onHideLocally,
   applicationStatus,
+  isQueued,
   onUnsave,
 }: {
   group: CatalogGroupRow;
@@ -743,9 +807,12 @@ function CatalogGroupCard({
   onOpenRole: (job: Job) => void;
   status?: "open" | "closed";
   onSaveForWeb?: () => void;
+  onSaveForLater?: () => void;
   isSavingForWeb?: boolean;
   onHideLocally?: () => void;
   applicationStatus?: string;
+  /** Explicit queue membership; defaults to saved status when omitted (guest). */
+  isQueued?: boolean;
   onUnsave?: () => void;
 }) {
   const motionAllowed = useContext(MotionAllowedContext);
@@ -754,9 +821,10 @@ function CatalogGroupCard({
   const hideTranslateY = useRef(new Animated.Value(0)).current;
   const [isHiding, setIsHiding] = useState(false);
   const translateX = useRef(new Animated.Value(0)).current;
-  const isSaved = applicationStatus === "saved";
+  const isSaved = isQueued ?? applicationStatus === "saved";
+  const hasSaved = applicationStatus === "saved";
   const saveProgressLabel = isSaved ? "Unsaving…" : "Saving…";
-  const canSaveForWeb = Boolean(onSaveForWeb) && !isSaved && !isSavingForWeb;
+  const canSaveForWeb = Boolean(onSaveForWeb) && !isSavingForWeb && (!applicationStatus || (applicationStatus === "saved" && !isSaved));
   const canHideLocally = Boolean(onHideLocally);
   const handleHide = () => {
     if (isHiding || !onHideLocally) return;
@@ -805,7 +873,7 @@ function CatalogGroupCard({
   const hideActionProgress = translateX.interpolate({ inputRange: [0, 36, 108], outputRange: [0, 0.32, 1], extrapolate: "clamp" });
   if (catalogCardKind(group) === "role") {
     const job = catalogRoleJob(group.featuredRole);
-    return <JobCard job={job} onOpen={() => onOpenRole(job)} onSaveForWeb={onSaveForWeb} isSavingForWeb={isSavingForWeb} onHideLocally={onHideLocally} applicationStatus={applicationStatus} onUnsave={onUnsave} />;
+    return <JobCard job={job} onOpen={() => onOpenRole(job)} onSaveForWeb={onSaveForWeb} onSaveForLater={onSaveForLater} isSavingForWeb={isSavingForWeb} onHideLocally={onHideLocally} applicationStatus={applicationStatus} isQueued={isQueued} onUnsave={onUnsave} />;
   }
   const label = catalogGroupAvailabilityLabel(group, status);
   const education = group.education
@@ -827,7 +895,7 @@ function CatalogGroupCard({
         {canSaveForWeb || isSavingForWeb ? (
           <Animated.View pointerEvents="none" style={[styles.swipeSaveAction, { opacity: saveActionProgress }]}>
             <Ionicons name="bookmark" size={20} color="#FFFFFF" />
-            <Text style={styles.swipeSaveActionText}>{isSavingForWeb ? saveProgressLabel : "Save"}</Text>
+            <Text style={styles.swipeSaveActionText}>{isSavingForWeb ? saveProgressLabel : "Mark"}</Text>
           </Animated.View>
         ) : null}
         {canHideLocally ? (
@@ -888,22 +956,28 @@ function CatalogGroupCard({
                     <Text style={styles.webSaveButtonText}>{saveProgressLabel}</Text>
                   </View>
                 ) : null}
-                {!isSavingForWeb && isSaved && onUnsave ? (
-                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Unsave" onPress={() => { if (!onUnsave) return; onUnsave(); }} style={styles.webUnsaveButtonCompact}>
+                {!isSavingForWeb && hasSaved ? (
+                  <View accessibilityLabel="Saved" style={styles.webSavedButtonCompact}>
                     <Ionicons name="bookmark" size={14} color={colors.signal} />
-                    <Text style={styles.webUnsaveButtonText}>Saved</Text>
-                  </TouchableOpacity>
-                ) : null}
-                {canSaveForWeb ? (
-                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Save for web" onPress={handleSave} style={styles.webSaveButtonCompact}>
-                    <Ionicons name="bookmark" size={14} color={colors.ink} />
-                    <Text style={styles.webSaveButtonText}>Save</Text>
-                  </TouchableOpacity>
+                    <Text style={styles.webSavedButtonText}>Saved</Text>
+                  </View>
                 ) : null}
                 {canHideLocally ? (
                   <TouchableOpacity accessibilityRole="button" accessibilityLabel="Hide on this device" onPress={handleHide} style={styles.webHideButtonCompact}>
                     <Ionicons name="eye-off-outline" size={14} color={colors.muted} />
                     <Text style={styles.webHideButtonText}>Hide</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {!isSavingForWeb && isSaved && onUnsave ? (
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Remove from queue" onPress={() => { if (!onUnsave) return; onUnsave(); }} style={styles.webUnsaveButtonCompact}>
+                    <Ionicons name="bookmark" size={14} color={colors.signal} />
+                    <Text style={styles.webUnsaveButtonText}>In queue</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {canSaveForWeb ? (
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Add to apply queue" accessibilityHint="Saves this role and adds it to the apply queue" onPress={handleSave} style={styles.webSaveButtonCompact}>
+                    <Ionicons name="bookmark" size={14} color={colors.ink} />
+                    <Text style={styles.webSaveButtonText}>Apply</Text>
                   </TouchableOpacity>
                 ) : null}
               </View>
@@ -1020,8 +1094,10 @@ function NewRoleCard({
   job,
   onOpen,
   applicationStatus,
+  isQueued,
   index,
   onSaveForWeb,
+  onSaveForLater,
   isSavingForWeb,
   onHideLocally,
   onUnsave,
@@ -1029,8 +1105,10 @@ function NewRoleCard({
   job: Job;
   onOpen: () => void;
   applicationStatus?: string;
+  isQueued?: boolean;
   index: number;
   onSaveForWeb?: () => void;
+  onSaveForLater?: () => void;
   isSavingForWeb?: boolean;
   onHideLocally?: () => void;
   onUnsave?: () => void;
@@ -1064,15 +1142,16 @@ function NewRoleCard({
     animation.start();
     return () => animation.stop();
   }, [glow, index, lift, motionAllowed, opacity]);
-
   return (
     <Animated.View style={{ opacity, transform: [{ translateY: lift }] }}>
       <JobCard
         job={job}
         onOpen={onOpen}
         applicationStatus={applicationStatus}
+        isQueued={isQueued}
         isNew
         onSaveForWeb={onSaveForWeb}
+        onSaveForLater={onSaveForLater}
         isSavingForWeb={isSavingForWeb}
         onHideLocally={onHideLocally}
         onUnsave={onUnsave}
@@ -1094,8 +1173,10 @@ function JobDetailSheet({
   onApply,
   onOpenListing,
   onSaveForWeb,
+  onSaveForLater,
   isSavingForWeb = false,
   applicationStatus,
+  isQueued,
   onHideLocally,
   onUnsave,
 }: {
@@ -1110,8 +1191,10 @@ function JobDetailSheet({
   onApply: (job: Job) => void;
   onOpenListing: (job: Job) => void;
   onSaveForWeb?: (job: Job) => void;
+  onSaveForLater?: (job: Job) => void;
   isSavingForWeb?: boolean;
   applicationStatus?: string;
+  isQueued?: boolean;
   onHideLocally?: (job: Job) => void;
   onUnsave?: (job: Job) => void;
 }) {
@@ -1140,8 +1223,9 @@ function JobDetailSheet({
     ? postingTimingPresentation(role.sourceReferences, role.firstSeenAt)
     : undefined;
   const closedListingUrl = role && !role.open ? validatedOfficialUrl(role) : undefined;
-  const isSaved = applicationStatus === "saved";
-  const canSave = Boolean(role && onSaveForWeb && !isSaved && !isSavingForWeb);
+  const isSaved = isQueued ?? applicationStatus === "saved";
+  const canSave = Boolean(role && onSaveForWeb && !isSavingForWeb && (!applicationStatus || (applicationStatus === "saved" && !isSaved)));
+  const canSaveLater = Boolean(role && onSaveForLater && !applicationStatus && !isSavingForWeb);
   return (
     <Modal
       animationType="none"
@@ -1250,7 +1334,8 @@ function JobDetailSheet({
                 ) : canSave ? (
                   <TouchableOpacity
                     accessibilityRole="button"
-                    accessibilityLabel="Save for web"
+                    accessibilityLabel="Add to apply queue"
+                    accessibilityHint="Saves this role and adds it to the apply queue"
                     onPress={() => {
                       if (role && onSaveForWeb) onSaveForWeb(role);
                       onDismiss();
@@ -1258,17 +1343,32 @@ function JobDetailSheet({
                     style={styles.sheetSaveBar}
                   >
                     <Ionicons name="bookmark" size={18} color={colors.ink} />
-                    <Text style={styles.sheetSaveBarText}>Save</Text>
+                    <Text style={styles.sheetSaveBarText}>Add to apply queue</Text>
                   </TouchableOpacity>
                 ) : isSaved && onUnsave && role ? (
                   <TouchableOpacity
                     accessibilityRole="button"
-                    accessibilityLabel="Unsave"
+                    accessibilityLabel="Remove from queue"
                     onPress={() => { onUnsave(role); onDismiss(); }}
                     style={styles.sheetSavedBar}
                   >
                     <Ionicons name="bookmark" size={18} color={colors.signal} />
-                    <Text style={styles.sheetSavedBarText}>Saved</Text>
+                    <Text style={styles.sheetSavedBarText}>In queue</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {canSaveLater && role ? (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Save for later"
+                    accessibilityHint="Saves without adding to the apply queue"
+                    onPress={() => {
+                      if (role && onSaveForLater) onSaveForLater(role);
+                      onDismiss();
+                    }}
+                    style={styles.sheetHideBar}
+                  >
+                    <Ionicons name="bookmark-outline" size={18} color={colors.muted} />
+                    <Text style={styles.sheetHideBarText}>Save</Text>
                   </TouchableOpacity>
                 ) : null}
                 {onHideLocally && role ? (
@@ -1292,7 +1392,7 @@ function JobDetailSheet({
                   : greenhouseQuickApply
                   ? "If this employer enables Quick Apply, MyGreenhouse can fill the details you have saved there. Review every answer before submitting."
                   : signedIn
-                  ? "Apply now opens the employer form. Save a role to keep it in your list."
+                  ? "Queued roles are saved automatically. Apply next opens each employer form in turn."
                   : "You’ll complete the employer’s application in your browser."}
               </Text>
             </ScrollView>
@@ -1540,6 +1640,175 @@ function FilterBar({
     </View>
   );
 }
+function QueuePillButton({
+  count,
+  onPress,
+  expanded = false,
+}: {
+  count: number;
+  onPress: () => void;
+  expanded?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel={count > 0 ? `Open apply queue, ${count} ${count === 1 ? "role" : "roles"}` : "Open apply queue"}
+      onPress={onPress}
+      style={styles.queuePill}
+    >
+      <Ionicons name="albums-outline" size={18} color={colors.signal} />
+      <Text style={styles.queuePillText}>Queue</Text>
+      {count > 0 ? <Text style={styles.queuePillCount}>{count}</Text> : null}
+      <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={14} color={colors.muted} />
+    </TouchableOpacity>
+  );
+}
+function QueueBulkButtons({
+  available,
+  onOpenFirst,
+  onBulkOpen,
+  shortcutMode = "none",
+}: {
+  available: Array<{ jobId: string; applyUrl: string }>;
+  onOpenFirst: () => void;
+  onBulkOpen: (targets: Array<{ jobId: string; applyUrl: string }>) => void;
+  shortcutMode?: "all" | "next" | "none";
+}) {
+  if (Platform.OS !== "web" || available.length === 0) return null;
+  const half = Math.max(1, Math.ceil(available.length / 2));
+  const options = [
+    { label: "Next", count: 1, onPress: onOpenFirst, shortcut: "N" },
+    ...(available.length >= 5 ? [{ label: "5", count: 5, onPress: () => onBulkOpen(selectBulkTargets(available, 5)), shortcut: "5" }] : []),
+    ...(available.length >= 10 ? [{ label: "10", count: 10, onPress: () => onBulkOpen(selectBulkTargets(available, 10)), shortcut: "T" }] : []),
+    ...(available.length >= 2 ? [
+      { label: "Half", count: half, onPress: () => onBulkOpen(selectBulkTargets(available, "half")), shortcut: "H" },
+      { label: "All", count: available.length, onPress: () => onBulkOpen(selectBulkTargets(available, "all")), shortcut: "A" },
+    ] : []),
+  ];
+  return (
+    <View style={styles.queueBulkBlock}>
+      <Text style={styles.queueBulkLabel}>Open applications</Text>
+      <View style={styles.queueBulkRow}>
+        {options.map((option) => (
+          <TouchableOpacity
+            key={option.label}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${option.count} ${option.count === 1 ? "application" : "applications"}`}
+            accessibilityHint={shortcutMode === "all" || (shortcutMode === "next" && option.label === "Next") ? `Keyboard shortcut: ${option.shortcut}` : undefined}
+            onPress={option.onPress}
+            style={styles.queueBulkButton}
+          >
+            <Text style={styles.queueBulkButtonLabel}>{option.label}</Text>
+            {shortcutMode === "all" || (shortcutMode === "next" && option.label === "Next") ? <Text style={styles.keyboardShortcut}>{option.shortcut}</Text> : null}
+          </TouchableOpacity>
+        ))}
+      </View>
+      <Text style={styles.queueBulkHint}>{available.length === 1 ? "Open the remaining application." : `Half opens ${half}; all opens ${available.length}.`} Each application opens in a new window.</Text>
+    </View>
+  );
+}
+const QUEUE_PANEL_MAX_ROWS = 6;
+function QueuePanel({
+  queue,
+  jobs,
+  onOpenQueuedRole,
+  onBulkOpenQueue,
+  onViewAll,
+  onCollapse,
+  maxRows = QUEUE_PANEL_MAX_ROWS,
+}: {
+  queue: Application[];
+  jobs: Job[];
+  onOpenQueuedRole?: (target: { jobId: string; applyUrl: string }) => void;
+  onBulkOpenQueue?: (targets: Array<{ jobId: string; applyUrl: string }>) => void;
+  onViewAll?: () => void;
+  onCollapse?: () => void;
+  maxRows?: number;
+}) {
+  const availableTargets = queue
+    .map((item) => queueEntryTarget(item, jobs))
+    .filter((target): target is { jobId: string; applyUrl: string } => target !== undefined);
+  const visible = queue.slice(0, maxRows);
+  const hidden = queue.length - visible.length;
+  return (
+    <View style={styles.queuePanel}>
+      <View style={styles.queuePanelHeader}>
+        <View style={styles.queuePanelHeading}>
+          <View style={styles.queuePanelIcon}>
+            <Ionicons name="albums-outline" size={20} color={colors.signal} />
+          </View>
+          <View>
+            <Text style={styles.queuePanelTitle}>Apply queue</Text>
+            <Text style={styles.queuePanelSubtitle}>{queue.length} {queue.length === 1 ? "role" : "roles"} ready</Text>
+          </View>
+        </View>
+        {onCollapse ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={`Collapse queue list, ${queue.length} ${queue.length === 1 ? "role" : "roles"}`}
+            onPress={onCollapse}
+            style={styles.queuePanelCollapse}
+          >
+            <Ionicons name="chevron-up" size={18} color={colors.muted} />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      {queue.length === 0 ? (
+        <View style={styles.queuePanelEmpty}>
+          <Ionicons name="checkmark-circle-outline" size={22} color={colors.success} />
+          <Text style={styles.queuePanelEmptyText}>Your queue is clear. Mark a role to keep it within reach.</Text>
+        </View>
+      ) : (
+        <View style={styles.queuePanelList}>
+          {onBulkOpenQueue ? (
+            <QueueBulkButtons
+              available={availableTargets}
+              onOpenFirst={() => { const [first] = availableTargets; if (first) onOpenQueuedRole?.(first); }}
+              onBulkOpen={onBulkOpenQueue}
+              shortcutMode="all"
+            />
+          ) : null}
+          {visible.map((item, index) => {
+            const job = resolveApplicationJob(item, jobs);
+            const target = queueEntryTarget(item, jobs);
+            return (
+              <View key={item.applicationId} style={styles.queueSheetRow}>
+                <View style={styles.queueSheetCopy}>
+                  <View style={styles.queueSheetPositionBadge}>
+                    <Text style={styles.queueSheetPosition}>{index + 1}</Text>
+                  </View>
+                  <View style={styles.queueSheetText}>
+                    <Text style={styles.queueRowTitle} numberOfLines={1}>{job?.title ?? "Saved role"}</Text>
+                    <Text style={styles.muted} numberOfLines={1}>{job?.company ?? ""}</Text>
+                  </View>
+                </View>
+                {target && onOpenQueuedRole ? (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open application for ${job?.title ?? "saved role"}${job?.company ? ` at ${job.company}` : ""}`}
+                    onPress={() => onOpenQueuedRole(target)}
+                    style={styles.queueOpenButton}
+                  >
+                    <Text style={styles.queueOpenButtonText}>Open</Text>
+                    <Ionicons name="open-outline" size={15} color={colors.signal} />
+                  </TouchableOpacity>
+                ) : !target ? (
+                  <Text style={styles.muted}>Unavailable</Text>
+                ) : null}
+              </View>
+            );
+          })}
+          {hidden > 0 && onViewAll ? (
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={`View all ${queue.length} queued roles`} onPress={onViewAll} style={styles.queuePanelMoreButton}>
+              <Text style={styles.queuePanelMore}>View all {queue.length}</Text>
+              <Ionicons name="arrow-forward" size={16} color={colors.signal} />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      )}
+    </View>
+  );
+}
 
 function FilterSheet({
   visible,
@@ -1737,34 +2006,45 @@ function TabNavigation({
   active,
   onChange,
   rail = false,
+  badgeCount = 0,
 }: {
-  active: "feed" | "saved" | "profile";
-  onChange: (tab: "feed" | "saved" | "profile") => void;
+  active: "feed" | "queue" | "saved" | "profile";
+  onChange: (tab: "feed" | "queue" | "saved" | "profile") => void;
   rail?: boolean;
+  badgeCount?: number;
 }) {
   const tabs = [
     { key: "feed", label: "Roles", icon: "briefcase-outline", activeIcon: "briefcase" },
-    { key: "saved", label: "Saved", icon: "bookmark-outline", activeIcon: "bookmark" },
+    { key: "queue", label: "Queue", accessibilityLabel: "Apply queue", icon: "albums-outline", activeIcon: "albums" },
+    { key: "saved", label: "Saved", accessibilityLabel: "Saved roles", icon: "bookmark-outline", activeIcon: "bookmark" },
     { key: "profile", label: "Profile", icon: "person-outline", activeIcon: "person" },
   ] as const;
   return (
     <View style={[styles.nav, rail && styles.navRail]} accessibilityRole="tablist">
       {tabs.map((item) => {
         const selected = active === item.key;
+        const badge = item.key === "queue" ? badgeCount : 0;
         return (
           <TouchableOpacity
             key={item.key}
             accessibilityRole="tab"
             aria-selected={selected}
-            accessibilityLabel={item.label}
+            accessibilityLabel={"accessibilityLabel" in item && item.accessibilityLabel ? item.accessibilityLabel : item.label}
             onPress={() => onChange(item.key)}
             style={[styles.navItem, rail && styles.navRailItem]}
           >
-            <Ionicons
-              name={selected ? item.activeIcon : item.icon}
-              size={22}
-              color={selected ? colors.ink : colors.muted}
-            />
+            <View style={styles.navIconWrap}>
+              <Ionicons
+                name={selected ? item.activeIcon : item.icon}
+                size={22}
+                color={selected ? colors.ink : colors.muted}
+              />
+              {badge > 0 ? (
+                <View style={styles.navBadge} accessibilityLabel={`${badge} roles in queue`}>
+                  <Text style={styles.navBadgeText}>{badge > 99 ? "99+" : String(badge)}</Text>
+                </View>
+              ) : null}
+            </View>
             <Text style={[styles.navLabel, selected && styles.navLabelActive]}>
               {item.label}
             </Text>
@@ -1781,35 +2061,46 @@ function ActionButton({
   disabled = false,
   variant = "primary",
   compact = false,
+  tight = false,
+  grow = false,
+  shortcut,
 }: {
   label: string;
   onPress: () => void;
   disabled?: boolean;
   variant?: "primary" | "secondary" | "danger";
   compact?: boolean;
+  tight?: boolean;
+  grow?: boolean;
+  shortcut?: string;
 }) {
   return (
     <TouchableOpacity
       accessibilityRole="button"
+      accessibilityHint={shortcut ? `Keyboard shortcut: ${shortcut}` : undefined}
       aria-disabled={disabled}
       disabled={disabled}
       onPress={onPress}
       style={[
         styles.actionButton,
         variant === "secondary" && styles.actionButtonSecondary,
-        variant === "danger" && styles.actionButtonDanger,
         compact && styles.actionButtonCompact,
+        tight && styles.actionButtonTight,
+        grow && styles.actionButtonGrow,
         disabled && styles.actionButtonDisabled,
       ]}
     >
-      <Text
-        style={[
-          styles.actionButtonText,
-          variant === "secondary" && styles.actionButtonTextSecondary,
-        ]}
-      >
-        {label}
-      </Text>
+      <View style={styles.actionButtonLabel}>
+        <Text
+          style={[
+            styles.actionButtonText,
+            variant === "secondary" && styles.actionButtonTextSecondary,
+          ]}
+        >
+          {label}
+        </Text>
+        {shortcut && Platform.OS === "web" ? <Text style={styles.keyboardShortcut}>{shortcut}</Text> : null}
+      </View>
     </TouchableOpacity>
   );
 }
@@ -1982,8 +2273,6 @@ function launchInterval(previousOpenedAt: string | null) {
   if (Number.isNaN(date.valueOf())) return "your last visit";
   return new Intl.DateTimeFormat(undefined, {
     weekday: "short",
-    month: "short",
-    day: "numeric",
   }).format(date);
 }
 
@@ -1992,7 +2281,9 @@ function LaunchInbox({
   onOpen,
   onViewAll,
   applicationStatuses,
+  queuedJobIds,
   onSaveForWeb,
+  onSaveForLater,
   savingJobIds,
   hiddenJobIds,
   onHideLocally,
@@ -2000,12 +2291,16 @@ function LaunchInbox({
   hiddenFeedbackJob,
   onUndoHide,
   onOpenGroup,
+  queueCount,
+  onOpenQueue,
 }: {
   inbox: LaunchInbox;
   onOpen: (job: Job) => void;
   onViewAll: () => void;
   applicationStatuses: Map<string, string>;
+  queuedJobIds?: Set<string>;
   onSaveForWeb: (job: Job) => void;
+  onSaveForLater?: (job: Job) => void;
   savingJobIds: Set<string>;
   hiddenJobIds: Set<string>;
   onHideLocally: (job: Job) => void;
@@ -2013,6 +2308,8 @@ function LaunchInbox({
   hiddenFeedbackJob?: Job;
   onUndoHide: () => void;
   onOpenGroup: (group: CatalogGroupRow, details?: CatalogGroupDetails) => void;
+  queueCount?: number;
+  onOpenQueue?: () => void;
 }) {
   const visibleJobs = inbox.jobs.filter(
     (job) => !hiddenJobIds.has(job.jobId) || hiddenFeedbackJob?.jobId === job.jobId,
@@ -2030,9 +2327,14 @@ function LaunchInbox({
           <Text accessibilityLabel={`${inbox.total} new matches`} style={styles.inboxCount}>{inbox.total}</Text>
           <Text style={styles.inboxTitle}>new matches</Text>
           <Text style={styles.inboxDescription}>Grouped by employer release and verified program details</Text>
-          <TouchableOpacity accessibilityRole="button" onPress={onViewAll} style={styles.inboxViewAll}>
-            <Text style={styles.inboxViewAllText}>View all internships</Text>
-          </TouchableOpacity>
+          <View style={styles.inboxActions}>
+            <TouchableOpacity accessibilityRole="button" onPress={onViewAll} style={[styles.inboxViewAll, styles.inboxViewAllInline]}>
+              <Text style={styles.inboxViewAllText}>View all internships</Text>
+            </TouchableOpacity>
+            {Platform.OS === "web" && onOpenQueue && queueCount !== undefined ? (
+              <QueuePillButton count={queueCount} onPress={onOpenQueue} />
+            ) : null}
+          </View>
         </View>
       }
       renderItem={({ item, index }) => {
@@ -2045,8 +2347,10 @@ function LaunchInbox({
               job={role}
               onOpen={() => onOpen(role)}
               applicationStatus={applicationStatuses.get(role.jobId)}
+              isQueued={queuedJobIds?.has(role.jobId)}
               index={index}
               onSaveForWeb={() => onSaveForWeb(role)}
+              onSaveForLater={() => onSaveForLater?.(role)}
               isSavingForWeb={savingJobIds.has(role.jobId)}
               onHideLocally={() => onHideLocally(role)}
               onUnsave={() => onUnsave(role)}
@@ -2059,9 +2363,11 @@ function LaunchInbox({
             onOpenGroup={() => onOpenGroup(item, inbox.groups?.[index])}
             onOpenRole={onOpen}
             onSaveForWeb={item.featuredRole ? () => onSaveForWeb(catalogRoleJob(item.featuredRole)) : undefined}
+            onSaveForLater={item.featuredRole && onSaveForLater ? () => onSaveForLater(catalogRoleJob(item.featuredRole)) : undefined}
             isSavingForWeb={item.featuredRole ? savingJobIds.has(item.featuredRole.jobId) : false}
             onHideLocally={item.featuredRole ? () => onHideLocally(catalogRoleJob(item.featuredRole)) : undefined}
             applicationStatus={item.featuredRole ? applicationStatuses.get(item.featuredRole.jobId) : undefined}
+            isQueued={item.featuredRole ? queuedJobIds?.has(item.featuredRole.jobId) : undefined}
             onUnsave={item.featuredRole ? () => onUnsave(catalogRoleJob(item.featuredRole)) : undefined}
           />
         );
@@ -2097,13 +2403,18 @@ function LaunchInbox({
           {inbox.hasMore ? (
             <Text style={styles.inboxOverflow}>Showing the newest 50.</Text>
           ) : null}
-          <TouchableOpacity
-            accessibilityRole="button"
-            onPress={onViewAll}
-            style={styles.inboxViewAll}
-          >
-            <Text style={styles.inboxViewAllText}>View all internships</Text>
-          </TouchableOpacity>
+          <View style={styles.inboxActions}>
+            <TouchableOpacity
+              accessibilityRole="button"
+              onPress={onViewAll}
+              style={[styles.inboxViewAll, styles.inboxViewAllInline]}
+            >
+              <Text style={styles.inboxViewAllText}>View all internships</Text>
+            </TouchableOpacity>
+            {Platform.OS === "web" && onOpenQueue && queueCount !== undefined ? (
+              <QueuePillButton count={queueCount} onPress={onOpenQueue} />
+            ) : null}
+          </View>
           <Text style={styles.inboxSectionLabel}>New matches</Text>
         </View>
       }
@@ -2116,7 +2427,9 @@ function LaunchInbox({
             index={index}
             onOpen={() => onOpen(item)}
             applicationStatus={applicationStatuses.get(item.jobId)}
+            isQueued={queuedJobIds?.has(item.jobId)}
             onSaveForWeb={() => onSaveForWeb(item)}
+            onSaveForLater={() => onSaveForLater?.(item)}
             isSavingForWeb={savingJobIds.has(item.jobId)}
             onHideLocally={() => onHideLocally(item)}
             onUnsave={() => onUnsave(item)}
@@ -2222,10 +2535,18 @@ function GroupedCatalogFeed({
   onOpenGroup,
   onOpenRole,
   onSaveForWeb,
+  onSaveForLater,
   onHideLocally,
   onUnsave,
   savingJobIds,
   applicationStatuses,
+  queuedJobIds,
+  queueCount,
+  onOpenQueue,
+  queue,
+  queueJobs,
+  onOpenQueuedRole,
+  onBulkOpenQueue,
 }: {
   groups: CatalogGroupRow[];
   query: string;
@@ -2243,89 +2564,156 @@ function GroupedCatalogFeed({
   onOpenGroup: (group: CatalogGroupRow) => void;
   onOpenRole: (job: Job) => void;
   onSaveForWeb?: (job: Job) => void | Promise<boolean>;
+  onSaveForLater?: (job: Job) => void | Promise<boolean>;
   onHideLocally?: (job: Job) => void;
   onUnsave?: (job: Job) => void;
   savingJobIds?: Set<string>;
   applicationStatuses?: Map<string, string>;
+  queuedJobIds?: Set<string>;
+  queueCount?: number;
+  onOpenQueue?: () => void;
+  queue?: Application[];
+  queueJobs?: Job[];
+  onOpenQueuedRole?: (target: { jobId: string; applyUrl: string }) => void;
+  onBulkOpenQueue?: (targets: Array<{ jobId: string; applyUrl: string }>) => void;
 }) {
+  const { width } = useWindowDimensions();
+  // The queue panel is a desktop workspace aid. Native keeps Roles focused on
+  // browsing; queued roles remain one tap away in the Queue tab.
+  const showQueueFixture = Platform.OS === "web" && queue !== undefined;
+  const showQueueSidebar = Platform.OS === "web" && width >= 1280 && queue !== undefined;
+  const pushQueueToEdge = showQueueSidebar && width >= 1400;
+  const queueEdgeOffset = 32 + Math.max(0, (width - 1440) / 2);
+  const roleFocusOffset = 28 + Math.min(68, Math.max(0, (width - 1440) / 4));
+  const [queueOpen, setQueueOpen] = useState(false);
   const [sheetVisible, setSheetVisible] = useState(false);
+  const openNextQueuedRole = () => {
+    const target = queue
+      ?.map((item) => queueEntryTarget(item, queueJobs ?? []))
+      .find((item): item is { jobId: string; applyUrl: string } => item !== undefined);
+    if (target) onOpenQueuedRole?.(target);
+  };
+  const availableQueuedTargets = queue
+    ?.map((item) => queueEntryTarget(item, queueJobs ?? []))
+    .filter((item): item is { jobId: string; applyUrl: string } => item !== undefined) ?? [];
+  useWebKeyboardShortcuts([
+    { key: "n", onPress: openNextQueuedRole, enabled: Boolean(availableQueuedTargets.length && onOpenQueuedRole) },
+    { key: "5", onPress: () => onBulkOpenQueue?.(selectBulkTargets(availableQueuedTargets, 5)), enabled: Boolean(onBulkOpenQueue && availableQueuedTargets.length >= 5) },
+    { key: "t", onPress: () => onBulkOpenQueue?.(selectBulkTargets(availableQueuedTargets, 10)), enabled: Boolean(onBulkOpenQueue && availableQueuedTargets.length >= 10) },
+    { key: "h", onPress: () => onBulkOpenQueue?.(selectBulkTargets(availableQueuedTargets, "half")), enabled: Boolean(onBulkOpenQueue && availableQueuedTargets.length >= 2) },
+    { key: "a", onPress: () => onBulkOpenQueue?.(selectBulkTargets(availableQueuedTargets, "all")), enabled: Boolean(onBulkOpenQueue && availableQueuedTargets.length >= 2) },
+  ]);
   return (
-    <>
-      <View style={styles.roleFeedControls}>
-        <PlainTextInput
-          key="catalog-search"
-          value={query}
-          onChangeText={onQueryChange}
-          accessibilityLabel="Search roles, companies, and locations"
-          autoComplete="off"
-          secureTextEntry={false}
-          textContentType="none"
-          placeholder="Search roles, companies, locations"
-          placeholderTextColor={colors.placeholder}
-          style={styles.feedSearch}
-        />
-        <FilterBar activeCount={countActiveCatalogFilters(filters)} onOpen={() => setSheetVisible(true)} />
+    <View style={[styles.roleWorkspace, showQueueSidebar && styles.roleWorkspaceWide]}>
+      <View style={[styles.roleFeedColumn, showQueueSidebar && styles.roleFeedColumnWide, showQueueSidebar && { transform: [{ translateX: roleFocusOffset }] }]}>
+        <View style={[styles.roleFeedControls, showQueueSidebar && styles.roleFeedControlsWide]}>
+          <View style={styles.feedSearchRow}>
+            <PlainTextInput
+              key="catalog-search"
+              value={query}
+              onChangeText={onQueryChange}
+              accessibilityLabel="Search roles, companies, and locations"
+              autoComplete="off"
+              secureTextEntry={false}
+              textContentType="none"
+              placeholder="Search roles, companies, locations"
+              placeholderTextColor={colors.placeholder}
+              style={[styles.feedSearch, styles.feedSearchFlex]}
+            />
+            {!showQueueSidebar && showQueueFixture && queueCount !== undefined ? (
+              <QueuePillButton count={queueCount} expanded={queueOpen} onPress={() => setQueueOpen((open) => !open)} />
+            ) : null}
+          </View>
+          {!showQueueSidebar && showQueueFixture && queueOpen ? (
+            <QueuePanel
+              queue={queue}
+              jobs={queueJobs ?? []}
+              onOpenQueuedRole={onOpenQueuedRole}
+              onBulkOpenQueue={onBulkOpenQueue}
+              onViewAll={onOpenQueue}
+              onCollapse={() => setQueueOpen(false)}
+            />
+          ) : null}
+          <View style={styles.queuePillRow}>
+            <FilterBar activeCount={countActiveCatalogFilters(filters)} onOpen={() => setSheetVisible(true)} />
+          </View>
+        </View>
         <FilterSheet
           visible={sheetVisible}
           filters={filters}
           onFiltersChange={onFiltersChange}
           onClose={() => setSheetVisible(false)}
         />
-      </View>
-      <FlatList
-        data={groups}
-        extraData={[applicationStatuses, savingJobIds]}
-        keyExtractor={(group) => group.groupId}
-        contentContainerStyle={styles.feedListContent}
-        onEndReached={onLoadMore}
-        onEndReachedThreshold={0.6}
-        renderItem={({ item }) => {
-          const featuredJob = item.featuredRole ? catalogRoleJob(item.featuredRole) : undefined;
-          const isSaving = featuredJob ? savingJobIds?.has(featuredJob.jobId) : false;
-          const applicationStatus = featuredJob ? applicationStatuses?.get(featuredJob.jobId) : undefined;
-          return (
-            <CatalogGroupCard
-              group={item}
-              status={filters.jobStatus}
-              onOpenGroup={() => onOpenGroup(item)}
-              onOpenRole={onOpenRole}
-              onSaveForWeb={featuredJob && onSaveForWeb ? () => { void onSaveForWeb(featuredJob); } : undefined}
-              isSavingForWeb={isSaving}
-              onHideLocally={featuredJob && onHideLocally ? () => onHideLocally(featuredJob) : undefined}
-              applicationStatus={applicationStatus}
-              onUnsave={featuredJob && onUnsave ? () => onUnsave(featuredJob) : undefined}
-            />
-          );
-        }}
-        ListEmptyComponent={
-          loading ? <CatalogInitialLoading /> : error ? (
-            <View style={styles.catalogUnavailable}>
-              <EmptyState
-                eyebrow="Catalog unavailable"
-                title="Your latest opportunities will appear here."
-                description="We couldn't refresh the catalog right now. Check your connection and try again."
+        <FlatList
+          style={styles.roleFeedList}
+          data={groups}
+          extraData={[applicationStatuses, savingJobIds]}
+          keyExtractor={(group) => group.groupId}
+          contentContainerStyle={[styles.feedListContent, showQueueSidebar && styles.feedListContentWide]}
+          onEndReached={onLoadMore}
+          onEndReachedThreshold={0.6}
+          renderItem={({ item }) => {
+            const featuredJob = item.featuredRole ? catalogRoleJob(item.featuredRole) : undefined;
+            const isSaving = featuredJob ? savingJobIds?.has(featuredJob.jobId) : false;
+            const applicationStatus = featuredJob ? applicationStatuses?.get(featuredJob.jobId) : undefined;
+            return (
+              <CatalogGroupCard
+                group={item}
+                status={filters.jobStatus}
+                onOpenGroup={() => onOpenGroup(item)}
+                onOpenRole={onOpenRole}
+                onSaveForWeb={featuredJob && onSaveForWeb ? () => { void onSaveForWeb(featuredJob); } : undefined}
+                onSaveForLater={featuredJob && onSaveForLater ? () => { void onSaveForLater(featuredJob); } : undefined}
+                isSavingForWeb={isSaving}
+                onHideLocally={featuredJob && onHideLocally ? () => onHideLocally(featuredJob) : undefined}
+                applicationStatus={applicationStatus}
+                isQueued={featuredJob ? queuedJobIds?.has(featuredJob.jobId) : undefined}
+                onUnsave={featuredJob && onUnsave ? () => onUnsave(featuredJob) : undefined}
               />
-              <ActionButton label="Try again" onPress={onRetry} />
-            </View>
-          ) : (
-            <EmptyState
-              eyebrow="Search"
-              title="Nothing fits that search yet."
-              description="Try a company, role, or location with fewer terms."
+            );
+          }}
+          ListEmptyComponent={
+            loading ? <CatalogInitialLoading /> : error ? (
+              <View style={styles.catalogUnavailable}>
+                <EmptyState
+                  eyebrow="Catalog unavailable"
+                  title="Your latest opportunities will appear here."
+                  description="We couldn't refresh the catalog right now. Check your connection and try again."
+                />
+                <ActionButton label="Try again" onPress={onRetry} />
+              </View>
+            ) : (
+              <EmptyState
+                eyebrow="Search"
+                title="Nothing fits that search yet."
+                description="Try a company, role, or location with fewer terms."
+              />
+            )
+          }
+          ListFooterComponent={
+            <CatalogPaginationFooter
+              loading={loadingMore}
+              error={moreError}
+              reachedEnd={reachedEnd}
+              searching={Boolean(query.trim())}
+              onRetry={onRetryLoadMore}
             />
-          )
-        }
-        ListFooterComponent={
-          <CatalogPaginationFooter
-            loading={loadingMore}
-            error={moreError}
-            reachedEnd={reachedEnd}
-            searching={Boolean(query.trim())}
-            onRetry={onRetryLoadMore}
+          }
+        />
+      </View>
+      {showQueueSidebar && queue ? (
+        <View style={[styles.queueSidebar, pushQueueToEdge && { transform: [{ translateX: queueEdgeOffset }] }]}>
+          <QueuePanel
+            queue={queue}
+            jobs={queueJobs ?? []}
+            onOpenQueuedRole={onOpenQueuedRole}
+            onBulkOpenQueue={onBulkOpenQueue}
+            onViewAll={onOpenQueue}
+            maxRows={8}
           />
-        }
-      />
-    </>
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -2460,7 +2848,8 @@ function AppContent() {
   const [sessionRecoveryMessage, setSessionRecoveryMessage] = useState<string>();
   const sessionRequestId = useRef(0);
   const privateRequestId = useRef(0);
-  const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
+  const [tab, setTab] = useState<"feed" | "queue" | "saved" | "profile">("feed");
+  const [queueSheetVisible, setQueueSheetVisible] = useState(false);
   const [preferences, setPreferences] = useState<Preference>();
   const [preferenceError, setPreferenceError] = useState<string>();
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -2503,7 +2892,7 @@ function AppContent() {
   const catalogRequestGeneration = useRef(0);
   const catalogRequestInFlight = useRef(false);
   const groupRequestGuard = useRef(createLatestRequestGuard());
-  const changeTab = (nextTab: "feed" | "saved" | "profile") => {
+  const changeTab = (nextTab: "feed" | "queue" | "saved" | "profile") => {
     setTab(nextTab);
     if (nextTab === "feed") setShowLaunchInbox(false);
   };
@@ -3046,6 +3435,8 @@ function AppContent() {
     () => new Map(applications.map((application) => [application.jobId, application.status])),
     [applications],
   );
+  const applyQueue = useMemo(() => sortApplyQueue(applications), [applications]);
+  const queuedJobIds = useMemo(() => new Set(applyQueue.map((item) => item.jobId)), [applyQueue]);
   const roleSections = useMemo<RoleSection[]>(() => {
     const newJobIds = new Set(catalogFilters.jobStatus === "open" ? launchInbox?.jobs.map((job) => job.jobId) ?? [] : []);
     if (!newJobIds.size) return [{ kind: "all", data: filtered }];
@@ -3165,6 +3556,25 @@ function AppContent() {
   if (!preferences) return <AppLoadingSkeleton />;
   if (!preferences.onboardingComplete)
     return <Onboarding onDone={setPreferences} />;
+  const dequeueOpenedApplication = (jobId: string) => {
+    const queued = applications.find((item) => item.jobId === jobId && item.status === "saved" && item.queuedAt !== undefined);
+    if (!queued) return;
+    setApplications((current) => current.map((item) => {
+      if (item.applicationId !== queued.applicationId) return item;
+      const updated = { ...item };
+      delete updated.queuedAt;
+      return updated;
+    }));
+    void api<Application>(`/me/applications/${encodeURIComponent(queued.applicationId)}`, token, {
+      method: "PATCH",
+      body: JSON.stringify({ queued: false }),
+    }).then((updated) => {
+      setApplications((current) => current.map((item) => item.applicationId === updated.applicationId ? updated : item));
+    }).catch((error) => {
+      setApplications((current) => current.map((item) => item.applicationId === queued.applicationId ? queued : item));
+      Alert.alert("Could not update queue", error instanceof Error ? error.message : "Please try again.");
+    });
+  };
   const openApplicationAndScheduleCheck = (job: Pick<Job, "jobId" | "applyUrl">) => {
     void api("/me/gmail/checks", token, {
       method: "POST",
@@ -3174,13 +3584,52 @@ function AppContent() {
     });
     // Start the request before handing off to the system browser, which can
     // immediately background the native app and suspend later JavaScript work.
-    void openOfficialApplication(job.applyUrl);
+    void openOfficialApplication(job.applyUrl, preferences.applicationHandoff ?? "window", () => dequeueOpenedApplication(job.jobId));
   };
-  const saveForWeb = (job: Job) => {
-    if (applicationStatuses.has(job.jobId) || savingJobIds.has(job.jobId)) return;
+  const openQueueBulk = (targets: Array<{ jobId: string; applyUrl: string }>) => {
+    if (Platform.OS !== "web") {
+      const [first] = targets;
+      if (first) openApplicationAndScheduleCheck(first);
+      return;
+    }
+    let blocked = 0;
+    for (const target of targets) {
+      void api("/me/gmail/checks", token, {
+        method: "POST",
+        body: JSON.stringify({ jobId: target.jobId }),
+      }).catch((error) => {
+        console.warn("Could not schedule Gmail application check", error);
+      });
+      const applicationWindow = openWebApplication(target.applyUrl, preferences.applicationHandoff ?? "window");
+      if (applicationWindow === null) blocked += 1;
+      else {
+        applicationWindow.opener = null;
+        dequeueOpenedApplication(target.jobId);
+      }
+    }
+    if (blocked > 0) {
+      Alert.alert(
+        "Pop-ups blocked",
+        `Your browser blocked ${blocked} of ${targets.length} role pages. Allow pop-ups for this site, then try again.`,
+      );
+    }
+  };
+  const saveForWeb = (job: Job, options?: { silent?: boolean }) => {
+    const existing = applications.find((item) => item.jobId === job.jobId);
+    if (existing && existing.status !== "saved") return;
+    if (existing?.status === "saved" && existing.queuedAt) return;
+    if (savingJobIds.has(job.jobId)) return;
     setSavingJobIds((current) => new Set(current).add(job.jobId));
     void (async () => {
       try {
+        if (existing?.status === "saved") {
+          const requeued = await api<Application>(`/me/applications/${encodeURIComponent(existing.applicationId)}`, token, {
+            method: "PATCH",
+            body: JSON.stringify({ queued: true }),
+          });
+          setApplications((current) => current.map((item) => item.applicationId === requeued.applicationId ? requeued : item));
+          return;
+        }
         const created = await api<Application>("/me/applications", token, {
           method: "POST",
           body: JSON.stringify({ jobId: job.jobId, status: "saved" }),
@@ -3202,6 +3651,52 @@ function AppContent() {
           "Could not save role",
           error instanceof Error ? error.message : "Please try again.",
         );
+      } finally {
+        setSavingJobIds((current) => {
+          const updated = new Set(current);
+          updated.delete(job.jobId);
+          return updated;
+        });
+      }
+    })();
+  };
+  const saveForLater = (job: Job) => {
+    const existing = applications.find((item) => item.jobId === job.jobId);
+    if (existing && existing.status !== "saved") return;
+    if (savingJobIds.has(job.jobId)) return;
+    setSavingJobIds((current) => new Set(current).add(job.jobId));
+    void (async () => {
+      try {
+        if (existing) {
+          const dequeued = await api<Application>(`/me/applications/${encodeURIComponent(existing.applicationId)}`, token, {
+            method: "PATCH",
+            body: JSON.stringify({ queued: false }),
+          });
+          setApplications((current) => current.map((item) => item.applicationId === dequeued.applicationId ? dequeued : item));
+          return;
+        }
+        const created = await api<Application>("/me/applications", token, {
+          method: "POST",
+          body: JSON.stringify({ jobId: job.jobId, status: "saved" }),
+        });
+        const saved = await api<Application>(`/me/applications/${encodeURIComponent(created.applicationId)}`, token, {
+          method: "PATCH",
+          body: JSON.stringify({ queued: false }),
+        });
+        setApplications((current) => [
+          saved,
+          ...current.filter((item) => item.applicationId !== saved.applicationId),
+        ]);
+        const alertSettings = preferences.alertSettings ?? defaultAlertSettings;
+        if (preferences.alertsEnabled && alertSettings.applicationReminders) {
+          void scheduleApplicationFollowUp(
+            saved.applicationId,
+            `${job.title} at ${job.company}`,
+            alertSettings.followUpDays,
+          ).catch(() => undefined);
+        }
+      } catch (error) {
+        Alert.alert("Could not save role", error instanceof Error ? error.message : "Please try again.");
       } finally {
         setSavingJobIds((current) => {
           const updated = new Set(current);
@@ -3235,7 +3730,7 @@ function AppContent() {
   return (
     <SafeAreaView style={styles.screen}>
       <View style={[styles.appShell, usesNavigationRail && styles.appShellWide]}>
-        {usesNavigationRail ? <TabNavigation active={tab} onChange={changeTab} rail /> : null}
+        {usesNavigationRail ? <TabNavigation active={tab} onChange={changeTab} rail badgeCount={applyQueue.length} /> : null}
         <View style={styles.appMain}>
           {tab === "feed" ? (
             launchInbox && showLaunchInbox ? (
@@ -3245,13 +3740,17 @@ function AppContent() {
                 onOpenGroup={openCatalogGroup}
                 onViewAll={() => setShowLaunchInbox(false)}
                 applicationStatuses={applicationStatuses}
+                queuedJobIds={queuedJobIds}
                 onSaveForWeb={saveForWeb}
+                onSaveForLater={saveForLater}
                 savingJobIds={savingJobIds}
                 hiddenJobIds={hiddenJobIds}
                 onHideLocally={hideLocally}
                 onUnsave={unsaveForWeb}
                 hiddenFeedbackJob={hiddenFeedbackJob}
                 onUndoHide={undoHideLocally}
+                queueCount={applyQueue.length}
+                onOpenQueue={() => setQueueSheetVisible(true)}
               />
             ) : (
               <GroupedCatalogFeed
@@ -3271,15 +3770,38 @@ function AppContent() {
                 onOpenGroup={openCatalogGroup}
                 onOpenRole={openCatalogJob}
                 onSaveForWeb={saveForWeb}
+                onSaveForLater={saveForLater}
                 onHideLocally={hideLocally}
                 onUnsave={unsaveForWeb}
                 savingJobIds={savingJobIds}
                 applicationStatuses={applicationStatuses}
+                queuedJobIds={queuedJobIds}
+                queueCount={applyQueue.length}
+                onOpenQueue={() => setQueueSheetVisible(true)}
+                queue={applyQueue}
+                queueJobs={catalogJobs}
+                onOpenQueuedRole={openApplicationAndScheduleCheck}
+                onBulkOpenQueue={openQueueBulk}
               />
             )
+          ) : tab === "queue" ? (
+            <Applications
+              mode="queue"
+              applications={applications}
+              queue={applyQueue}
+              jobs={catalogJobs}
+              token={token}
+              alertSettings={preferences.alertSettings ?? defaultAlertSettings}
+              alertsEnabled={preferences.alertsEnabled}
+              onChanged={() => void load()}
+              onOpenOfficialApplication={openApplicationAndScheduleCheck}
+              onBulkOpenQueue={openQueueBulk}
+            />
           ) : tab === "saved" ? (
             <Applications
+              mode="saved"
               applications={applications}
+              queue={applyQueue}
               jobs={catalogJobs}
               token={token}
               alertSettings={preferences.alertSettings ?? defaultAlertSettings}
@@ -3301,6 +3823,7 @@ function AppContent() {
             />
           )}
         </View>
+        {!usesNavigationRail ? <TabNavigation active={tab} onChange={changeTab} badgeCount={applyQueue.length} /> : null}
       </View>
       <JobDetailSheet
         job={selectedJob}
@@ -3315,11 +3838,13 @@ function AppContent() {
           openApplicationAndScheduleCheck(job);
         }}
         onOpenListing={(job) => {
-          void openOfficialApplication(job.applyUrl);
+          void openOfficialApplication(job.applyUrl, preferences.applicationHandoff ?? "window");
         }}
         onSaveForWeb={(job) => saveForWeb(job)}
+        onSaveForLater={(job) => saveForLater(job)}
         isSavingForWeb={selectedJob ? savingJobIds.has(selectedJob.jobId) : false}
         applicationStatus={selectedJob ? applicationStatuses.get(selectedJob.jobId) : undefined}
+        isQueued={selectedJob ? queuedJobIds.has(selectedJob.jobId) : undefined}
         onUnsave={unsaveForWeb}
       />
       <CatalogGroupSheet
@@ -3331,6 +3856,17 @@ function AppContent() {
         onRetry={() => selectedGroupId && loadCatalogGroup(selectedGroupId)}
         onOpenRole={openGroupedRole}
       />
+      {Platform.OS === "web" ? (
+        <QueueSheet
+          visible={queueSheetVisible}
+          queue={applyQueue}
+          jobs={catalogJobs}
+          onOpen={openApplicationAndScheduleCheck}
+          onBulkOpen={openQueueBulk}
+          onViewQueue={() => changeTab("queue")}
+          onDismiss={() => setQueueSheetVisible(false)}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -3727,7 +4263,7 @@ function GuestExperience({
 }) {
   const { width } = useWindowDimensions();
   const usesNavigationRail = width >= 700;
-  const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
+  const [tab, setTab] = useState<"feed" | "queue" | "saved" | "profile">("feed");
   const [query, setQuery] = useState("");
   const [showAccount, setShowAccount] = useState(false);
   const openAccount = () => {
@@ -3791,10 +4327,11 @@ function GuestExperience({
                 onOpenGroup={onOpenGroup}
                 onOpenRole={onOpenJob}
                 onSaveForWeb={async () => { openAccount(); return false; }}
+                onSaveForLater={async () => { openAccount(); return false; }}
                 onHideLocally={onHideLocally as unknown as (job: Job) => void}
               />
             </View>
-            {tab === "saved" ? (
+            {tab === "queue" || tab === "saved" ? (
               <AccountGate
                 feature="save and track applications"
                 onSignIn={openAccount}
@@ -3827,6 +4364,7 @@ function GuestExperience({
             void openOfficialApplication(job.applyUrl);
           }}
           onSaveForWeb={async () => { openAccount(); return false; }}
+          onSaveForLater={async () => { openAccount(); return false; }}
           onHideLocally={onHideLocally}
         />
       </SafeAreaView>
@@ -4013,23 +4551,111 @@ function Onboarding({
     </SafeAreaView>
   );
 }
+function QueueSheet({
+  visible,
+  queue,
+  jobs,
+  onOpen,
+  onBulkOpen,
+  onViewQueue,
+  onDismiss,
+}: {
+  visible: boolean;
+  queue: Application[];
+  jobs: Job[];
+  onOpen: (target: { jobId: string; applyUrl: string }) => void;
+  onBulkOpen: (targets: Array<{ jobId: string; applyUrl: string }>) => void;
+  onViewQueue: () => void;
+  onDismiss: () => void;
+}) {
+  const next = nextAvailableQueueEntry(queue, jobs, 0);
+  const nextJob = next ? resolveApplicationJob(next, jobs) : undefined;
+  const available = queue
+    .map((item) => ({ item, target: queueEntryTarget(item, jobs) }))
+    .filter((entry): entry is { item: Application; target: { jobId: string; applyUrl: string } } => entry.target !== undefined);
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onDismiss}>
+      <View style={styles.sheetOverlay}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close apply queue" style={styles.sheetDismissArea} onPress={onDismiss} />
+        <View style={styles.queueSheet}>
+          <View style={styles.sheetHandle} />
+          <Text style={styles.sheetTitle}>Apply queue · {queue.length}</Text>
+          {queue.length === 0 ? (
+            <Text style={styles.muted}>Add roles to the queue as you browse and they will wait here.</Text>
+          ) : null}
+          <ActionButton
+            label={nextJob ? `Apply next: ${nextJob.title} at ${nextJob.company}` : "Apply next"}
+            disabled={!next}
+            onPress={() => { const target = next ? queueEntryTarget(next, jobs) : undefined; if (target) { onOpen(target); onDismiss(); } }}
+          />
+          <QueueBulkButtons
+            available={available.map((entry) => entry.target)}
+            onOpenFirst={() => { const target = next ? queueEntryTarget(next, jobs) : undefined; if (target) { onOpen(target); onDismiss(); } }}
+            onBulkOpen={(targets) => { onBulkOpen(targets); onDismiss(); }}
+          />
+          <ScrollView style={styles.queueSheetList}>
+            {queue.map((item, index) => {
+              const job = resolveApplicationJob(item, jobs);
+              const target = queueEntryTarget(item, jobs);
+              return (
+                <View key={item.applicationId} style={styles.queueSheetRow}>
+                  <View style={styles.queueSheetCopy}>
+                    <View style={styles.queueSheetPositionBadge}>
+                      <Text style={styles.queueSheetPosition}>{index + 1}</Text>
+                    </View>
+                    <View style={styles.queueSheetText}>
+                      <Text style={styles.queueRowTitle} numberOfLines={1}>{job?.title ?? "Saved role"}</Text>
+                      <Text style={styles.muted} numberOfLines={1}>{job?.company ?? ""}</Text>
+                    </View>
+                  </View>
+                  {target ? (
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open application for ${job?.title ?? "saved role"}${job?.company ? ` at ${job.company}` : ""}`}
+                      onPress={() => { onOpen(target); onDismiss(); }}
+                      style={styles.queueOpenButton}
+                    >
+                      <Text style={styles.queueOpenButtonText}>Open</Text>
+                      <Ionicons name="open-outline" size={15} color={colors.signal} />
+                    </TouchableOpacity>
+                  ) : (
+                    <Text style={styles.muted}>Unavailable</Text>
+                  )}
+                </View>
+              );
+            })}
+          </ScrollView>
+          <ActionButton label="Open queue tab" variant="secondary" onPress={() => { onViewQueue(); onDismiss(); }} />
+        </View>
+      </View>
+    </Modal>
+  );
+}
 function Applications({
+  mode,
   applications,
+  queue,
   jobs,
   token,
   alertSettings,
   alertsEnabled,
   onChanged,
   onOpenOfficialApplication,
+  onBulkOpenQueue,
 }: {
+  mode: "queue" | "saved";
   applications: Application[];
+  queue: Application[];
   jobs: Job[];
   token: string;
   alertSettings: AlertSettings;
   alertsEnabled: boolean;
   onChanged: () => void;
   onOpenOfficialApplication: (job: Pick<Job, "jobId" | "applyUrl">) => void;
+  onBulkOpenQueue?: (targets: Array<{ jobId: string; applyUrl: string }>) => void;
 }) {
+  const { width } = useWindowDimensions();
+  const compactQueueActions = width < 600;
   const [detections, setDetections] = useState<GmailDetection[]>([]);
   const [detectionError, setDetectionError] = useState<string>();
   const [reviewingDetectionId, setReviewingDetectionId] = useState<string>();
@@ -4056,18 +4682,119 @@ function Applications({
       setReviewingDetectionId(undefined);
     }
   };
+  const [queueIndex, setQueueIndex] = useState(0);
+  useEffect(() => {
+    if (queueIndex > queue.length - 1) setQueueIndex(0);
+  }, [queue.length, queueIndex]);
+  const queuePosition = Math.min(queueIndex, Math.max(queue.length - 1, 0));
+  const nextQueued = nextAvailableQueueEntry(queue, jobs, queuePosition);
+  const nextQueuedJob = nextQueued ? resolveApplicationJob(nextQueued, jobs) : undefined;
+  const applyNext = () => {
+    if (!nextQueued) return;
+    const job = resolveApplicationJob(nextQueued, jobs);
+    const applyUrl = job && "applyUrl" in job ? job.applyUrl : undefined;
+    if (!job || !applyUrl) {
+      Alert.alert("Application link unavailable", "The official application link for this role is no longer available.");
+      return;
+    }
+    onOpenOfficialApplication({ jobId: job.jobId, applyUrl });
+  };
+  const skipQueued = () => {
+    setQueueIndex((current) => Math.min(current + 1, Math.max(queue.length - 1, 0)));
+  };
+  const removeFromQueue = (item: Application) => {
+    void (async () => {
+      await api(`/me/applications/${encodeURIComponent(item.applicationId)}`, token, {
+        method: "PATCH",
+        body: JSON.stringify({ queued: false }),
+      });
+      onChanged();
+    })().catch((error) =>
+      Alert.alert("Could not update queue", error instanceof Error ? error.message : "Please try again."),
+    );
+  };
+  const requeueInQueue = (item: Application) => {
+    void (async () => {
+      await api(`/me/applications/${encodeURIComponent(item.applicationId)}`, token, {
+        method: "PATCH",
+        body: JSON.stringify({ queued: true }),
+      });
+      onChanged();
+    })().catch((error) =>
+      Alert.alert("Could not update queue", error instanceof Error ? error.message : "Please try again."),
+    );
+  };
+  const queuedIds = new Set(queue.map((entry) => entry.applicationId));
+  const savedOnly = applications.filter((entry) => entry.status === "saved" && !queuedIds.has(entry.applicationId));
+  const ordered = mode === "queue" ? [...queue] : [...queue, ...savedOnly, ...applications.filter((entry) => entry.status !== "saved" && !queuedIds.has(entry.applicationId))];
+  const availableQueueTargets = queue
+    .map((item) => queueEntryTarget(item, jobs))
+    .filter((target): target is { jobId: string; applyUrl: string } => target !== undefined);
+  useWebKeyboardShortcuts([
+    { key: "n", onPress: applyNext, enabled: mode === "queue" && Boolean(nextQueuedJob) },
+    { key: "s", onPress: skipQueued, enabled: mode === "queue" && queue.length > 1 },
+    { key: "5", onPress: () => onBulkOpenQueue?.(selectBulkTargets(availableQueueTargets, 5)), enabled: mode === "queue" && availableQueueTargets.length >= 5 },
+    { key: "t", onPress: () => onBulkOpenQueue?.(selectBulkTargets(availableQueueTargets, 10)), enabled: mode === "queue" && availableQueueTargets.length >= 10 },
+    { key: "h", onPress: () => onBulkOpenQueue?.(selectBulkTargets(availableQueueTargets, "half")), enabled: mode === "queue" && availableQueueTargets.length >= 2 },
+    { key: "a", onPress: () => onBulkOpenQueue?.(selectBulkTargets(availableQueueTargets, "all")), enabled: mode === "queue" && availableQueueTargets.length >= 2 },
+  ]);
+  const advanceApplicationStatus = (item: Application, nextStatus: Application["status"], roleName: string) => {
+    void (async () => {
+      const updated = await api<Application>(
+        `/me/applications/${item.applicationId}`,
+        token,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status: nextStatus }),
+        },
+      );
+      onChanged();
+      if (!alertsEnabled || !alertSettings.applicationReminders) return;
+      void notifyApplicationProgress(
+        updated.applicationId,
+        "Application progress updated",
+        `${roleName} is now marked ${updated.status}.`,
+      ).catch(() => undefined);
+      if (["saved", "applied", "assessment", "interview"].includes(updated.status)) {
+        void scheduleApplicationFollowUp(
+          updated.applicationId,
+          roleName,
+          alertSettings.followUpDays,
+        ).catch(() => undefined);
+      } else {
+        void clearApplicationFollowUp(updated.applicationId).catch(() => undefined);
+      }
+    })().catch((error) =>
+      Alert.alert(
+        "Could not update application",
+        error instanceof Error ? error.message : "Please try again.",
+      ),
+    );
+  };
   return (
+    <View style={styles.queueScreen}>
     <FlatList
       style={styles.list}
-      data={applications}
+      data={ordered}
       keyExtractor={(item) => item.applicationId}
-      contentContainerStyle={styles.feedListContent}
+      contentContainerStyle={[styles.feedListContent, mode === "saved" && styles.savedListContent]}
       ListHeaderComponent={<>
         <PageHeading
-          eyebrow="Applications"
-          title="Saved applications"
-          description="Track roles you save, update manually, or confirm through Gmail."
+          eyebrow={mode === "queue" ? "Apply queue" : "Saved"}
+          title={mode === "queue" ? "Roles to apply to" : "Saved roles"}
+          description={mode === "queue" ? "Queued roles are also saved. Work the queue top to bottom." : "All queued roles appear here, along with roles you saved for later."}
         />
+        {mode === "queue" ? (
+          <Text style={styles.queueCount}>{queue.length} {queue.length === 1 ? "role" : "roles"} in queue</Text>
+        ) : null}
+        {mode === "queue" && onBulkOpenQueue ? (
+          <QueueBulkButtons
+            available={availableQueueTargets}
+            onOpenFirst={() => { const [first] = availableQueueTargets; if (first) onOpenOfficialApplication(first); }}
+            onBulkOpen={onBulkOpenQueue}
+            shortcutMode="all"
+          />
+        ) : null}
         {detections.length ? (
           <View style={styles.gmailReviewSection}>
             <Text style={styles.sectionTitle}>Possibly applied</Text>
@@ -4121,7 +4848,7 @@ function Applications({
           </View>
         ) : null}
       </>}
-      renderItem={({ item }) => {
+      renderItem={({ item, index }) => {
         const job = resolveApplicationJob(item, jobs);
         const source = sourcePresentation(job?.sourceReferences ?? []);
         const nextStatus = nextApplicationStatuses[item.status] ?? "interview";
@@ -4132,7 +4859,59 @@ function Applications({
           ? job.availability
           : job?.open ? "available" : "closed";
         const unavailableReason = job && "unavailableReason" in job ? job.unavailableReason : undefined;
+        if (mode === "queue") {
+          const canOpen = availability === "available" && Boolean(job?.applyUrl);
+          return (
+            <View style={styles.queueCompactCard}>
+              <View style={styles.queueCompactTop}>
+                <View style={styles.queueSheetPositionBadge}>
+                  <Text style={styles.queueSheetPosition}>{index + 1}</Text>
+                </View>
+                <View style={styles.queueCompactCopy}>
+                  <Text style={styles.queueCompactCompany} numberOfLines={1}>{job?.company ?? "Saved role"}</Text>
+                  <Text style={styles.queueCompactTitle} numberOfLines={2}>{job?.title ?? "Role details unavailable"}</Text>
+                </View>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${roleName} from queue`}
+                  onPress={() => removeFromQueue(item)}
+                  style={styles.queueCompactRemove}
+                >
+                  <Ionicons name="remove-circle-outline" size={22} color={colors.muted} />
+                </TouchableOpacity>
+              </View>
+              {availability === "catalog-review" ? (
+                <Text accessibilityRole="alert" style={styles.queueCompactUnavailable} numberOfLines={2}>
+                  {unavailableReason ?? "Official application link under review."}
+                </Text>
+              ) : null}
+              <View style={styles.queueCompactActions}>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open application for ${roleName}`}
+                  disabled={!canOpen}
+                  onPress={() => { if (job?.applyUrl) onOpenOfficialApplication({ jobId: job.jobId, applyUrl: job.applyUrl }); }}
+                  style={[styles.queueCompactOpen, !canOpen && styles.queueCompactActionDisabled]}
+                >
+                  <Text style={styles.queueCompactOpenText}>{canOpen ? (compactQueueActions ? "Open" : "Open application") : "Unavailable"}</Text>
+                  {canOpen ? <Ionicons name="open-outline" size={16} color={colors.onDark} /> : null}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel={`Mark ${roleName} as ${nextStatus}`}
+                  disabled={nextStatus === item.status}
+                  onPress={() => advanceApplicationStatus(item, nextStatus, roleName)}
+                  style={[styles.queueCompactProgress, nextStatus === item.status && styles.queueCompactActionDisabled]}
+                >
+                  <Ionicons name="checkmark-circle-outline" size={17} color={colors.signal} />
+                  <Text style={styles.queueCompactProgressText}>{nextStatus === "applied" ? "Mark applied" : `Mark ${nextStatus}`}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        }
         return (
+          <>
           <View style={styles.card}>
             <Text style={styles.company}>{job?.company ?? "Saved role"}</Text>
             <Text style={styles.title}>{job?.title ?? "Role details unavailable"}</Text>
@@ -4149,6 +4928,26 @@ function Applications({
                 <Text style={styles.catalogReviewNoticeText}>
                   {unavailableReason ?? "InternNotifs couldn’t verify the official role page and is reviewing it."}
                 </Text>
+              </View>
+            ) : null}
+            {item.status === "saved" && item.queuedAt ? (
+              <View style={styles.applicationActionGap}>
+                <ActionButton
+                  label="Remove from queue"
+                  compact
+                  variant="secondary"
+                  onPress={() => removeFromQueue(item)}
+                />
+              </View>
+            ) : null}
+            {item.status === "saved" && !item.queuedAt ? (
+              <View style={styles.applicationActionGap}>
+                <ActionButton
+                  label="Add to queue"
+                  compact
+                  variant="secondary"
+                  onPress={() => requeueInQueue(item)}
+                />
               </View>
             ) : null}
             {availability === "available" && job?.applyUrl ? (
@@ -4169,51 +4968,46 @@ function Applications({
               compact
               variant="secondary"
               disabled={nextStatus === item.status}
-              onPress={() =>
-                void (async () => {
-                  const updated = await api<Application>(
-                    `/me/applications/${item.applicationId}`,
-                    token,
-                    {
-                      method: "PATCH",
-                      body: JSON.stringify({ status: nextStatus }),
-                    },
-                  );
-                  onChanged();
-                  if (!alertsEnabled || !alertSettings.applicationReminders) return;
-                  void notifyApplicationProgress(
-                    updated.applicationId,
-                    "Application progress updated",
-                    `${roleName} is now marked ${updated.status}.`,
-                  ).catch(() => undefined);
-                  if (["saved", "applied", "assessment", "interview"].includes(updated.status)) {
-                    void scheduleApplicationFollowUp(
-                      updated.applicationId,
-                      roleName,
-                      alertSettings.followUpDays,
-                    ).catch(() => undefined);
-                  } else {
-                    void clearApplicationFollowUp(updated.applicationId).catch(() => undefined);
-                  }
-                })().catch((error) =>
-                  Alert.alert(
-                    "Could not update application",
-                    error instanceof Error ? error.message : "Please try again.",
-                  ),
-                )
-              }
+              onPress={() => advanceApplicationStatus(item, nextStatus, roleName)}
             />
           </View>
+          </>
         );
       }}
       ListEmptyComponent={
-        <EmptyState
-          eyebrow="Applications"
-          title="Your application list starts here."
-          description="Save a role, mark it manually, or connect Gmail to detect confirmations."
-        />
+        mode === "queue" ? (
+          <EmptyState
+            eyebrow="Apply queue"
+            title="Queue is clear."
+            description="Add roles to the queue as you browse and they will wait here."
+          />
+        ) : (
+          <EmptyState
+            eyebrow="Saved"
+            title="No saved roles yet."
+            description="Save roles from the feed, or mark them to join the apply queue."
+          />
+        )
       }
     />
+      {mode === "queue" && queue.length ? (
+        <View style={styles.queueActionBar}>
+          <View style={styles.queueActionPrimary}>
+            <ActionButton
+              label={nextQueuedJob && !compactQueueActions ? `Apply next: ${nextQueuedJob.title} at ${nextQueuedJob.company}` : "Apply next"}
+              disabled={!nextQueuedJob}
+              onPress={applyNext}
+              shortcut="N"
+            />
+          </View>
+          {queue.length > 1 ? (
+            <View style={styles.queueActionSecondary}>
+              <ActionButton label="Skip" variant="secondary" onPress={skipQueued} shortcut="S" />
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
   );
 }
 function commaList(value: string) {
@@ -4349,6 +5143,9 @@ function Profile({
   const [followUpDays, setFollowUpDays] = useState(
     String(preferences.alertSettings?.followUpDays ?? defaultAlertSettings.followUpDays),
   );
+  const [applicationHandoff, setApplicationHandoff] = useState<ApplicationHandoff>(
+    preferences.applicationHandoff ?? "window",
+  );
   const [titleTemplate, setTitleTemplate] = useState(
     preferences.push?.titleTemplate ?? "",
   );
@@ -4431,6 +5228,7 @@ function Profile({
       setFollowUpDays(
         String(preferences.alertSettings?.followUpDays ?? defaultAlertSettings.followUpDays),
       );
+      setApplicationHandoff(preferences.applicationHandoff ?? "window");
       setTitleTemplate(preferences.push?.titleTemplate ?? "");
       setDescriptionTemplate(preferences.push?.descriptionTemplate ?? "");
       setRoleAliases(aliasesToText(preferences.push?.roleAbbreviations));
@@ -4619,6 +5417,7 @@ function Profile({
         body: JSON.stringify(appSettingsPayload({
           applicationReminders,
           followUpDays: parsedFollowUpDays,
+          applicationHandoff,
           push,
         })),
       });
@@ -5235,6 +6034,32 @@ function Profile({
           thumbColor={colors.onDark}
         />
       </View>
+      {Platform.OS === "web" ? (
+        <>
+          <Text style={styles.preferenceTitle}>Open application forms</Text>
+          <Text style={styles.muted}>Choose how official employer forms open in your browser.</Text>
+          <View style={styles.choiceGroup} accessibilityRole="radiogroup">
+            <ChoiceOption
+              label="Separate window"
+              description="Open each form in a full-size browser window."
+              selected={applicationHandoff === "window"}
+              onPress={() => {
+                markAppSettingsDirty();
+                setApplicationHandoff("window");
+              }}
+            />
+            <ChoiceOption
+              label="New tab"
+              description="Keep application forms in your current browser window."
+              selected={applicationHandoff === "tab"}
+              onPress={() => {
+                markAppSettingsDirty();
+                setApplicationHandoff("tab");
+              }}
+            />
+          </View>
+        </>
+      ) : null}
       <Text style={styles.inputLabel}>Follow up after (days)</Text>
       <PlainTextInput
         style={styles.search}
@@ -5719,6 +6544,9 @@ const styles = StyleSheet.create({
   navRailItem: { flex: 0, marginBottom: 8, width: "100%" },
   navLabel: { color: colors.muted, fontSize: 12, fontWeight: "600", marginTop: 3 },
   navLabelActive: { color: colors.ink, fontWeight: "700" },
+  navIconWrap: { alignItems: "center", justifyContent: "center" },
+  navBadgeText: { color: colors.onDark, fontSize: 11, fontWeight: "700" },
+  navBadge: { alignItems: "center", backgroundColor: colors.ink, borderRadius: 9, justifyContent: "center", minWidth: 18, paddingHorizontal: 4, position: "absolute", right: -12, top: -6 },
   inboxHeader: { paddingTop: 28, paddingBottom: 20 },
   inboxCount: {
     color: colors.ink,
@@ -5743,6 +6571,8 @@ const styles = StyleSheet.create({
   },
   inboxViewAllText: { color: colors.signal, fontSize: 15, fontWeight: "700" },
   inboxViewAllFooter: { alignSelf: "center", marginBottom: 12, marginTop: 24 },
+  inboxActions: { alignItems: "center", flexDirection: "row", gap: 8, marginTop: 16 },
+  inboxViewAllInline: { alignSelf: "auto", marginTop: 0 },
   inboxSectionLabel: { color: colors.signal, fontSize: 12, fontWeight: "700", letterSpacing: 1, marginTop: 28 },
   newRolesLabel: { color: colors.signal, fontSize: 12, fontWeight: "700", letterSpacing: 1, marginTop: 8, marginBottom: 12 },
   caughtUpBlock: { marginTop: 20, marginBottom: 12 },
@@ -5758,6 +6588,7 @@ const styles = StyleSheet.create({
     paddingBottom: 28,
     width: "100%",
   },
+  savedListContent: { paddingBottom: 44, paddingTop: 20 },
   catalogInitialLoading: { paddingTop: 12 },
   catalogPagination: { alignItems: "center", minHeight: 52, justifyContent: "center", paddingVertical: 12 },
   catalogPaginationText: { color: colors.muted, fontSize: 14, lineHeight: 20, textAlign: "center" },
@@ -5918,6 +6749,8 @@ const styles = StyleSheet.create({
   webSaveButton: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
   webSaveButtonCompact: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
   webSaveButtonText: { color: colors.ink, fontSize: 13, fontWeight: "800" },
+  webSavedButtonCompact: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
+  webSavedButtonText: { color: colors.signal, fontSize: 13, fontWeight: "800" },
   webUnsaveButton: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 36, paddingHorizontal: 12 },
   webUnsaveButtonCompact: { alignItems: "center", backgroundColor: colors.signalSoft, borderColor: colors.separator, borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 32, paddingHorizontal: 10 },
   webUnsaveButtonText: { color: colors.signal, fontSize: 13, fontWeight: "800" },
@@ -6104,12 +6937,29 @@ const styles = StyleSheet.create({
     marginTop: 12,
     marginBottom: 0,
   },
+  feedSearchRow: { alignItems: "center", flexDirection: "row", gap: 8, marginTop: 12 },
+  feedSearchFlex: { flex: 1, marginTop: 0 },
+  roleWorkspace: { flex: 1, minHeight: 0, width: "100%" },
+  roleWorkspaceWide: {
+    alignSelf: "center",
+    flexDirection: "row",
+    gap: 24,
+    maxWidth: 1240,
+    paddingLeft: 76,
+    paddingRight: 20,
+  },
+  roleFeedColumn: { flex: 1, minHeight: 0, minWidth: 0 },
+  roleFeedColumnWide: { maxWidth: 760 },
+  roleFeedList: { flex: 1 },
   roleFeedControls: {
     alignSelf: "center",
     maxWidth: 760,
     paddingHorizontal: 20,
     width: "100%",
   },
+  roleFeedControlsWide: { maxWidth: undefined, paddingHorizontal: 0 },
+  feedListContentWide: { maxWidth: undefined, paddingHorizontal: 0 },
+  queueSidebar: { flex: 1, maxWidth: 288, minWidth: 252, paddingTop: 12 },
   catalogSourceFilters: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12, marginTop: 12 },
   filterRegion: { marginTop: 12, marginBottom: 12 },
   filterBar: { flexDirection: "row", alignItems: "center", minHeight: 48 },
@@ -6351,16 +7201,15 @@ const styles = StyleSheet.create({
   saveFeedbackError: { backgroundColor: colors.dangerSoft, borderColor: colors.dangerBorder },
   saveFeedbackText: { color: colors.body, fontSize: 14, lineHeight: 20 },
   saveFeedbackRetry: { color: colors.signal, fontSize: 14, fontWeight: "700", marginTop: 8 },
+  queuePillRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginTop: 10 },
   hiddenRolePlaceholder: {
     alignItems: "center",
-    backgroundColor: colors.signalSoft,
     borderColor: colors.separator,
     borderRadius: 14,
     borderWidth: 1,
     flexDirection: "row",
     gap: 14,
     justifyContent: "center",
-    marginBottom: 12,
     minHeight: 88,
     paddingHorizontal: 16,
     paddingVertical: 16,
@@ -6376,7 +7225,6 @@ const styles = StyleSheet.create({
   },
   statusPill: {
     alignSelf: "flex-start",
-    backgroundColor: colors.signalSoft,
     borderRadius: 999,
     marginTop: 14,
     paddingHorizontal: 10,
@@ -6400,6 +7248,121 @@ const styles = StyleSheet.create({
   hiddenRoleCopy: { flex: 1 },
   hiddenRoleTitle: { color: colors.ink, fontSize: 15, fontWeight: "700", lineHeight: 20, marginTop: 2 },
   applicationActionGap: { marginTop: 14 },
+  queueCompactCard: {
+    backgroundColor: colors.surface,
+    borderColor: colors.separator,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginTop: 10,
+    padding: 14,
+  },
+  queueCompactTop: { alignItems: "center", flexDirection: "row" },
+  queueCompactCopy: { flex: 1, minWidth: 0, paddingHorizontal: 10 },
+  queueCompactCompany: { color: colors.signal, fontSize: 12, fontWeight: "700", lineHeight: 17 },
+  queueCompactTitle: { color: colors.ink, fontSize: 15, fontWeight: "700", lineHeight: 20, marginTop: 1 },
+  queueCompactRemove: { alignItems: "center", justifyContent: "center", minHeight: 44, minWidth: 44 },
+  queueCompactUnavailable: { color: colors.muted, fontSize: 12, lineHeight: 18, marginLeft: 38, marginTop: 6 },
+  queueCompactActions: { flexDirection: "row", gap: 8, marginTop: 10 },
+  queueCompactOpen: {
+    alignItems: "center",
+    backgroundColor: colors.ink,
+    borderRadius: 10,
+    flex: 1,
+    flexDirection: "row",
+    gap: 7,
+    justifyContent: "center",
+    minHeight: 44,
+    paddingHorizontal: 10,
+  },
+  queueCompactOpenText: { color: colors.onDark, fontSize: 14, fontWeight: "700" },
+  queueCompactProgress: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 10,
+    borderWidth: 1,
+    flex: 1,
+    flexDirection: "row",
+    gap: 6,
+    justifyContent: "center",
+    minHeight: 44,
+    paddingHorizontal: 10,
+  },
+  queueCompactProgressText: { color: colors.signal, fontSize: 14, fontWeight: "700" },
+  queueCompactActionDisabled: { opacity: 0.5 },
+  queueScreen: { flex: 1 },
+  queueActionBar: { alignItems: "center", backgroundColor: colors.surface, borderTopColor: colors.separator, borderTopWidth: 1, flexDirection: "row", gap: 8, paddingHorizontal: 16, paddingVertical: 12 },
+  queueActionPrimary: { flex: 1, minWidth: 0 },
+  queueActionSecondary: { flexShrink: 0, width: 56 },
+  queueCount: { color: colors.ink, fontSize: 17, fontWeight: "700", marginBottom: 12 },
+  queuePill: {
+    alignItems: "center",
+    backgroundColor: colors.signalSoft,
+    borderColor: colors.signal,
+    borderRadius: 12,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 7,
+    minHeight: 44,
+    paddingHorizontal: 12,
+  },
+  queuePillText: { color: colors.signal, fontSize: 14, fontWeight: "700" },
+  queuePillCount: {
+    backgroundColor: colors.signal,
+    borderRadius: 10,
+    color: colors.onDark,
+    fontSize: 12,
+    fontWeight: "800",
+    minWidth: 20,
+    overflow: "hidden",
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    textAlign: "center",
+  },
+  queueSheet: { backgroundColor: colors.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: 560, padding: 20 },
+  queueSheetList: { marginVertical: 12, maxHeight: 320 },
+  queueSheetRow: { alignItems: "center", borderTopColor: colors.separator, borderTopWidth: 1, flexDirection: "row", justifyContent: "space-between", minHeight: 64, paddingVertical: 10 },
+  queueSheetCopy: { alignItems: "center", flex: 1, flexDirection: "row", gap: 10, marginRight: 12 },
+  queueSheetPositionBadge: { alignItems: "center", backgroundColor: colors.canvas, borderRadius: 14, height: 28, justifyContent: "center", width: 28 },
+  queueSheetPosition: { color: colors.muted, fontSize: 13, fontWeight: "800", textAlign: "center", width: 20 },
+  queueSheetText: { flex: 1 },
+  queueRowTitle: { color: colors.ink, fontSize: 15, fontWeight: "700", lineHeight: 20 },
+  queueOpenButton: { alignItems: "center", borderRadius: 10, flexDirection: "row", gap: 5, justifyContent: "center", minHeight: 44, paddingHorizontal: 10 },
+  queueOpenButtonText: { color: colors.signal, fontSize: 14, fontWeight: "800" },
+  queueBulkBlock: { marginTop: 16 },
+  queueBulkLabel: { color: colors.body, fontSize: 13, fontWeight: "700" },
+  queueBulkHint: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 8 },
+  queueBulkRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "flex-start", marginTop: 8 },
+  queueBulkButton: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 10,
+    borderWidth: 1,
+    flexBasis: 44,
+    flexGrow: 1,
+    justifyContent: "center",
+    maxWidth: 72,
+    minHeight: 44,
+    minWidth: 44,
+    paddingHorizontal: 6,
+  },
+  queueBulkButtonLabel: { color: colors.ink, fontSize: 13, fontWeight: "700" },
+  keyboardShortcut: { color: colors.muted, fontSize: 11, fontWeight: "800", lineHeight: 14, marginTop: 1 },
+  queuePanel: { backgroundColor: colors.surface, borderColor: colors.separator, borderRadius: 16, borderWidth: 1, marginTop: 12, padding: 16 },
+  queuePanelHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
+  queuePanelHeading: { alignItems: "center", flexDirection: "row", gap: 10 },
+  queuePanelIcon: { alignItems: "center", backgroundColor: colors.signalSoft, borderRadius: 12, height: 40, justifyContent: "center", width: 40 },
+  queuePanelTitle: { color: colors.ink, fontSize: 17, fontWeight: "800" },
+  queuePanelSubtitle: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: 1 },
+  queuePanelCollapse: { alignItems: "center", justifyContent: "center", minHeight: 44, minWidth: 44 },
+  queuePanelEmpty: { alignItems: "center", flexDirection: "row", gap: 10, marginTop: 18, paddingVertical: 6 },
+  queuePanelEmptyText: { color: colors.muted, flex: 1, fontSize: 14, lineHeight: 20 },
+  queuePanelList: { marginTop: 6 },
+  queuePanelMoreButton: { alignItems: "center", flexDirection: "row", gap: 6, justifyContent: "center", minHeight: 44, marginTop: 4 },
+  queuePanelMore: { color: colors.signal, fontSize: 14, fontWeight: "800" },
+  queueSectionHeader: { alignItems: "center", flexDirection: "row", gap: 8, marginBottom: 8, marginTop: 24 },
+  queueSectionHeaderText: { color: colors.ink, fontSize: 15, fontWeight: "700" },
   catalogReviewNotice: {
     alignItems: "flex-start",
     backgroundColor: colors.signalSoft,
@@ -6542,7 +7505,10 @@ const styles = StyleSheet.create({
   },
   actionButtonDanger: { backgroundColor: colors.danger },
   actionButtonCompact: { minHeight: 48, marginTop: 16 },
+  actionButtonTight: { marginTop: 0 },
+  actionButtonGrow: { flex: 1 },
   actionButtonDisabled: { opacity: 0.55 },
+  actionButtonLabel: { alignItems: "center", flexDirection: "row", gap: 7, justifyContent: "center", paddingHorizontal: 12 },
   actionButtonText: { color: colors.onDark, fontSize: 16, fontWeight: "700" },
   actionButtonTextSecondary: { color: colors.body },
   employerRoot: { backgroundColor: "#F7F7F4", flex: 1 },
