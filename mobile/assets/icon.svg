@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 600 600" fill="none">
+  <title>InternNotifs</title>
+  <desc>A rising arrow woven through an N, with three notification arcs, on a solid white background.</desc>
+  <defs>
+    <linearGradient id="signal" x1="260" y1="105" x2="400" y2="465" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#58E1E4"/>
+      <stop offset="0.22" stop-color="#28CCD9"/>
+      <stop offset="0.48" stop-color="#40BCE5"/>
+      <stop offset="0.65" stop-color="#55B7EB"/>
+      <stop offset="1" stop-color="#398DE0"/>
+    </linearGradient>
+    <linearGradient id="arrow" x1="290" y1="270" x2="164" y2="455" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#79DAEE"/>
+      <stop offset="0.3" stop-color="#4FC4E8"/>
+      <stop offset="0.55" stop-color="#60BFF0"/>
+      <stop offset="1" stop-color="#4099E7"/>
+    </linearGradient>
+  </defs>
+  <path fill="#FFFFFF" d="M0 0h600v600H0z"/>
+  <g stroke="url(#signal)" stroke-width="34" stroke-linecap="round">
+    <path d="M240 139A184 184 0 0 1 488 316"/>
+    <path d="M265 197A126 126 0 0 1 430 316"/>
+    <path d="M289 255A68 68 0 0 1 372 316"/>
+  </g>
+  <path d="M168 461V251L384 461V362" stroke="url(#signal)" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M145 443L278 299L266 285L322 277L322 336L307 323L187 477Q164 489 150 472Q140 460 145 443Z" fill="url(#arrow)"/>
+</svg>
