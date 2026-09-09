@@ -417,6 +417,10 @@ days so a one-day delayed transient retry cannot expire before delivery, and sup
 `DESTINATION_VERIFICATION_QUEUE_ID` to the billing-shutdown path. A non-empty
 DLQ, an oldest work item approaching the evidence deadline, any unexpectedly
 stale eligible record, or an active quarantine is an admission incident.
+The audit scans catalog rows in bounded keyset pages so both the detailed audit
+and summary health calculation stay within Worker memory. Health deliberately
+omits the review-record and unresolved-employer detail arrays; use the audit
+endpoint when those operator details are required.
 
 Destination evidence expires after seven days and is scheduled for recheck one
 day before expiry. A transient failed recheck pauses alerts immediately; catalog

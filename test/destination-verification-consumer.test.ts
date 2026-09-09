@@ -288,6 +288,39 @@ describe('destination verification queue consumer', () => {
     expect(shadowQueue.send).toHaveBeenCalledOnce();
     expect(database.prepare('SELECT job_id, source_id, external_id FROM shadow_extraction_posting_revisions').get())
       .toEqual({ job_id: job.jobId, source_id: reference.sourceId, external_id: reference.externalId });
+    expect(JSON.parse(database.prepare('SELECT report FROM role_metadata_acquisition WHERE job_id = ? AND source_id = ?')
+      .get(job.jobId, reference.sourceId)!.report as string)).toMatchObject({
+      shadowHandoff: { outcome: 'enqueued', method: 'greenhouse-api' },
+    });
+  });
+
+  it('retries a durable metadata acquisition when its shadow queue handoff fails', async () => {
+    const { database, db, jobs } = subject();
+    const { job, reference } = role();
+    await jobs.putInternship(job);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({
+      id: Number(reference.externalId), title: reference.title,
+      content: `<p>${reference.title}</p><p>Austin</p><p>$50 - $60 per hour</p>`,
+    })));
+    const shadowQueue = { send: vi.fn().mockRejectedValue(new Error('temporary queue failure')), sendBatch: vi.fn() };
+    const queued = queueMessage({ version: 1, jobId: job.jobId, sourceId: reference.sourceId,
+      externalId: reference.externalId!, candidateUrl: reference.applyUrl, providerIdentity: {
+        provider: 'greenhouse', sourceId: reference.sourceId, sourceUrl: reference.sourceUrl,
+        tenant: 'acme', postingId: reference.externalId,
+      }, reason: 'historical-backfill', queuedAt: '2026-08-30T00:00:00Z',
+      metadataBackfillToken: 'retry-shadow-handoff' });
+
+    await processDestinationVerificationBatch({ queue: 'destination-verification', messages: [queued] }, {
+      ...environment(db), SHADOW_EXTRACTION_QUEUE: shadowQueue,
+      SHADOW_EXTRACTION_ARTIFACTS: { put: vi.fn().mockResolvedValue(undefined) } as unknown as R2Bucket,
+    }, () => new Date('2026-08-30T00:01:00Z'));
+
+    expect(queued.ack).not.toHaveBeenCalled();
+    expect(queued.retry).toHaveBeenCalledWith({ delaySeconds: 300 });
+    expect(JSON.parse(database.prepare('SELECT report FROM role_metadata_acquisition WHERE job_id = ? AND source_id = ?')
+      .get(job.jobId, reference.sourceId)!.report as string)).toMatchObject({
+      shadowHandoff: { outcome: 'failed', method: 'greenhouse-api' },
+    });
   });
 
   it('retries a transient browser failure for platform retry and eventual DLQ handling', async () => {

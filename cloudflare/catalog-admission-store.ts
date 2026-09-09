@@ -658,6 +658,20 @@ export class D1CatalogAdmissionStore {
       .bind(jobId, sourceId, retryAfter, observedAt, JSON.stringify(report)).run();
   }
 
+  async recordShadowExtractionHandoff(jobId: string, sourceId: string, acquisitionObservedAt: string, input: {
+    outcome: 'enqueued' | 'skipped-no-text' | 'skipped-no-binding' | 'failed';
+    method: string;
+    descriptionBytes: number;
+    observedAt: string;
+  }): Promise<void> {
+    await this.db.prepare(`UPDATE role_metadata_acquisition SET report = json_set(report,
+      '$.shadowHandoff.outcome', ?, '$.shadowHandoff.method', ?, '$.shadowHandoff.descriptionBytes', ?,
+      '$.shadowHandoff.observedAt', ?)
+      WHERE job_id = ? AND source_id = ? AND observed_at = ?`)
+      .bind(input.outcome, input.method, input.descriptionBytes, input.observedAt,
+        jobId, sourceId, acquisitionObservedAt).run();
+  }
+
   async metadataHostAvailable(host: string, now = new Date().toISOString()): Promise<boolean> {
     const row = await this.db.prepare('SELECT retry_after FROM role_metadata_api_backoff WHERE host = ?').bind(host).first<{ retry_after: string }>();
     return !row || row.retry_after <= now;
@@ -938,7 +952,7 @@ export class D1CatalogAdmissionStore {
     return { changed: rows.results.length, occurrencesChanged: 0, projectionRefreshRequired: rows.results.length > 0 };
   }
 
-  async audit(): Promise<{
+  async audit(options: { includeRecords?: boolean; includeUnresolvedEmployers?: boolean } = {}): Promise<{
     scanned: number;
     eligible: number;
     review: number;
@@ -958,16 +972,34 @@ export class D1CatalogAdmissionStore {
     records: Array<{ jobId: string; company: string; title: string; open: boolean; catalogEligible: boolean;
       reasonCodes: string[]; sourceIds: string[]; destinationClassification?: string; smsSent: boolean }>;
   }> {
-    const rows = await this.db.prepare("SELECT value FROM catalog_items WHERE kind = 'internship'").all<JsonRow>();
-    const jobs = rows.results.map((row) => JSON.parse(row.value) as Internship);
+    const includeRecords = options.includeRecords !== false;
+    const includeUnresolvedEmployers = options.includeUnresolvedEmployers !== false;
     const byReason: Record<string, number> = {};
     const bySource: Record<string, number> = {};
     const byDestination: Record<string, number> = {};
     const closureSignals: Record<string, number> = {};
     const unresolved = new Map<string, { provider: string; tenant?: string; labels: Set<string>; evidenceUrls: Set<string>;
       occurrenceCount: number; continuationConflicts: number; notifiedJobs: Set<string> }>();
-    for (const job of jobs) for (const reason of job.admission?.reasonCodes ?? []) byReason[reason] = (byReason[reason] ?? 0) + 1;
-    for (const job of jobs) {
+    const now = Date.now();
+    const freshness = { fresh: 0, due: 0, stale: 0, staleEligible: 0, missing: 0 };
+    const validationCoverage = { validated: 0, missing: 0 };
+    const records: Array<{ jobId: string; company: string; title: string; open: boolean; catalogEligible: boolean;
+      reasonCodes: string[]; sourceIds: string[]; destinationClassification?: string; smsSent: boolean }> = [];
+    let scanned = 0; let eligible = 0; let review = 0; let legacyUnclassified = 0;
+    let withNotificationHistory = 0; let continuationConflicts = 0;
+    // Parse one bounded page at a time. Internship JSON can include large source
+    // histories and descriptions, so materializing the complete catalog exceeds
+    // the Worker memory limit even though the aggregate response is modest.
+    for await (const page of this.catalogInternshipPages()) for (const row of page) {
+      const job = JSON.parse(row.value) as Internship;
+      scanned += 1;
+      if (catalogEligible(job)) eligible += 1;
+      if (job.admission?.catalogEligible === false) review += 1;
+      if (!job.admission) legacyUnclassified += 1;
+      if (job.notification.smsSentAt) withNotificationHistory += 1;
+      if (job.applicationUrlValidatedAt) validationCoverage.validated += 1;
+      else validationCoverage.missing += 1;
+      for (const reason of job.admission?.reasonCodes ?? []) byReason[reason] = (byReason[reason] ?? 0) + 1;
       for (const sourceId of new Set(job.sourceReferences.map((reference) => reference.sourceId))) {
         bySource[sourceId] = (bySource[sourceId] ?? 0) + 1;
       }
@@ -976,7 +1008,9 @@ export class D1CatalogAdmissionStore {
       const closureSignal = job.admission?.destination.closureSignal;
       if (closureSignal) closureSignals[closureSignal] = (closureSignals[closureSignal] ?? 0) + 1;
       for (const reference of job.sourceReferences) {
-        if (reference.admission?.employerResolution === 'resolved' && reference.employerInheritance !== 'conflict') continue;
+        if (reference.employerInheritance === 'conflict') continuationConflicts += 1;
+        if (!includeUnresolvedEmployers
+          || reference.admission?.employerResolution === 'resolved' && reference.employerInheritance !== 'conflict') continue;
         const destination = reference.admission?.destination;
         let route: ReturnType<typeof providerPostingReference> = { provider: 'unknown' };
         try { route = providerPostingReference(reference.applyUrl); } catch { /* Preserve malformed candidate evidence. */ }
@@ -990,20 +1024,25 @@ export class D1CatalogAdmissionStore {
         if (job.notification.smsSentAt || job.notification.digestedAt) group.notifiedJobs.add(job.jobId);
         unresolved.set(key, group);
       }
-    }
-    const now = Date.now();
-    const freshness = { fresh: 0, due: 0, stale: 0, staleEligible: 0, missing: 0 };
-    for (const job of jobs) {
       const destination = job.admission?.destination;
-      if (!destination) { freshness.missing += 1; continue; }
-      const freshUntil = destination.freshUntil
-        ?? new Date(Date.parse(destination.inspectedAt) + 7 * 86_400_000).toISOString();
-      if (Date.parse(freshUntil) <= now) {
-        freshness.stale += 1;
-        if (job.open && job.admission?.catalogEligible) freshness.staleEligible += 1;
+      if (!destination) freshness.missing += 1;
+      else {
+        const freshUntil = destination.freshUntil
+          ?? new Date(Date.parse(destination.inspectedAt) + 7 * 86_400_000).toISOString();
+        if (Date.parse(freshUntil) <= now) {
+          freshness.stale += 1;
+          if (job.open && job.admission?.catalogEligible) freshness.staleEligible += 1;
+        }
+        else if (Date.parse(destination.nextCheckAt ?? freshUntil) <= now) freshness.due += 1;
+        else freshness.fresh += 1;
       }
-      else if (Date.parse(destination.nextCheckAt ?? freshUntil) <= now) freshness.due += 1;
-      else freshness.fresh += 1;
+      if (includeRecords && job.admission?.catalogEligible === false) records.push({
+        jobId: job.jobId, company: job.company, title: job.title, open: job.open,
+        catalogEligible: false, reasonCodes: job.admission.reasonCodes,
+        sourceIds: [...new Set(job.sourceReferences.map((reference) => reference.sourceId))].sort(),
+        destinationClassification: job.admission.destination.classification,
+        smsSent: Boolean(job.notification.smsSentAt),
+      });
     }
     const [scheduled, leased, backfillQueued, backfillCompleted, repairStaged, repairApplied] = await Promise.all([
       this.db.prepare('SELECT count(*) AS count FROM destination_verification_schedule').first<{ count: number }>(),
@@ -1014,18 +1053,17 @@ export class D1CatalogAdmissionStore {
       this.db.prepare('SELECT count(*) AS count FROM catalog_admission_repair_guards').first<{ count: number }>(),
     ]);
     return {
-      scanned: jobs.length,
-      eligible: jobs.filter((job) => catalogEligible(job)).length,
-      review: jobs.filter((job) => job.admission?.catalogEligible === false).length,
-      legacyUnclassified: jobs.filter((job) => !job.admission).length,
+      scanned,
+      eligible,
+      review,
+      legacyUnclassified,
       byReason,
       bySource,
       byDestination,
-      withNotificationHistory: jobs.filter((job) => Boolean(job.notification.smsSentAt)).length,
+      withNotificationHistory,
       freshness,
-      validationCoverage: { validated: jobs.filter((job) => Boolean(job.applicationUrlValidatedAt)).length,
-        missing: jobs.filter((job) => !job.applicationUrlValidatedAt).length },
-      continuationConflicts: jobs.flatMap((job) => job.sourceReferences).filter((reference) => reference.employerInheritance === 'conflict').length,
+      validationCoverage,
+      continuationConflicts,
       closureSignals,
       operations: { scheduled: scheduled?.count ?? 0, leased: leased?.count ?? 0, backfillQueued: backfillQueued?.count ?? 0,
         backfillCompleted: backfillCompleted?.count ?? 0, repairStaged: repairStaged?.count ?? 0, repairApplied: repairApplied?.count ?? 0 },
@@ -1033,13 +1071,7 @@ export class D1CatalogAdmissionStore {
         labels: [...group.labels].sort(), evidenceUrls: [...group.evidenceUrls].sort(), occurrenceCount: group.occurrenceCount,
         continuationConflicts: group.continuationConflicts, withNotificationHistory: group.notifiedJobs.size }))
         .sort((left, right) => left.provider.localeCompare(right.provider) || (left.tenant ?? '').localeCompare(right.tenant ?? '')),
-      records: jobs.filter((job) => job.admission?.catalogEligible === false).map((job) => ({
-        jobId: job.jobId, company: job.company, title: job.title, open: job.open,
-        catalogEligible: false, reasonCodes: job.admission?.reasonCodes ?? [],
-        sourceIds: [...new Set(job.sourceReferences.map((reference) => reference.sourceId))].sort(),
-        ...(job.admission ? { destinationClassification: job.admission.destination.classification } : {}),
-        smsSent: Boolean(job.notification.smsSentAt),
-      })),
+      records,
     };
   }
 
