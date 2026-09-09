@@ -177,3 +177,23 @@ describe('golden dataset fixture', () => {
     expect(entry?.expected.fields.compensation?.value).toEqual([{ min: 50, max: 60, currency: 'USD', period: 'hour' }]);
   });
 });
+
+describe('second golden dataset fixture (anti-overfit holdout)', () => {
+  const dataset = parseShadowEvalCases(JSON.parse(readFileSync(new URL('../test/fixtures/shadow-extraction-eval-2.json', import.meta.url), 'utf8')) as unknown);
+  it('loads 12 unique cases with all seven explicit field labels', () => {
+    expect(dataset.length).toBe(12);
+    expect(new Set(dataset.map((entry) => entry.id)).size).toBe(12);
+    for (const entry of dataset) expect(Object.keys(entry.expected.fields).sort()).toEqual([...shadowEvalFields].sort());
+  });
+  it('keeps the CAD new-grad compensation and work-mode conflict expectations', () => {
+    const cad = dataset.find((item) => item.id === 'cad-new-grad-hybrid');
+    expect(cad?.expected.fields.compensation?.value).toEqual([{ min: 85000, max: 85000, currency: 'CAD', period: 'year' }]);
+    const conflict = dataset.find((item) => item.id === 'conflicting-work-mode');
+    expect(conflict?.expected.fields.workMode?.status).toBe('conflicting');
+    expect(conflict?.expected.classification.earlyCareer).toBe('yes');
+  });
+  it('keeps the senior experienced-hire earlyCareer label', () => {
+    const senior = dataset.find((item) => item.id === 'senior-experienced-hire');
+    expect(senior?.expected.classification.earlyCareer).toBe('no');
+  });
+});

@@ -1,0 +1,209 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "cad-new-grad-hybrid",
+      "title": "Software Engineer (New Grad)",
+      "description": "This is a hybrid role in Toronto, Ontario. Compensation: $85,000 CAD per year. Start date: January 2027.",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["Software Engineering"] },
+        "fields": {
+          "compensation": { "status": "present", "value": [{ "min": 85000, "max": 85000, "currency": "CAD", "period": "year" }] },
+          "locations": { "status": "present", "value": ["Toronto, Ontario"] },
+          "workMode": { "status": "present", "value": "hybrid" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "present", "value": true },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "sponsored-london-analyst",
+      "title": "Data Analyst Intern",
+      "description": "This internship is in London, United Kingdom. We provide visa sponsorship for eligible candidates.",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["Data Analytics"] },
+        "fields": {
+          "compensation": { "status": "not-stated" },
+          "locations": { "status": "present", "value": ["London, United Kingdom"] },
+          "workMode": { "status": "not-stated" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "present", "value": true }
+        }
+      }
+    },
+    {
+      "id": "onsite-coop-no-location",
+      "title": "Network Engineer Co-op",
+      "description": "This co-op is onsite at our office. Students must be enrolled in a four-year engineering program.",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["Network Engineering"] },
+        "fields": {
+          "compensation": { "status": "not-stated" },
+          "locations": { "status": "not-stated" },
+          "workMode": { "status": "present", "value": "onsite" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "present", "value": true },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "conflicting-work-mode",
+      "title": "Product Design Intern",
+      "description": "This role is fully remote. You must work from our New York office three days per week.",
+      "expected": {
+        "classification": { "technical": "no", "earlyCareer": "yes", "disciplines": [] },
+        "fields": {
+          "compensation": { "status": "not-stated" },
+          "locations": { "status": "present", "value": ["New York"] },
+          "workMode": { "status": "conflicting" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "housing-stipend-summer-dates",
+      "title": "Site Reliability Intern",
+      "description": "A $2,000 monthly housing stipend is provided. The internship runs June through August. This is a full-time role onsite in Seattle.",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["Site Reliability Engineering"] },
+        "fields": {
+          "compensation": { "status": "not-stated" },
+          "locations": { "status": "present", "value": ["Seattle"] },
+          "workMode": { "status": "present", "value": "onsite" },
+          "housing": { "status": "present", "value": true },
+          "timing": { "status": "present", "value": true },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "marketing-salary-nontechnical",
+      "title": "Marketing Coordinator (New Grad)",
+      "description": "Compensation: $60,000 per year. This role is based in Chicago, Illinois.",
+      "expected": {
+        "classification": { "technical": "no", "earlyCareer": "yes", "disciplines": [] },
+        "fields": {
+          "compensation": { "status": "present", "value": [{ "min": 60000, "max": 60000, "currency": "USD", "period": "year" }] },
+          "locations": { "status": "present", "value": ["Chicago, Illinois"] },
+          "workMode": { "status": "not-stated" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "clearance-remote-systems",
+      "title": "Systems Engineer Intern",
+      "description": "Active Top Secret clearance is required. This is a remote position.",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["Systems Engineering"] },
+        "fields": {
+          "compensation": { "status": "not-stated" },
+          "locations": { "status": "not-stated" },
+          "workMode": { "status": "present", "value": "remote" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "present", "value": true }
+        }
+      }
+    },
+    {
+      "id": "vague-growth-intern",
+      "title": "Growth Intern",
+      "description": "Join our fast-growing startup and help us reach new customers. Apply today!",
+      "expected": {
+        "classification": { "technical": "no", "earlyCareer": "yes", "disciplines": [] },
+        "fields": {
+          "compensation": { "status": "not-stated" },
+          "locations": { "status": "not-stated" },
+          "workMode": { "status": "not-stated" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "quant-deadline-education",
+      "title": "Quantitative Analyst Intern",
+      "description": "Candidates must be pursuing a degree in mathematics, statistics, or computer science. Applications close March 15, 2027.",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["Quantitative Analysis"] },
+        "fields": {
+          "compensation": { "status": "not-stated" },
+          "locations": { "status": "not-stated" },
+          "workMode": { "status": "not-stated" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "present", "value": true },
+          "education": { "status": "present", "value": true },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "ml-intern-two-cities",
+      "title": "ML Engineer Intern",
+      "description": "Candidates may sit in our New York, NY or Boston, MA offices. Salary range: $70 - $85 per hour.",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["Machine Learning"] },
+        "fields": {
+          "compensation": { "status": "present", "value": [{ "min": 70, "max": 85, "currency": "USD", "period": "hour" }] },
+          "locations": { "status": "present", "value": ["New York, NY", "Boston, MA"] },
+          "workMode": { "status": "not-stated" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "berlin-monthly-eur",
+      "title": "Berlin Data Engineering Intern",
+      "description": "Compensation: €2,800 per month. This is an onsite role in Berlin, Germany.",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "yes", "disciplines": ["Data Engineering"] },
+        "fields": {
+          "compensation": { "status": "present", "value": [{ "min": 2800, "max": 2800, "currency": "EUR", "period": "month" }] },
+          "locations": { "status": "present", "value": ["Berlin, Germany"] },
+          "workMode": { "status": "present", "value": "onsite" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    },
+    {
+      "id": "senior-experienced-hire",
+      "title": "Senior Infrastructure Engineer",
+      "description": "We are hiring a senior engineer to lead our infrastructure team. Full-time, in our New York office.",
+      "expected": {
+        "classification": { "technical": "yes", "earlyCareer": "no", "disciplines": ["Infrastructure Engineering"] },
+        "fields": {
+          "compensation": { "status": "not-stated" },
+          "locations": { "status": "present", "value": ["New York"] },
+          "workMode": { "status": "present", "value": "onsite" },
+          "housing": { "status": "not-stated" },
+          "timing": { "status": "not-stated" },
+          "education": { "status": "not-stated" },
+          "eligibility": { "status": "not-stated" }
+        }
+      }
+    }
+  ]
+}
