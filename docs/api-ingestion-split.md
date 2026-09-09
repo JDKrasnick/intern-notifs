@@ -106,6 +106,8 @@ purge, reset, or historical repair is part of it.
 
    ```bash
    jq 'del(.queues.consumers, .triggers)
+     | .queues.producers |= map(select(.queue != "intern-notifs-shadow-extraction" and .queue != "intern-notifs-shadow-extraction-dlq"))
+     | .r2_buckets |= map(select(.binding != "SHADOW_EXTRACTION_ARTIFACTS"))
      | .main = "../cloudflare/ingestion-worker.ts"
      | ."$schema" = "../node_modules/wrangler/config-schema.json"
      | .d1_databases[0].migrations_dir = "../cloudflare/migrations"' \
