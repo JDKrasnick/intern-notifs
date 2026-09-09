@@ -33,6 +33,8 @@ const strings = {
   ],
 };
 
+const workMode = { type: 'string', enum: ['remote', 'hybrid', 'onsite'] } as const;
+
 const compensation = {
   type: 'array',
   items: {
@@ -63,7 +65,7 @@ const responseSchema = {
       properties: {
         compensation: fieldSchema(compensation),
         locations: fieldSchema({ type: 'array', items: { type: 'string' } }),
-        workMode: fieldSchema(strings), housing: fieldSchema(strings), timing: fieldSchema(strings),
+        workMode: fieldSchema(workMode), housing: fieldSchema(strings), timing: fieldSchema(strings),
         education: fieldSchema(strings), eligibility: fieldSchema(strings),
       },
     },

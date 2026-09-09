@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 
 /** Versions are part of the cache key. Changing any one forces a new shadow run. */
-export const SHADOW_EXTRACTION_PROMPT_VERSION = 'shadow-extraction-prompt-v3';
-export const SHADOW_EXTRACTION_SCHEMA_VERSION = 'shadow-extraction-schema-v4';
+export const SHADOW_EXTRACTION_PROMPT_VERSION = 'shadow-extraction-prompt-v4';
+export const SHADOW_EXTRACTION_SCHEMA_VERSION = 'shadow-extraction-schema-v5';
 export const SHADOW_EXTRACTION_PREPROCESSING_VERSION = 'exact-posting-markdown-v1';
 export const SHADOW_EXTRACTION_MODEL_ID = 'gpt-4o-mini-2024-07-18';
 export const SHADOW_EXTRACTION_MAX_INPUT_BYTES = 40_000;
@@ -89,7 +89,10 @@ export function shadowExtractionPrompt(input: NormalizedPostingInput): { system:
       + '"null", "unknown", or an empty collection—as value whenever status is not present. Compensation means base wage, salary, or '
       + 'explicit pay rate only: exclude benefits, reimbursements, bonuses, housing/travel/meal/equipment/wellness allowances, and other '
       + 'stipends. Compensation value must be an array of {min, max, currency, period} objects, and each compensation evidence passage '
-      + 'must itself contain the corresponding amount, currency, and pay period. Locations value must be an array of location strings. '
+      + 'must itself contain the corresponding amount, currency, and pay period. Locations value must contain geographic places only; '
+      + 'remote, hybrid, onsite, and in-office are work modes, not locations. '
+      + 'WorkMode value must be exactly remote, hybrid, or onsite. When the supplied posting is marked incomplete, use incomplete—not '
+      + 'not-stated—for every field that is absent from the supplied excerpt. '
       + 'For each field return value or null, status, verbatim supporting passages, and qualifiers. '
       + 'Use unknown for classifications without support. Do not turn clearance into citizenship, graduation dates into role season, '
       + 'or generic office/remote prose into a role location or work mode.',
@@ -172,12 +175,21 @@ export function validateShadowExtraction(value: unknown, input: NormalizedPostin
     const status = raw.status as ShadowStatus;
     const evidence = stringArray(raw.evidence);
     const qualifiers = stringArray(raw.qualifiers);
+    const validWorkMode = field !== 'workMode' || status !== 'present'
+      || (typeof raw.value === 'string' && ['remote', 'hybrid', 'onsite'].includes(raw.value));
+    const validLocations = field !== 'locations' || status !== 'present' || (Array.isArray(raw.value) && raw.value.length > 0
+      && raw.value.every(location => typeof location === 'string' && location.trim()
+        && !/^(?:remote|hybrid|on[ -]?site|in[ -]?office)$/iu.test(location.trim())));
+    const validCompleteness = input.completeness !== 'incomplete' || status !== 'not-stated';
     const validStatus = (status === 'present' ? raw.value !== null && Boolean(evidence?.length) : raw.value === null)
       && Boolean(evidence) && Boolean(qualifiers) && evidencePresent(evidence!, input.description)
-      && numericUnitsConsistent(field, raw.value, evidence!);
+      && numericUnitsConsistent(field, raw.value, evidence!) && validWorkMode && validLocations && validCompleteness;
     if (!validStatus) {
       const failure = !evidence ? 'invalid evidence' : !evidencePresent(evidence, input.description) ? 'supporting passage absent from artifact'
-        : !numericUnitsConsistent(field, raw.value, evidence) ? 'numeric or unit inconsistency' : 'status/value inconsistency';
+        : !numericUnitsConsistent(field, raw.value, evidence) ? 'numeric or unit inconsistency'
+          : !validWorkMode ? 'unsupported work mode'
+            : !validLocations ? 'location is not a geographic place'
+              : !validCompleteness ? 'not-stated is invalid for incomplete input' : 'status/value inconsistency';
       failures.push(`${field}: ${failure}`); outcomes.push({ field, status, accepted: false, failure }); continue;
     }
     accepted[field] = { value: raw.value ?? null, status, evidence: evidence!, qualifiers: qualifiers! };

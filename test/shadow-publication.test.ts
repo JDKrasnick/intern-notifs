@@ -6,7 +6,9 @@ import cloudflareWorker, { type Environment } from '../cloudflare/worker.js';
 import { reconcileRoleMetadata, ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 import type { ShadowExtraction } from '../src/shadow-extraction.js';
-import type { RoleMetadataEvidence } from '../src/types.js';
+import type { Internship, RoleMetadataEvidence } from '../src/types.js';
+import type { R2Bucket } from '../cloudflare/types.js';
+import { D1InternshipStore } from '../cloudflare/d1-store.js';
 
 const hash = 'a'.repeat(64);
 
@@ -26,34 +28,76 @@ function d1(database: DatabaseSync): D1Database {
   };
 }
 
-function publicationDatabase(): DatabaseSync {
+class MemoryR2 implements R2Bucket {
+  values = new Map<string, Uint8Array>();
+  async put(key: string, value: ArrayBuffer | ReadableStream | null) {
+    if (!(value instanceof ArrayBuffer)) throw new Error('test requires array buffer');
+    this.values.set(key, new Uint8Array(value));
+  }
+  async get(key: string) {
+    const value = this.values.get(key);
+    return value ? { size: value.byteLength, body: new ReadableStream({ start(controller) { controller.enqueue(value); controller.close(); } }) } : null;
+  }
+  async delete(key: string) { this.values.delete(key); }
+}
+
+const extraction: ShadowExtraction = {
+  classification: { technical: 'yes', earlyCareer: 'yes', disciplines: ['software'] },
+  fields: {
+    compensation: { value: null, status: 'not-stated', evidence: [], qualifiers: [] },
+    locations: { value: ['Austin, TX'], status: 'present', evidence: ['Location: Austin, TX'], qualifiers: [] },
+    workMode: { value: 'On-site', status: 'present', evidence: ['Work mode: On-site'], qualifiers: [] },
+    housing: { value: null, status: 'not-stated', evidence: [], qualifiers: [] }, timing: { value: null, status: 'not-stated', evidence: [], qualifiers: [] },
+    education: { value: null, status: 'not-stated', evidence: [], qualifiers: [] }, eligibility: { value: null, status: 'not-stated', evidence: [], qualifiers: [] },
+  },
+};
+
+async function publicationDatabase(): Promise<{ database: DatabaseSync; artifacts: MemoryR2 }> {
   const database = new DatabaseSync(':memory:');
-  for (const migration of ['0003_billing_shutdown.sql', '0020_shadow_extraction.sql', '0021_shadow_extraction_fencing.sql',
-    '0022_shadow_extraction_cache_expiry.sql', '0023_shadow_extraction_attempt_costs.sql', '0024_shadow_publication_receipts.sql']) {
+  for (const migration of ['0001_initial.sql', '0003_billing_shutdown.sql', '0015_role_metadata_enrichment.sql', '0020_shadow_extraction.sql', '0021_shadow_extraction_fencing.sql',
+    '0022_shadow_extraction_cache_expiry.sql', '0023_shadow_extraction_attempt_costs.sql', '0024_shadow_publication_receipts.sql', '0025_shadow_extraction_evaluations.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   database.prepare(`INSERT INTO shadow_extraction_runs
     (run_key, job_id, source_id, external_id, source_url, posting_identity, content_hash, model_id, prompt_version,
-      schema_version, preprocessing_version, state, input_key, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?)`).run(
-    hash, 'job-1', 'greenhouse-acme', '123', 'https://jobs.example/123', '{}', hash, 'model', 'prompt', 'schema', 'preprocessing', 'input',
+      schema_version, preprocessing_version, state, input_key, response_key, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?)`).run(
+    hash, 'job-1', 'greenhouse-acme', '123', 'https://jobs.example/123', '{}', hash, 'model', 'prompt', 'schema', 'preprocessing', 'input', 'response',
     '2026-09-08T00:00:00.000Z', '2026-09-08T00:00:00.000Z',
   );
   database.prepare(`INSERT INTO shadow_extraction_posting_revisions (job_id, source_id, external_id, content_hash, observed_at)
     VALUES (?, ?, ?, ?, ?)`).run('job-1', 'greenhouse-acme', '123', hash, '2026-09-08T00:00:00.000Z');
   for (const field of ['locations', 'workMode']) database.prepare(`INSERT INTO shadow_extraction_field_outcomes
     (run_key, field, status, accepted) VALUES (?, ?, 'present', 1)`).run(hash, field);
-  return database;
+  const jobs = new D1InternshipStore(d1(database));
+  const reference = { sourceId: 'greenhouse-acme', externalId: '123', document: 'source', sourceUrl: 'https://jobs.example/123', row: 1,
+    company: 'Acme', title: 'Software Intern', location: 'Location not specified', season: 'summer-2027', applyUrl: 'https://jobs.example/123',
+    compensation: { raw: '' }, state: 'open' as const };
+  await jobs.putInternship({ jobId: 'job-1', company: 'Acme', title: 'Software Intern', location: 'Location not specified', season: 'summer-2027',
+    applyUrl: 'https://jobs.example/123', normalizedUrl: 'https://jobs.example/123', fingerprint: 'fingerprint', compensation: { raw: '' },
+    sourceReferences: [reference], technical: true, open: true, firstSeenAt: '2026-09-08T00:00:00.000Z', lastSeenAt: '2026-09-08T00:00:00.000Z',
+    notification: { smsPending: false, digestPending: false } } satisfies Internship);
+  const artifacts = new MemoryR2();
+  const validation = { accepted: extraction, failures: [], fieldOutcomes: Object.entries(extraction.fields).map(([field, value]) => ({ field, status: value.status, accepted: true })) };
+  await artifacts.put('response', new TextEncoder().encode(JSON.stringify({ response: extraction, validation })).buffer);
+  return { database, artifacts };
 }
 
-async function createReceipt(database: DatabaseSync, version: string, acceptedFields: string[]) {
+async function createReceipt(database: DatabaseSync, artifacts: MemoryR2, version: string, acceptedFields: string[]) {
   const policy = { enabled: true, version, allowedFields: ['locations', 'workMode'],
     cohort: [{ sourceId: 'greenhouse-acme', externalId: '123', contentHash: hash }] };
+  const environment = { OPERATIONS_SHARED_SECRET: 'secret', DB: d1(database), SHADOW_EXTRACTION_ARTIFACTS: artifacts,
+    LLM_METADATA_PUBLICATION_POLICY_JSON: JSON.stringify(policy) } as unknown as Environment;
+  const evaluation = await cloudflareWorker.fetch(new Request('https://intern-notifs.test/internal/operations/shadow-publication', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Operations-Key': 'secret' },
+    body: JSON.stringify({ action: 'record-evaluation', runKey: hash,
+      evaluations: acceptedFields.map(field => ({ field, outcome: 'correct-present' })) }),
+  }), environment);
+  expect(evaluation.status).toBe(200);
   const response = await cloudflareWorker.fetch(new Request('https://intern-notifs.test/internal/operations/shadow-publication', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Operations-Key': 'secret' },
     body: JSON.stringify({ action: 'create-receipt', runKey: hash, acceptedFields }),
-  }), { OPERATIONS_SHARED_SECRET: 'secret', DB: d1(database),
-    LLM_METADATA_PUBLICATION_POLICY_JSON: JSON.stringify(policy) } as unknown as Environment);
+  }), environment);
   expect(response.status).toBe(200);
   return response.json() as Promise<{ receiptId: string; evidenceFingerprint: string }>;
 }
@@ -114,11 +158,25 @@ describe('shadow publication policy', () => {
     expect(metadata?.locations?.[0]?.name).toBe('Austin, TX');
   });
 
+  it('rejects publication before the selected field passes human evaluation', async () => {
+    const { database, artifacts } = await publicationDatabase();
+    const policy = { enabled: true, version: 'v1', allowedFields: ['locations'],
+      cohort: [{ sourceId: 'greenhouse-acme', externalId: '123', contentHash: hash }] };
+    const response = await cloudflareWorker.fetch(new Request('https://intern-notifs.test/internal/operations/shadow-publication', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Operations-Key': 'secret' },
+      body: JSON.stringify({ action: 'create-receipt', runKey: hash, acceptedFields: ['locations'] }),
+    }), { OPERATIONS_SHARED_SECRET: 'secret', DB: d1(database), SHADOW_EXTRACTION_ARTIFACTS: artifacts,
+      LLM_METADATA_PUBLICATION_POLICY_JSON: JSON.stringify(policy) } as unknown as Environment);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ message: 'Receipt fields have not passed human evaluation' });
+    expect(database.prepare('SELECT COUNT(*) AS count FROM shadow_publication_receipts').get()).toEqual({ count: 0 });
+  });
+
   it('keeps changed review decisions append-only and identical receipt creation idempotent', async () => {
-    const database = publicationDatabase();
-    const first = await createReceipt(database, 'v1', ['locations']);
-    const second = await createReceipt(database, 'v2', ['workMode']);
-    const repeated = await createReceipt(database, 'v2', ['workMode']);
+    const { database, artifacts } = await publicationDatabase();
+    const first = await createReceipt(database, artifacts, 'v1', ['locations']);
+    const second = await createReceipt(database, artifacts, 'v2', ['workMode']);
+    const repeated = await createReceipt(database, artifacts, 'v2', ['workMode']);
     expect(second.receiptId).not.toBe(first.receiptId);
     expect(repeated).toEqual(second);
     const rows = database.prepare(`SELECT receipt_id, policy_version, accepted_fields, evidence_fingerprint
@@ -127,5 +185,9 @@ describe('shadow publication policy', () => {
       { receipt_id: first.receiptId, policy_version: 'v1', accepted_fields: '["locations"]', evidence_fingerprint: first.evidenceFingerprint },
       { receipt_id: second.receiptId, policy_version: 'v2', accepted_fields: '["workMode"]', evidence_fingerprint: second.evidenceFingerprint },
     ]);
+    const published = JSON.parse((database.prepare("SELECT value FROM catalog_items WHERE pk = 'JOB#job-1' AND sk = 'META'").get() as { value: string }).value) as Internship;
+    expect(published.locations).toEqual(['Austin, TX']);
+    expect(published.workMode).toBe('onsite');
+    expect(published.notification).toEqual({ smsPending: false, digestPending: false });
   });
 });
