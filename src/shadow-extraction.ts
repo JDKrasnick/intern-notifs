@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 
 /** Versions are part of the cache key. Changing any one forces a new shadow run. */
-export const SHADOW_EXTRACTION_PROMPT_VERSION = 'shadow-extraction-prompt-v2';
-export const SHADOW_EXTRACTION_SCHEMA_VERSION = 'shadow-extraction-schema-v2';
+export const SHADOW_EXTRACTION_PROMPT_VERSION = 'shadow-extraction-prompt-v3';
+export const SHADOW_EXTRACTION_SCHEMA_VERSION = 'shadow-extraction-schema-v3';
 export const SHADOW_EXTRACTION_PREPROCESSING_VERSION = 'exact-posting-markdown-v1';
 export const SHADOW_EXTRACTION_MODEL_ID = 'gpt-4o-mini-2024-07-18';
 export const SHADOW_EXTRACTION_MAX_INPUT_BYTES = 40_000;
@@ -85,9 +85,11 @@ export function shadowExtractionPrompt(input: NormalizedPostingInput): { system:
       + '(yes, no, or unknown) plus a disciplines string array. Fields contains compensation, locations, workMode, housing, timing, '
       + 'education, and eligibility. Every field contains value, status (present, not-stated, conflicting, or incomplete), '
       + 'a verbatim evidence string array, and a qualifiers string array. Every evidence item must be copied byte-for-byte as one '
-      + 'contiguous substring of the supplied description; never shorten, normalize, or paraphrase it. Use null value and empty evidence '
-      + 'when a fact is not present. Compensation value must be an array of {min, max, currency, period} objects; locations value must '
-      + 'be an array of location strings. '
+      + 'contiguous substring of the supplied description; never shorten, normalize, or paraphrase it. Use JSON null—not the string '
+      + '"null", "unknown", or an empty collection—as value whenever status is not present. Compensation means base wage, salary, or '
+      + 'explicit pay rate only: exclude benefits, reimbursements, bonuses, housing/travel/meal/equipment/wellness allowances, and other '
+      + 'stipends. Compensation value must be an array of {min, max, currency, period} objects, and each compensation evidence passage '
+      + 'must itself contain the corresponding amount, currency, and pay period. Locations value must be an array of location strings. '
       + 'For each field return value or null, status, verbatim supporting passages, and qualifiers. '
       + 'Use unknown for classifications without support. Do not turn clearance into citizenship, graduation dates into role season, '
       + 'or generic office/remote prose into a role location or work mode.',

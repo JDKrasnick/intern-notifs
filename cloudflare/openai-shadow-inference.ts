@@ -7,40 +7,41 @@ const requestTimeoutMs = 45_000;
 const inputCentsPerMillionTokens = 15;
 const outputCentsPerMillionTokens = 60;
 
-function fieldSchema(value: Record<string, unknown>) { return {
-  type: 'object',
-  additionalProperties: false,
-  required: ['value', 'status', 'evidence', 'qualifiers'],
-  properties: {
-    value,
-    status: { type: 'string', enum: ['present', 'not-stated', 'conflicting', 'incomplete'] },
-    evidence: { type: 'array', items: { type: 'string' } },
-    qualifiers: { type: 'array', items: { type: 'string' } },
-  },
+const evidence = { type: 'array', items: { type: 'string' } } as const;
+const qualifiers = { type: 'array', items: { type: 'string' } } as const;
+
+function fieldSchema(presentValue: Record<string, unknown>) { return {
+  anyOf: [
+    {
+      type: 'object', additionalProperties: false, required: ['value', 'status', 'evidence', 'qualifiers'],
+      properties: { value: presentValue, status: { type: 'string', enum: ['present'] }, evidence, qualifiers },
+    },
+    {
+      type: 'object', additionalProperties: false, required: ['value', 'status', 'evidence', 'qualifiers'],
+      properties: {
+        value: { type: 'null' }, status: { type: 'string', enum: ['not-stated', 'conflicting', 'incomplete'] },
+        evidence, qualifiers,
+      },
+    },
+  ],
 } as const; }
 
-const nullableStrings = {
+const strings = {
   anyOf: [
-    { type: 'null' },
     { type: 'string' },
     { type: 'array', items: { type: 'string' } },
   ],
 };
 
 const compensation = {
-  anyOf: [
-    { type: 'null' },
-    {
-      type: 'array',
-      items: {
-        type: 'object', additionalProperties: false, required: ['min', 'max', 'currency', 'period'],
-        properties: {
-          min: { type: 'number' }, max: { type: 'number' }, currency: { type: 'string' },
-          period: { type: 'string', enum: ['hour', 'day', 'week', 'month', 'year', 'one-time', 'unknown'] },
-        },
-      },
+  type: 'array',
+  items: {
+    type: 'object', additionalProperties: false, required: ['min', 'max', 'currency', 'period'],
+    properties: {
+      min: { type: 'number' }, max: { type: 'number' }, currency: { type: 'string' },
+      period: { type: 'string', enum: ['hour', 'day', 'week', 'month', 'year', 'one-time', 'unknown'] },
     },
-  ],
+  },
 };
 
 const responseSchema = {
@@ -61,9 +62,9 @@ const responseSchema = {
       required: ['compensation', 'locations', 'workMode', 'housing', 'timing', 'education', 'eligibility'],
       properties: {
         compensation: fieldSchema(compensation),
-        locations: fieldSchema({ anyOf: [{ type: 'null' }, { type: 'array', items: { type: 'string' } }] }),
-        workMode: fieldSchema(nullableStrings), housing: fieldSchema(nullableStrings), timing: fieldSchema(nullableStrings),
-        education: fieldSchema(nullableStrings), eligibility: fieldSchema(nullableStrings),
+        locations: fieldSchema({ type: 'array', items: { type: 'string' } }),
+        workMode: fieldSchema(strings), housing: fieldSchema(strings), timing: fieldSchema(strings),
+        education: fieldSchema(strings), eligibility: fieldSchema(strings),
       },
     },
   },
