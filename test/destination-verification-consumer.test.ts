@@ -258,6 +258,38 @@ describe('destination verification queue consumer', () => {
       .toEqual({ job_id: job.jobId, source_id: reference.sourceId, external_id: reference.externalId });
   });
 
+  it('hands a staging-only official API backfill off to shadow extraction', async () => {
+    const { database, db, jobs } = subject();
+    const { job, reference } = role();
+    await jobs.putInternship(job);
+    const before = await jobs.getJob(job.jobId);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({
+      id: Number(reference.externalId), title: reference.title,
+      content: `<p>${reference.title}</p><p>Austin</p><p>$50 - $60 per hour</p>`,
+    })));
+    const shadowQueue = { send: vi.fn(), sendBatch: vi.fn() };
+    const artifactPut = vi.fn().mockResolvedValue(undefined);
+    const queued = queueMessage({ version: 1, jobId: job.jobId, sourceId: reference.sourceId,
+      externalId: reference.externalId!, candidateUrl: reference.applyUrl, providerIdentity: {
+        provider: 'greenhouse', sourceId: reference.sourceId, sourceUrl: reference.sourceUrl,
+        tenant: 'acme', postingId: reference.externalId,
+      }, reason: 'historical-backfill', queuedAt: '2026-08-30T00:00:00Z',
+      metadataBackfillToken: 'staging-only-shadow-handoff' });
+
+    await processDestinationVerificationBatch({ queue: 'destination-verification', messages: [queued] }, {
+      ...environment(db), SHADOW_EXTRACTION_QUEUE: shadowQueue,
+      SHADOW_EXTRACTION_ARTIFACTS: { put: artifactPut } as unknown as R2Bucket,
+    }, () => new Date('2026-08-30T00:01:00Z'));
+
+    expect(queued.ack).toHaveBeenCalledOnce();
+    expect(launch).not.toHaveBeenCalled();
+    expect(await jobs.getJob(job.jobId)).toEqual(before);
+    expect(artifactPut).toHaveBeenCalledOnce();
+    expect(shadowQueue.send).toHaveBeenCalledOnce();
+    expect(database.prepare('SELECT job_id, source_id, external_id FROM shadow_extraction_posting_revisions').get())
+      .toEqual({ job_id: job.jobId, source_id: reference.sourceId, external_id: reference.externalId });
+  });
+
   it('retries a transient browser failure for platform retry and eventual DLQ handling', async () => {
     const { db, operations, jobs } = subject();
     const { job, reference } = role();

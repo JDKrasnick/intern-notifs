@@ -458,8 +458,22 @@ export async function processDestinationVerificationBatch(
         // Historical collection cannot change admission, URL or notifications.
         // An identity-checked full API artifact needs no browser for that task.
         if (message.metadataBackfillToken && apiAcquisition?.artifact) {
-          await persistDestinationAdmission({ jobs, operations, message, job, reference,
+          const result = await persistDestinationAdmission({ jobs, operations, message, job, reference,
             reachability: 'live', inspectedAt: now().toISOString(), apiAcquisition, durationMs: now().getTime() - Date.parse(attemptedAt) });
+          if (apiAcquisition.artifact.text && env.SHADOW_EXTRACTION_QUEUE && env.SHADOW_EXTRACTION_ARTIFACTS) {
+            try {
+              await enqueueShadowExtraction({ DB: env.DB, SHADOW_EXTRACTION_QUEUE: env.SHADOW_EXTRACTION_QUEUE,
+                SHADOW_EXTRACTION_ARTIFACTS: env.SHADOW_EXTRACTION_ARTIFACTS }, {
+                jobId: job.jobId, sourceId: message.sourceId, externalId: message.externalId,
+                sourceUrl: apiAcquisition.sourceUrl, providerIdentity: message.providerIdentity,
+                title: apiAcquisition.artifact.title ?? reference.title, description: apiAcquisition.artifact.text,
+                observedAt: now().toISOString(), incomplete: false, baseline: result.shadowBaseline,
+              });
+            } catch (error) {
+              console.error(JSON.stringify({ event: 'shadow_extraction_enqueue_failed', jobId: job.jobId,
+                sourceId: message.sourceId, error: error instanceof Error ? error.message : String(error) }));
+            }
+          }
           queued.ack(); continue;
         }
         browser ??= await puppeteer.launch(env.DESTINATION_BROWSER);
