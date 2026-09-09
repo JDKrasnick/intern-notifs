@@ -29,7 +29,7 @@ function d1(database: DatabaseSync): D1Database {
 function publicationDatabase(): DatabaseSync {
   const database = new DatabaseSync(':memory:');
   for (const migration of ['0003_billing_shutdown.sql', '0020_shadow_extraction.sql', '0021_shadow_extraction_fencing.sql',
-    '0022_shadow_extraction_cache_expiry.sql', '0023_shadow_publication_receipts.sql']) {
+    '0022_shadow_extraction_cache_expiry.sql', '0023_shadow_extraction_attempt_costs.sql', '0024_shadow_publication_receipts.sql']) {
     database.exec(readFileSync(new URL(`../cloudflare/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   database.prepare(`INSERT INTO shadow_extraction_runs

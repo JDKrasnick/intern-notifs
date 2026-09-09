@@ -58,8 +58,8 @@ CREATE TABLE shadow_extraction_baseline_differences (
   PRIMARY KEY(run_key, field)
 );
 
--- One reservation per exact cache key. The Worker checks the combined app
--- forecast before reserving; actual usage replaces the bound after inference.
+-- Initial per-run reservation ledger. Migration 0023 preserves these rows and
+-- converts the table to per-attempt reservations before live inference exists.
 CREATE TABLE shadow_extraction_cost_ledger (
   period TEXT NOT NULL,
   run_key TEXT NOT NULL REFERENCES shadow_extraction_runs(run_key) ON DELETE CASCADE,

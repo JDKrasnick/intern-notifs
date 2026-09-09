@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { URL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   destinationFromNotification,
@@ -12,11 +14,40 @@ import {
   postingRecencyBadge,
   releaseDeepLink,
   routeFailureState,
+  shouldPushJobHistory,
   sourcePresentation,
   validatedOfficialUrl,
 } from '../src/job-detail.js';
 
 describe('mobile job routes', () => {
+  it('opens a grouped role through the immediate catalog-card path', () => {
+    const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+    const handler = /const openGroupedRole = \(job: Job\) => \{(?<body>[\s\S]*?)\n  \};/.exec(app);
+
+    expect(app).toContain('onPress={() => onOpenRole(catalogRoleJob(item))}');
+    expect(handler?.groups?.body).toContain('openCatalogJob(job);');
+    expect(handler?.groups?.body).not.toContain('presentDestination');
+    expect(handler?.groups?.body).not.toContain('InteractionManager');
+  });
+
+  it('keeps the grouped sheet stable with role-shaped loading placeholders', () => {
+    const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+
+    expect(app).toContain('<CatalogGroupLoadingSkeleton />');
+    expect(app).toContain('accessibilityLabel="Loading grouped roles"');
+    expect(app).not.toContain('<Text style={styles.catalogPaginationText}>Loading roles…</Text>');
+  });
+
+  it('uses one restrained entrance motion for single and grouped role sheets', () => {
+    const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+
+    expect(app.match(/useSheetEntranceOffset\(/g)).toHaveLength(3);
+    expect(app).toContain('new Animated.Value(96)');
+    expect(app).toContain('duration: 320');
+    expect(app).toContain('easing: Easing.bezier(0.16, 1, 0.3, 1)');
+    expect(app).not.toContain('new Animated.Value(windowHeight)');
+  });
+
   it('parses compatible notification payloads and encoded app URLs', () => {
     expect(destinationFromNotification({ jobId: 'legacy/job' })).toEqual({ kind: 'job', jobId: 'legacy/job', reasons: [], exclusionsApplied: false });
     expect(destinationFromNotification({ applicationId: 'application-1', destination: 'saved' })).toEqual({ kind: 'saved' });
@@ -46,6 +77,12 @@ describe('mobile job routes', () => {
     expect(jobOpenDisposition('role-1', 'role-1')).toBe('ignore');
     expect(jobOpenDisposition('role-1', 'role-2')).toBe('replace');
     expect(jobOpenDisposition(undefined, 'role-2', true)).toBe('replace');
+  });
+
+  it('does not push a duplicate history entry for an initial job URL', () => {
+    expect(shouldPushJobHistory('role-1', 'role-1')).toBe(false);
+    expect(shouldPushJobHistory('role-1', 'role-2')).toBe(true);
+    expect(shouldPushJobHistory(null, 'role-1')).toBe(true);
   });
 
   it('keeps one sheet mounted while a routed role changes from loading to detail', () => {

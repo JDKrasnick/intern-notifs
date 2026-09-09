@@ -70,7 +70,8 @@ it does not claim to repair any previously published metadata.
 Apply migrations `0020_shadow_extraction.sql`,
 `0021_shadow_extraction_fencing.sql`, and
 `0022_shadow_extraction_cache_expiry.sql`, and
-`0023_shadow_publication_receipts.sql` before deploying the queue consumer.
+`0023_shadow_extraction_attempt_costs.sql`, and
+`0024_shadow_publication_receipts.sql` before deploying the queue consumer.
 Provision the private R2 bucket and the `shadow-extraction` work/DLQ
 queues from the infrastructure configuration. Configure this R2 lifecycle rule
 after the bucket exists, using credentials with only the documented R2 write

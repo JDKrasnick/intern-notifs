@@ -60,6 +60,7 @@ import {
   postingTimingPresentation,
   postingRecencyBadge,
   routeFailureState,
+  shouldPushJobHistory,
   sourcePresentation,
   validatedOfficialUrl,
   type AppDestination,
@@ -326,7 +327,9 @@ if (Platform.OS === 'web' && typeof document !== 'undefined') {
 const MotionAllowedContext = createContext(false);
 
 function useMotionAllowed() {
-  const [motionAllowed, setMotionAllowed] = useState(false);
+  // Start enabled so the first interaction does not render without motion and
+  // then restart its transition when the async accessibility check resolves.
+  const [motionAllowed, setMotionAllowed] = useState(true);
   useEffect(() => {
     let mounted = true;
     void AccessibilityInfo.isReduceMotionEnabled()
@@ -346,6 +349,31 @@ function useMotionAllowed() {
     };
   }, []);
   return motionAllowed;
+}
+
+function useSheetEntranceOffset(visible: boolean) {
+  const motionAllowed = useContext(MotionAllowedContext);
+  const offset = useRef(new Animated.Value(96)).current;
+  useEffect(() => {
+    if (!visible) {
+      offset.setValue(96);
+      return;
+    }
+    if (!motionAllowed) {
+      offset.setValue(0);
+      return;
+    }
+    offset.setValue(96);
+    const animation = Animated.timing(offset, {
+      toValue: 0,
+      duration: 320,
+      easing: Easing.bezier(0.16, 1, 0.3, 1),
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [motionAllowed, offset, visible]);
+  return offset;
 }
 
 async function openOfficialApplication(url: string) {
@@ -450,6 +478,8 @@ function JobCard({
 }) {
   const display = presentCatalogRole(job);
   const motionAllowed = useContext(MotionAllowedContext);
+  const { width } = useWindowDimensions();
+  const compactMobile = width < 600;
   const source = sourcePresentation(job.sourceReferences);
   const translateX = useRef(new Animated.Value(0)).current;
   const hideFade = useRef(new Animated.Value(1)).current;
@@ -598,7 +628,7 @@ function JobCard({
               if (event.nativeEvent.actionName === "unsave") handleUnsave();
               if (event.nativeEvent.actionName === "hide") handleHide();
             }}
-            style={[styles.card, styles.swipeCardSurface]}
+            style={[styles.card, styles.swipeCardSurface, compactMobile && styles.mobileRoleCard]}
             onPress={onOpen}
           >
             <View style={styles.jobCompanyRow}>
@@ -624,15 +654,15 @@ function JobCard({
                 </View>
               ) : null}
             </View>
-            <Text style={styles.title} numberOfLines={2}>{display.title}</Text>
-            <Text style={styles.muted} numberOfLines={3}>
+            <Text style={[styles.title, compactMobile && styles.mobileRoleTitle]} numberOfLines={2}>{display.title}</Text>
+            <Text style={[styles.muted, compactMobile && styles.mobileRoleMeta]} numberOfLines={3}>
               {display.location} · {display.season}
               {display.compensation ? <Text style={styles.payInline}> · {display.compensation}</Text> : null}
             </Text>
-            <JobSource source={source} showIdentityUnconfirmed={job.postingIdentityStatus === "unconfirmed"} />
-            <Text style={styles.postingTiming}>{postingTiming.summary}</Text>
+            <View style={compactMobile && styles.mobileRoleSource}><JobSource source={source} showIdentityUnconfirmed={job.postingIdentityStatus === "unconfirmed"} /></View>
+            <Text style={[styles.postingTiming, compactMobile && styles.mobileRoleTiming]}>{postingTiming.summary}</Text>
             {!job.open ? <Text style={styles.closedStatus}>Closed</Text> : null}
-            <View style={styles.jobCardFooterLeft}>
+            <View style={[styles.jobCardFooterLeft, compactMobile && styles.mobileRoleFooter]}>
               <View style={styles.jobCardActionCompact}>
                 <Text style={styles.jobCardActionText}>View role</Text>
                 <Text style={styles.jobCardActionArrow}>›</Text>
@@ -900,20 +930,20 @@ function CatalogGroupSheet({
   error?: string;
   onDismiss: () => void;
   onRetry: () => void;
-  onOpenRole: (jobId: string) => void;
+  onOpenRole: (job: Job) => void;
 }) {
+  const visible = Boolean(groupId);
+  const sheetOffset = useSheetEntranceOffset(visible);
   return (
-    <Modal visible={Boolean(groupId)} transparent animationType="slide" onRequestClose={onDismiss}>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={onDismiss}>
       <View style={styles.sheetOverlay}>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close role group" style={styles.sheetDismissArea} onPress={onDismiss} />
-        <View style={styles.catalogGroupSheet}>
+        <Animated.View style={[styles.catalogGroupSheet, { transform: [{ translateY: sheetOffset }] }]}>
           <View style={styles.sheetHandle} />
           {loading ? (
-            <View accessibilityRole="progressbar" accessibilityLabel="Loading grouped roles" style={styles.catalogGroupLoading}>
-              <Text style={styles.catalogPaginationText}>Loading roles…</Text>
-            </View>
+            <CatalogGroupLoadingSkeleton />
           ) : error ? (
-            <View style={styles.catalogGroupLoading}>
+            <View style={styles.catalogGroupErrorState}>
               <Text accessibilityRole="alert" style={styles.catalogGroupError}>{error}</Text>
               <ActionButton label="Try again" onPress={onRetry} />
             </View>
@@ -941,7 +971,7 @@ function CatalogGroupSheet({
                   <TouchableOpacity
                     accessibilityRole="button"
                     accessibilityLabel={`${boundedCatalogText(item.title, 240)}, ${compactLocations(item.locations, item.location)}${item.postingIdentityStatus === "unconfirmed" ? ", identity unconfirmed" : ""}`}
-                    onPress={() => onOpenRole(item.jobId)}
+                    onPress={() => onOpenRole(catalogRoleJob(item))}
                     style={styles.catalogGroupRole}
                   >
                     <View style={styles.catalogGroupRoleCopy}>
@@ -956,9 +986,33 @@ function CatalogGroupSheet({
               />
             </>
           ) : null}
-        </View>
+        </Animated.View>
       </View>
     </Modal>
+  );
+}
+
+function CatalogGroupLoadingSkeleton() {
+  return (
+    <View accessibilityRole="progressbar" accessibilityLabel="Loading grouped roles" style={styles.catalogGroupLoading}>
+      <View style={styles.catalogGroupSkeletonHeader}>
+        <Skeleton width={168} height={20} />
+        <View style={styles.skeletonGap8} />
+        <Skeleton width={92} height={13} />
+      </View>
+      <View style={styles.catalogGroupRoles}>
+        {[0, 1].map((index) => (
+          <View key={index} style={styles.catalogGroupRole}>
+            <View style={styles.catalogGroupRoleCopy}>
+              <Skeleton width={232} height={16} />
+              <View style={styles.skeletonGap8} />
+              <Skeleton width={148} height={12} />
+            </View>
+            <Skeleton width={18} height={18} />
+          </View>
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -1061,37 +1115,14 @@ function JobDetailSheet({
   onHideLocally?: (job: Job) => void;
   onUnsave?: (job: Job) => void;
 }) {
-  const motionAllowed = useContext(MotionAllowedContext);
-  const sheetOffset = useRef(new Animated.Value(800)).current;
   const displayedJob = useRef<Job | null>(null);
   const pendingAction = useRef<{ job: Job; kind: "apply" | "listing" } | null>(null);
   const [handoffPending, setHandoffPending] = useState(false);
   const presentation = jobDetailPresentation(Boolean(job), routeState);
   const visible = presentation.visible;
+  const sheetOffset = useSheetEntranceOffset(visible);
 
   if (job) displayedJob.current = job;
-
-  useEffect(() => {
-    if (!visible) {
-      sheetOffset.setValue(800);
-      return;
-    }
-
-    sheetOffset.setValue(800);
-    if (!motionAllowed) {
-      sheetOffset.setValue(0);
-      return;
-    }
-
-    const animation = Animated.timing(sheetOffset, {
-      toValue: 0,
-      duration: 220,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    });
-    animation.start();
-    return () => animation.stop();
-  }, [motionAllowed, sheetOffset, visible]);
 
   const role = job ?? displayedJob.current;
   const roleDisplay = role ? presentCatalogRole(role) : undefined;
@@ -1109,8 +1140,8 @@ function JobDetailSheet({
     ? postingTimingPresentation(role.sourceReferences, role.firstSeenAt)
     : undefined;
   const closedListingUrl = role && !role.open ? validatedOfficialUrl(role) : undefined;
-  const canSave = Boolean(role && onSaveForWeb && !applicationStatus && !isSavingForWeb);
   const isSaved = applicationStatus === "saved";
+  const canSave = Boolean(role && onSaveForWeb && !isSaved && !isSavingForWeb);
   return (
     <Modal
       animationType="none"
@@ -1212,7 +1243,11 @@ function JobDetailSheet({
                     onPress={() => startRoleAction("apply")}
                   />
                 ) : null}
-                {canSave ? (
+                {isSavingForWeb ? (
+                  <View style={styles.sheetSaveBar}>
+                    <Text style={styles.sheetSaveBarText}>{isSaved ? "Unsaving…" : "Saving…"}</Text>
+                  </View>
+                ) : canSave ? (
                   <TouchableOpacity
                     accessibilityRole="button"
                     accessibilityLabel="Save for web"
@@ -1235,10 +1270,6 @@ function JobDetailSheet({
                     <Ionicons name="bookmark" size={18} color={colors.signal} />
                     <Text style={styles.sheetSavedBarText}>Saved</Text>
                   </TouchableOpacity>
-                ) : isSavingForWeb ? (
-                  <View style={styles.sheetSaveBar}>
-                    <Text style={styles.sheetSaveBarText}>Saving…</Text>
-                  </View>
                 ) : null}
                 {onHideLocally && role ? (
                   <TouchableOpacity
@@ -1261,7 +1292,7 @@ function JobDetailSheet({
                   : greenhouseQuickApply
                   ? "If this employer enables Quick Apply, MyGreenhouse can fill the details you have saved there. Review every answer before submitting."
                   : signedIn
-                  ? "Apply now opens the employer form. Viewed roles save to your list automatically."
+                  ? "Apply now opens the employer form. Save a role to keep it in your list."
                   : "You’ll complete the employer’s application in your browser."}
               </Text>
             </ScrollView>
@@ -2774,8 +2805,10 @@ function AppContent() {
     setJobRouteState("loading");
     if (Platform.OS === "web" && typeof window !== "undefined") {
       const url = new URL(window.location.href);
-      url.searchParams.set("job", destination.jobId);
-      window.history.pushState({ jobId: destination.jobId }, "", url.toString());
+      if (shouldPushJobHistory(url.searchParams.get("job"), destination.jobId)) {
+        url.searchParams.set("job", destination.jobId);
+        window.history.pushState({ jobId: destination.jobId }, "", url.toString());
+      }
     }
     void api<Job>(`/jobs/${encodeURIComponent(destination.jobId)}`, "")
       .then((job) => {
@@ -2886,8 +2919,10 @@ function AppContent() {
     setSelectedJob(job);
     if (Platform.OS === "web" && typeof window !== "undefined") {
       const url = new URL(window.location.href);
-      url.searchParams.set("job", job.jobId);
-      window.history.pushState({ jobId: job.jobId }, "", url.toString());
+      if (shouldPushJobHistory(url.searchParams.get("job"), job.jobId)) {
+        url.searchParams.set("job", job.jobId);
+        window.history.pushState({ jobId: job.jobId }, "", url.toString());
+      }
     }
   };
   const loadCatalogGroup = (groupId: string) => {
@@ -2931,10 +2966,10 @@ function AppContent() {
     setSelectedGroupError(undefined);
     setSelectedGroupLoading(false);
   };
-  const openGroupedRole = (jobId: string) => {
+  const openGroupedRole = (job: Job) => {
     setSelectedGroupVisible(false);
     returnToGroupedRoles.current = true;
-    InteractionManager.runAfterInteractions(() => presentDestination({ kind: "job", jobId, reasons: [], exclusionsApplied: false }));
+    openCatalogJob(job);
   };
   const retryRoutedJob = () => {
     const jobId = routedJobId.current;
@@ -3051,18 +3086,6 @@ function AppContent() {
     });
     if (hiddenFeedbackJob?.jobId === job.jobId) setHiddenFeedbackJob(undefined);
   };
-  const autoSavedJobId = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    const job = selectedJob;
-    if (!job) {
-      autoSavedJobId.current = undefined;
-      return;
-    }
-    if (!token || autoSavedJobId.current === job.jobId) return;
-    if (applicationStatuses.has(job.jobId) || savingJobIds.has(job.jobId)) return;
-    autoSavedJobId.current = job.jobId;
-    saveForWeb(job, { silent: true });
-  }, [token, selectedJob, applicationStatuses, savingJobIds]);
   if (!ready)
     return <AppLoadingSkeleton />;
   if (sessionRecoveryMessage)
@@ -3153,7 +3176,7 @@ function AppContent() {
     // immediately background the native app and suspend later JavaScript work.
     void openOfficialApplication(job.applyUrl);
   };
-  const saveForWeb = (job: Job, options?: { silent?: boolean }) => {
+  const saveForWeb = (job: Job) => {
     if (applicationStatuses.has(job.jobId) || savingJobIds.has(job.jobId)) return;
     setSavingJobIds((current) => new Set(current).add(job.jobId));
     void (async () => {
@@ -3175,12 +3198,10 @@ function AppContent() {
           ).catch(() => undefined);
         }
       } catch (error) {
-        if (!options?.silent) {
-          Alert.alert(
-            "Could not save role",
-            error instanceof Error ? error.message : "Please try again.",
-          );
-        }
+        Alert.alert(
+          "Could not save role",
+          error instanceof Error ? error.message : "Please try again.",
+        );
       } finally {
         setSavingJobIds((current) => {
           const updated = new Set(current);
@@ -5789,6 +5810,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.separator,
   },
+  mobileRoleCard: { marginBottom: 10, padding: 13 },
+  mobileRoleTitle: { fontSize: 16, lineHeight: 22, marginTop: 3 },
+  mobileRoleMeta: { fontSize: 13, lineHeight: 19, marginTop: 3 },
+  mobileRoleSource: { marginTop: -2 },
+  mobileRoleTiming: { fontSize: 12, lineHeight: 17 },
+  mobileRoleFooter: { marginTop: 9 },
   catalogGroupCard: {
     backgroundColor: colors.surface,
     borderColor: colors.separator,
@@ -5823,7 +5850,9 @@ const styles = StyleSheet.create({
     paddingBottom: 28,
   },
   catalogGroupSheetHeader: { paddingBottom: 18 },
-  catalogGroupLoading: { gap: 16, justifyContent: "center", minHeight: 220 },
+  catalogGroupLoading: { minHeight: 220 },
+  catalogGroupSkeletonHeader: { paddingBottom: 18 },
+  catalogGroupErrorState: { gap: 16, justifyContent: "center", minHeight: 220 },
   catalogGroupError: { color: colors.danger, fontSize: 15, lineHeight: 21, textAlign: "center" },
   catalogGroupRoles: { borderTopColor: colors.separator, borderTopWidth: 1, paddingBottom: 8 },
   catalogGroupRole: {
