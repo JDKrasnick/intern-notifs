@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { SHADOW_EXTRACTION_MODEL_ID, normalizeExactPostingDescription, shadowExtractionPrompt, validateShadowExtraction } from '../src/shadow-extraction.js';
-import { inferOpenAIShadowExtraction } from '../cloudflare/openai-shadow-inference.js';
+import { inferOpenAIShadowExtraction, shadowModelPricingCents } from '../cloudflare/openai-shadow-inference.js';
 import {
   evaluateShadowCase,
   parseShadowEvalCases,
@@ -31,11 +31,15 @@ if (!Number.isInteger(limitValue) || limitValue < 0) {
 }
 const limit = limitValue;
 if ((offlinePath === undefined) !== live) {
-  console.error('Usage: tsx scripts/shadow-extraction-eval.ts (--offline <recorded.json> | --live) [--cases <dataset.json>] [--record <out.json>] [--report <base>] [--limit <n>]');
+  console.error('Usage: tsx scripts/shadow-extraction-eval.ts (--offline <recorded.json> | --live) [--cases <dataset.json>] [--record <out.json>] [--report <base>] [--limit <n>] [--model <id>]');
   process.exit(1);
 }
 if (recordPath !== undefined && !live) {
   console.error('--record is only valid with --live'); process.exit(1);
+}
+const model = option('--model') ?? SHADOW_EXTRACTION_MODEL_ID;
+if (live && !shadowModelPricingCents[model]) {
+  console.error(`Unknown model ${model}; supported: ${Object.keys(shadowModelPricingCents).join(', ')}`); process.exit(1);
 }
 
 function apiKey(): string {
@@ -68,7 +72,7 @@ if (live) {
     const input = normalizeExactPostingDescription(goldenCase.title, goldenCase.description);
     const prompt = shadowExtractionPrompt(input);
     try {
-      const inference = await inferOpenAIShadowExtraction(key, input, prompt);
+      const inference = await inferOpenAIShadowExtraction(key, input, prompt, fetch, { model });
       const validation = validateShadowExtraction(inference.response, input);
       results.push(resultFor(goldenCase, validation, inference));
       if (recordPath !== undefined) recorded.push({ id: goldenCase.id, contentHash: input.contentHash, result: inference });
@@ -100,7 +104,7 @@ const reportMd = `${reportBase}.md`;
 await mkdir(dirname(reportJson), { recursive: true });
 await writeFile(reportJson, `${JSON.stringify(summary, null, 2)}\n`);
 if (recordPath !== undefined && recorded.length > 0) {
-  const envelope = { version: 1, recordedAt, modelId: SHADOW_EXTRACTION_MODEL_ID, cases: recorded };
+  const envelope = { version: 1, recordedAt, modelId: model, cases: recorded };
   await mkdir(dirname(recordPath), { recursive: true });
   await writeFile(recordPath, `${JSON.stringify(envelope, null, 2)}\n`);
 }
@@ -122,6 +126,7 @@ const caseRows = results.map((result) => {
 await writeFile(reportMd, `# Shadow extraction evaluation
 
 Mode: ${mode}
+Model: ${model}
 Recorded at: ${recordedAt}
 Cases: ${summary.cases} | Valid: ${summary.validCases} | Invalid: ${summary.invalidCases}
 
