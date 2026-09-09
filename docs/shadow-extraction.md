@@ -31,11 +31,12 @@ a result employer-authoritative.
 
 ## Cost guard and rollout
 
-`SHADOW_EXTRACTION_ENABLED` remains `false`. No Worker AI binding or production
-model is selected here: the model ID is deliberately `unapproved-pilot-model`
-until the frozen pilot identifies an eligible model and field set.
+Production shadow execution uses the pinned `gpt-4o-mini-2024-07-18` snapshot
+through OpenAI Chat Completions schema-backed JSON mode. Store `OPENAI_KEY` as a Worker secret;
+never put it in Wrangler variables, Terraform state, queue messages, or artifacts.
+`SHADOW_EXTRACTION_ENABLED` controls calls independently from publication.
 
-When a later approved rollout enables execution, it must provide both
+Enabled execution must provide both
 `SHADOW_EXTRACTION_MONTHLY_FORECAST_CENTS` (the forecast for all existing
 Cloudflare usage) and `SHADOW_EXTRACTION_MONTHLY_HEADROOM_CENTS`. The consumer
 fails closed unless cumulative reservations and reconciled actual usage fit both

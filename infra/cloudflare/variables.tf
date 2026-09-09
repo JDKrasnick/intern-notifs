@@ -103,6 +103,24 @@ variable "llm_metadata_publication_policy_json" {
   default     = "{\"enabled\":false,\"version\":\"disabled\",\"allowedFields\":[],\"cohort\":[]}"
 }
 
+variable "shadow_extraction_enabled" {
+  description = "Runs bounded OpenAI shadow extraction without publishing model-derived metadata."
+  type        = bool
+  default     = false
+}
+
+variable "shadow_extraction_monthly_forecast_cents" {
+  description = "Forecast monthly non-shadow platform spend used by the combined shadow cost guard."
+  type        = number
+  default     = 1500
+}
+
+variable "shadow_extraction_monthly_headroom_cents" {
+  description = "Maximum monthly spend available to shadow extraction inside the combined cost guard."
+  type        = number
+  default     = 500
+}
+
 variable "gmail_client_id" {
   description = "Google OAuth web client identifier. The client secret remains a Worker secret binding."
   type        = string

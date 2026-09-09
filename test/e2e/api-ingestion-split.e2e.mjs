@@ -184,8 +184,8 @@ test('processes a compiled shadow queue event through R2 and exposes its disable
   const sha256 = (value) => createHash('sha256').update(value).digest('hex');
   const normalized = { title: 'Software Engineering Intern', description: 'Austin\n$50 - $60 per hour', completeness: 'complete' };
   normalized.contentHash = sha256(JSON.stringify(normalized));
-  const cacheKey = sha256([normalized.contentHash, 'unapproved-pilot-model', 'shadow-extraction-prompt-v1',
-    'shadow-extraction-schema-v1', 'exact-posting-markdown-v1'].join('\0'));
+  const cacheKey = sha256([normalized.contentHash, 'gpt-4o-mini-2024-07-18', 'shadow-extraction-prompt-v2',
+    'shadow-extraction-schema-v2', 'exact-posting-markdown-v1'].join('\0'));
   const identity = { provider: 'greenhouse', sourceId: 'greenhouse-review', tenant: 'review', postingId: '175', sourceUrl: 'https://example.test/175' };
   const runKey = sha256(['review-job', 'greenhouse-review', '175', normalized.contentHash, cacheKey].join('\0'));
   const inputKey = `shadow-input/${runKey}.json`;
@@ -214,7 +214,7 @@ test('processes a compiled shadow queue event through R2 and exposes its disable
   await shadowRuntime.dispose();
 
   assert.equal(acked, true);
-  assert.deepEqual(row, { state: 'disabled', attempts: 1, error: 'live model execution disabled pending pilot and budget approval' });
+  assert.deepEqual(row, { state: 'disabled', attempts: 1, error: 'live model execution disabled or credential unavailable' });
   assert.equal(summary.status, 200);
   assert.ok(summaryBody.runs.some((item) => item.state === 'disabled' && item.count === 1));
 });
