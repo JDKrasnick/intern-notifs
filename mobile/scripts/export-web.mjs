@@ -1,5 +1,6 @@
 import { copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -29,9 +30,18 @@ execFileSync(
 );
 
 await mkdir(outputDirectory, { recursive: true });
+const indexPath = resolve(outputDirectory, "index.html");
+const indexHtml = await readFile(indexPath, "utf8");
+const favicon = await readFile(resolve(outputDirectory, "favicon.ico"));
+const iconVersion = createHash("sha256").update(favicon).digest("hex").slice(0, 12);
+const faviconName = `favicon-${iconVersion}.ico`;
+await copyFile(resolve(outputDirectory, "favicon.ico"), resolve(outputDirectory, faviconName));
+await writeFile(indexPath, indexHtml
+  .replace('href="/favicon.ico"', `href="/${faviconName}"`)
+  .replace("</head>", `<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=${iconVersion}" /></head>`));
 await Promise.all(policyFiles.map((name) => copyFile(resolve(repositoryRoot, "docs", name), resolve(outputDirectory, name))));
 
-const requiredFiles = ["index.html", "_headers", ...policyFiles];
+const requiredFiles = ["index.html", "_headers", "favicon.ico", "apple-touch-icon.png", ...policyFiles];
 await Promise.all(requiredFiles.map(async (name) => {
   const value = await readFile(resolve(outputDirectory, name));
   if (value.byteLength === 0) throw new Error(`Web export produced an empty ${name}`);

@@ -157,6 +157,8 @@
 
 ### Product owner
 
+- [x] Recreate the official reference icon as an editable vector and configure matching website favicon, Apple touch icon, and native iOS assets for the next TestFlight build.
+
 - [ ] Reactivate AWS account `628031636041` long enough to export retained development data and approve the final Cloudflare cutover; do not delete retained resources during migration.
 
 - [ ] Connect a GitHub account/repository with permission to create a GitHub Project and issues.
