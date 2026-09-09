@@ -1802,21 +1802,22 @@ function TabNavigation({
   rail = false,
   badgeCount = 0,
 }: {
-  active: "feed" | "saved" | "profile";
-  onChange: (tab: "feed" | "saved" | "profile") => void;
+  active: "feed" | "queue" | "saved" | "profile";
+  onChange: (tab: "feed" | "queue" | "saved" | "profile") => void;
   rail?: boolean;
   badgeCount?: number;
 }) {
   const tabs = [
     { key: "feed", label: "Roles", icon: "briefcase-outline", activeIcon: "briefcase" },
-    { key: "saved", label: "Queue", accessibilityLabel: "Apply queue", icon: "bookmark-outline", activeIcon: "bookmark" },
+    { key: "queue", label: "Queue", accessibilityLabel: "Apply queue", icon: "bookmark-outline", activeIcon: "bookmark" },
+    { key: "saved", label: "Saved", accessibilityLabel: "Saved roles", icon: "albums-outline", activeIcon: "albums" },
     { key: "profile", label: "Profile", icon: "person-outline", activeIcon: "person" },
   ] as const;
   return (
     <View style={[styles.nav, rail && styles.navRail]} accessibilityRole="tablist">
       {tabs.map((item) => {
         const selected = active === item.key;
-        const badge = item.key === "saved" ? badgeCount : 0;
+        const badge = item.key === "queue" ? badgeCount : 0;
         return (
           <TouchableOpacity
             key={item.key}
@@ -2355,18 +2356,20 @@ function GroupedCatalogFeed({
           placeholderTextColor={colors.placeholder}
           style={styles.feedSearch}
         />
-        <FilterBar activeCount={countActiveCatalogFilters(filters)} onOpen={() => setSheetVisible(true)} />
-        {onOpenQueue && queueCount !== undefined && queueCount > 0 ? (
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel={`Open apply queue, ${queueCount} ${queueCount === 1 ? "role" : "roles"}`}
-            onPress={onOpenQueue}
-            style={styles.queuePill}
-          >
-            <Ionicons name="bookmark" size={14} color={colors.onDark} />
-            <Text style={styles.queuePillText}>Queue · {queueCount}</Text>
-          </TouchableOpacity>
-        ) : null}
+        <View style={styles.queuePillRow}>
+          <FilterBar activeCount={countActiveCatalogFilters(filters)} onOpen={() => setSheetVisible(true)} />
+          {onOpenQueue && queueCount !== undefined && queueCount > 0 ? (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel={`Open apply queue, ${queueCount} ${queueCount === 1 ? "role" : "roles"}`}
+              onPress={onOpenQueue}
+              style={styles.queuePill}
+            >
+              <Ionicons name="bookmark" size={14} color={colors.onDark} />
+              <Text style={styles.queuePillText}>Queue · {queueCount}</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
         <FilterSheet
           visible={sheetVisible}
           filters={filters}
@@ -2564,7 +2567,7 @@ function AppContent() {
   const [sessionRecoveryMessage, setSessionRecoveryMessage] = useState<string>();
   const sessionRequestId = useRef(0);
   const privateRequestId = useRef(0);
-  const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
+  const [tab, setTab] = useState<"feed" | "queue" | "saved" | "profile">("feed");
   const [queueSheetVisible, setQueueSheetVisible] = useState(false);
   const [preferences, setPreferences] = useState<Preference>();
   const [preferenceError, setPreferenceError] = useState<string>();
@@ -2608,7 +2611,7 @@ function AppContent() {
   const catalogRequestGeneration = useRef(0);
   const catalogRequestInFlight = useRef(false);
   const groupRequestGuard = useRef(createLatestRequestGuard());
-  const changeTab = (nextTab: "feed" | "saved" | "profile") => {
+  const changeTab = (nextTab: "feed" | "queue" | "saved" | "profile") => {
     setTab(nextTab);
     if (nextTab === "feed") setShowLaunchInbox(false);
   };
@@ -3470,8 +3473,21 @@ function AppContent() {
                 onOpenQueue={() => setQueueSheetVisible(true)}
               />
             )
+          ) : tab === "queue" ? (
+            <Applications
+              mode="queue"
+              applications={applications}
+              queue={applyQueue}
+              jobs={catalogJobs}
+              token={token}
+              alertSettings={preferences.alertSettings ?? defaultAlertSettings}
+              alertsEnabled={preferences.alertsEnabled}
+              onChanged={() => void load()}
+              onOpenOfficialApplication={openApplicationAndScheduleCheck}
+            />
           ) : tab === "saved" ? (
             <Applications
+              mode="saved"
               applications={applications}
               queue={applyQueue}
               jobs={catalogJobs}
@@ -3534,7 +3550,7 @@ function AppContent() {
         jobs={catalogJobs}
         onOpen={openApplicationAndScheduleCheck}
         onBulkOpen={openQueueBulk}
-        onViewQueue={() => changeTab("saved")}
+        onViewQueue={() => changeTab("queue")}
         onDismiss={() => setQueueSheetVisible(false)}
       />
     </SafeAreaView>
@@ -3933,7 +3949,7 @@ function GuestExperience({
 }) {
   const { width } = useWindowDimensions();
   const usesNavigationRail = width >= 700;
-  const [tab, setTab] = useState<"feed" | "saved" | "profile">("feed");
+  const [tab, setTab] = useState<"feed" | "queue" | "saved" | "profile">("feed");
   const [query, setQuery] = useState("");
   const [showAccount, setShowAccount] = useState(false);
   const openAccount = () => {
@@ -4001,7 +4017,7 @@ function GuestExperience({
                 onHideLocally={onHideLocally as unknown as (job: Job) => void}
               />
             </View>
-            {tab === "saved" ? (
+            {tab === "queue" || tab === "saved" ? (
               <AccountGate
                 feature="save and track applications"
                 onSignIn={openAccount}
@@ -4292,6 +4308,7 @@ function QueueSheet({
   );
 }
 function Applications({
+  mode,
   applications,
   queue,
   jobs,
@@ -4301,6 +4318,7 @@ function Applications({
   onChanged,
   onOpenOfficialApplication,
 }: {
+  mode: "queue" | "saved";
   applications: Application[];
   queue: Application[];
   jobs: Job[];
@@ -4380,7 +4398,7 @@ function Applications({
   };
   const queuedIds = new Set(queue.map((entry) => entry.applicationId));
   const savedOnly = applications.filter((entry) => entry.status === "saved" && !queuedIds.has(entry.applicationId));
-  const ordered = [...queue, ...savedOnly, ...applications.filter((entry) => entry.status !== "saved" && !queuedIds.has(entry.applicationId))];
+  const ordered = mode === "queue" ? [...queue] : [...queue, ...savedOnly, ...applications.filter((entry) => entry.status !== "saved" && !queuedIds.has(entry.applicationId))];
   return (
     <View style={styles.queueScreen}>
     <FlatList
@@ -4390,11 +4408,13 @@ function Applications({
       contentContainerStyle={styles.feedListContent}
       ListHeaderComponent={<>
         <PageHeading
-          eyebrow="Apply queue"
-          title="Roles to apply to"
-          description="Mark roles as you browse, then work the queue top to bottom."
+          eyebrow={mode === "queue" ? "Apply queue" : "Saved"}
+          title={mode === "queue" ? "Roles to apply to" : "Saved roles"}
+          description={mode === "queue" ? "Mark roles as you browse, then work the queue top to bottom." : "Roles you saved for later, with manual status tracking."}
         />
-        <Text style={styles.queueCount}>{queue.length} {queue.length === 1 ? "role" : "roles"} in queue</Text>
+        {mode === "queue" ? (
+          <Text style={styles.queueCount}>{queue.length} {queue.length === 1 ? "role" : "roles"} in queue</Text>
+        ) : null}
         {detections.length ? (
           <View style={styles.gmailReviewSection}>
             <Text style={styles.sectionTitle}>Possibly applied</Text>
@@ -4459,8 +4479,8 @@ function Applications({
           ? job.availability
           : job?.open ? "available" : "closed";
         const unavailableReason = job && "unavailableReason" in job ? job.unavailableReason : undefined;
-        const showQueueHeader = index === 0 && queue.length > 0;
-        const showSavedHeader = index === queue.length && savedOnly.length > 0;
+        const showQueueHeader = mode === "saved" && index === 0 && queue.length > 0;
+        const showSavedHeader = mode === "saved" && index === queue.length && savedOnly.length > 0;
         const header = showQueueHeader
           ? { icon: "bookmark" as const, label: "In queue" }
           : showSavedHeader
@@ -4569,14 +4589,22 @@ function Applications({
         );
       }}
       ListEmptyComponent={
-        <EmptyState
-          eyebrow="Apply queue"
-          title="Queue is clear."
-          description="Mark roles as you browse and they will wait here."
-        />
+        mode === "queue" ? (
+          <EmptyState
+            eyebrow="Apply queue"
+            title="Queue is clear."
+            description="Mark roles as you browse and they will wait here."
+          />
+        ) : (
+          <EmptyState
+            eyebrow="Saved"
+            title="No saved roles yet."
+            description="Save roles from the feed, or mark them to join the apply queue."
+          />
+        )
       }
     />
-      {queue.length ? (
+      {mode === "queue" && queue.length ? (
         <View style={styles.queueActionBar}>
           <View style={styles.queueActionPrimary}>
             <ActionButton
@@ -6731,6 +6759,7 @@ const styles = StyleSheet.create({
   saveFeedbackError: { backgroundColor: colors.dangerSoft, borderColor: colors.dangerBorder },
   saveFeedbackText: { color: colors.body, fontSize: 14, lineHeight: 20 },
   saveFeedbackRetry: { color: colors.signal, fontSize: 14, fontWeight: "700", marginTop: 8 },
+  queuePillRow: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginTop: 10 },
   hiddenRolePlaceholder: {
     alignItems: "center",
     borderColor: colors.separator,
@@ -6739,7 +6768,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 14,
     justifyContent: "center",
-    marginBottom: 12,
     minHeight: 88,
     paddingHorizontal: 16,
     paddingVertical: 16,
@@ -6782,7 +6810,7 @@ const styles = StyleSheet.create({
   queueActionBar: { alignItems: "center", backgroundColor: colors.surface, borderTopColor: colors.separator, borderTopWidth: 1, flexDirection: "row", gap: 8, paddingHorizontal: 16, paddingVertical: 12 },
   queueActionPrimary: { flex: 1 },
   queueCount: { color: colors.ink, fontSize: 17, fontWeight: "700", marginBottom: 12 },
-  queuePill: { alignItems: "center", alignSelf: "flex-end", backgroundColor: colors.ink, borderRadius: 16, flexDirection: "row", gap: 6, marginTop: 10, paddingHorizontal: 12, paddingVertical: 8 },
+  queuePill: { alignItems: "center", backgroundColor: colors.ink, borderRadius: 16, flexDirection: "row", gap: 6, paddingHorizontal: 12, paddingVertical: 8 },
   queuePillText: { color: colors.onDark, fontSize: 13, fontWeight: "700" },
   queueSheet: { backgroundColor: colors.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: 560, padding: 20 },
   queueSheetList: { marginVertical: 12, maxHeight: 320 },
