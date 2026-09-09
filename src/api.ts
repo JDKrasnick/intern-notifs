@@ -585,13 +585,15 @@ export function createApiHandler(dependencies: ApiDependencies) {
         const body = parseBody(event); if (typeof body.jobId !== 'string') return reply(400, { message: 'jobId is required' });
         const job = await dependencies.jobs.getJob?.(body.jobId);
         if (!job || !catalogEligible(job) || !identityPublished(job, identityUnconfirmedPublicationEnabled)) return reply(404, { message: 'Job not found' });
+        if (body.queued !== undefined && typeof body.queued !== 'boolean') return reply(400, { message: 'queued must be a boolean' });
         const timestamp = now(); const existing = (await dependencies.users.listApplications(userId)).find((application) => application.jobId === job.jobId);
         const status = statuses.includes(body.status as ApplicationStatus) ? body.status as ApplicationStatus : existing?.status ?? 'saved';
+        const queued = body.queued ?? true;
         const application: ApplicationRecord = {
           applicationId: existing?.applicationId ?? randomUUID(), jobId: job.jobId, status,
           ...(existing?.appliedAt ? { appliedAt: existing.appliedAt } : status === 'applied' ? { appliedAt: timestamp } : {}),
           ...(existing?.detection ? { detection: existing.detection } : {}),
-          ...(status === 'saved' ? { queuedAt: existing?.queuedAt ?? timestamp } : {}),
+          ...(status === 'saved' && queued ? { queuedAt: existing?.queuedAt ?? timestamp } : {}),
           notes: typeof body.notes === 'string' ? body.notes.slice(0, 5000) : existing?.notes,
           applyMode: integrations.applyMode(job), createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp,
         };
