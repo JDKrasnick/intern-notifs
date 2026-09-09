@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 /** Versions are part of the cache key. Changing any one forces a new shadow run. */
 export const SHADOW_EXTRACTION_PROMPT_VERSION = 'shadow-extraction-prompt-v3';
-export const SHADOW_EXTRACTION_SCHEMA_VERSION = 'shadow-extraction-schema-v3';
+export const SHADOW_EXTRACTION_SCHEMA_VERSION = 'shadow-extraction-schema-v4';
 export const SHADOW_EXTRACTION_PREPROCESSING_VERSION = 'exact-posting-markdown-v1';
 export const SHADOW_EXTRACTION_MODEL_ID = 'gpt-4o-mini-2024-07-18';
 export const SHADOW_EXTRACTION_MAX_INPUT_BYTES = 40_000;
@@ -112,8 +112,8 @@ function evidencePresent(evidence: readonly string[], source: string): boolean {
 }
 
 function compensationNumberPresent(passage: string, value: number): boolean {
-  const escaped = String(value).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-  return new RegExp(`(^|[^0-9.])${escaped}(?![0-9.])`, 'u').test(passage.replace(/,/gu, ''));
+  return [...passage.matchAll(/(?:^|[^0-9.])([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)(?![0-9.])/gu)]
+    .some((match) => Number(match[1]!.replace(/,/gu, '')) === value);
 }
 
 function compensationCurrencyPresent(passage: string, currency: string): boolean {
@@ -129,7 +129,7 @@ function compensationCurrencyPresent(passage: string, currency: string): boolean
 function compensationPeriodPresent(passage: string, period: string): boolean {
   if (period === 'unknown') return true;
   const aliases: Record<string, RegExp> = {
-    hour: /\b(?:per\s+hour|hourly|an?\s+hour|hrs?\.?)(?:\b|$)/iu,
+    hour: /\b(?:per\s+hour|hourly|hour|an?\s+hour|hrs?\.?)(?:\b|$)/iu,
     day: /\b(?:per\s+day|daily|an?\s+day)(?:\b|$)/iu,
     week: /\b(?:per\s+week|weekly|a\s+week)(?:\b|$)/iu,
     month: /\b(?:per\s+month|monthly|a\s+month)(?:\b|$)/iu,
