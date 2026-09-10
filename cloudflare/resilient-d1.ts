@@ -58,7 +58,10 @@ function rebuild(statement: D1PreparedStatement): () => D1PreparedStatement {
  *
  * Retrying writes is safe: the reconnect error means the instance rotated
  * before the statement committed (single statements autocommit; `batch` is
- * atomic), so a retried write never double-applies.
+ * atomic), so a retried write never double-applies. Independently, the only
+ * caller is the at-least-once queue consumer, whose whole batch already
+ * re-runs every write on redelivery, so this in-request retry introduces no
+ * duplication the pipeline does not already tolerate (ingestion writes upsert).
  */
 export function resilientD1(
   db: D1Database,
