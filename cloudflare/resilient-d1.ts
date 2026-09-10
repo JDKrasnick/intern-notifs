@@ -1,0 +1,68 @@
+import type { D1Database, D1PreparedStatement } from './types.js';
+
+// D1 occasionally rotates the underlying instance mid-request and rejects an
+// in-flight statement with "this D1 DB instance is no longer active. Reconnect
+// or retry the request." Cloudflare's guidance for this class of error is to
+// retry: a fresh prepare/bind runs against the reconnected instance. Ingestion
+// polls that hit this during persistence otherwise exhaust their two queue
+// retries and dead-letter valid work (see issue #203).
+const RETRYABLE = /no longer active|Connection closed|reset because the connection|Network connection lost|storage caused object to be reset/i;
+
+function isRetryable(error: unknown): boolean {
+  return error instanceof Error && RETRYABLE.test(error.message);
+}
+
+async function withRetry<T>(operation: () => Promise<T>, attempts: number, baseDelayMs: number, sleep: (ms: number) => Promise<void>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isRetryable(error) || attempt === attempts - 1) throw error;
+      await sleep(baseDelayMs * (attempt + 1));
+    }
+  }
+  throw lastError;
+}
+
+const BUILD = Symbol('resilient-d1-build');
+
+interface ResilientOptions {
+  attempts: number;
+  baseDelayMs: number;
+  sleep: (ms: number) => Promise<void>;
+}
+
+function wrapStatement(build: () => D1PreparedStatement, options: ResilientOptions): D1PreparedStatement {
+  const statement = {
+    [BUILD]: build,
+    bind: (...values: unknown[]) => wrapStatement(() => build().bind(...values), options),
+    first: <T,>() => withRetry(() => build().first<T>(), options.attempts, options.baseDelayMs, options.sleep),
+    all: <T,>() => withRetry(() => build().all<T>(), options.attempts, options.baseDelayMs, options.sleep),
+    run: () => withRetry(() => build().run(), options.attempts, options.baseDelayMs, options.sleep),
+  };
+  return statement as unknown as D1PreparedStatement;
+}
+
+function rebuild(statement: D1PreparedStatement): () => D1PreparedStatement {
+  const build = (statement as unknown as { [BUILD]?: () => D1PreparedStatement })[BUILD];
+  return build ?? (() => statement);
+}
+
+/**
+ * Wraps a D1 binding so reads, writes, and batches retry the transient
+ * "instance is no longer active" reconnect error. Each retry rebuilds the
+ * statement so it runs against the reconnected instance. Non-retryable errors
+ * propagate immediately and unchanged.
+ */
+export function resilientD1(
+  db: D1Database,
+  { attempts = 3, baseDelayMs = 50, sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)) }: Partial<ResilientOptions> = {},
+): D1Database {
+  const options: ResilientOptions = { attempts, baseDelayMs, sleep };
+  return {
+    prepare: (query) => wrapStatement(() => db.prepare(query), options),
+    batch: (statements) => withRetry(() => db.batch(statements.map((statement) => rebuild(statement)())), options.attempts, options.baseDelayMs, options.sleep),
+  };
+}

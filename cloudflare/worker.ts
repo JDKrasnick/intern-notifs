@@ -39,6 +39,7 @@ import type { BrowserWorker } from '@cloudflare/puppeteer';
 import { destinationVerificationMessage, enqueueDueDestinationVerifications, processDestinationVerificationBatch,
   sendAdmissionOperationalAlert } from './destination-verification.js';
 import { cleanupDlqRecords, handleDlqOperations, recordQueueFailureBestEffort, resolveQueueFailures, type DlqDependencies, type DlqName, type PeekedMessage } from './dlq-operations.js';
+import { resilientD1 } from './resilient-d1.js';
 import type { CatalogAdmissionResolver } from '../src/destination-verification.js';
 import { ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
 import {
@@ -1245,6 +1246,10 @@ async function scheduledHandler(event: ScheduledController, env: Environment): P
 }
 
 async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Promise<void> {
+  // Ingestion consumers dead-letter valid work when D1 rotates its instance
+  // mid-poll. Retry the transient reconnect error across every store built for
+  // this batch (issue #203).
+  env = { ...env, DB: resilientD1(env.DB) };
   if (await isShutdown(env)) {
     for (const message of batch.messages) message.ack();
     return;
