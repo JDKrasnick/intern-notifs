@@ -165,24 +165,29 @@ export async function processGreenhouseQueue(
     const startedAt = new Date().toISOString();
     try {
       const message = parseWorkMessage(record.body);
-      const previousHealth = await dependencies.store.getSourceHealth(message.sourceId);
       const result = await runGreenhouseBoard(message, dependencies);
       if (result.skipped) {
         console.log(JSON.stringify({ event: 'source_poll_skipped', command: 'greenhouse-poll', sourceId: result.sourceId, reason: result.skipped }));
         return;
       }
-      const completedAt = new Date().toISOString();
-      await dependencies.store.putSourceHealth(successfulSourceHealth({
-        sourceId: result.sourceId,
-        provider: integrationRegistry.greenhouse.id,
-        region: integrationRegistry.greenhouse.defaultRegion,
-        previous: previousHealth,
-        startedAt,
-        completedAt,
-        rawRows: result.rawRows,
-        eligibleRows: result.listings,
-        withheldRows: result.withheldRows,
-      }));
+      if (result.mode === 'shadow') {
+        // Shadow boards fetch through the adapter, so the queue owns their only
+        // health write. Published boards poll through the shared poller, which
+        // already persisted counts, hashes, and outcome for this attempt; a
+        // second coarse write here would overwrite that richer artifact and
+        // report every attempt as `success_changed`.
+        await dependencies.store.putSourceHealth(successfulSourceHealth({
+          sourceId: result.sourceId,
+          provider: integrationRegistry.greenhouse.id,
+          region: integrationRegistry.greenhouse.defaultRegion,
+          previous: await dependencies.store.getSourceHealth(result.sourceId),
+          startedAt,
+          completedAt: new Date().toISOString(),
+          rawRows: result.rawRows,
+          eligibleRows: result.listings,
+          withheldRows: result.withheldRows,
+        }));
+      }
       console.log(JSON.stringify({ command: 'greenhouse-poll', ...result }));
     } catch (error) {
       try {
