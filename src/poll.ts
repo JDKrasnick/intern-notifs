@@ -34,6 +34,7 @@ import { SourceFetchError } from './sources/source-error.js';
 import { extractVerifiedPageMetadataEvidence, mergeRoleMetadataEvidence, projectRoleMetadata, roleMetadataEvidenceHasFields, ROLE_METADATA_EXTRACTION_VERSION, VERIFIED_PAGE_METADATA_SOURCES } from './role-metadata.js';
 import { failedSourceHealth, sourceFailureOutcome, successfulSourceHealth } from './source-health.js';
 import type {
+  CatalogAdmission,
   Internship,
   ProcessedListing,
   ProcessedSnapshot,
@@ -107,6 +108,16 @@ function sourceMaterialHash(listing: ProcessedListing): string {
   let applyUrl = listing.applyUrl;
   try { applyUrl = canonicalApplicationUrl(applyUrl); } catch { /* Resolution rejects malformed URLs. */ }
   return createHash('sha256').update(sourceOwnedMaterial({ ...listing, applyUrl })).digest('hex');
+}
+
+function shadowEvaluationAdmissionEligible(listing: ProcessedListing, admission: CatalogAdmission): boolean {
+  return admission.catalogEligible || (
+    listing.provenance === 'official-ats'
+    && admission.employerResolution === 'unresolved'
+    && admission.reasonCodes.length === 1
+    && admission.reasonCodes[0] === 'employer-unresolved'
+    && ['posting-detail', 'application-form'].includes(admission.destination.classification)
+  );
 }
 
 // Catalog rows written before posting identity v1 retained gh_src while
@@ -1105,7 +1116,7 @@ export class IngestionRunner {
           });
         } else if (providerShadowEligible && this.enqueueDestinationVerification && listing.providerIdentity
           && listing.postingIdentityDecision?.status === 'confirmed'
-          && listing.technical !== false && listing.state === 'open' && admission.catalogEligible
+          && listing.technical !== false && listing.state === 'open' && shadowEvaluationAdmissionEligible(listing, admission)
           && Boolean(listing.shadowContentHash)
           && (!priorOccurrence || (Boolean(priorOccurrence.occurrence.shadowContentHash)
             && priorOccurrence.occurrence.shadowContentHash !== listing.shadowContentHash))
