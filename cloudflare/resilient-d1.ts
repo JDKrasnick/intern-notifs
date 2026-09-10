@@ -6,7 +6,7 @@ import type { D1Database, D1PreparedStatement } from './types.js';
 // retry: a fresh prepare/bind runs against the reconnected instance. Ingestion
 // polls that hit this during persistence otherwise exhaust their two queue
 // retries and dead-letter valid work (see issue #203).
-const RETRYABLE = /no longer active|Connection closed|reset because the connection|Network connection lost|storage caused object to be reset/i;
+const RETRYABLE = /no longer active|Connection closed|reset because the connection|D1 DB reset|Network connection lost|storage caused object to be reset/i;
 
 function isRetryable(error: unknown): boolean {
   return error instanceof Error && RETRYABLE.test(error.message);
