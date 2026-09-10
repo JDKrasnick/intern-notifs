@@ -1417,8 +1417,12 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
   for (const message of batch.messages) {
     if (failed.has(message.id)) message.retry();
     else {
-      try { await resolveQueueFailures(env.DB, batch.queue, message.id); }
-      catch (error) { console.error(JSON.stringify({ command: 'catalog-failure-ledger-resolution', messageId: message.id, error: safeDiagnostic(error) })); }
+      // A first-delivery message has no prior failure row, so skip the extra
+      // write. Only retried deliveries (attempts > 1) can carry one to resolve.
+      if ((message.attempts ?? 0) > 1) {
+        try { await resolveQueueFailures(env.DB, batch.queue, message.id); }
+        catch (error) { console.error(JSON.stringify({ command: 'catalog-failure-ledger-resolution', messageId: message.id, error: safeDiagnostic(error) })); }
+      }
       message.ack();
     }
   }
