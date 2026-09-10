@@ -1307,7 +1307,10 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
       }
       return;
     }
-    const resolveFailures = async (messageId: string) => {
+    const resolveFailures = async (messageId: string, attempts?: number) => {
+      // A first-delivery message has no prior failure row, so skip the extra
+      // write. Only retried deliveries (attempts > 1) can carry one to resolve.
+      if ((attempts ?? 0) <= 1) return;
       try { await resolveQueueFailures(env.DB, batch.queue, messageId); }
       catch (error) {
         console.error(JSON.stringify({ command: 'github-failure-ledger-resolution', messageId,
@@ -1325,7 +1328,7 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
         const source = defaultSources.find((candidate) => candidate.id === sourceId);
         if (reviewedStructured) {
           const ran = await runStructuredSource(reviewedStructured, env, { forceRecovery: message.force === true });
-          if (ran) await resolveFailures(queued.id);
+          if (ran) await resolveFailures(queued.id, queued.attempts);
           continue;
         }
         if (!source) throw new Error(`Unknown reviewed source ${JSON.stringify(sourceId)}`);
@@ -1363,7 +1366,7 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
         if (result.poll?.continuationSources.includes(source.id)) {
           await sendQueueMessageWithin(env.GITHUB_QUEUE, { sourceId: source.id });
         }
-        await resolveFailures(queued.id);
+        await resolveFailures(queued.id, queued.attempts);
       } catch (error) {
         failed.add(record.messageId);
         await recordQueueFailureBestEffort({
