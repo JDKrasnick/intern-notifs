@@ -40,6 +40,17 @@ const catalogMessage = (id: string, sourceId = 'lever-acme'): PeekedMessage => (
   body: { version: 1, sourceId, scheduledAt: '2026-09-04T09:00:00.000Z', runId: 'old-run' },
 });
 
+const destinationMessage = (id: string): PeekedMessage => ({
+  id, attempts: 5, timestampMs: Date.parse('2026-09-04T10:00:00.000Z'), ref: `private-${id}`,
+  body: {
+    version: 1, jobId: 'job-1', sourceId: 'greenhouse-acme', externalId: 'gh-42',
+    providerIdentity: { provider: 'greenhouse', sourceId: 'greenhouse-acme', sourceUrl: 'https://boards.greenhouse.io/acme', postingId: '42' },
+    candidateUrl: 'https://boards.greenhouse.io/acme/jobs/42', reason: 'content-change',
+    queuedAt: '2026-09-04T09:00:00.000Z', idempotencyKey: 'idem-42', metadataExtractionVersion: 7,
+    metadataArtifactHash: 'artifact-hash-42', shadowOrigin: 'provider-poll',
+  },
+});
+
 describe('protected DLQ operations', () => {
   it('inspects sanitized summaries without consuming or exposing bodies and refs', async () => {
     const { database, dependencies, purge } = subject([catalogMessage('m1')], async () => ({
@@ -97,6 +108,23 @@ describe('protected DLQ operations', () => {
     database.close();
   });
 
+  it('replays a destination-verification message verbatim so consumer guards engage', async () => {
+    const { database, dependencies, send, purge, events } = subject([destinationMessage('d1')]);
+    const plan = await planDlq({ queue: 'destination-verification', action: 'replay', messageIds: ['d1'], expectedCount: 1,
+      reason: 'Consumer #120 fix landed; safe to re-verify' }, dependencies);
+    const result = await applyDlq({ planId: plan.planId, repairToken: plan.repairToken, expectedCount: 1 }, dependencies);
+    expect(result).toMatchObject({ queue: 'destination-verification', action: 'replay', appliedCount: 1 });
+    // The exact stored body is re-enqueued: current-revision fields, idempotency
+    // key, and shadow origin survive so the consumer settles obsolete/duplicate
+    // messages and preserves shadow provenance without a catalog collapse.
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(destinationMessage('d1').body);
+    expect(events).toEqual(['send', 'purge']);
+    expect(purge).toHaveBeenCalledWith('intern-notifs-destination-verification-dlq', ['private-d1']);
+    expect(database.prepare('SELECT classification FROM dlq_disposition_audit').get()).toMatchObject({ classification: 'replayed' });
+    database.close();
+  });
+
   it('allows only one concurrent apply to acquire a repair plan', async () => {
     const { database, dependencies, send } = subject([catalogMessage('m1')]);
     const plan = await planDlq({ queue: 'lever', action: 'replay', messageIds: ['m1'], expectedCount: 1,
@@ -123,14 +151,12 @@ describe('protected DLQ operations', () => {
     database.close();
   });
 
-  it('rejects selection drift, count mismatches, quarantined replay, and destination replay', async () => {
+  it('rejects selection drift and count mismatches, but no longer blocks destination replay', async () => {
     const drift = subject([catalogMessage('m1')]);
     await expect(planDlq({ queue: 'lever', action: 'discard', messageIds: ['missing'], expectedCount: 1, reason: 'obsolete' }, drift.dependencies))
       .rejects.toThrow('Selection drift');
     await expect(planDlq({ queue: 'lever', action: 'discard', messageIds: ['m1'], expectedCount: 2, reason: 'obsolete' }, drift.dependencies))
       .rejects.toThrow('expectedCount');
-    await expect(planDlq({ queue: 'destination-verification', action: 'replay', messageIds: ['m1'], expectedCount: 1, reason: 'retry' }, drift.dependencies))
-      .rejects.toThrow('#120');
     drift.database.close();
 
     const quarantined = subject([catalogMessage('m1')], async () => ({ sourceId: 'lever-acme', state: 'quarantined',

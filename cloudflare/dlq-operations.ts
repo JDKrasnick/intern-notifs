@@ -132,9 +132,6 @@ export async function planDlq(input: {
 }, dependencies: DlqDependencies) {
   assertQueue(input.queue);
   if (input.action !== 'replay' && input.action !== 'discard') throw new Error('Action must be replay or discard');
-  if (input.action === 'replay' && input.queue === 'destination-verification') {
-    throw new Error('Destination verification replay remains disabled until issue #120 lands');
-  }
   const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
   if (!reason || reason.length > 500) throw new Error('An operator reason between 1 and 500 characters is required');
   const ids = Array.isArray(input.messageIds) ? [...new Set(input.messageIds.filter((id): id is string => typeof id === 'string' && id.length > 0))] : [];
@@ -153,6 +150,11 @@ export async function planDlq(input: {
         : parseMessage(input.queue as DlqName, message.body),
     };
   });
+  // The source health gate is intentionally catalog-only. Catalog replay
+  // resumes a full source poll, which must not run for a paused/quarantined
+  // source. Destination-verification replay re-enqueues a single per-job link
+  // check whose consumer guards settle it safely, so it stays replayable even
+  // while the owning source is paused.
   if (input.action === 'replay' && ['greenhouse', 'lever', 'ashby', 'github'].includes(input.queue as string)) {
     for (const item of parsed) {
       const health = await dependencies.sourceHealth(item.parsed.sourceId!);
