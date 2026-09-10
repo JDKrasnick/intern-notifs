@@ -77,6 +77,8 @@ the run (`shadow_extraction_baseline_differences`): `deterministic-confirm`
 when deterministic evidence also says present, `deterministic-conflict` when the
 model field status differs from the deterministic baseline,
 `deterministic-consistent` when their presence/absence states agree,
+`baseline-inconclusive` when deterministic evidence is incomplete or
+conflicting,
 `baseline-unavailable` when a covered field has no recorded baseline, and
 `llm-only` for eligibility, which the deterministic extractor cannot express. A conflict is a review signal, not a
 block: `create-receipt` requires `correct-present` for every selected field as
