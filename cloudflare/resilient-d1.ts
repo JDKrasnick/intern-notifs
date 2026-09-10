@@ -55,12 +55,19 @@ function rebuild(statement: D1PreparedStatement): () => D1PreparedStatement {
  * "instance is no longer active" reconnect error. Each retry rebuilds the
  * statement so it runs against the reconnected instance. Non-retryable errors
  * propagate immediately and unchanged.
+ *
+ * Retrying writes is safe: the reconnect error means the instance rotated
+ * before the statement committed (single statements autocommit; `batch` is
+ * atomic), so a retried write never double-applies.
  */
 export function resilientD1(
   db: D1Database,
   { attempts = 3, baseDelayMs = 50, sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)) }: Partial<ResilientOptions> = {},
 ): D1Database {
   const options: ResilientOptions = { attempts, baseDelayMs, sleep };
+  // Returns only prepare/batch because cloudflare/types.ts declares D1Database
+  // with exactly those two members. A future interface method (exec, withSession,
+  // raw, dump) would be silently undefined here unless added to this wrapper.
   return {
     prepare: (query) => wrapStatement(() => db.prepare(query), options),
     batch: (statements) => withRetry(() => db.batch(statements.map((statement) => rebuild(statement)())), options.attempts, options.baseDelayMs, options.sleep),
