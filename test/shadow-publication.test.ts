@@ -69,6 +69,12 @@ async function publicationDatabase(): Promise<{ database: DatabaseSync; artifact
     VALUES (?, ?, ?, ?, ?)`).run('job-1', 'greenhouse-acme', '123', hash, '2026-09-08T00:00:00.000Z');
   for (const field of ['locations', 'workMode']) database.prepare(`INSERT INTO shadow_extraction_field_outcomes
     (run_key, field, status, accepted) VALUES (?, ?, 'present', 1)`).run(hash, field);
+  database.prepare(`INSERT INTO shadow_extraction_baseline_differences
+    (run_key, field, baseline_state, shadow_state, differs, recorded_at) VALUES (?, 'locations', 'present', 'present', 0, ?)`)
+    .run(hash, '2026-09-08T00:00:00.000Z');
+  database.prepare(`INSERT INTO shadow_extraction_baseline_differences
+    (run_key, field, baseline_state, shadow_state, differs, recorded_at) VALUES (?, 'workMode', 'not-stated', 'present', 1, ?)`)
+    .run(hash, '2026-09-08T00:00:00.000Z');
   const jobs = new D1InternshipStore(d1(database));
   const reference = { sourceId: 'greenhouse-acme', externalId: '123', document: 'source', sourceUrl: 'https://jobs.example/123', row: 1,
     company: 'Acme', title: 'Software Intern', location: 'Location not specified', season: 'summer-2027', applyUrl: 'https://jobs.example/123',
@@ -94,6 +100,10 @@ async function createReceipt(database: DatabaseSync, artifacts: MemoryR2, versio
       evaluations: acceptedFields.map(field => ({ field, outcome: 'correct-present' })) }),
   }), environment);
   expect(evaluation.status).toBe(200);
+  const evaluationBody = await evaluation.json() as { conformance: Array<{ field: string; baseline: string; advisory: string }> };
+  expect(evaluationBody.conformance).toEqual(acceptedFields.map(field => field === 'locations'
+    ? { field, baseline: 'present', advisory: 'deterministic-confirm' }
+    : { field, baseline: 'not-stated', advisory: 'deterministic-conflict' }));
   const response = await cloudflareWorker.fetch(new Request('https://intern-notifs.test/internal/operations/shadow-publication', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Operations-Key': 'secret' },
     body: JSON.stringify({ action: 'create-receipt', runKey: hash, acceptedFields }),
