@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
 import { mergeRoleMetadataEvidence, projectRoleMetadata, ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
 import {
+  deterministicBaselineFields,
+  fieldBaselineConformance,
   parseShadowPublicationPolicy,
   policyAllows,
   shadowExtractionEvidence,
   shadowPublicationFingerprint,
   shadowPublishableFields,
+  type BaselineState,
   type ShadowPublicationField,
 } from '../src/shadow-publication.js';
 import { SHADOW_EXTRACTION_MODEL_ID, SHADOW_EXTRACTION_PREPROCESSING_VERSION, SHADOW_EXTRACTION_PROMPT_VERSION,
@@ -96,7 +99,8 @@ export async function handleShadowPublication(request: Request, env: {
     return Response.json({ enabled: policy.enabled, version: policy.version, allowedFields: policy.allowedFields,
       cohortSize: policy.cohort.length, activeReceipts: receipts.results, evaluations: await evaluationSummary(env.DB),
       extractionScope: { classification: ['technical', 'earlyCareer', 'disciplines'],
-        metadata: [...evaluationFields], publishedMetadata: ['compensation', 'locations', 'workMode'] } },
+        metadata: [...evaluationFields], publishedMetadata: ['compensation', 'locations', 'workMode'],
+        deterministicBaseline: { covered: [...deterministicBaselineFields], llmOnly: ['eligibility'] } } },
     { headers: { 'Cache-Control': 'no-store' } });
   }
   if (request.method !== 'POST') return Response.json({ message: 'Method not allowed' }, { status: 405 });
@@ -125,7 +129,13 @@ export async function handleShadowPublication(request: Request, env: {
       await env.DB.batch(evaluations.map(value => env.DB.prepare(`INSERT INTO shadow_extraction_evaluations (run_key, field, outcome, evaluated_at)
         VALUES (?, ?, ?, ?) ON CONFLICT(run_key, field) DO UPDATE SET outcome = excluded.outcome, evaluated_at = excluded.evaluated_at`)
         .bind(run.run_key, value.field, value.outcome, evaluatedAt)));
-      return Response.json({ runKey: run.run_key, recorded: evaluations.length, evaluation: await evaluationSummary(env.DB) });
+      const baselineRows = await env.DB.prepare(`SELECT field, baseline_state FROM shadow_extraction_baseline_differences
+        WHERE run_key = ?`).bind(run.run_key).all<{ field: string; baseline_state: string }>();
+      const baselineByField = new Map(baselineRows.results.map(row => [row.field, row.baseline_state]));
+      const conformance = evaluations.map(value => fieldBaselineConformance(String(value.field), String(value.outcome),
+        (baselineByField.get(String(value.field)) as BaselineState | undefined) ?? 'unavailable'));
+      return Response.json({ runKey: run.run_key, recorded: evaluations.length, conformance,
+        evaluation: await evaluationSummary(env.DB) });
     }
     if (input.action !== 'create-receipt' || !Array.isArray(input.acceptedFields) || input.acceptedFields.length === 0
       || input.acceptedFields.some(field => typeof field !== 'string' || !policy.allowedFields.includes(field as ShadowPublicationField))
