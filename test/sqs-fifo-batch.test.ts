@@ -59,7 +59,7 @@ describe('FIFO batch processing', () => {
     });
   });
 
-  it('reports the throwing record to onRecordFailure but not the records it blocks', async () => {
+  it('reports the original cause for every record that will be retried', async () => {
     const cause = new Error('provider failed');
     const observed: Array<{ messageId: string; error: unknown }> = [];
     const result = await processFifoBatch([
@@ -70,7 +70,10 @@ describe('FIFO batch processing', () => {
       if (item.messageId === 'failed') throw cause;
     }, undefined, (item, error) => { observed.push({ messageId: item.messageId, error }); });
 
-    expect(observed).toEqual([{ messageId: 'failed', error: cause }]);
+    expect(observed).toEqual([
+      { messageId: 'failed', error: cause },
+      { messageId: 'blocked', error: cause },
+    ]);
     expect(result.batchItemFailures).toEqual([{ itemIdentifier: 'failed' }, { itemIdentifier: 'blocked' }]);
   });
 
