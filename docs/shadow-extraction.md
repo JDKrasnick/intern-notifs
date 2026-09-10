@@ -9,7 +9,11 @@ repair plans.
 ## Data flow and safety boundary
 
 Normal Greenhouse, Lever, and Ashby polls atomically persist a revision-keyed
-handoff with the catalog observation. `destination-verification` then validates
+handoff with the catalog observation. The evaluation-only handoff accepts an
+exact official ATS posting when `employer-unresolved` is its sole admission
+blocker; catalog publication and alerts remain admission-gated. Aggregate,
+gone, conflicting, unattributed, or metadata-invalid postings remain excluded.
+`destination-verification` then validates
 the exact posting identity and writes a bounded normalized
 description to the private `intern-notifs-shadow-extraction` R2 bucket and
 enqueues only a compact reference: posting IDs, source identity, content hash,

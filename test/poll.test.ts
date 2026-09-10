@@ -93,6 +93,44 @@ describe('polling', () => {
     expect(queued).toHaveLength(2);
   });
 
+  it('queues evaluation-only shadow work when an official posting is blocked only by an unresolved employer', async () => {
+    const store = new MemoryInternshipStore();
+    const sourceId = 'greenhouse-unmapped';
+    const posting = (postingId: string) => ({
+      sourceId, provenance: 'official-ats' as const, externalId: postingId,
+      sourceUrl: 'https://boards-api.greenhouse.io/v1/boards/unmapped/jobs', fetchedAt: '2026-09-09T22:00:00Z',
+      employer: { id: 'unmapped', name: 'Unmapped', authority: 'reviewed-registry' as const },
+      title: 'Software Engineering Intern', content: [{ kind: 'description' as const, format: 'plain' as const,
+        value: 'Build production software.' }], locations: ['Remote'],
+      applyUrl: `https://job-boards.greenhouse.io/unmapped/jobs/${postingId}`, sourceState: 'open' as const,
+      lifecycleAuthority: 'title' as const, providerIdentity: { provider: 'greenhouse' as const, tenant: 'unmapped' },
+      providerEvidence: { provider: 'greenhouse' as const, tenant: 'unmapped', postingId, sourceId,
+        urls: [`https://job-boards.greenhouse.io/unmapped/jobs/${postingId}`] },
+    });
+    let ids = ['100'];
+    const adapter: SourceAdapter = { id: sourceId, async fetch(previous): Promise<SourceFetchResult & SourceSnapshot> {
+      const contentHash = ids.join(':');
+      return { sourceId, outcome: previous?.contentHash === contentHash ? 'unchanged' : 'changed', complete: true,
+        rawCount: ids.length, contentHash, checkpoint: { sourceId, successfulFetches: (previous?.successfulFetches ?? 0) + 1,
+          contentHash, activeExternalIds: ids }, postings: ids.map(posting), listings: [],
+        notModified: previous?.contentHash === contentHash };
+    } };
+    const resolver = { async configurationVersion() { return 'configuration-v1'; },
+      async resolveCanonicalEmployer() { return undefined; }, async resolveDestinationRule() { return undefined; } };
+    const queued: Array<{ externalId: string; shadowOrigin?: string }> = [];
+    const run = () => new Poller([adapter], store, undefined, undefined, undefined, undefined,
+      async (request) => { queued.push(request); }, resolver).poll({ naturalProviderPoll: true });
+
+    await run();
+    ids = ['100', '101'];
+    await run();
+
+    expect(queued).toEqual([expect.objectContaining({ externalId: '101', shadowOrigin: 'provider-poll' })]);
+    expect([...store.jobs.values()].find((job) => job.sourceReferences.some((reference) => reference.externalId === '101')))
+      .toMatchObject({ admission: { catalogEligible: false, alertEligible: false, reasonCodes: ['employer-unresolved'] } });
+    expect(await store.pendingSms()).toEqual([]);
+  });
+
   it('retries a failed provider shadow queue handoff from the durable source checkpoint', async () => {
     const store = new MemoryInternshipStore(); const sourceId = 'greenhouse-acme';
     const makeSnapshot = (ids: string[], hash: string): SourceFetchResult & SourceSnapshot => ({ sourceId, outcome: 'changed', complete: true,
