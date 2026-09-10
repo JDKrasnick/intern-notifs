@@ -1,11 +1,14 @@
 import type { D1Database, D1PreparedStatement } from './types.js';
 
-// D1 occasionally rotates the underlying instance mid-request and rejects an
-// in-flight statement with "this D1 DB instance is no longer active. Reconnect
-// or retry the request." Cloudflare's guidance for this class of error is to
-// retry: a fresh prepare/bind runs against the reconnected instance. Ingestion
-// polls that hit this during persistence otherwise exhaust their two queue
-// retries and dead-letter valid work (see issue #203).
+// D1 drops connections and resets instances out from under in-flight
+// statements: "this D1 DB instance is no longer active. Reconnect or retry the
+// request." when it rotates mid-request, and "D1 DB reset because its code was
+// updated." when a deploy lands. The remaining patterns are the same family:
+// closed connections, lost network, reset storage. Cloudflare's guidance for
+// this class of error is to retry: a fresh prepare/bind runs against the
+// reconnected instance. Ingestion polls that hit this during persistence
+// otherwise exhaust their two queue retries and dead-letter valid work (see
+// issues #203 and #205).
 const RETRYABLE = /no longer active|Connection closed|reset because the connection|D1 DB reset|Network connection lost|storage caused object to be reset/i;
 
 function isRetryable(error: unknown): boolean {
@@ -51,12 +54,13 @@ function rebuild(statement: D1PreparedStatement): () => D1PreparedStatement {
 }
 
 /**
- * Wraps a D1 binding so reads, writes, and batches retry the transient
- * "instance is no longer active" reconnect error. Each retry rebuilds the
- * statement so it runs against the reconnected instance. Non-retryable errors
- * propagate immediately and unchanged.
+ * Wraps a D1 binding so reads, writes, and batches retry the transient D1
+ * instance failures listed in RETRYABLE: an instance rotation, a deploy-time
+ * reset, or a lost connection that rejects an in-flight statement. Each retry
+ * rebuilds the statement so it runs against the reconnected instance.
+ * Non-retryable errors propagate immediately and unchanged.
  *
- * Retrying writes is safe: the reconnect error means the instance rotated
+ * Retrying writes is safe: these errors mean the instance rotated or was reset
  * before the statement committed (single statements autocommit; `batch` is
  * atomic), so a retried write never double-applies. Independently, the only
  * caller is the at-least-once queue consumer, whose whole batch already
