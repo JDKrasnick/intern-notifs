@@ -174,6 +174,29 @@ describe('Greenhouse queue worker', () => {
     });
   });
 
+  it('reports each dead-letter-bound poll failure to onRecordFailure with its cause', async () => {
+    const failures: Array<{ messageId: string; message: string }> = [];
+    const result = await processGreenhouseQueue({
+      Records: [
+        { messageId: 'good', body: JSON.stringify(message()) },
+        { messageId: 'bad', body: JSON.stringify(message('greenhouse-unknown')) },
+      ],
+    }, {
+      store: new MemoryInternshipStore(),
+      sources: [acmeSource],
+      fetchImpl: async () => response(),
+      linkValidator: async (url) => url,
+      onRecordFailure: (record, error) => {
+        failures.push({ messageId: record.messageId, message: error instanceof Error ? error.message : String(error) });
+      },
+    });
+
+    expect(result).toEqual({ batchItemFailures: [{ itemIdentifier: 'bad' }] });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.messageId).toBe('bad');
+    expect(failures[0]?.message).toContain('greenhouse-unknown');
+  });
+
   it('does not process later FIFO records from a board whose earlier record failed', async () => {
     const result = await processGreenhouseQueue({
       Records: [

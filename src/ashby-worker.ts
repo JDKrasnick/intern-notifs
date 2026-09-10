@@ -49,6 +49,7 @@ export interface AshbyBoardDependencies {
   enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>;
   catalogAdmissionResolver?: CatalogAdmissionResolver;
   sleep?: (milliseconds: number) => Promise<void>;
+  onRecordFailure?: (record: QueueRecord, error: unknown) => Promise<void> | void;
 }
 
 export interface AshbyBoardResult {
@@ -373,7 +374,7 @@ export async function processAshbyQueue(
       }));
       throw error;
     }
-  });
+  }, undefined, dependencies.onRecordFailure);
 }
 
 export async function handler(

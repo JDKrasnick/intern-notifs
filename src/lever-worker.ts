@@ -38,6 +38,7 @@ export interface LeverBoardDependencies {
   enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>;
   catalogAdmissionResolver?: CatalogAdmissionResolver;
   sleep?: (milliseconds: number) => Promise<void>;
+  onRecordFailure?: (record: QueueRecord, error: unknown) => Promise<void> | void;
 }
 
 export interface LeverBoardResult {
@@ -336,7 +337,7 @@ export async function processLeverQueue(
       }));
       throw error;
     }
-  });
+  }, undefined, dependencies.onRecordFailure);
 }
 
 export async function handler(

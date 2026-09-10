@@ -58,4 +58,33 @@ describe('FIFO batch processing', () => {
       batchItemFailures: [{ itemIdentifier: 'failed' }, { itemIdentifier: 'blocked' }],
     });
   });
+
+  it('reports the original cause for every record that will be retried', async () => {
+    const cause = new Error('provider failed');
+    const observed: Array<{ messageId: string; error: unknown }> = [];
+    const result = await processFifoBatch([
+      record('failed', 'a'),
+      record('blocked', 'a'),
+      record('other', 'b'),
+    ], async (item) => {
+      if (item.messageId === 'failed') throw cause;
+    }, undefined, (item, error) => { observed.push({ messageId: item.messageId, error }); });
+
+    expect(observed).toEqual([
+      { messageId: 'failed', error: cause },
+      { messageId: 'blocked', error: cause },
+    ]);
+    expect(result.batchItemFailures).toEqual([{ itemIdentifier: 'failed' }, { itemIdentifier: 'blocked' }]);
+  });
+
+  it('contains a throwing onRecordFailure hook so failure isolation is preserved', async () => {
+    const result = await processFifoBatch([
+      record('failed', 'a'),
+      record('other', 'b'),
+    ], async (item) => {
+      if (item.messageId === 'failed') throw new Error('provider failed');
+    }, undefined, () => { throw new Error('ledger unavailable'); });
+
+    expect(result.batchItemFailures).toEqual([{ itemIdentifier: 'failed' }]);
+  });
 });

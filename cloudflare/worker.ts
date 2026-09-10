@@ -1307,7 +1307,10 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
       }
       return;
     }
-    const resolveFailures = async (messageId: string) => {
+    const resolveFailures = async (messageId: string, attempts?: number) => {
+      // A first-delivery message has no prior failure row, so skip the extra
+      // write. Only retried deliveries (attempts > 1) can carry one to resolve.
+      if ((attempts ?? 0) <= 1) return;
       try { await resolveQueueFailures(env.DB, batch.queue, messageId); }
       catch (error) {
         console.error(JSON.stringify({ command: 'github-failure-ledger-resolution', messageId,
@@ -1325,7 +1328,7 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
         const source = defaultSources.find((candidate) => candidate.id === sourceId);
         if (reviewedStructured) {
           const ran = await runStructuredSource(reviewedStructured, env, { forceRecovery: message.force === true });
-          if (ran) await resolveFailures(queued.id);
+          if (ran) await resolveFailures(queued.id, queued.attempts);
           continue;
         }
         if (!source) throw new Error(`Unknown reviewed source ${JSON.stringify(sourceId)}`);
@@ -1363,7 +1366,7 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
         if (result.poll?.continuationSources.includes(source.id)) {
           await sendQueueMessageWithin(env.GITHUB_QUEUE, { sourceId: source.id });
         }
-        await resolveFailures(queued.id);
+        await resolveFailures(queued.id, queued.attempts);
       } catch (error) {
         failed.add(record.messageId);
         await recordQueueFailureBestEffort({
@@ -1382,10 +1385,27 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
   }
   const event = { Records: records };
   const registry = await reviewedProviderRegistry(new D1EmployerStore(env.DB));
+  const messageById = new Map(batch.messages.map((message) => [message.id, message]));
+  // Catalog polls carry only a sourceId. Persist the exact failure category and
+  // diagnostic before the platform retries and dead-letters the message, so the
+  // guarded DLQ inspector can explain every dead-letter instead of only GitHub.
+  const onRecordFailure = async (record: { messageId: string; body: string }, error: unknown) => {
+    const parsed = (() => {
+      try { return JSON.parse(record.body) as { sourceId?: string }; }
+      catch { return undefined; }
+    })();
+    const queued = messageById.get(record.messageId);
+    await recordQueueFailureBestEffort({
+      db: env.DB, queueName: batch.queue, messageId: record.messageId,
+      attempts: queued?.attempts, timestamp: queued?.timestamp, sourceId: parsed?.sourceId,
+      sourceKind: catalogProvider, body: record.body, error,
+    });
+  };
   const dependencies = {
     store: new D1InternshipStore(env.DB), userStore: new D1UserStore(env.DB),
     enqueueDestinationVerification: (request: Parameters<typeof destinationVerificationMessage>[0]) => env.DESTINATION_VERIFICATION_QUEUE.send(destinationVerificationMessage(request)),
     catalogAdmissionResolver: catalogAdmissionResolver(env),
+    onRecordFailure,
   };
   const legacyLever = (await dependencies.store.listLeverAdmissions?.() ?? []).map(({ source }) => source);
   const leverRegistry = [...registry.lever, ...legacyLever.filter((source) => !registry.lever.some((candidate) => candidate.id === source.id))];
@@ -1399,7 +1419,15 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
   const failed = new Set(result.batchItemFailures.map(({ itemIdentifier }) => itemIdentifier));
   for (const message of batch.messages) {
     if (failed.has(message.id)) message.retry();
-    else message.ack();
+    else {
+      // A first-delivery message has no prior failure row, so skip the extra
+      // write. Only retried deliveries (attempts > 1) can carry one to resolve.
+      if ((message.attempts ?? 0) > 1) {
+        try { await resolveQueueFailures(env.DB, batch.queue, message.id); }
+        catch (error) { console.error(JSON.stringify({ command: 'catalog-failure-ledger-resolution', messageId: message.id, error: safeDiagnostic(error) })); }
+      }
+      message.ack();
+    }
   }
 }
 

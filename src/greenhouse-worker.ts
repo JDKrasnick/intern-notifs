@@ -36,6 +36,7 @@ export interface GreenhouseBoardDependencies {
   groupedNotificationCohort?: GroupedNotificationCohort;
   enqueueDestinationVerification?: (request: DestinationVerificationRequest) => Promise<void>;
   catalogAdmissionResolver?: CatalogAdmissionResolver;
+  onRecordFailure?: (record: QueueRecord, error: unknown) => Promise<void> | void;
 }
 
 export interface GreenhouseBoardResult {
@@ -207,7 +208,7 @@ export async function processGreenhouseQueue(
       }));
       throw error;
     }
-  });
+  }, undefined, dependencies.onRecordFailure);
 }
 
 export async function handler(event: QueueEvent): Promise<{ batchItemFailures: Array<{ itemIdentifier: string }> }> {

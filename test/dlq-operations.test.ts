@@ -66,6 +66,16 @@ describe('protected DLQ operations', () => {
     database.close();
   });
 
+  it('surfaces the ledgered failure category and diagnostic for a non-GitHub catalog queue', async () => {
+    const { database, dependencies } = subject([catalogMessage('m1')]);
+    await recordQueueFailure({ db: dependencies.db, queueName: 'intern-notifs-lever', messageId: 'm1', attempts: 3,
+      sourceId: 'lever-acme', sourceKind: 'lever', body: { sourceId: 'lever-acme' },
+      error: new Error('fetch to https://api.lever.co/v0/postings timed out') });
+    const result = await inspectDlq({ queue: 'lever', limit: 100 }, dependencies);
+    expect(result.messages[0]).toMatchObject({ messageId: 'm1', failureCategory: 'transport', latestDiagnostic: 'fetch to [url] timed out' });
+    database.close();
+  });
+
   it('keeps malformed messages inspectable and selectively discardable', async () => {
     const malformed: PeekedMessage = { id: 'broken', attempts: 5, ref: 'private-broken', body: '{not-json' };
     const { database, dependencies, purge } = subject([malformed]);
