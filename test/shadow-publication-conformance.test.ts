@@ -10,7 +10,7 @@ describe('fieldBaselineConformance', () => {
     expect(fieldBaselineConformance('workMode', 'correct-present', 'not-stated'))
       .toEqual({ field: 'workMode', baseline: 'not-stated', advisory: 'deterministic-conflict' });
     expect(fieldBaselineConformance('compensation', 'false-positive', 'incomplete'))
-      .toEqual({ field: 'compensation', baseline: 'incomplete', advisory: 'deterministic-conflict' });
+      .toEqual({ field: 'compensation', baseline: 'incomplete', advisory: 'baseline-inconclusive' });
   });
   it('flags a correct-absent review where deterministic evidence existed', () => {
     expect(fieldBaselineConformance('housing', 'correct-absent', 'present'))
@@ -30,5 +30,11 @@ describe('fieldBaselineConformance', () => {
   it('distinguishes a missing deterministic baseline from an LLM-only field', () => {
     expect(fieldBaselineConformance('compensation', 'correct-absent', 'unavailable'))
       .toEqual({ field: 'compensation', baseline: 'unavailable', advisory: 'baseline-unavailable' });
+  });
+  it('does not call incomplete or conflicting deterministic evidence consistent', () => {
+    expect(fieldBaselineConformance('housing', 'correct-absent', 'incomplete'))
+      .toEqual({ field: 'housing', baseline: 'incomplete', advisory: 'baseline-inconclusive' });
+    expect(fieldBaselineConformance('timing', 'correct-present', 'conflicting'))
+      .toEqual({ field: 'timing', baseline: 'conflicting', advisory: 'baseline-inconclusive' });
   });
 });
