@@ -85,6 +85,21 @@ describe('public application handoff URL', () => {
     expect(created.officialApplyUrl).toBe(CLEAN_URL);
   });
 
+  it('sanitizes catalog groups served from a projection written before the change', async () => {
+    const [built] = groupCatalogJobs([trackedJob]);
+    const details = catalogGroupDetails(built!);
+    const stale = { ...details, roles: details.roles.map((role) => ({ ...role, officialApplyUrl: TRACKED_URL })) };
+    const jobs = new MemoryInternshipStore();
+    await jobs.putCatalogProjection([stale], '2026-09-02T00:00:00.000Z');
+    const handler = createApiHandler({ jobs, users: new MemoryUserStore(), now: () => '2026-09-02T00:00:00.000Z' });
+
+    const response = JSON.parse((await handler({
+      rawPath: `/catalog/groups/${encodeURIComponent(details.group.groupId)}`,
+      requestContext: { http: { method: 'GET' } },
+    })).body);
+    expect(response.roles.map((role: { officialApplyUrl: string }) => role.officialApplyUrl)).toEqual([CLEAN_URL]);
+  });
+
   it('opens clean destinations from push and digest notifications', async () => {
     expect(renderPushTemplate('{url}', trackedJob)).toBe(CLEAN_URL);
 
