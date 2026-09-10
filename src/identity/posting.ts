@@ -1,10 +1,20 @@
 import { createHash } from 'node:crypto';
 import type { Internship, PostingAlias, PostingIdentity, PostingProvider, ProviderPostingEvidence } from '../types.js';
 
-const TRACKING_PARAMETERS = new Set([
-  'fbclid', 'gclid', 'gh_src', 'mc_cid', 'mc_eid', 'ref', 'source',
-  'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
-]);
+/** Referral parameters community feeds and campaigns append; none selects a posting. */
+const TRACKING_PARAMETERS: Record<string, true> = {
+  fbclid: true, gclid: true, gh_src: true, mc_cid: true, mc_eid: true, ref: true, source: true,
+  utm_source: true, utm_medium: true, utm_campaign: true, utm_term: true, utm_content: true,
+};
+
+/**
+ * Case-insensitive referral/tracking parameter test. `utm_` is a whole family
+ * rather than a fixed list, so it matches by prefix.
+ */
+export function isApplicationTrackingParameter(key: string): boolean {
+  const lower = key.toLowerCase();
+  return TRACKING_PARAMETERS[lower] === true || lower.startsWith('utm_');
+}
 
 function withoutTrailingSlash(pathname: string): string {
   return pathname === '/' ? '/' : pathname.replace(/\/+$/, '');
@@ -18,8 +28,7 @@ export function canonicalizePostingUrl(input: string): string {
   url.hostname = url.hostname.toLowerCase();
   url.hash = '';
   for (const key of [...url.searchParams.keys()]) {
-    const lower = key.toLowerCase();
-    if (TRACKING_PARAMETERS.has(lower) || lower.startsWith('utm_')) url.searchParams.delete(key);
+    if (isApplicationTrackingParameter(key)) url.searchParams.delete(key);
   }
 
   const host = url.hostname.replace(/^www\./, '');

@@ -1,5 +1,6 @@
 import { applicationUrlRejection } from '../sources/quality.js';
 import { createHash } from 'node:crypto';
+import { isApplicationTrackingParameter } from '../identity/posting.js';
 import { platformFetch } from './platform-fetch.js';
 import { applicationMetadataArtifactsFromJsonDocuments, type ApplicationMetadataArtifact } from '../role-metadata.js';
 
@@ -29,6 +30,33 @@ export function canonicalApplicationUrl(value: string): string {
     // Validation remains responsible for reporting malformed URLs.
     return value;
   }
+}
+
+/**
+ * Public handoff URL: the source URL minus reviewed referral parameters.
+ *
+ * Only tracking parameters are removed. Posting-selecting and
+ * route-controlling parameters (`gh_jid`, locale, form and detail parameters)
+ * survive, and the occurrence keeps the exact source URL for provenance.
+ * Unparseable input returns unchanged so a stored bad URL cannot break a
+ * public read, and a URL with nothing to strip returns byte-for-byte so
+ * existing links are not rewritten incidentally.
+ */
+export function publicApplicationUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return value;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return value;
+  let removed = false;
+  for (const key of [...url.searchParams.keys()]) {
+    if (!isApplicationTrackingParameter(key)) continue;
+    url.searchParams.delete(key);
+    removed = true;
+  }
+  return removed ? url.toString() : value;
 }
 
 /** Minimal server-rendered evidence available for any employer application page. */

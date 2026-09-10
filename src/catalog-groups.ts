@@ -3,6 +3,7 @@ import { inferJobFocuses } from './core/filters.js';
 import { catalogSourceClasses, type CatalogSource } from './catalog-fields.js';
 import { catalogVisibleAt, compareCatalogRecency } from './catalog-recency.js';
 import { canonicalCompanyKey } from './core/normalize.js';
+import { publicApplicationUrl } from './core/application-url.js';
 import { employerCategory, type EmployerCategory } from './core/employers.js';
 import { occurrenceProvenance } from './sources/provenance.js';
 import type { Internship } from './types.js';
@@ -360,7 +361,7 @@ function catalogGroupRole(job: Internship): CatalogGroupRole {
     locations: locationsFor(job), visibleAt: catalogVisibleAt(job),
     education: catalogEducation(job), disciplines: disciplinesFor(job), workModes: workModesFor(job),
     sourceCredibility: sourceCredibility(job), provenanceLabels: provenanceLabels(job), detailUrl: `/jobs/${encodeURIComponent(job.jobId)}`,
-    officialApplyUrl: job.applyUrl, applicationUrlValidated: Boolean(job.applicationUrlValidatedAt), open: job.open,
+    officialApplyUrl: publicApplicationUrl(job.applyUrl), applicationUrlValidated: Boolean(job.applicationUrlValidatedAt), open: job.open,
     employerCategory: job.employerCategory ?? employerCategory(job.company),
     requiresUsCitizenship: Boolean(job.requirements?.requiresUsCitizenship),
     advancedDegreeRequired: Boolean(job.requirements?.advancedDegreeRequired),

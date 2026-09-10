@@ -7,6 +7,7 @@ import type { DeliveryReceipt, Internship } from './types.js';
 import type { InternshipStore, UserStore } from './store.js';
 import { matchesJobFilter } from './core/filters.js';
 import { notificationSourceLabelFor } from './sources/source-label.js';
+import { publicApplicationUrl } from './core/application-url.js';
 import { canonicalPostingTiming, formatPostingDate } from './core/posting-time.js';
 
 export const rankInternships = (jobs: Internship[]) => [...jobs].sort((a, b) => score(b.company, b.compensation) - score(a.company, a.compensation) || (canonicalPostingTiming(b).timestamp ?? '').localeCompare(canonicalPostingTiming(a).timestamp ?? '') || b.firstSeenAt.localeCompare(a.firstSeenAt));
@@ -385,7 +386,7 @@ export function renderPushTemplate(template: string, job: Internship, roleAbbrev
         : '';
   const focus = inferJobFocuses(job).join(' · ');
   const values: Record<string, string> = {
-    title: displayValue(job.title), shortTitle: compactRoleTitle(job.title, roleAbbreviations), company: displayValue(job.company), location: displayValue(job.location), season: displayValue(job.season), compensation, compensationDetail: compensation ? ` · ${compensation}` : '', focus: focus ? `Focus: ${focus}` : '', posted, postedDetail: posted ? `${focus ? ' · ' : ''}${timingLabel}: ${posted}` : '', source: notificationSourceLabel(job), url: safeClick(job.applyUrl) ?? ''
+    title: displayValue(job.title), shortTitle: compactRoleTitle(job.title, roleAbbreviations), company: displayValue(job.company), location: displayValue(job.location), season: displayValue(job.season), compensation, compensationDetail: compensation ? ` · ${compensation}` : '', focus: focus ? `Focus: ${focus}` : '', posted, postedDetail: posted ? `${focus ? ' · ' : ''}${timingLabel}: ${posted}` : '', source: notificationSourceLabel(job), url: safeClick(publicApplicationUrl(job.applyUrl)) ?? ''
   };
   return template.replace(/\{(title|shortTitle|company|location|season|compensation|compensationDetail|focus|posted|postedDetail|source|url)\}/g, (_, key: string) => values[key] ?? '').replace(/\n[ \t]*\n+/g, '\n').trim();
 }
@@ -400,7 +401,7 @@ function pushMessage(job: Internship, templates: PushTemplates): PushMessage {
   const tagsByFocus: Partial<Record<JobFocus, string>> = { 'AI/ML': 'brain', 'Cloud/Infra': 'cloud', Security: 'lock', Data: 'bar_chart', 'Backend/API': 'computer', 'Frontend/Mobile': 'computer', 'Systems/Hardware': 'gear', 'Quant/Fintech': 'chart_with_upwards_trend', Product: 'clipboard', Design: 'art', SWE: 'computer' };
   const tag = inferJobFocuses(job).map((focus) => tagsByFocus[focus]).find((candidate): candidate is string => Boolean(candidate));
   const tags = tag ? [tag] : [];
-  return { title: title || 'New internship', body: renderPushDescription(templates.descriptionTemplate ?? defaultPushTemplates.descriptionTemplate, job, aliases), click: safeClick(job.applyUrl), ...(tags.length ? { tags } : {}) };
+  return { title: title || 'New internship', body: renderPushDescription(templates.descriptionTemplate ?? defaultPushTemplates.descriptionTemplate, job, aliases), click: safeClick(publicApplicationUrl(job.applyUrl)), ...(tags.length ? { tags } : {}) };
 }
 export function summaryChunks(jobs: Internship[], limit = 1200): Internship[][] {
   const chunks: Internship[][] = []; let current: Internship[] = []; let length = 0;
@@ -437,8 +438,8 @@ export class SesEmailSender implements EmailSender {
 const escapeHtml = (input: string) => input.replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char] ?? char);
 export async function sendDigest(store: InternshipStore, sender: EmailSender, now: () => Date = () => new Date()): Promise<number> {
   const jobs = rankInternships(await store.pendingDigest()); if (!jobs.length) return 0;
-  const text = jobs.map((job) => `${job.company} — ${job.title} (${job.location})\n${job.applyUrl}`).join('\n\n');
-  const html = `<h1>Internship digest</h1><ul>${jobs.map((job) => `<li><strong>${escapeHtml(job.company)}</strong> — ${escapeHtml(job.title)} (${escapeHtml(job.location)})<br><a href="${escapeHtml(job.applyUrl)}">Apply</a></li>`).join('')}</ul>`;
+  const text = jobs.map((job) => `${job.company} — ${job.title} (${job.location})\n${publicApplicationUrl(job.applyUrl)}`).join('\n\n');
+  const html = `<h1>Internship digest</h1><ul>${jobs.map((job) => `<li><strong>${escapeHtml(job.company)}</strong> — ${escapeHtml(job.title)} (${escapeHtml(job.location)})<br><a href="${escapeHtml(publicApplicationUrl(job.applyUrl))}">Apply</a></li>`).join('')}</ul>`;
   await sender.send(`Internship digest: ${jobs.length} new role${jobs.length === 1 ? '' : 's'}`, text, html);
   await store.markDigested(jobs.map((job) => job.jobId), now().toISOString());
   return jobs.length;

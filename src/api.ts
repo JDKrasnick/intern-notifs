@@ -10,6 +10,7 @@ import { createApplicationSession, transitionApplicationSession, type Applicatio
 import { companyCoverage } from '../coverage/summary.js';
 import { catalogGroupDetails, filterCatalogGroupDetails, filterCatalogGroups, groupCatalogJobs,
   type CatalogGroupDetails, type CatalogGroupFilter } from './catalog-groups.js';
+import { publicApplicationUrl } from './core/application-url.js';
 import { occurrenceProvenance } from './sources/provenance.js';
 import { catalogEligible, deriveCanonicalAdmission } from './catalog-admission.js';
 
@@ -24,8 +25,9 @@ const statuses: ApplicationStatus[] = ['saved', 'applied', 'assessment', 'interv
 const hashSecret = (value: string) => createHash('sha256').update(value).digest('base64url');
 const inMinutes = (iso: string, minutes: number) => new Date(new Date(iso).getTime() + minutes * 60_000).toISOString();
 const isBefore = (left: string, right: string) => new Date(left).getTime() < new Date(right).getTime();
-const publicJob = <T extends { sourceReferences: Array<{ sourceId: string; provenance?: OccurrenceProvenance }> }>(job: T): T => ({
+const publicJob = <T extends { applyUrl: string; sourceReferences: Array<{ sourceId: string; provenance?: OccurrenceProvenance }> }>(job: T): T => ({
   ...job,
+  applyUrl: publicApplicationUrl(job.applyUrl),
   sourceReferences: job.sourceReferences.map((reference) => ({ ...reference, provenance: occurrenceProvenance(reference) })),
 });
 
@@ -85,11 +87,15 @@ async function jobsPage(
 }
 
 function eligibleProjectedGroup(details: CatalogGroupDetails, at = new Date()): CatalogGroupDetails | undefined {
-  const roles = details.roles.filter((role) => catalogEligible({
-    admission: deriveCanonicalAdmission(role.sourceReferences, at.toISOString()),
-  }, at));
+  const roles = details.roles
+    .filter((role) => catalogEligible({
+      admission: deriveCanonicalAdmission(role.sourceReferences, at.toISOString()),
+    }, at))
+    // A projection outlives the deploy that wrote it, so the read path
+    // sanitizes handoff URLs as well as the projection builder.
+    .map((role) => ({ ...role, officialApplyUrl: publicApplicationUrl(role.officialApplyUrl) }));
   if (!roles.length) return undefined;
-  if (roles.length === details.roles.length) return details;
+  if (roles.length === details.roles.length) return { ...details, roles };
   return filterCatalogGroupDetails([{ ...details, roles }], {})[0];
 }
 
@@ -149,7 +155,7 @@ function applicationSummary(
         ...(job.postingIdentityStatus ? { postingIdentityStatus: job.postingIdentityStatus } : {}),
         availability,
         ...(availability !== 'catalog-review' ? {
-          applyUrl: job.applyUrl,
+          applyUrl: publicApplicationUrl(job.applyUrl),
           assistance: assistanceAvailability(job, application.applyMode),
         } : {
           unavailableReason: job.postingIdentityStatus === 'unconfirmed' && !identityUnconfirmedPublicationEnabled
@@ -600,7 +606,7 @@ export function createApiHandler(dependencies: ApiDependencies) {
         await dependencies.users.putApplication(userId, application);
         return reply(existing ? 200 : 201, {
           ...applicationSummary(application, job, identityUnconfirmedPublicationEnabled),
-          officialApplyUrl: application.applyMode === 'official-form' ? job.applyUrl : undefined,
+          officialApplyUrl: application.applyMode === 'official-form' ? publicApplicationUrl(job.applyUrl) : undefined,
         });
       }
       const appMatch = path.match(/^\/me\/applications\/([^/]+)$/);

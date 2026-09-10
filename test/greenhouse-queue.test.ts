@@ -151,6 +151,32 @@ describe('Greenhouse queue worker', () => {
     expect(await store.pendingSms()).toHaveLength(1);
   });
 
+  it('keeps the poller\'s rich health artifact for published boards', async () => {
+    const published: ReviewedGreenhouseSource = { ...acmeSource, status: 'published' };
+    const store = new MemoryInternshipStore();
+    const dependencies = {
+      store,
+      sources: [published],
+      fetchImpl: async () => response(),
+      linkValidator: async (url: string) => url,
+      catalogAdmissionResolver,
+    };
+    const records = [{ messageId: 'first', body: JSON.stringify(message()) }];
+    expect(await processGreenhouseQueue({ Records: records }, dependencies)).toEqual({ batchItemFailures: [] });
+
+    const health = await store.getSourceHealth(acmeSource.id);
+    expect(health).toMatchObject({ state: 'healthy', provider: 'greenhouse', region: 'unknown', outcome: 'success_changed' });
+    expect(health?.contentHash).toBeTruthy();
+    expect(health?.counts).toBeDefined();
+    expect(health?.recentRuns).toHaveLength(1);
+
+    expect(await processGreenhouseQueue({ Records: records }, dependencies)).toEqual({ batchItemFailures: [] });
+    const after = await store.getSourceHealth(acmeSource.id);
+    expect(after?.outcome).toBe('success_unchanged_hash');
+    expect(after?.recentRuns?.[0]).toMatchObject({ outcome: 'success_unchanged_hash', state: 'succeeded' });
+    expect(after?.recentRuns).toHaveLength(2);
+  });
+
   it('returns only failed SQS record IDs for bounded retry', async () => {
     const store = new MemoryInternshipStore();
     const result = await processGreenhouseQueue({

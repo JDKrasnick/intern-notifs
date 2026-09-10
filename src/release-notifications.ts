@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { inferJobFocuses, matchesJobFilter, type JobFilter } from './core/filters.js';
+import { publicApplicationUrl } from './core/application-url.js';
 import { canonicalCompanyKey } from './core/normalize.js';
 import type { Internship } from './types.js';
 
@@ -243,7 +244,7 @@ export function renderReleasePush(release: PersonalizedRelease) {
 }
 
 export function renderReleaseEmail(release: PersonalizedRelease) {
-  const rows = release.jobs.map((job) => `${job.title}\n${job.company} · ${job.location} · ${seasonLabel(job)} · ${educationLabel(job)}${job.postingIdentityStatus === 'unconfirmed' ? '\nIdentity unconfirmed' : ''}\nInternNotifs: internnotifs://releases/${release.releaseId}\nOfficial application: ${job.applyUrl}`);
+  const rows = release.jobs.map((job) => `${job.title}\n${job.company} · ${job.location} · ${seasonLabel(job)} · ${educationLabel(job)}${job.postingIdentityStatus === 'unconfirmed' ? '\nIdentity unconfirmed' : ''}\nInternNotifs: internnotifs://releases/${release.releaseId}\nOfficial application: ${publicApplicationUrl(job.applyUrl)}`);
   return { subject: `${release.jobs[0]!.company} posted ${release.jobs.length} matching role${release.jobs.length === 1 ? '' : 's'}`, text: rows.join('\n\n') };
 }
 
