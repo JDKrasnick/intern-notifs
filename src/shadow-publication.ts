@@ -121,13 +121,13 @@ export interface FieldBaselineConformance {
    * stayed silent on (or vice versa) — flag for review before any receipt.
    * deterministic-consistent: both agree the field is absent.
    * llm-only: no deterministic baseline exists (eligibility). */
-  advisory: 'deterministic-confirm' | 'deterministic-conflict' | 'deterministic-consistent' | 'llm-only';
+  advisory: 'deterministic-confirm' | 'deterministic-conflict' | 'deterministic-consistent' | 'baseline-unavailable' | 'llm-only';
 }
 
 const presentOutcomes = ['correct-present', 'false-positive', 'wrong-value'];
 
 export function fieldBaselineConformance(field: string, outcome: string, baseline: BaselineState): FieldBaselineConformance {
-  if (baseline === 'unavailable') return { field, baseline, advisory: 'llm-only' };
+  if (baseline === 'unavailable') return { field, baseline, advisory: field === 'eligibility' ? 'llm-only' : 'baseline-unavailable' };
   const claimsPresent = presentOutcomes.includes(outcome);
   if (claimsPresent && baseline === 'present') return { field, baseline, advisory: 'deterministic-confirm' };
   if (!claimsPresent && baseline !== 'present') return { field, baseline, advisory: 'deterministic-consistent' };

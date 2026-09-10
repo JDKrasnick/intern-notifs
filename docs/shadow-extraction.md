@@ -75,9 +75,10 @@ evaluation metrics, and extraction scope. `record-evaluation` stores one of
 per-field `conformance` advisory against the deterministic baseline recorded on
 the run (`shadow_extraction_baseline_differences`): `deterministic-confirm`
 when deterministic evidence also says present, `deterministic-conflict` when the
-review disagrees with the deterministic baseline, `deterministic-consistent`
-when both agree a field is absent, and `llm-only` for eligibility, which the
-deterministic extractor cannot express. A conflict is a review signal, not a
+model field status differs from the deterministic baseline,
+`deterministic-consistent` when their presence/absence states agree,
+`baseline-unavailable` when a covered field has no recorded baseline, and
+`llm-only` for eligibility, which the deterministic extractor cannot express. A conflict is a review signal, not a
 block: `create-receipt` requires `correct-present` for every selected field as
 well as a completed, validator-accepted, current posting revision, and a human
 `correct-present` review overrides a silent deterministic baseline. Policy

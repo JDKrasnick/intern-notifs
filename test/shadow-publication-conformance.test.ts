@@ -27,4 +27,8 @@ describe('fieldBaselineConformance', () => {
       .toEqual({ field: 'eligibility', baseline: 'unavailable', advisory: 'llm-only' });
     expect(deterministicBaselineFields).not.toContain('eligibility');
   });
+  it('distinguishes a missing deterministic baseline from an LLM-only field', () => {
+    expect(fieldBaselineConformance('compensation', 'correct-absent', 'unavailable'))
+      .toEqual({ field: 'compensation', baseline: 'unavailable', advisory: 'baseline-unavailable' });
+  });
 });
