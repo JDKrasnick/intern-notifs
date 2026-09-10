@@ -49,7 +49,8 @@ describe('mocked production workflow integration', () => {
     const firstSms = await sendPendingNotifications(store, sms, undefined, () => new Date('2026-07-18T12:05:01.000Z'));
     expect(firstSms).toEqual({ sent: 6, failed: 1 });
     expect(await store.pendingSms()).toHaveLength(1);
-    expect(sms.messages.map((message) => message.body).join('\n')).toContain('https://jobs.ashbyhq.com/fixture/00000000-0000-0000-0000-000000000008?utm_source=fixture');
+    expect(sms.messages.map((message) => message.body).join('\n')).toContain('https://jobs.ashbyhq.com/fixture/00000000-0000-0000-0000-000000000008');
+    expect(sms.messages.map((message) => message.body).join('\n')).not.toContain('utm_source');
 
     const retry = new RecorderSms();
     expect(await sendPendingNotifications(store, retry)).toEqual({ sent: 1, failed: 0 });
@@ -58,7 +59,9 @@ describe('mocked production workflow integration', () => {
     const email = new RecorderEmail();
     expect(await sendDigest(store, email, () => new Date('2026-07-18T17:00:00.000Z'))).toBe(7);
     expect(email).toMatchObject({ calls: 1, subject: 'Internship digest: 7 new roles' });
-    expect(email.html).toContain('https://jobs.ashbyhq.com/fixture/00000000-0000-0000-0000-000000000002?utm_source=fixture');
+    expect(email.html).toContain('https://jobs.ashbyhq.com/fixture/00000000-0000-0000-0000-000000000002');
+    expect(email.text).not.toContain('utm_source');
+    expect(email.html).not.toContain('utm_source');
     expect(await store.pendingDigest()).toEqual([]);
     expect(await sendDigest(store, email)).toBe(0);
     expect(email.calls).toBe(1);
