@@ -132,9 +132,6 @@ export async function planDlq(input: {
 }, dependencies: DlqDependencies) {
   assertQueue(input.queue);
   if (input.action !== 'replay' && input.action !== 'discard') throw new Error('Action must be replay or discard');
-  if (input.action === 'replay' && input.queue === 'destination-verification') {
-    throw new Error('Destination verification replay remains disabled until issue #120 lands');
-  }
   const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
   if (!reason || reason.length > 500) throw new Error('An operator reason between 1 and 500 characters is required');
   const ids = Array.isArray(input.messageIds) ? [...new Set(input.messageIds.filter((id): id is string => typeof id === 'string' && id.length > 0))] : [];
