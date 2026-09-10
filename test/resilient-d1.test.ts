@@ -3,6 +3,7 @@ import { resilientD1 } from '../cloudflare/resilient-d1.js';
 import type { D1Database, D1PreparedStatement } from '../cloudflare/types.js';
 
 const instanceGone = () => new Error('D1_ERROR: Connection closed: this D1 DB instance is no longer active. Reconnect or retry the request.');
+const resetOnDeploy = () => new Error('D1_ERROR: D1 DB reset because its code was updated.');
 
 function statement(overrides: Partial<Record<'first' | 'all' | 'run', () => Promise<unknown>>>): D1PreparedStatement {
   const self: D1PreparedStatement = {
@@ -38,6 +39,14 @@ describe('resilientD1', () => {
     await expect(db.batch([db.prepare('UPDATE t SET a = 1')])).resolves.toEqual([{ meta: { changes: 2 } }]);
     expect(run).toHaveBeenCalledTimes(2);
     expect(batch).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries the transient D1 reset that follows a code deploy', async () => {
+    const run = vi.fn().mockRejectedValueOnce(resetOnDeploy()).mockResolvedValueOnce({ meta: { changes: 1 } });
+    const db = resilientD1({ prepare: () => statement({ run }), batch: async () => [] } as unknown as D1Database, noSleep);
+
+    await expect(db.prepare('UPDATE t SET a = 1').run()).resolves.toEqual({ meta: { changes: 1 } });
+    expect(run).toHaveBeenCalledTimes(2);
   });
 
   it('does not retry an unrelated error', async () => {
