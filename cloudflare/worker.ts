@@ -39,6 +39,7 @@ import type { BrowserWorker } from '@cloudflare/puppeteer';
 import { destinationVerificationMessage, enqueueDueDestinationVerifications, processDestinationVerificationBatch,
   sendAdmissionOperationalAlert } from './destination-verification.js';
 import { cleanupDlqRecords, handleDlqOperations, recordQueueFailureBestEffort, resolveQueueFailures, type DlqDependencies, type DlqName, type PeekedMessage } from './dlq-operations.js';
+import { resilientD1 } from './resilient-d1.js';
 import type { CatalogAdmissionResolver } from '../src/destination-verification.js';
 import { ROLE_METADATA_EXTRACTION_VERSION } from '../src/role-metadata.js';
 import {
@@ -1283,6 +1284,13 @@ async function queueHandler(batch: MessageBatch<unknown>, env: Environment): Pro
     }
     return;
   }
+  // Catalog consumers dead-letter valid work when D1 rotates its instance
+  // mid-poll. Their persistence writes are idempotent, so retry the transient
+  // reconnect error only for stores built by these catalog paths (issue #203).
+  // Do not extend this wrapper to destination, shadow, or Gmail consumers:
+  // their state transitions include writes whose business semantics require
+  // their own idempotency guards.
+  env = { ...env, DB: resilientD1(env.DB) };
   const catalogProvider = providerForQueueName(batch.queue);
   if (catalogProvider === 'github') {
     const failed = new Set<string>();
