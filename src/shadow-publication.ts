@@ -105,3 +105,31 @@ export function shadowPublishableFields(extraction: ShadowExtraction, allowedFie
       : field === 'locations' ? Boolean(evidence?.locations?.length) : Boolean(evidence?.workMode);
   });
 }
+
+/** Fields the deterministic metadata extractor records a baseline for. The LLM
+ * runs shadow-only on top; conformance to this baseline is a review signal. */
+export const deterministicBaselineFields = ['compensation', 'locations', 'workMode', 'housing', 'timing', 'education'] as const;
+export type DeterministicBaselineField = (typeof deterministicBaselineFields)[number];
+
+export type BaselineState = 'present' | 'not-stated' | 'conflicting' | 'incomplete' | 'unavailable';
+
+export interface FieldBaselineConformance {
+  field: string;
+  baseline: BaselineState;
+  /** deterministic-confirm: deterministic evidence also says present.
+   * deterministic-conflict: the LLM claims a field the deterministic extractor
+   * stayed silent on (or vice versa) — flag for review before any receipt.
+   * deterministic-consistent: both agree the field is absent.
+   * llm-only: no deterministic baseline exists (eligibility). */
+  advisory: 'deterministic-confirm' | 'deterministic-conflict' | 'deterministic-consistent' | 'baseline-unavailable' | 'llm-only';
+}
+
+const presentOutcomes = ['correct-present', 'false-positive', 'wrong-value'];
+
+export function fieldBaselineConformance(field: string, outcome: string, baseline: BaselineState): FieldBaselineConformance {
+  if (baseline === 'unavailable') return { field, baseline, advisory: field === 'eligibility' ? 'llm-only' : 'baseline-unavailable' };
+  const claimsPresent = presentOutcomes.includes(outcome);
+  if (claimsPresent && baseline === 'present') return { field, baseline, advisory: 'deterministic-confirm' };
+  if (!claimsPresent && baseline !== 'present') return { field, baseline, advisory: 'deterministic-consistent' };
+  return { field, baseline, advisory: 'deterministic-conflict' };
+}

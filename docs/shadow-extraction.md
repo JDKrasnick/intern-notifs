@@ -71,10 +71,18 @@ entries. The authenticated operations endpoint
 `/internal/operations/shadow-publication` reports policy state, versioned field
 evaluation metrics, and extraction scope. `record-evaluation` stores one of
 `correct-present`, `correct-absent`, `false-positive`, `false-negative`,
-`wrong-value`, or `wrong-status` for each reviewed run field. `create-receipt`
-requires `correct-present` for every selected field as well as a completed,
-validator-accepted, current posting revision. Policy membership alone never
-authorizes publication.
+`wrong-value`, or `wrong-status` for each reviewed run field, and returns a
+per-field `conformance` advisory against the deterministic baseline recorded on
+the run (`shadow_extraction_baseline_differences`): `deterministic-confirm`
+when deterministic evidence also says present, `deterministic-conflict` when the
+model field status differs from the deterministic baseline,
+`deterministic-consistent` when their presence/absence states agree,
+`baseline-unavailable` when a covered field has no recorded baseline, and
+`llm-only` for eligibility, which the deterministic extractor cannot express. A conflict is a review signal, not a
+block: `create-receipt` requires `correct-present` for every selected field as
+well as a completed, validator-accepted, current posting revision, and a human
+`correct-present` review overrides a silent deterministic baseline. Policy
+membership alone never authorizes publication.
 
 Receipts bind the run key, posting identity and hash, policy version, accepted
 field subset, and deterministic evidence fingerprint in D1. A newer posting
