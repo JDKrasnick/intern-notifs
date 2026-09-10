@@ -150,6 +150,11 @@ export async function planDlq(input: {
         : parseMessage(input.queue as DlqName, message.body),
     };
   });
+  // The source health gate is intentionally catalog-only. Catalog replay
+  // resumes a full source poll, which must not run for a paused/quarantined
+  // source. Destination-verification replay re-enqueues a single per-job link
+  // check whose consumer guards settle it safely, so it stays replayable even
+  // while the owning source is paused.
   if (input.action === 'replay' && ['greenhouse', 'lever', 'ashby', 'github'].includes(input.queue as string)) {
     for (const item of parsed) {
       const health = await dependencies.sourceHealth(item.parsed.sourceId!);
