@@ -322,6 +322,20 @@ describe('lever manifest gate', () => {
     expect(collectLeverManifestViolations([source], options())).toEqual([]);
   });
 
+  it('gates an empty-board acknowledgement on an owner, a reason, and a timestamp', () => {
+    const acknowledged = {
+      ...source,
+      emptyBoardAcknowledged: { acknowledgedBy: 'JDKrasnick', acknowledgedAt: '2026-07-29T00:00:00Z', reason: 'seasonally empty' },
+    };
+    expect(collectLeverManifestViolations([acknowledged], options())).toEqual([]);
+    const malformed = { ...source, emptyBoardAcknowledged: { acknowledgedBy: '', acknowledgedAt: 'not-a-timestamp', reason: ' ' } };
+    expect(collectLeverManifestViolations([malformed], options())).toEqual([
+      'lever-cirrus: empty-board acknowledgement lacks an owner',
+      'lever-cirrus: empty-board acknowledgement lacks a reason',
+      'lever-cirrus: empty-board acknowledgement timestamp is invalid',
+    ]);
+  });
+
   it('fails an agent-verified board with no evidence record', () => {
     expect(collectLeverManifestViolations([source], options({ fs: fakeFs({}) })))
       .toEqual(['lever-cirrus: missing fixtures/cirrus/evidence.json']);

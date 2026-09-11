@@ -23,6 +23,9 @@ token or application host.
   the dispatch window.
 - Lambda consumes batches of ten with maximum concurrency four.
 - Shadow boards write only isolated source checkpoints and logs.
+- A board the owner has confirmed genuinely empty carries an
+  `emptyBoardAcknowledged` declaration: its zero-row snapshots are expected
+  instead of failing the suspicious-zero gate, and the board keeps monitoring.
 - Published boards use the catalog poller, quiet first baseline, link
   validation, DynamoDB deduplication, and user alert path.
 - Each request to the Greenhouse jobs API has an eight-second timeout.

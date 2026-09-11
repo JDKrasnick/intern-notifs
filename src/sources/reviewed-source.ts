@@ -52,6 +52,34 @@ export interface SourcePromotionEvidence {
   };
 }
 
+/**
+ * Owner declaration that a reviewed board is legitimately empty right now — a
+ * seasonal or unused board rather than a parser regression. It waives only the
+ * row-count drift guard; identity, schema, host, and link checks still run.
+ */
+export interface EmptyBoardAcknowledgement {
+  /** Owner who re-checked the live board against its reviewed identity. */
+  acknowledgedBy: string;
+  /** UTC time of that check. */
+  acknowledgedAt: string;
+  /** Why the empty board is expected; re-read at the next re-verification. */
+  reason: string;
+}
+
+/**
+ * Rejection reasons for an owner's empty-board declaration; empty means valid.
+ * The timestamp is not compared against the re-verification clock: an
+ * acknowledgement is recorded whenever the owner re-checks the board, so it
+ * legitimately postdates admission.
+ */
+export function emptyBoardAcknowledgementViolations(acknowledgement: EmptyBoardAcknowledgement): string[] {
+  const violations: string[] = [];
+  if (!acknowledgement.acknowledgedBy.trim()) violations.push('empty-board acknowledgement lacks an owner');
+  if (!acknowledgement.reason.trim()) violations.push('empty-board acknowledgement lacks a reason');
+  if (Number.isNaN(Date.parse(acknowledgement.acknowledgedAt))) violations.push('empty-board acknowledgement timestamp is invalid');
+  return violations;
+}
+
 export interface ReviewedSourceRecord {
   id: string;
   company: string;
@@ -62,6 +90,12 @@ export interface ReviewedSourceRecord {
   allowedApplicationHosts: ReviewedApplicationHost[];
   status: ReviewedSourceStatus;
   promotionEvidence?: SourcePromotionEvidence;
+  /**
+   * Set only after the owner confirms the board itself is empty. A zero-row
+   * snapshot is then expected rather than treated as parser drift, so the
+   * source keeps monitoring and picks up roles when the board refills.
+   */
+  emptyBoardAcknowledged?: EmptyBoardAcknowledgement;
 }
 
 export interface EmployerCareersEvidence {

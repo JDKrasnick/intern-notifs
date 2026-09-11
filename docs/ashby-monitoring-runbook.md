@@ -46,6 +46,24 @@ Operator pause, backoff, and replay take precedence over normal scheduling.
 Published boards run every thirty minutes; shadow boards run every three hours.
 Active and quiet tiers remain health classifications and do not alter cadence.
 
+## Acknowledged-empty boards
+
+A reviewed board whose API still resolves its identity but lists no roles is
+empty, not broken: `api.ashbyhq.com/posting-api/job-board/{board}` returns `200`
+with `{"jobs":[]}`, while a removed board returns `404`. Do not force-recover an
+empty board — the raw-zero guard rejects it, so every recovery re-fails and
+requeues the quarantine.
+
+When the owner re-checks the live board and accepts the emptiness, record an
+`emptyBoardAcknowledged` declaration on the reviewed source with the owner, the
+UTC check time, and the reason. The declaration makes the board dormant: a
+zero-row snapshot is expected rather than parser drift, while identity, schema,
+application-host, and link checks still apply. Monitoring continues, so the
+board's next listed role is ingested normally.
+
+Re-check the declaration whenever the board is re-verified, and remove it when
+the board refills: zero rows are drift again from that point.
+
 ## Promotion
 
 Promotion is per board. Add committed `promotionEvidence` containing three

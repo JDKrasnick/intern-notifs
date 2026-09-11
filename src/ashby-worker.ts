@@ -209,7 +209,8 @@ export async function runAshbyBoard(
       const needsLinkEvidenceBackfill = previousHealth?.applicationLinksChecked === undefined
         || previousHealth.applicationLinkFailures === undefined;
       if (!result.notModified || (result.unchangedReason === 'content_hash' && needsLinkEvidenceBackfill)) {
-        if ((previous?.lastRawCount ?? 0) > 0 && (result.rawRowCount ?? 0) === 0) {
+        // An owner-acknowledged empty board is dormant, so its zero rows are expected.
+        if (!source.emptyBoardAcknowledged && (previous?.lastRawCount ?? 0) > 0 && (result.rawRowCount ?? 0) === 0) {
           throw new SourceFetchError(`${source.id}: rejected an unexpected raw-zero snapshot`, 'empty');
         }
         linkValidation = await validateShadowLinks(result.listings, validate);

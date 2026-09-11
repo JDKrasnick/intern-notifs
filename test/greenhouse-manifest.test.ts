@@ -53,6 +53,17 @@ describe('greenhouse manifest', () => {
     expect(collectManifestViolations([source], memoryFs(completeFixtures))).toEqual([]);
   });
 
+  it('gates an empty-board acknowledgement on an owner, a reason, and a timestamp', () => {
+    const acknowledged = { ...source, emptyBoardAcknowledged: { acknowledgedBy: 'JDKrasnick', acknowledgedAt: '2026-07-24T18:00:00Z', reason: 'seasonally empty' } };
+    expect(collectManifestViolations([acknowledged], memoryFs(completeFixtures))).toEqual([]);
+    const malformed = { ...source, emptyBoardAcknowledged: { acknowledgedBy: '', acknowledgedAt: 'not-a-timestamp', reason: ' ' } };
+    expect(collectManifestViolations([malformed], memoryFs(completeFixtures))).toEqual([
+      `${source.id}: empty-board acknowledgement lacks an owner`,
+      `${source.id}: empty-board acknowledgement lacks a reason`,
+      `${source.id}: empty-board acknowledgement timestamp is invalid`,
+    ]);
+  });
+
   it('fails when a reviewed board ships no fixture material', () => {
     const violations = collectManifestViolations([source], memoryFs({}));
     expect(violations).toEqual([

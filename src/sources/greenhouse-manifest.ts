@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { hostMatchesAllowlist, matchesExpectedBoardName, type ReviewedGreenhouseSource } from './greenhouse-config.js';
+import { emptyBoardAcknowledgementViolations } from './reviewed-source.js';
 import { isGreenhouseJobShape, mapGreenhouseJob, type GreenhouseJob, type GreenhouseJobsResponse } from './greenhouse.js';
 
 /** Per-company evidence lives under `test/fixtures/greenhouse/{boardToken}/`. */
@@ -113,6 +114,9 @@ export function collectManifestViolations(
   const unclaimedDirs = new Set(fs.listBoardDirs(root));
   for (const source of registry) {
     unclaimedDirs.delete(source.boardToken);
+    if (source.emptyBoardAcknowledged) {
+      for (const issue of emptyBoardAcknowledgementViolations(source.emptyBoardAcknowledged)) violations.push(`${source.id}: ${issue}`);
+    }
     if (source.evidenceStatus === 'api-probed') continue;
     const dir = `${root}/${source.boardToken}`;
     const missing = REQUIRED_FIXTURES.filter(({ file }) => !fs.fileExists(`${dir}/${file}`));

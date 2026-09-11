@@ -203,6 +203,23 @@ describe('Ashby offline manifest and reverification', () => {
     ]));
   });
 
+  it('gates empty-board acknowledgements on an owner, a reason, and a timestamp', async () => {
+    const probe = await okProbe();
+    const files = {
+      'fixtures/acme.io/evidence.json': evidence(),
+      'fixtures/acme.io/probe.json': { probedAt: '2026-08-09T00:00:00Z', retention: 'metadata-only', results: [probe] },
+    };
+    const options = { fs: fakeFs(files), root: 'fixtures', now: new Date('2026-08-10T12:00:00Z') };
+    const acknowledged = source({ emptyBoardAcknowledged: { acknowledgedBy: 'JDKrasnick', acknowledgedAt: '2026-08-09T00:00:00Z', reason: 'seasonally empty' } });
+    expect(collectAshbyManifestViolations([acknowledged], options)).toEqual([]);
+    const malformed = source({ emptyBoardAcknowledged: { acknowledgedBy: ' ', acknowledgedAt: 'not-a-timestamp', reason: '' } });
+    expect(collectAshbyManifestViolations([malformed], options)).toEqual([
+      'ashby-acme-io: empty-board acknowledgement lacks an owner',
+      'ashby-acme-io: empty-board acknowledgement lacks a reason',
+      'ashby-acme-io: empty-board acknowledgement timestamp is invalid',
+    ]);
+  });
+
   it('rejects stale admission probes and future-dated evidence', async () => {
     const probe = await okProbe();
     const staleFiles = {
