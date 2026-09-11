@@ -111,20 +111,36 @@ export async function enqueueShadowExtraction(env: Pick<ShadowExtractionEnvironm
   baseline?: ShadowBaseline;
   origin?: ShadowExtractionOrigin;
 }): Promise<ShadowExtractionMessage | undefined> {
-  const normalized = normalizeExactPostingDescription(input.title, input.description, input.incomplete);
+  const origin = input.origin ?? 'legacy-unknown';
+  const bytes = (value: string) => new TextEncoder().encode(value).byteLength;
+  const serialize = (candidate: ReturnType<typeof normalizeExactPostingDescription>) => JSON.stringify({
+    version: 1, normalized: candidate, baseline: input.baseline ?? {}, identity: {
+      jobId: input.jobId, sourceId: input.sourceId, externalId: input.externalId, sourceUrl: input.sourceUrl,
+      providerIdentity: input.providerIdentity, observedAt: input.observedAt, origin,
+    }, retention: { expiresAt: new Date(Date.parse(input.observedAt) + retentionDays * 86_400_000).toISOString() } });
+  let normalized = normalizeExactPostingDescription(input.title, input.description, input.incomplete);
   if (!normalized.title || !normalized.description) return undefined;
+  let stored = serialize(normalized);
+  if (bytes(stored) > maxInputBytes + 2_000) {
+    // The description is capped independently, but the serialized envelope
+    // (identity, baseline, retention, JSON escaping) can still push the input
+    // over the ceiling. Re-truncate the description against the measured
+    // overhead so a complete posting still enqueues instead of being silently
+    // dropped (see issue #189).
+    const overhead = bytes(stored) - bytes(normalized.description);
+    const budget = maxInputBytes - overhead;
+    if (budget > 0) {
+      normalized = normalizeExactPostingDescription(input.title, input.description, input.incomplete, budget);
+      stored = serialize(normalized);
+    }
+    if (bytes(stored) > maxInputBytes + 2_000) return undefined;
+  }
   const cacheKey = shadowExtractionCacheKey(normalized);
   const runKey = shadowReportFingerprint({ jobId: input.jobId, sourceId: input.sourceId, externalId: input.externalId,
     contentHash: normalized.contentHash, cacheKey });
   // The normalized text is content-addressed by cacheKey, while this artifact
   // also holds posting-specific baseline state and therefore must not be shared.
   const inputKey = r2Key(runKey);
-  const origin = input.origin ?? 'legacy-unknown';
-  const stored = JSON.stringify({ version: 1, normalized, baseline: input.baseline ?? {}, identity: {
-    jobId: input.jobId, sourceId: input.sourceId, externalId: input.externalId, sourceUrl: input.sourceUrl,
-    providerIdentity: input.providerIdentity, observedAt: input.observedAt, origin,
-  }, retention: { expiresAt: new Date(Date.parse(input.observedAt) + retentionDays * 86_400_000).toISOString() } });
-  if (new TextEncoder().encode(stored).byteLength > maxInputBytes + 2_000) return undefined;
   await env.SHADOW_EXTRACTION_ARTIFACTS.put(inputKey, new TextEncoder().encode(stored).buffer, { httpMetadata: { contentType: 'application/json' } });
   const message: ShadowExtractionMessage = { version: 1, runKey, cacheKey, jobId: input.jobId, sourceId: input.sourceId,
     externalId: input.externalId, sourceUrl: input.sourceUrl, providerIdentity: input.providerIdentity,

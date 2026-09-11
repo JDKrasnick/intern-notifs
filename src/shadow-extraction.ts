@@ -58,14 +58,15 @@ function utf8(value: string): number { return new TextEncoder().encode(value).by
 
 /** Keeps heading, table, and list syntax intact. Only line endings/control bytes
  * are normalized, and a bounded input says explicitly when it is incomplete. */
-export function normalizeExactPostingDescription(title: string, description: string, forceIncomplete = false): NormalizedPostingInput {
+export function normalizeExactPostingDescription(title: string, description: string, forceIncomplete = false, maxBytes = SHADOW_EXTRACTION_MAX_INPUT_BYTES): NormalizedPostingInput {
   const cleanTitle = removeUnsafeControls(title).trim();
   let normalized = removeUnsafeControls(description.replace(/\r\n?/gu, '\n'));
   let completeness: NormalizedPostingInput['completeness'] = forceIncomplete ? 'incomplete' : 'complete';
-  if (utf8(normalized) > SHADOW_EXTRACTION_MAX_INPUT_BYTES) {
+  const budget = Math.min(maxBytes, SHADOW_EXTRACTION_MAX_INPUT_BYTES);
+  if (utf8(normalized) > budget) {
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
-    normalized = decoder.decode(encoder.encode(normalized).slice(0, SHADOW_EXTRACTION_MAX_INPUT_BYTES));
+    normalized = decoder.decode(encoder.encode(normalized).slice(0, budget));
     completeness = 'incomplete';
   }
   return { title: cleanTitle, description: normalized, completeness,
