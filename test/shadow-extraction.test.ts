@@ -186,6 +186,36 @@ describe('shadow extraction queue and cost ledger', () => {
     expect(row).toEqual({ state: 'disabled', attempts: 1, origin: 'provider-poll' });
   });
 
+  it('re-truncates a complete posting whose envelope overhead would exceed the ceiling instead of dropping it (issue #189)', async () => {
+    const DB = schema(); const artifacts = new MemoryR2(); const sent: unknown[] = [];
+    const queue: Queue = { async send(body) { sent.push(body); }, async sendBatch() {} };
+    // A full-length description plus a large identity envelope (long URLs
+    // duplicated across identity + providerIdentity) exceeds maxInputBytes+2000.
+    const longUrl = `https://example.test/${'p'.repeat(3_000)}`;
+    const message = await enqueueShadowExtraction({ DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts }, {
+      jobId: 'big', sourceId: identity.sourceId, externalId: 'big', sourceUrl: longUrl,
+      providerIdentity: { ...identity, sourceUrl: longUrl }, title: 'Software Engineering Intern',
+      description: 'a'.repeat(40_000), observedAt: '2026-09-08T00:00:00.000Z', origin: 'provider-poll',
+    });
+    expect(message).toBeDefined();
+    expect(sent).toHaveLength(1);
+    expect(artifacts.values.get(message!.inputKey)!.byteLength).toBeLessThanOrEqual(40_000 + 2_000);
+    expect(await DB.prepare('SELECT job_id FROM shadow_extraction_posting_revisions WHERE job_id = ?').bind('big').first())
+      .toEqual({ job_id: 'big' });
+  });
+
+  it('still declines an input whose identity envelope alone exceeds the ceiling', async () => {
+    const DB = schema(); const artifacts = new MemoryR2();
+    const queue: Queue = { async send() {}, async sendBatch() {} };
+    const hugeUrl = `https://example.test/${'p'.repeat(45_000)}`;
+    const message = await enqueueShadowExtraction({ DB, SHADOW_EXTRACTION_QUEUE: queue, SHADOW_EXTRACTION_ARTIFACTS: artifacts }, {
+      jobId: 'huge', sourceId: identity.sourceId, externalId: 'huge', sourceUrl: hugeUrl,
+      providerIdentity: { ...identity, sourceUrl: hugeUrl }, title: 'Intern', description: 'a'.repeat(1_000),
+      observedAt: '2026-09-08T00:00:00.000Z', origin: 'provider-poll',
+    });
+    expect(message).toBeUndefined();
+  });
+
   it('serializes concurrent cost reservations and does not let a late revision run', async () => {
     const DB = schema(); const now = new Date('2026-09-08T00:00:00.000Z');
     // Foreign-key rows exist in production before a reservation; create two runs here to exercise the ledger guard.
