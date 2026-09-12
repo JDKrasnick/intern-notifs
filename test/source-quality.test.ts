@@ -41,6 +41,10 @@ describe('source-quality policy', () => {
     expect(greenhouseQualityPolicy(acknowledged).dormant).toBe(true);
     expect(verifySourceQuality([{ policy: greenhouseQualityPolicy(acmeSource), ...input }]).failures.join(' ')).toContain('suspicious zero-row');
     expect(verifySourceQuality([{ policy: greenhouseQualityPolicy(acknowledged), ...input }]).failures).toEqual([]);
+    // Only row-count drift is waived: a URL-policy breach still fails the source.
+    const breached = { ...input, result: { sourceId: acmeSource.id, listings: [row('https://linkedin.com/jobs/1')], notModified: false } };
+    expect(verifySourceQuality([{ policy: greenhouseQualityPolicy(acknowledged), ...breached }]).failures.join(' '))
+      .toContain('aggregator-only host is not allowed');
   });
   it('treats an owner-acknowledged empty Lever board as dormant too', () => {
     const lever: ReviewedLeverSource = {

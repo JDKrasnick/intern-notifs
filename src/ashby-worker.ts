@@ -317,6 +317,8 @@ export async function runAshbyBoard(
   const poll = await new Poller([adapter], dependencies.store, undefined, undefined, validate, false,
     dependencies.enqueueDestinationVerification, dependencies.catalogAdmissionResolver).poll({
     runId: message.runId,
+    // Published Ashby boards already tolerate a complete empty snapshot, so an
+    // `emptyBoardAcknowledged` declaration only changes the shadow guard above.
     allowCompleteEmptySnapshot: true,
     naturalProviderPoll: !message.force,
   });

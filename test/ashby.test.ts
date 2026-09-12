@@ -185,7 +185,7 @@ describe('Ashby offline manifest and reverification', () => {
       'Junior', 'Airwallex', 'Netic', 'Retell AI', 'Quadrillion', 'Pylon', 'NationGraph',
     ]);
     expect(reviewedAshbySources.filter(({ status }) => status === 'shadow')).toHaveLength(63);
-    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-08-18T12:05:00Z') })).toEqual([]);
+    expect(collectAshbyManifestViolations(reviewedAshbySources, { fs: nodeAshbyManifestFs(), now: new Date('2026-09-11T12:00:00Z') })).toEqual([]);
   });
 
   it('keeps any expansion replacements ordered and unadmitted', () => {
@@ -203,7 +203,7 @@ describe('Ashby offline manifest and reverification', () => {
     ]));
   });
 
-  it('gates empty-board acknowledgements on an owner, a reason, and a timestamp', async () => {
+  it('gates empty-board acknowledgements on an owner, a reason, and a fresh timestamp', async () => {
     const probe = await okProbe();
     const files = {
       'fixtures/acme.io/evidence.json': evidence(),
@@ -218,6 +218,10 @@ describe('Ashby offline manifest and reverification', () => {
       'ashby-acme-io: empty-board acknowledgement lacks a reason',
       'ashby-acme-io: empty-board acknowledgement timestamp is invalid',
     ]);
+    const future = source({ emptyBoardAcknowledged: { acknowledgedBy: 'JDKrasnick', acknowledgedAt: '2026-08-10T12:06:00Z', reason: 'seasonally empty' } });
+    expect(collectAshbyManifestViolations([future], options)).toEqual(['ashby-acme-io: empty-board acknowledgement timestamp is in the future']);
+    const stale = source({ emptyBoardAcknowledged: { acknowledgedBy: 'JDKrasnick', acknowledgedAt: '2026-02-01T00:00:00Z', reason: 'seasonally empty' } });
+    expect(collectAshbyManifestViolations([stale], options)).toEqual(['ashby-acme-io: empty-board acknowledgement is overdue for re-verification (limit 180 days)']);
   });
 
   it('rejects stale admission probes and future-dated evidence', async () => {

@@ -67,16 +67,32 @@ export interface EmptyBoardAcknowledgement {
 }
 
 /**
- * Rejection reasons for an owner's empty-board declaration; empty means valid.
- * The timestamp is not compared against the re-verification clock: an
- * acknowledgement is recorded whenever the owner re-checks the board, so it
- * legitimately postdates admission.
+ * How long an owner's empty-board acknowledgement stays valid. The declaration
+ * disables a drift detector, so the owner must re-check the live board inside
+ * the same window the provider manifests already allow admission evidence.
  */
-export function emptyBoardAcknowledgementViolations(acknowledgement: EmptyBoardAcknowledgement): string[] {
+export const EMPTY_BOARD_ACKNOWLEDGEMENT_DAYS = 180;
+
+const DAY_MS = 86_400_000;
+const CLOCK_SKEW_MS = 5 * 60_000;
+
+/**
+ * Rejection reasons for an owner's empty-board declaration; empty means valid.
+ * The stamp is checked against the manifest clock: a future-dated or stale
+ * declaration would keep the row-count guard off for a board that may already
+ * be drifting, which is the failure this declaration exists to bound rather
+ * than to hide.
+ */
+export function emptyBoardAcknowledgementViolations(acknowledgement: EmptyBoardAcknowledgement, now: Date): string[] {
   const violations: string[] = [];
   if (!acknowledgement.acknowledgedBy.trim()) violations.push('empty-board acknowledgement lacks an owner');
   if (!acknowledgement.reason.trim()) violations.push('empty-board acknowledgement lacks a reason');
-  if (Number.isNaN(Date.parse(acknowledgement.acknowledgedAt))) violations.push('empty-board acknowledgement timestamp is invalid');
+  const acknowledgedAt = Date.parse(acknowledgement.acknowledgedAt);
+  if (!Number.isFinite(acknowledgedAt)) violations.push('empty-board acknowledgement timestamp is invalid');
+  else if (acknowledgedAt > now.getTime() + CLOCK_SKEW_MS) violations.push('empty-board acknowledgement timestamp is in the future');
+  else if (Math.floor((now.getTime() - acknowledgedAt) / DAY_MS) > EMPTY_BOARD_ACKNOWLEDGEMENT_DAYS) {
+    violations.push(`empty-board acknowledgement is overdue for re-verification (limit ${EMPTY_BOARD_ACKNOWLEDGEMENT_DAYS} days)`);
+  }
   return violations;
 }
 
@@ -93,7 +109,10 @@ export interface ReviewedSourceRecord {
   /**
    * Set only after the owner confirms the board itself is empty. A zero-row
    * snapshot is then expected rather than treated as parser drift, so the
-   * source keeps monitoring and picks up roles when the board refills.
+   * source keeps monitoring and picks up roles when the board refills. The
+   * declaration expires after `EMPTY_BOARD_ACKNOWLEDGEMENT_DAYS`; the manifests
+   * reject a stale or future-dated stamp so the guard cannot stay off by
+   * accident.
    */
   emptyBoardAcknowledged?: EmptyBoardAcknowledgement;
 }

@@ -322,7 +322,7 @@ describe('lever manifest gate', () => {
     expect(collectLeverManifestViolations([source], options())).toEqual([]);
   });
 
-  it('gates an empty-board acknowledgement on an owner, a reason, and a timestamp', () => {
+  it('gates an empty-board acknowledgement on an owner, a reason, and a fresh timestamp', () => {
     const acknowledged = {
       ...source,
       emptyBoardAcknowledged: { acknowledgedBy: 'JDKrasnick', acknowledgedAt: '2026-07-29T00:00:00Z', reason: 'seasonally empty' },
@@ -334,6 +334,10 @@ describe('lever manifest gate', () => {
       'lever-cirrus: empty-board acknowledgement lacks a reason',
       'lever-cirrus: empty-board acknowledgement timestamp is invalid',
     ]);
+    const future = { ...source, emptyBoardAcknowledged: { acknowledgedBy: 'JDKrasnick', acknowledgedAt: '2026-07-29T00:06:00Z', reason: 'seasonally empty' } };
+    expect(collectLeverManifestViolations([future], options())).toEqual(['lever-cirrus: empty-board acknowledgement timestamp is in the future']);
+    const stale = { ...source, emptyBoardAcknowledged: { acknowledgedBy: 'JDKrasnick', acknowledgedAt: '2026-01-01T00:00:00Z', reason: 'seasonally empty' } };
+    expect(collectLeverManifestViolations([stale], options())).toEqual(['lever-cirrus: empty-board acknowledgement is overdue for re-verification (limit 180 days)']);
   });
 
   it('fails an agent-verified board with no evidence record', () => {

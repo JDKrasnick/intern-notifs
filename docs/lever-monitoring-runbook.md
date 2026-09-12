@@ -91,8 +91,10 @@ the month; the next month resets automatically.
   page, then record an `emptyBoardAcknowledged` declaration on the reviewed
   source (owner, UTC check time, reason). The declaration makes the board
   dormant: zero rows are expected rather than parser drift, while identity,
-  site, host, and link checks still apply, and monitoring continues. Remove the
-  declaration when the board refills.
+  site, host, and link checks still apply, and monitoring continues. Replay the
+  board once after recording the declaration so the forced run clears the
+  quarantine, then resume it when that run reports healthy. A declaration
+  expires after 180 days. Remove it when the board refills.
 
 ### Application-host mismatch or broken links
 

@@ -51,8 +51,8 @@ Active and quiet tiers remain health classifications and do not alter cadence.
 A reviewed board whose API still resolves its identity but lists no roles is
 empty, not broken: `api.ashbyhq.com/posting-api/job-board/{board}` returns `200`
 with `{"jobs":[]}`, while a removed board returns `404`. Do not force-recover an
-empty board — the raw-zero guard rejects it, so every recovery re-fails and
-requeues the quarantine.
+unacknowledged empty board — the raw-zero guard rejects it, so every recovery
+re-fails and requeues the quarantine.
 
 When the owner re-checks the live board and accepts the emptiness, record an
 `emptyBoardAcknowledged` declaration on the reviewed source with the owner, the
@@ -61,8 +61,15 @@ zero-row snapshot is expected rather than parser drift, while identity, schema,
 application-host, and link checks still apply. Monitoring continues, so the
 board's next listed role is ingested normally.
 
-Re-check the declaration whenever the board is re-verified, and remove it when
-the board refills: zero rows are drift again from that point.
+Once the declaration is deployed, recover the board with `recover` and then
+`resume` it. The forced run now accepts the zero-row snapshot, resolves the
+incident, zeroes `consecutiveFailures`, and rewrites the shadow checkpoint, so
+zeros stop tripping the guard.
+
+A declaration expires after 180 days, matching the admission re-verification
+window; the manifest fails until the owner re-checks the live board and updates
+`acknowledgedAt`. Remove the declaration when the board refills: zero rows are
+drift again, and the guard re-arms on the first non-empty snapshot.
 
 ## Promotion
 

@@ -123,7 +123,7 @@ export function collectLeverManifestViolations(
     seenSites.add(source.site);
     if (!source.id.startsWith('lever-')) violations.push(`${source.id}: source id must be namespaced lever-*`);
     if (source.emptyBoardAcknowledged) {
-      for (const issue of emptyBoardAcknowledgementViolations(source.emptyBoardAcknowledged)) violations.push(`${source.id}: ${issue}`);
+      for (const issue of emptyBoardAcknowledgementViolations(source.emptyBoardAcknowledged, now)) violations.push(`${source.id}: ${issue}`);
     }
 
     // A registry entry with no matching quality policy is a board whose

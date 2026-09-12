@@ -127,7 +127,7 @@ export function collectAshbyManifestViolations(
     if (source.identity.provider !== 'ashby') violations.push(`${source.id}: provider is not ashby`);
     if (source.status !== 'shadow' && source.status !== 'published') violations.push(`${source.id}: invalid status`);
     if (source.emptyBoardAcknowledged) {
-      for (const issue of emptyBoardAcknowledgementViolations(source.emptyBoardAcknowledged)) violations.push(`${source.id}: ${issue}`);
+      for (const issue of emptyBoardAcknowledgementViolations(source.emptyBoardAcknowledged, now)) violations.push(`${source.id}: ${issue}`);
     }
     for (const issue of promotionEvidenceViolations(source, now)) violations.push(`${source.id}: ${issue}`);
     const admitted = Date.parse(source.admittedAt);
